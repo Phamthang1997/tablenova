@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { dbHelper } from '../utils/dbHelper';
 import type { DbConnectionConfig } from '../utils/dbHelper';
-import { Database, Server, CheckCircle2, AlertTriangle, Plus, Trash2, Save, Copy, Download, Upload, Lock, Key, TerminalSquare } from 'lucide-react';
+import { Database, Server, CheckCircle2, AlertTriangle, Plus, Trash2, Save, Copy, Download, Upload, Lock, Key, TerminalSquare, Hash, FolderOpen, User, Link, Star, Eye, EyeOff, ShieldAlert, Search, X, ChevronDown, ChevronRight, RefreshCw, ShieldCheck, Network, ArrowLeft, Check, Cloud, HardDriveDownload } from 'lucide-react';
+import { PostgresIcon, MySqlIcon, RedisIcon, SqliteIcon } from './DbIcons';
 import { encryptConnectionExport, decryptConnectionExport } from '../utils/cryptoHelper';
 import { TerminalPanel } from './TerminalPanel';
 
@@ -32,23 +33,99 @@ const LoadingSpinner: React.FC<{ size?: number; style?: React.CSSProperties; cla
   </svg>
 );
 
+// Nút hiện/ẩn mật khẩu nằm bên trong ô input.
+const EyeBtn: React.FC<{ on: boolean; onClick: () => void }> = ({ on, onClick }) => (
+  <button type="button" className="cm-eye" onClick={onClick} title={on ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}>
+    {on ? <EyeOff size={14} /> : <Eye size={14} />}
+  </button>
+);
+
+// Nút chọn tệp (chứng chỉ SSL, private key...) — chỉ hiện tên tệp cho gọn.
+const FilePick: React.FC<{ id: string; value: string; label: string; onPick: (path: string) => void }> = ({ id, value, label, onPick }) => (
+  <>
+    <input
+      type="file"
+      id={id}
+      style={{ display: 'none' }}
+      onChange={(e) => {
+        const file = e.target.files?.[0];
+        if (file) onPick((file as any).path || file.name);
+      }}
+    />
+    <button type="button" className={`cm-file-btn ${value ? 'has-file' : ''}`} onClick={() => document.getElementById(id)?.click()} title={value || label}>
+      <FolderOpen size={12} />
+      <span>{value ? value.split(/[\\/]/).pop() : label}</span>
+    </button>
+  </>
+);
+
 export interface SavedProfile {
   id: string;
   name: string;
-  type: 'sqlite' | 'postgres' | 'mysql';
+  type: 'sqlite' | 'postgres' | 'mysql' | 'redis';
   config: any;
   color?: string;
   group?: string;
+  isDefault?: boolean;
 }
 
 interface ConnectionManagerProps {
-  onConnect: (dbName: string, dbType: 'sqlite' | 'postgres' | 'mysql', color?: string, config?: DbConnectionConfig) => void;
+  onConnect: (dbName: string, dbType: 'sqlite' | 'postgres' | 'mysql' | 'redis', color?: string, config?: DbConnectionConfig) => void;
 }
 
+// Giải thích từng mức SSL — hiển thị dưới ô select thay vì nhồi vào <option>
+// (option dài sẽ bị mũi tên của select đè lên và popup native tràn ra ngoài).
+const SSL_MODE_DESC: Record<string, string> = {
+  DISABLED: 'Tắt hẳn TLS — mật khẩu và dữ liệu đi ở dạng thô. Máy chủ nào bắt buộc SSL sẽ từ chối kết nối.',
+  PREFERRED: 'Có TLS thì dùng, không có thì vẫn kết nối thường — kẻ chặn đường truyền có thể ép tụt về không mã hoá.',
+  REQUIRED: 'Bắt buộc TLS nhưng không kiểm tra chứng chỉ — chống nghe lén, chưa chống được máy chủ giả mạo.',
+  VERIFY_CA: 'Bắt buộc TLS và chứng chỉ máy chủ phải do CA tin cậy ký — chống được máy chủ giả mạo.',
+  VERIFY_IDENTITY: 'Như VERIFY_CA, thêm điều kiện hostname khớp chứng chỉ — mức an toàn cao nhất.',
+};
+
+// Meta hiển thị theo loại DB (badge + nhãn + màu) dùng cho sidebar và header.
+// Nhãn cho đèn trạng thái ở mỗi dòng kết nối trong sidebar.
+const LED_TITLE: Record<'busy' | 'ok' | 'fail', string> = {
+  busy: 'Đang xử lý kết nối này...',
+  ok: 'Kiểm tra kết nối thành công',
+  fail: 'Kiểm tra kết nối thất bại',
+};
+
+// Logo thật của từng hệ DB (xem DbIcons.tsx) + màu thương hiệu cho ô nền.
+const TYPE_META: Record<string, { label: string; color: string; Icon: React.FC<{ size?: number }> }> = {
+  sqlite: { label: 'SQLite', color: '#003B57', Icon: SqliteIcon },
+  postgres: { label: 'PostgreSQL', color: '#336791', Icon: PostgresIcon },
+  mysql: { label: 'MySQL', color: '#00758F', Icon: MySqlIcon },
+  redis: { label: 'Redis', color: '#DC382D', Icon: RedisIcon },
+};
+
 export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect }) => {
-  const [activeType, setActiveType] = useState<'sqlite' | 'postgres' | 'mysql' | 'backup_restore'>('sqlite');
+  const [activeType, setActiveType] = useState<'sqlite' | 'postgres' | 'mysql' | 'redis' | 'backup_restore'>('sqlite');
+  // Redis form state
+  const [redisHost, setRedisHost] = useState('127.0.0.1');
+  const [redisPort, setRedisPort] = useState(6379);
+  const [redisUser, setRedisUser] = useState('');
+  const [redisPassword, setRedisPassword] = useState('');
+  const [redisDbIndex, setRedisDbIndex] = useState(0);
+  const [showPw, setShowPw] = useState(false); // hiện/ẩn mật khẩu form kết nối
+  const [profileSearch, setProfileSearch] = useState(''); // lọc profile ở sidebar
+  const [testStatus, setTestStatus] = useState<'untested' | 'ok' | 'fail'>('untested'); // trạng thái Kiểm tra kết nối
+
+  // Tab của form cấu hình: gom SSL / SSH ra tab riêng để form chính không bị dài.
+  const [formTab, setFormTab] = useState<'general' | 'ssl' | 'ssh'>('general');
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({}); // nhóm đang thu gọn ở sidebar
+  const [showNewMenu, setShowNewMenu] = useState(false); // menu chọn loại DB khi tạo kết nối mới
+  const [showGroupList, setShowGroupList] = useState(false); // dropdown gợi ý nhóm đã có
+  const [showDbList, setShowDbList] = useState(false); // dropdown chọn database đã tải về
+  const [uriCopied, setUriCopied] = useState(false); // phản hồi sau khi copy connection string
+
+  // Host được coi là "từ xa" (không phải local) -> dùng để cảnh báo SSL.
+  const isRemoteHost = (h?: string) => {
+    const v = (h || '').trim().toLowerCase();
+    return v !== '' && !['localhost', '127.0.0.1', '::1', '0.0.0.0', 'host.docker.internal'].includes(v);
+  };
   const [sqlitePath, setSqlitePath] = useState('demo.db');
-  
+
   // PG config
   const [pgHost, setPgHost] = useState('localhost');
   const [pgPort, setPgPort] = useState(5432);
@@ -91,6 +168,22 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [isSuccessConnecting, setIsSuccessConnecting] = useState(false);
+  const [connectingDbName, setConnectingDbName] = useState('');
+
+  // Thông báo tự ẩn: thành công 4s, lỗi 8s (dài hơn để còn đọc kịp nội dung lỗi).
+  // Thời gian này phải khớp với keyframes cmAlertLife / cmAlertLifeLong trong CSS.
+  useEffect(() => {
+    if (!successMsg) return;
+    const timer = setTimeout(() => setSuccessMsg(null), 4000);
+    return () => clearTimeout(timer);
+  }, [successMsg]);
+
+  useEffect(() => {
+    if (!errorMsg) return;
+    const timer = setTimeout(() => setErrorMsg(null), 8000);
+    return () => clearTimeout(timer);
+  }, [errorMsg]);
 
   // Connection-less Backup/Restore States
   const [brAction, setBrAction] = useState<'backup' | 'restore'>('backup');
@@ -122,11 +215,35 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
   const [availableDatabases, setAvailableDatabases] = useState<string[]>([]);
   const [loadingDbs, setLoadingDbs] = useState(false);
 
+  // Cấu hình SSL đang chọn ở form — phải gửi kèm mọi lệnh phụ (liệt kê database,
+  // sao lưu/phục hồi), nếu không backend sẽ hiểu là DISABLED và tắt hẳn TLS.
+  const currentSslConfig = () => ({
+    sslEnabled,
+    sslMode,
+    sslKeyPath,
+    sslCertPath,
+    sslCaPath,
+  });
+
+  // Form Sao lưu & Phục hồi không có phần SSL riêng: lấy theo profile đã chọn,
+  // không có profile thì để PREFERRED (dùng TLS nếu máy chủ hỗ trợ).
+  const brSslConfig = () => {
+    const prof = profiles.find(p => p.id === selectedBrProfileId);
+    const c: any = prof?.config || {};
+    return {
+      sslEnabled: c.sslEnabled ?? false,
+      sslMode: c.sslMode || 'PREFERRED',
+      sslKeyPath: c.sslKeyPath || '',
+      sslCertPath: c.sslCertPath || '',
+      sslCaPath: c.sslCaPath || '',
+    };
+  };
+
   const fetchDatabases = async (type: 'postgres' | 'mysql' | 'br_mysql' | 'br_postgres') => {
     setLoadingDbs(true);
     setErrorMsg(null);
     let config: DbConnectionConfig;
-    
+
     if (type === 'postgres') {
       config = {
         type: 'postgres',
@@ -135,6 +252,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
         user: pgUser,
         password: pgPassword,
         database: pgDatabase,
+        ...currentSslConfig(),
       };
     } else if (type === 'mysql') {
       config = {
@@ -144,6 +262,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
         user: myUser,
         password: myPassword,
         database: myDatabase,
+        ...currentSslConfig(),
       };
     } else if (type === 'br_postgres') {
       config = {
@@ -153,6 +272,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
         user: brPgUser,
         password: brPgPassword,
         database: brPgDatabase,
+        ...brSslConfig(),
       };
     } else {
       config = {
@@ -162,6 +282,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
         user: brMyUser,
         password: brMyPassword,
         database: brMyDatabase,
+        ...brSslConfig(),
       };
     }
 
@@ -179,13 +300,21 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     }
   };
 
+  // fetchDatabases được tạo lại mỗi render (nó đọc rất nhiều state). KHÔNG thể đưa
+  // thẳng vào deps của 3 effect debounce bên dưới: effect sẽ chạy lại sau mỗi render,
+  // timer 500ms bị reset liên tục và gần như không bao giờ nổ -> mất hẳn tính năng
+  // tự tải danh sách database. Giữ bản mới nhất trong ref: ref là stable nên
+  // exhaustive-deps không đòi, mà effect vẫn luôn gọi đúng bản mới nhất.
+  const fetchDbRef = useRef(fetchDatabases);
+  useEffect(() => { fetchDbRef.current = fetchDatabases; });
+
   // Auto-load databases for Postgres
   useEffect(() => {
     if (activeType !== 'postgres') return;
     if (!pgHost.trim() || !pgUser.trim()) return;
 
     const timer = setTimeout(() => {
-      fetchDatabases('postgres');
+      fetchDbRef.current('postgres');
     }, 500);
 
     return () => clearTimeout(timer);
@@ -197,7 +326,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     if (!myHost.trim() || !myUser.trim()) return;
 
     const timer = setTimeout(() => {
-      fetchDatabases('mysql');
+      fetchDbRef.current('mysql');
     }, 500);
 
     return () => clearTimeout(timer);
@@ -211,13 +340,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     if (brType === 'postgres') {
       if (!brPgHost.trim() || !brPgUser.trim()) return;
       const timer = setTimeout(() => {
-        fetchDatabases('br_postgres');
+        fetchDbRef.current('br_postgres');
       }, 500);
       return () => clearTimeout(timer);
     } else {
       if (!brMyHost.trim() || !brMyUser.trim()) return;
       const timer = setTimeout(() => {
-        fetchDatabases('br_mysql');
+        fetchDbRef.current('br_mysql');
       }, 500);
       return () => clearTimeout(timer);
     }
@@ -269,10 +398,22 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
   // Connection Profiles States
   const [profiles, setProfiles] = useState<SavedProfile[]>([]);
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
+  const [defaultProfileId, setDefaultProfileId] = useState<string | null>(() => localStorage.getItem('tf_default_profile_id'));
   const [selectedBrProfileId, setSelectedBrProfileId] = useState<string | null>(null);
   const [profileNameInput, setProfileNameInput] = useState('');
   const [profileColor, setProfileColor] = useState('');
   const [profileGroup, setProfileGroup] = useState('');
+
+  const handleToggleDefaultProfile = (profileId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const nextId = defaultProfileId === profileId ? null : profileId;
+    setDefaultProfileId(nextId);
+    if (nextId) {
+      localStorage.setItem('tf_default_profile_id', nextId);
+    } else {
+      localStorage.removeItem('tf_default_profile_id');
+    }
+  };
 
   const [showImportUrlModal, setShowImportUrlModal] = useState(false);
   const [importUrlInput, setImportUrlInput] = useState('');
@@ -346,14 +487,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
       });
 
       const encryptedText = await encryptConnectionExport(processedProfiles, exportFilePassword);
-      
+
       const blob = new Blob([encryptedText], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       const filenameStr = exportScope === 'group' ? `TablePlus_${exportGroupTarget.replace(/[^a-zA-Z0-9]/g, '_')}_Connections.tableplusconnection` :
         exportScope === 'single' ? `TablePlus_${exportSingleProfile?.name.replace(/[^a-zA-Z0-9]/g, '_')}_Connection.tableplusconnection` :
-        'TablePlus_All_Connections.tableplusconnection';
+          'TablePlus_All_Connections.tableplusconnection';
       a.download = filenameStr;
       document.body.appendChild(a);
       a.click();
@@ -362,7 +503,6 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
 
       setShowExportModal(false);
       setSuccessMsg(`Đã xuất ${processedProfiles.length} kết nối thành công!`);
-      setTimeout(() => setSuccessMsg(null), 4000);
     } catch (e: any) {
       alert("Lỗi xuất kết nối: " + e.message);
     } finally {
@@ -436,7 +576,6 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
       setShowImportPasswordModal(false);
       setPendingImportContent(null);
       setSuccessMsg(`Đã nhập thành công ${importedCount} kết nối!`);
-      setTimeout(() => setSuccessMsg(null), 4000);
     } catch (e: any) {
       if (e.requiresPassword) {
         throw e;
@@ -527,25 +666,26 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     setProfiles(newProfiles);
     localStorage.setItem('tf_connection_profiles', JSON.stringify(newProfiles));
     selectProfile(newProfile);
-    
+
     setShowImportUrlModal(false);
     setImportUrlInput('');
     setSuccessMsg('Đã nhập thành công cấu hình kết nối từ URL!');
-    setTimeout(() => setSuccessMsg(null), 3000);
   };
 
 
   // Load saved connection configurations from localStorage
   useEffect(() => {
     const saved = localStorage.getItem('tf_connection_profiles');
+    const savedDefaultId = localStorage.getItem('tf_default_profile_id');
     if (saved) {
       try {
-        const parsed = JSON.parse(saved);
+        const parsed: SavedProfile[] = JSON.parse(saved);
         setProfiles(parsed);
         if (parsed.length > 0) {
-          selectProfile(parsed[0]);
+          const defaultProf = parsed.find(p => p.id === savedDefaultId) || parsed[0];
+          selectProfile(defaultProf);
         }
-      } catch {}
+      } catch { }
     } else {
       const defaultProfiles: SavedProfile[] = [
         {
@@ -564,13 +704,24 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
   const selectProfile = (profile: SavedProfile) => {
     setActiveProfileId(profile.id);
     setActiveType(profile.type);
+    setTestStatus('untested');
+    setFormTab('general');
+    setErrorMsg(null);
+    setSuccessMsg(null);
     setProfileNameInput(profile.name);
     setProfileColor(profile.color || '');
     setProfileGroup(profile.group || '');
-    
+
     const config = profile.config;
     if (profile.type === 'sqlite') {
       setSqlitePath(config.sqlitePath || 'demo.db');
+    } else if (profile.type === 'redis') {
+      setRedisHost(config.host || '127.0.0.1');
+      setRedisPort(config.port || 6379);
+      setRedisUser(config.user || '');
+      setRedisPassword(config.password || '');
+      setRedisDbIndex(config.dbIndex ?? 0);
+      setSslEnabled(config.sslEnabled || false);
     } else if (profile.type === 'postgres') {
       setPgHost(config.host || 'localhost');
       setPgPort(config.port || 5432);
@@ -631,7 +782,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
   const handleSaveProfile = () => {
     if (!activeProfileId) return;
     const targetName = profileNameInput.trim() || 'Kết nối mới';
-    
+
     let config: any = {};
     if (activeType === 'sqlite') {
       config = { type: 'sqlite', sqlitePath };
@@ -709,17 +860,19 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     setSuccessMsg('Đã lưu cấu hình kết nối!');
   };
 
-  const handleCreateNewProfile = (type: 'sqlite' | 'postgres' | 'mysql') => {
+  const handleCreateNewProfile = (type: 'sqlite' | 'postgres' | 'mysql' | 'redis') => {
     const newId = 'profile_' + Date.now();
     const newProfile: SavedProfile = {
       id: newId,
       name: `Kết nối ${type.toUpperCase()}`,
       type,
-      config: type === 'sqlite' 
+      config: type === 'sqlite'
         ? { type, sqlitePath: 'new_database.db' }
         : type === 'postgres'
           ? { type, host: 'localhost', port: 5432, user: 'postgres', database: 'postgres' }
-          : { type, host: 'localhost', port: 3306, user: 'root', database: '' }
+          : type === 'redis'
+            ? { type, host: '127.0.0.1', port: 6379, user: '', password: '', dbIndex: 0 }
+            : { type, host: 'localhost', port: 3306, user: 'root', database: '' }
     };
 
     const newProfiles = [...profiles, newProfile];
@@ -739,7 +892,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     const newProfiles = profiles.filter(p => p.id !== id);
     setProfiles(newProfiles);
     localStorage.setItem('tf_connection_profiles', JSON.stringify(newProfiles));
-    
+
     if (activeProfileId === id) {
       if (newProfiles.length > 0) {
         selectProfile(newProfiles[0]);
@@ -816,6 +969,17 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
         sshKeyContent,
         sshPassphrase
       }));
+    } else if (activeType === 'redis') {
+      config = {
+        type: 'redis',
+        host: redisHost,
+        port: redisPort,
+        user: redisUser,
+        password: redisPassword,
+        dbIndex: redisDbIndex,
+        sslEnabled,
+      };
+      localStorage.setItem('tf_redis_config', JSON.stringify({ host: redisHost, port: redisPort, user: redisUser, dbIndex: redisDbIndex }));
     } else {
       config = {
         type: 'mysql',
@@ -866,10 +1030,12 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     setLoading(false);
     if (res.success) {
       setSuccessMsg(res.message);
+      setIsSuccessConnecting(true);
+      setConnectingDbName(res.database || (config.type === 'sqlite' ? config.sqlitePath : config.database) || 'Database');
       const activeProfile = profiles.find(p => p.id === activeProfileId);
       setTimeout(() => {
         onConnect(res.database || 'Database', config.type, activeProfile?.color, config);
-      }, 800);
+      }, 480);
     } else {
       setErrorMsg(res.message);
     }
@@ -879,6 +1045,21 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     setLoading(true);
     setErrorMsg(null);
     setSuccessMsg(null);
+
+    // Redis: test bằng chính redis_connect (PING) qua dbHelper.connect.
+    if (activeType === 'redis') {
+      const res = await dbHelper.connect({
+        type: 'redis', host: redisHost, port: redisPort, user: redisUser,
+        password: redisPassword, dbIndex: redisDbIndex, sslEnabled,
+      });
+      setLoading(false);
+      setTestStatus(res.success ? 'ok' : 'fail');
+      if (res.success) setSuccessMsg('Kết nối Redis OK (PING thành công).');
+      else setErrorMsg(res.message);
+      // Ngắt kết nối test để không giữ phiên.
+      await dbHelper.redisDisconnect();
+      return;
+    }
 
     let config: DbConnectionConfig;
     if (activeType === 'sqlite') {
@@ -947,6 +1128,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
 
     const res = await dbHelper.connect(config);
     setLoading(false);
+    setTestStatus(res.success ? 'ok' : 'fail');
     if (res.success) {
       setSuccessMsg('Kiểm tra kết nối thành công!');
       await dbHelper.disconnect();
@@ -971,7 +1153,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
         port: brPgPort,
         user: brPgUser,
         password: brPgPassword,
-        database: brPgDatabase
+        database: brPgDatabase,
+        ...brSslConfig(),
       };
     } else {
       config = {
@@ -980,7 +1163,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
         port: brMyPort,
         user: brMyUser,
         password: brMyPassword,
-        database: brMyDatabase
+        database: brMyDatabase,
+        ...brSslConfig(),
       };
     }
 
@@ -1046,1299 +1230,1286 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     }
   };
 
-  const groupedProfiles = profiles.reduce((acc, p) => {
+  const _pq = profileSearch.trim().toLowerCase();
+  const filteredProfiles = profiles.filter((p) => {
+    if (!_pq) return true;
+    const cfg: any = p.config || {};
+    return [p.name, p.group, p.type, cfg.host, cfg.database, cfg.sqlitePath]
+      .some((f) => (f || '').toString().toLowerCase().includes(_pq));
+  });
+  const groupedProfiles = filteredProfiles.reduce((acc, p) => {
     const groupName = p.group?.trim() || 'MẶC ĐỊNH';
     if (!acc[groupName]) acc[groupName] = [];
     acc[groupName].push(p);
     return acc;
   }, {} as Record<string, SavedProfile[]>);
+  const groupNames = Object.keys(groupedProfiles);
+  // Danh sách nhóm đã tồn tại — dùng cho combobox "Nhóm" (chọn lại hoặc nhập mới).
+  const existingGroups = Array.from(
+    new Set(profiles.map(p => (p.group || '').trim()).filter(Boolean))
+  ).sort((a, b) => a.localeCompare(b));
 
-  return (
-    <div className="connection-manager-container">
-      <div className="connection-card">
-        <div className="connection-header">
-          <h2>Kết nối cơ sở dữ liệu</h2>
-          <p>Chọn loại cơ sở dữ liệu và nhập cấu hình kết nối để bắt đầu làm việc</p>
-        </div>
+  const isBrMode = (activeType as any) === 'backup_restore';
+  const isServerDb = activeType === 'postgres' || activeType === 'mysql';
+  const activeMeta = TYPE_META[activeType] || TYPE_META.sqlite;
+  const hasProfile = !!activeProfileId && !isBrMode;
 
-        <div className="connection-body">
-          <div className="connection-sidebar" style={{ display: 'flex', flexDirection: 'column', width: '220px', borderRight: '1px solid var(--win-border)', background: 'var(--win-bg-tab-bar, rgba(0,0,0,0.03))' }}>
-            <div 
-              style={{ padding: '8px', fontSize: '10px', fontWeight: 600, color: 'var(--win-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                setContextMenu({ x: e.clientX, y: e.clientY, scope: 'all' });
-              }}
-            >
-              <span>Kết nối đã lưu</span>
-              <div style={{ display: 'flex', gap: '4px' }}>
-                <button
-                  onClick={() => openExportModal('all')}
-                  style={{ background: 'none', border: 'none', color: 'var(--win-text-secondary)', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center' }}
-                  title="Xuất tất cả kết nối (Export All Connections)"
-                >
-                  <Download size={11} />
-                </button>
-              </div>
-            </div>
-            
-            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', padding: '0 4px' }}>
-              {Object.keys(groupedProfiles).map(groupName => (
-                <div key={groupName} style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                  <div 
-                    style={{ padding: '6px 8px 2px 8px', fontSize: '9px', fontWeight: 700, color: 'var(--win-text-secondary)', opacity: 0.8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      setContextMenu({ x: e.clientX, y: e.clientY, scope: 'group', groupName });
-                    }}
-                  >
-                    <span>{groupName}</span>
-                    <button
-                      onClick={() => openExportModal('group', groupName)}
-                      style={{ background: 'none', border: 'none', color: 'var(--win-text-secondary)', cursor: 'pointer', padding: '1px', display: 'flex', alignItems: 'center', opacity: 0.7 }}
-                      title={`Xuất tất cả kết nối thuộc nhóm ${groupName}`}
-                    >
-                      <Download size={10} />
-                    </button>
+  // Connection string tóm tắt (không kèm mật khẩu) — hiển thị ở header để đối chiếu nhanh.
+  const connectionUri = (() => {
+    if (activeType === 'sqlite') return `sqlite://${sqlitePath}`;
+    if (activeType === 'redis') return `${sslEnabled ? 'rediss' : 'redis'}://${redisUser ? redisUser + '@' : ''}${redisHost}:${redisPort}/${redisDbIndex}`;
+    if (activeType === 'postgres') return `postgres://${pgUser}@${pgHost}:${pgPort}/${pgDatabase}`;
+    return `mysql://${myUser}@${myHost}:${myPort}/${myDatabase || ''}`;
+  })();
+
+  const handleCopyUri = async () => {
+    try {
+      await navigator.clipboard.writeText(connectionUri);
+      setUriCopied(true);
+      setTimeout(() => setUriCopied(false), 1600);
+    } catch { /* clipboard bị chặn - bỏ qua */ }
+  };
+
+  const toggleGroup = (name: string) =>
+    setCollapsedGroups((prev) => ({ ...prev, [name]: !prev[name] }));
+
+  const NEW_TYPES: { val: 'sqlite' | 'postgres' | 'mysql' | 'redis'; label: string }[] = [
+    { val: 'sqlite', label: 'SQLite' },
+    { val: 'postgres', label: 'PostgreSQL' },
+    { val: 'mysql', label: 'MySQL' },
+    { val: 'redis', label: 'Redis' },
+  ];
+
+  // ——— Ô "Cơ sở dữ liệu": nhập tự do + nút tải lại và dropdown chọn từ danh sách ———
+  // Gộp nút vào trong ô thay vì để nút "Tải danh sách" nổi riêng một dòng phía trên.
+  const renderDatabaseField = (
+    value: string,
+    setValue: (v: string) => void,
+    fetchTarget: 'postgres' | 'mysql' | 'br_postgres' | 'br_mysql',
+    placeholder: string,
+  ) => {
+    const q = value.trim().toLowerCase();
+    // Đang gõ dở thì lọc theo từ khoá; nếu đã trùng khít một database thì hiện
+    // lại toàn bộ danh sách để còn đổi sang cái khác.
+    const exact = availableDatabases.some(d => d.toLowerCase() === q);
+    const opts = (!q || exact) ? availableDatabases : availableDatabases.filter(d => d.toLowerCase().includes(q));
+    return (
+      <div className="form-group">
+        <label>Cơ sở dữ liệu</label>
+        <div className="input-icon-wrapper cm-combo two-btn">
+          <input
+            type="text"
+            className="form-input"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Escape') setShowDbList(false); }}
+            placeholder={placeholder}
+          />
+          <Database size={14} className="input-icon" />
+          <button
+            type="button"
+            className="cm-combo-btn second"
+            title="Tải lại danh sách database"
+            onClick={() => fetchDatabases(fetchTarget)}
+            disabled={loadingDbs}
+          >
+            {loadingDbs ? <LoadingSpinner size={12} /> : <RefreshCw size={13} />}
+          </button>
+          <button
+            type="button"
+            className={`cm-combo-btn ${showDbList ? 'on' : ''}`}
+            title="Chọn từ danh sách"
+            onClick={() => {
+              setShowDbList((v) => !v);
+              if (!availableDatabases.length && !loadingDbs) fetchDatabases(fetchTarget);
+            }}
+          >
+            <ChevronDown size={13} />
+          </button>
+          {showDbList && (
+            <>
+              <div className="cm-pop-backdrop" onClick={() => setShowDbList(false)} />
+              <div className="cm-combo-pop">
+                {opts.length === 0 ? (
+                  <div className="cm-combo-empty">
+                    {loadingDbs
+                      ? 'Đang tải danh sách...'
+                      : availableDatabases.length ? 'Không có database nào khớp' : 'Chưa tải được danh sách'}
                   </div>
-                  {groupedProfiles[groupName].map(p => (
-                    <div
-                      key={p.id}
-                      onClick={() => selectProfile(p)}
-                      onContextMenu={(e) => {
-                        e.preventDefault();
-                        setContextMenu({ x: e.clientX, y: e.clientY, scope: 'single', groupName, profile: p });
-                      }}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        padding: '6px 8px',
-                        borderRadius: '4px',
-                        background: activeProfileId === p.id && activeType !== 'backup_restore' ? 'var(--win-accent-alpha, rgba(0, 120, 215, 0.15))' : 'transparent',
-                        borderLeft: activeProfileId === p.id && activeType !== 'backup_restore' ? `3px solid ${p.color || 'var(--win-accent)'}` : '3px solid transparent',
-                        cursor: 'pointer',
-                        fontSize: '11px',
-                        color: 'var(--win-text-primary)'
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {p.type === 'sqlite' ? <Database size={12} className="icon-sqlite" /> : p.type === 'postgres' ? <Server size={12} className="icon-postgres" /> : <Database size={12} className="icon-mysql" />}
-                        {p.color && (
-                          <span style={{
-                            display: 'inline-block',
-                            width: '6px',
-                            height: '6px',
-                            borderRadius: '50%',
-                            background: p.color,
-                            marginRight: '2px'
-                          }} />
-                        )}
-                        <span style={{ fontWeight: activeProfileId === p.id ? 600 : 400 }}>{p.name}</span>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        <Copy
-                          size={11}
-                          onClick={(e) => handleDuplicateProfile(p, e)}
-                          style={{ color: 'var(--win-text-secondary)', opacity: 0.6, cursor: 'pointer' }}
-                        />
-                        {p.id !== 'demo' && (
-                          <Trash2
-                            size={11}
-                            onClick={(e) => handleDeleteProfile(p.id, e)}
-                            style={{ color: 'var(--win-text-secondary)', opacity: 0.6, cursor: 'pointer' }}
-                            onMouseEnter={(e) => e.currentTarget.style.color = '#ef4444'}
-                            onMouseLeave={(e) => e.currentTarget.style.color = 'var(--win-text-secondary)'}
-                          />
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ))}
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', padding: '8px', borderTop: '1px solid var(--win-border)' }}>
-              <div style={{ display: 'flex', gap: '4px' }}>
-                <button onClick={() => handleCreateNewProfile('sqlite')} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: '6px', fontSize: '9px', border: '1px solid var(--win-border)', borderRadius: '4px', background: 'var(--win-bg-card)', cursor: 'pointer', color: 'var(--win-text-primary)' }} title="Tạo SQLite">
-                  <Plus size={10} /> SQLite
-                </button>
-                <button onClick={() => handleCreateNewProfile('postgres')} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: '6px', fontSize: '9px', border: '1px solid var(--win-border)', borderRadius: '4px', background: 'var(--win-bg-card)', cursor: 'pointer', color: 'var(--win-text-primary)' }} title="Tạo PostgreSQL">
-                  <Plus size={10} /> PG
-                </button>
-                <button onClick={() => handleCreateNewProfile('mysql')} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: '6px', fontSize: '9px', border: '1px solid var(--win-border)', borderRadius: '4px', background: 'var(--win-bg-card)', cursor: 'pointer', color: 'var(--win-text-primary)' }} title="Tạo MySQL">
-                  <Plus size={10} /> MySQL
-                </button>
-              </div>
-              
-              <div style={{ display: 'flex', gap: '4px' }}>
-                <button 
-                  onClick={() => openExportModal('all')} 
-                  style={{ 
-                    flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: '5px', fontSize: '9px', 
-                    border: '1px solid var(--win-border)', borderRadius: '4px', background: 'var(--win-bg-card)', 
-                    cursor: 'pointer', color: 'var(--win-text-primary)'
-                  }} 
-                  title="Xuất các kết nối thành tệp (.tableplusconnection)"
-                >
-                  <Download size={10} /> Xuất (Export)
-                </button>
-                <label 
-                  style={{ 
-                    flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: '5px', fontSize: '9px', 
-                    border: '1px solid var(--win-border)', borderRadius: '4px', background: 'var(--win-bg-card)', 
-                    cursor: 'pointer', color: 'var(--win-text-primary)'
-                  }} 
-                  title="Nhập kết nối từ tệp (.tableplusconnection)"
-                >
-                  <Upload size={10} /> Nhập (Import)
-                  <input type="file" accept=".tableplusconnection,.tableforgeconnection,.json" onChange={handleFileImportSelect} style={{ display: 'none' }} />
-                </label>
-              </div>
-
-              <button 
-                onClick={() => setShowImportUrlModal(true)} 
-                style={{ 
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: '5px', fontSize: '9px', 
-                  border: '1px dashed var(--win-accent)', borderRadius: '4px', background: 'var(--win-bg-card)', 
-                  cursor: 'pointer', color: 'var(--win-accent)', width: '100%', fontWeight: 600
-                }} 
-                title="Nhập cấu hình kết nối từ đường dẫn URL"
-              >
-                Nhập từ URL (Import URL)
-              </button>
-            </div>
-
-            <button
-              className={`connection-type-btn ${activeType === 'backup_restore' ? 'active' : ''}`}
-              onClick={() => setActiveType('backup_restore' as any)}
-              style={{ borderTop: '1px solid var(--win-border)', borderRadius: 0, padding: '12px' }}
-            >
-              <Database size={16} style={{ color: 'var(--win-accent)' }} />
-              Backup & Restore
-            </button>
-          </div>
-
-          <div className="connection-form-container">
-            {errorMsg && (
-              <div className="info-bar" style={{ background: 'rgba(239, 68, 68, 0.1)', borderLeftColor: '#ef4444', margin: '0 0 12px 0' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <AlertTriangle size={16} color="#ef4444" />
-                  <span>{errorMsg}</span>
-                </div>
-              </div>
-            )}
-            
-            {successMsg && (
-              <div className="info-bar" style={{ background: 'rgba(16, 185, 129, 0.1)', borderLeftColor: '#10b981', margin: '0 0 12px 0' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <CheckCircle2 size={16} color="#10b981" />
-                  <span>{successMsg}</span>
-                </div>
-              </div>
-            )}
-
-            {activeType !== 'backup_restore' && activeProfileId && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px', paddingBottom: '12px', borderBottom: '1px solid var(--win-border)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <input
-                    type="text"
-                    className="form-input"
-                    value={profileNameInput}
-                    onChange={(e) => setProfileNameInput(e.target.value)}
-                    placeholder="Tên cấu hình kết nối..."
-                    style={{ flex: 1, height: '28px', fontSize: '11px' }}
-                  />
+                ) : opts.map(d => (
                   <button
-                    className="btn btn-secondary"
-                    onClick={handleSaveProfile}
-                    style={{ display: 'flex', alignItems: 'center', gap: '4px', height: '28px', padding: '0 10px', fontSize: '11px' }}
+                    key={d}
+                    type="button"
+                    className={`cm-combo-opt ${d === value.trim() ? 'on' : ''}`}
+                    onClick={() => { setValue(d); setShowDbList(false); }}
                   >
-                    <Save size={12} />
-                    Lưu
+                    <span className="cm-ellipsis">{d}</span>
+                    {d === value.trim() && <Check size={12} style={{ flexShrink: 0 }} />}
                   </button>
-                </div>
-                <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span style={{ fontSize: '10px', color: 'var(--win-text-secondary)' }}>Nhóm:</span>
-                    <input
-                      type="text"
-                      className="form-input"
-                      value={profileGroup}
-                      onChange={(e) => setProfileGroup(e.target.value)}
-                      placeholder="DEV, PROD..."
-                      style={{ width: '100px', height: '22px', fontSize: '10px', padding: '0 4px' }}
-                    />
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span style={{ fontSize: '10px', color: 'var(--win-text-secondary)' }}>Màu:</span>
-                    <div style={{ display: 'flex', gap: '4px' }}>
-                      {[
-                        { val: '', name: 'None', color: '#7f8c8d' },
-                        { val: '#ff4d4d', name: 'Red', color: '#ff4d4d' },
-                        { val: '#2ecc71', name: 'Green', color: '#2ecc71' },
-                        { val: '#3498db', name: 'Blue', color: '#3498db' },
-                        { val: '#f1c40f', name: 'Yellow', color: '#f1c40f' },
-                        { val: '#9b59b6', name: 'Purple', color: '#9b59b6' }
-                      ].map(c => (
-                        <div
-                          key={c.val}
-                          onClick={() => setProfileColor(c.val)}
-                          style={{
-                            width: '14px',
-                            height: '14px',
-                            borderRadius: '50%',
-                            background: c.color,
-                            cursor: 'pointer',
-                            border: profileColor === c.val ? '2px solid var(--win-text-primary)' : '1px solid rgba(0,0,0,0.15)',
-                            boxSizing: 'border-box'
-                          }}
-                          title={c.name}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                </div>
+                ))}
               </div>
-            )}
+            </>
+          )}
+        </div>
+      </div>
+    );
+  };
 
-            {activeType === 'sqlite' && (
-              <div className="form-group">
-                <label>Đường dẫn tệp SQLite (.db, .sqlite)</label>
+  // ——— Khối "Thông tin cơ bản": tên, nhóm, màu nhận diện ———
+  const renderBasicSection = () => (
+    <div className="cm-section">
+      <div className="cm-section-title">Thông tin cơ bản</div>
+      {/* Tên + nhóm gộp trên một dòng: header phía trên đã hiển thị lại những
+          thông tin này nên không cần mô tả dài dòng ở đây. */}
+      <div className="cm-grid basic" style={{ marginTop: '12px' }}>
+        <div className="form-group">
+          <label>Tên kết nối</label>
+          <input
+            type="text"
+            className="form-input"
+            value={profileNameInput}
+            onChange={(e) => setProfileNameInput(e.target.value)}
+            placeholder="VD: Fleet Staging"
+          />
+        </div>
+        <div className="form-group">
+          <label>Nhóm</label>
+          {/* Combobox tự dựng thay cho <datalist>: native datalist hiện thêm một
+              mũi tên riêng và popup không theo được theme của app. */}
+          <div className="cm-combo">
+            <input
+              type="text"
+              className="form-input"
+              value={profileGroup}
+              onChange={(e) => setProfileGroup(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Escape') setShowGroupList(false); }}
+              placeholder={existingGroups.length ? 'Chọn hoặc nhập...' : 'STG, PROD...'}
+            />
+            {existingGroups.length > 0 && (
+              <button
+                type="button"
+                className={`cm-combo-btn ${showGroupList ? 'on' : ''}`}
+                title="Chọn nhóm đã có"
+                onClick={() => setShowGroupList((v) => !v)}
+              >
+                <ChevronDown size={13} />
+              </button>
+            )}
+            {showGroupList && (
+              <>
+                <div className="cm-pop-backdrop" onClick={() => setShowGroupList(false)} />
+                <div className="cm-combo-pop">
+                  {existingGroups.map(g => (
+                    <button
+                      key={g}
+                      type="button"
+                      className={`cm-combo-opt ${g === profileGroup.trim() ? 'on' : ''}`}
+                      onClick={() => { setProfileGroup(g); setShowGroupList(false); }}
+                    >
+                      <span className="cm-ellipsis">{g}</span>
+                      {g === profileGroup.trim() && <Check size={12} style={{ flexShrink: 0 }} />}
+                    </button>
+                  ))}
+                  {profileGroup.trim() && (
+                    <>
+                      <div className="cm-pop-sep" />
+                      <button type="button" className="cm-combo-opt" onClick={() => { setProfileGroup(''); setShowGroupList(false); }}>
+                        <X size={12} style={{ flexShrink: 0 }} />
+                        <span>Bỏ nhóm</span>
+                      </button>
+                    </>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  // ——— Cảnh báo kết nối từ xa nhưng chưa bật mã hoá ———
+  const renderSslWarning = () => {
+    if (activeType === 'redis') {
+      if (sslEnabled || !isRemoteHost(redisHost)) return null;
+      return (
+        <div className="cm-warn">
+          <ShieldAlert size={15} style={{ flexShrink: 0 }} />
+          <span style={{ flex: 1 }}>Redis <b>từ xa</b> nhưng TLS đang tắt — dữ liệu truyền không mã hoá (server phải hỗ trợ <b>rediss://</b>).</span>
+          <button type="button" className="cm-warn-btn" onClick={() => setSslEnabled(true)}>Bật TLS</button>
+        </div>
+      );
+    }
+    if (!isServerDb) return null;
+    const host = activeType === 'postgres' ? pgHost : myHost;
+    if (sslMode !== 'DISABLED' || !isRemoteHost(host)) return null;
+    return (
+      <div className="cm-warn">
+        <ShieldAlert size={15} style={{ flexShrink: 0 }} />
+        <span style={{ flex: 1 }}>Máy chủ <b>từ xa</b> nhưng SSL đang <b>DISABLED</b> — mật khẩu và dữ liệu truyền đi không được mã hoá.</span>
+        <button type="button" className="cm-warn-btn" onClick={() => { setSslMode('REQUIRED'); setFormTab('ssl'); }}>Bật SSL</button>
+      </div>
+    );
+  };
+
+  // ——— Tab "Chung" cho từng loại DB ———
+  const renderGeneralTab = () => (
+    <>
+      {renderBasicSection()}
+
+      {activeType === 'sqlite' && (
+        <div className="cm-section">
+          <div className="cm-section-title">Tệp cơ sở dữ liệu</div>
+          <div className="cm-section-desc">SQLite lưu toàn bộ dữ liệu trong một tệp duy nhất trên máy bạn.</div>
+          <div className="cm-fields">
+            <div className="form-group">
+              <label>Đường dẫn tệp (.db, .sqlite)</label>
+              <div className="input-icon-wrapper">
                 <input
                   type="text"
                   className="form-input"
                   value={sqlitePath}
                   onChange={(e) => setSqlitePath(e.target.value)}
-                  placeholder="Nhập tên tệp (ví dụ: my_database.db)"
+                  placeholder="my_database.db"
                 />
-                <span style={{ fontSize: '11px', color: 'var(--win-text-secondary)', marginTop: '4px' }}>
-                  Nếu tệp chưa tồn tại, TableNova sẽ tự động khởi tạo tệp mới.
-                </span>
+                <FolderOpen size={14} className="input-icon" />
               </div>
-            )}
+              <span className="cm-hint">Nếu tệp chưa tồn tại, TableNova sẽ tự tạo tệp mới khi kết nối.</span>
+            </div>
+          </div>
+        </div>
+      )}
 
-            {activeType === 'postgres' && (
-              <>
-                <div className="form-row">
-                  <div className="form-group" style={{ flex: 3 }}>
-                    <label>Địa chỉ máy chủ (Host)</label>
-                    <input
-                      type="text"
-                      className="form-input"
-                      value={pgHost}
-                      onChange={(e) => setPgHost(e.target.value)}
-                    />
-                  </div>
-                  <div className="form-group" style={{ flex: 1 }}>
-                    <label>Cổng (Port)</label>
-                    <input
-                      type="number"
-                      className="form-input"
-                      value={pgPort}
-                      onChange={(e) => setPgPort(parseInt(e.target.value) || 5432)}
-                    />
-                  </div>
+      {activeType === 'redis' && (
+        <div className="cm-section">
+          <div className="cm-section-title">Máy chủ Redis</div>
+          <div className="cm-section-desc">Thông tin đăng nhập được lưu cục bộ trên thiết bị của bạn.</div>
+          <div className="cm-fields">
+            <div className="cm-grid host">
+              <div className="form-group">
+                <label>Host</label>
+                <div className="input-icon-wrapper">
+                  <input type="text" className="form-input" value={redisHost} onChange={(e) => setRedisHost(e.target.value)} placeholder="127.0.0.1" />
+                  <Server size={14} className="input-icon" />
                 </div>
-                <div className="form-row">
-                  <div className="form-group">
-                    <label>Tên đăng nhập (User)</label>
-                    <input
-                      type="text"
-                      className="form-input"
-                      value={pgUser}
-                      onChange={(e) => setPgUser(e.target.value)}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>Mật khẩu (Password)</label>
-                    <input
-                      type="password"
-                      className="form-input"
-                      value={pgPassword}
-                      onChange={(e) => setPgPassword(e.target.value)}
-                      placeholder="••••••••"
-                    />
-                  </div>
+              </div>
+              <div className="form-group">
+                <label>Port</label>
+                <div className="input-icon-wrapper">
+                  <input type="number" className="form-input" value={redisPort} onChange={(e) => setRedisPort(parseInt(e.target.value) || 6379)} />
+                  <Hash size={14} className="input-icon" />
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '10px', background: 'rgba(0,0,0,0.1)', border: '1px solid var(--win-border)', borderRadius: '4px', marginTop: '8px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ fontSize: '11px', color: 'var(--win-text-secondary)', fontWeight: 600 }}>SSL mode</span>
-                      <select
+              </div>
+            </div>
+            <div className="cm-grid two">
+              <div className="form-group">
+                <label>Username (ACL — bỏ trống nếu không dùng)</label>
+                <div className="input-icon-wrapper">
+                  <input type="text" className="form-input" value={redisUser} onChange={(e) => setRedisUser(e.target.value)} placeholder="default" />
+                  <User size={14} className="input-icon" />
+                </div>
+              </div>
+              <div className="form-group">
+                <label>Mật khẩu</label>
+                <div className="input-icon-wrapper">
+                  <input
+                    type={showPw ? 'text' : 'password'}
+                    className="form-input"
+                    value={redisPassword}
+                    onChange={(e) => setRedisPassword(e.target.value)}
+                    placeholder="••••••••"
+                    style={{ paddingRight: '32px' }}
+                  />
+                  <Key size={14} className="input-icon" />
+                  <EyeBtn on={showPw} onClick={() => setShowPw((v) => !v)} />
+                </div>
+              </div>
+            </div>
+            <div className="cm-grid two">
+              <div className="form-group">
+                <label>Database index (0–15)</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={15}
+                  className="form-input"
+                  value={redisDbIndex}
+                  onChange={(e) => setRedisDbIndex(Math.max(0, Math.min(15, parseInt(e.target.value) || 0)))}
+                />
+              </div>
+            </div>
+            <div className="cm-switch-row">
+              <button type="button" className={`cm-switch ${sslEnabled ? 'on' : ''}`} onClick={() => setSslEnabled(!sslEnabled)} aria-label="Bật TLS" />
+              <div style={{ flex: 1 }}>
+                <div className="cm-switch-label">Mã hoá TLS (rediss://)</div>
+                <div className="cm-hint">Bắt buộc với Redis Cloud, ElastiCache in-transit encryption và hầu hết Redis từ xa.</div>
+              </div>
+            </div>
+            {renderSslWarning()}
+          </div>
+        </div>
+      )}
+
+      {isServerDb && (() => {
+        const host = activeType === 'postgres' ? pgHost : myHost;
+        const setHost = activeType === 'postgres' ? setPgHost : setMyHost;
+        const port = activeType === 'postgres' ? pgPort : myPort;
+        const setPort = activeType === 'postgres' ? setPgPort : setMyPort;
+        const defPort = activeType === 'postgres' ? 5432 : 3306;
+        const user = activeType === 'postgres' ? pgUser : myUser;
+        const setUser = activeType === 'postgres' ? setPgUser : setMyUser;
+        const password = activeType === 'postgres' ? pgPassword : myPassword;
+        const setPassword = activeType === 'postgres' ? setPgPassword : setMyPassword;
+        const database = activeType === 'postgres' ? pgDatabase : myDatabase;
+        const setDatabase = activeType === 'postgres' ? setPgDatabase : setMyDatabase;
+
+        return (
+          <>
+            <div className="cm-section">
+              <div className="cm-section-title">Máy chủ</div>
+              <div className="cm-section-desc">Địa chỉ máy chủ và cổng kết nối tới {activeMeta.label}.</div>
+              <div className="cm-fields">
+                <div className="cm-grid host">
+                  <div className="form-group">
+                    <label>Host</label>
+                    <div className="input-icon-wrapper">
+                      <input
+                        type="text"
                         className="form-input"
-                        value={sslMode}
-                        onChange={(e) => setSslMode(e.target.value)}
-                        style={{ width: '130px', height: '24px', fontSize: '11px', padding: '0 4px' }}
-                      >
-                        <option value="DISABLED">DISABLED</option>
-                        <option value="PREFERRED">PREFERRED</option>
-                        <option value="REQUIRED">REQUIRED</option>
-                        <option value="VERIFY_CA">VERIFY_CA</option>
-                        <option value="VERIFY_IDENTITY">VERIFY_IDENTITY</option>
-                      </select>
+                        value={host}
+                        onChange={(e) => setHost(e.target.value)}
+                        placeholder="localhost"
+                      />
+                      <Server size={14} className="input-icon" />
                     </div>
-                    {sslMode !== 'DISABLED' && (
-                      <button
-                        type="button"
-                        className="btn btn-secondary"
-                        onClick={() => {
-                          setSslKeyPath('');
-                          setSslCertPath('');
-                          setSslCaPath('');
-                        }}
-                        style={{ height: '24px', fontSize: '10px', padding: '0 8px' }}
-                      >
-                        Clear keys
-                      </button>
-                    )}
                   </div>
+                  <div className="form-group">
+                    <label>Port</label>
+                    <div className="input-icon-wrapper">
+                      <input
+                        type="number"
+                        className="form-input"
+                        value={port}
+                        onChange={(e) => setPort(parseInt(e.target.value) || defPort)}
+                      />
+                      <Hash size={14} className="input-icon" />
+                    </div>
+                  </div>
+                </div>
+                {renderDatabaseField(
+                  database,
+                  setDatabase,
+                  activeType === 'postgres' ? 'postgres' : 'mysql',
+                  activeType === 'postgres' ? 'postgres' : 'Không bắt buộc',
+                )}
+                {renderSslWarning()}
+              </div>
+            </div>
 
-                  {sslMode !== 'DISABLED' && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
-                      <span style={{ fontSize: '11px', color: 'var(--win-text-secondary)', minWidth: '55px' }}>SSL keys</span>
-                      <div style={{ display: 'flex', gap: '4px', flex: 1 }}>
-                        <div style={{ flex: 1 }}>
-                          <input
-                            type="file"
-                            id="pg-ssl-key-picker"
-                            style={{ display: 'none' }}
-                            onChange={(e) => {
-                              const file = e.target.files?.[0];
-                              if (file) setSslKeyPath((file as any).path || file.name);
-                            }}
-                          />
-                          <button
-                            type="button"
-                            className="btn btn-secondary"
-                            onClick={() => document.getElementById('pg-ssl-key-picker')?.click()}
-                            style={{ width: '100%', height: '24px', fontSize: '10px', padding: '0 4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-                            title={sslKeyPath || 'Select Key file...'}
-                          >
-                            {sslKeyPath ? sslKeyPath.split(/[\\/]/).pop() : 'Key...'}
-                          </button>
-                        </div>
-
-                        <div style={{ flex: 1 }}>
-                          <input
-                            type="file"
-                            id="pg-ssl-cert-picker"
-                            style={{ display: 'none' }}
-                            onChange={(e) => {
-                              const file = e.target.files?.[0];
-                              if (file) setSslCertPath((file as any).path || file.name);
-                            }}
-                          />
-                          <button
-                            type="button"
-                            className="btn btn-secondary"
-                            onClick={() => document.getElementById('pg-ssl-cert-picker')?.click()}
-                            style={{ width: '100%', height: '24px', fontSize: '10px', padding: '0 4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-                            title={sslCertPath || 'Select Cert file...'}
-                          >
-                            {sslCertPath ? sslCertPath.split(/[\\/]/).pop() : 'Cert...'}
-                          </button>
-                        </div>
-
-                        <div style={{ flex: 1 }}>
-                          <input
-                            type="file"
-                            id="pg-ssl-ca-picker"
-                            style={{ display: 'none' }}
-                            onChange={(e) => {
-                              const file = e.target.files?.[0];
-                              if (file) setSslCaPath((file as any).path || file.name);
-                            }}
-                          />
-                          <button
-                            type="button"
-                            className="btn btn-secondary"
-                            onClick={() => document.getElementById('pg-ssl-ca-picker')?.click()}
-                            style={{ width: '100%', height: '24px', fontSize: '10px', padding: '0 4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-                            title={sslCaPath || 'Select CA Cert file...'}
-                          >
-                            {sslCaPath ? sslCaPath.split(/[\\/]/).pop() : 'CA Cert...'}
-                          </button>
-                        </div>
+            <div className="cm-section">
+              <div className="cm-label-row">
+                <div>
+                  <div className="cm-section-title">Xác thực</div>
+                  <div className="cm-section-desc">Đăng nhập bằng mật khẩu hoặc token AWS IAM (RDS/Aurora).</div>
+                </div>
+                <div className="cm-seg">
+                  <button type="button" className={authMethod === 'password' ? 'on' : ''} onClick={() => setAuthMethod('password')}>Mật khẩu</button>
+                  <button type="button" className={authMethod === 'aws_iam' ? 'on' : ''} onClick={() => setAuthMethod('aws_iam')}>AWS IAM</button>
+                </div>
+              </div>
+              <div className="cm-fields">
+                <div className="cm-grid two">
+                  <div className="form-group">
+                    <label>{authMethod === 'aws_iam' ? 'DB user (đã bật IAM auth)' : 'Tên đăng nhập'}</label>
+                    <div className="input-icon-wrapper">
+                      <input
+                        type="text"
+                        className="form-input"
+                        value={user}
+                        onChange={(e) => setUser(e.target.value)}
+                        placeholder={activeType === 'postgres' ? 'postgres' : 'root'}
+                      />
+                      <User size={14} className="input-icon" />
+                    </div>
+                  </div>
+                  {authMethod === 'password' && (
+                    <div className="form-group">
+                      <label>Mật khẩu</label>
+                      <div className="input-icon-wrapper">
+                        <input
+                          type={showPw ? 'text' : 'password'}
+                          className="form-input"
+                          value={password}
+                          onChange={(e) => setPassword(e.target.value)}
+                          placeholder="••••••••"
+                          style={{ paddingRight: '32px' }}
+                        />
+                        <Key size={14} className="input-icon" />
+                        <EyeBtn on={showPw} onClick={() => setShowPw((v) => !v)} />
                       </div>
                     </div>
                   )}
-                </div>
-                <div className="form-group">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                    <label style={{ margin: 0 }}>Tên cơ sở dữ liệu (Database)</label>
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      onClick={() => fetchDatabases('postgres')}
-                      disabled={loadingDbs}
-                      style={{ height: '18px', fontSize: '10px', padding: '0 6px', display: 'flex', alignItems: 'center', gap: '2px' }}
-                    >
-                      {loadingDbs ? (
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                          <LoadingSpinner size={10} />
-                          <span>Đang tải...</span>
-                        </span>
-                      ) : 'Tải danh sách'}
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    className="form-input"
-                    list="pg-dbs"
-                    value={pgDatabase}
-                    onChange={(e) => setPgDatabase(e.target.value)}
-                  />
-                  <datalist id="pg-dbs">
-                    {availableDatabases.map(db => (
-                      <option key={db} value={db} />
-                    ))}
-                  </datalist>
-                </div>
-              </>
-            )}
-
-            {activeType === 'mysql' && (
-              <>
-                <div className="form-row">
-                  <div className="form-group" style={{ flex: 3 }}>
-                    <label>Địa chỉ máy chủ (Host)</label>
-                    <input
-                      type="text"
-                      className="form-input"
-                      value={myHost}
-                      onChange={(e) => setMyHost(e.target.value)}
-                    />
-                  </div>
-                  <div className="form-group" style={{ flex: 1 }}>
-                    <label>Cổng (Port)</label>
-                    <input
-                      type="number"
-                      className="form-input"
-                      value={myPort}
-                      onChange={(e) => setMyPort(parseInt(e.target.value) || 3306)}
-                    />
-                  </div>
-                </div>
-                <div className="form-row">
-                  <div className="form-group">
-                    <label>Tên đăng nhập (User)</label>
-                    <input
-                      type="text"
-                      className="form-input"
-                      value={myUser}
-                      onChange={(e) => setMyUser(e.target.value)}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>Mật khẩu (Password)</label>
-                    <input
-                      type="password"
-                      className="form-input"
-                      value={myPassword}
-                      onChange={(e) => setMyPassword(e.target.value)}
-                      placeholder="••••••••"
-                    />
-                  </div>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '10px', background: 'rgba(0,0,0,0.1)', border: '1px solid var(--win-border)', borderRadius: '4px', marginTop: '8px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ fontSize: '11px', color: 'var(--win-text-secondary)', fontWeight: 600 }}>SSL mode</span>
-                      <select
-                        className="form-input"
-                        value={sslMode}
-                        onChange={(e) => setSslMode(e.target.value)}
-                        style={{ width: '130px', height: '24px', fontSize: '11px', padding: '0 4px' }}
-                      >
-                        <option value="DISABLED">DISABLED</option>
-                        <option value="PREFERRED">PREFERRED</option>
-                        <option value="REQUIRED">REQUIRED</option>
-                        <option value="VERIFY_CA">VERIFY_CA</option>
-                        <option value="VERIFY_IDENTITY">VERIFY_IDENTITY</option>
-                      </select>
-                    </div>
-                    {sslMode !== 'DISABLED' && (
-                      <button
-                        type="button"
-                        className="btn btn-secondary"
-                        onClick={() => {
-                          setSslKeyPath('');
-                          setSslCertPath('');
-                          setSslCaPath('');
-                        }}
-                        style={{ height: '24px', fontSize: '10px', padding: '0 8px' }}
-                      >
-                        Clear keys
-                      </button>
-                    )}
-                  </div>
-
-                  {sslMode !== 'DISABLED' && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
-                      <span style={{ fontSize: '11px', color: 'var(--win-text-secondary)', minWidth: '55px' }}>SSL keys</span>
-                      <div style={{ display: 'flex', gap: '4px', flex: 1 }}>
-                        <div style={{ flex: 1 }}>
-                          <input
-                            type="file"
-                            id="my-ssl-key-picker"
-                            style={{ display: 'none' }}
-                            onChange={(e) => {
-                              const file = e.target.files?.[0];
-                              if (file) setSslKeyPath((file as any).path || file.name);
-                            }}
-                          />
-                          <button
-                            type="button"
-                            className="btn btn-secondary"
-                            onClick={() => document.getElementById('my-ssl-key-picker')?.click()}
-                            style={{ width: '100%', height: '24px', fontSize: '10px', padding: '0 4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-                            title={sslKeyPath || 'Select Key file...'}
-                          >
-                            {sslKeyPath ? sslKeyPath.split(/[\\/]/).pop() : 'Key...'}
-                          </button>
-                        </div>
-
-                        <div style={{ flex: 1 }}>
-                          <input
-                            type="file"
-                            id="my-ssl-cert-picker"
-                            style={{ display: 'none' }}
-                            onChange={(e) => {
-                              const file = e.target.files?.[0];
-                              if (file) setSslCertPath((file as any).path || file.name);
-                            }}
-                          />
-                          <button
-                            type="button"
-                            className="btn btn-secondary"
-                            onClick={() => document.getElementById('my-ssl-cert-picker')?.click()}
-                            style={{ width: '100%', height: '24px', fontSize: '10px', padding: '0 4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-                            title={sslCertPath || 'Select Cert file...'}
-                          >
-                            {sslCertPath ? sslCertPath.split(/[\\/]/).pop() : 'Cert...'}
-                          </button>
-                        </div>
-
-                        <div style={{ flex: 1 }}>
-                          <input
-                            type="file"
-                            id="my-ssl-ca-picker"
-                            style={{ display: 'none' }}
-                            onChange={(e) => {
-                              const file = e.target.files?.[0];
-                              if (file) setSslCaPath((file as any).path || file.name);
-                            }}
-                          />
-                          <button
-                            type="button"
-                            className="btn btn-secondary"
-                            onClick={() => document.getElementById('my-ssl-ca-picker')?.click()}
-                            style={{ width: '100%', height: '24px', fontSize: '10px', padding: '0 4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-                            title={sslCaPath || 'Select CA Cert file...'}
-                          >
-                            {sslCaPath ? sslCaPath.split(/[\\/]/).pop() : 'CA Cert...'}
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-                <div className="form-group">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                    <label style={{ margin: 0 }}>Tên cơ sở dữ liệu (Database)</label>
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      onClick={() => fetchDatabases('mysql')}
-                      disabled={loadingDbs}
-                      style={{ height: '18px', fontSize: '10px', padding: '0 6px', display: 'flex', alignItems: 'center', gap: '2px' }}
-                    >
-                      {loadingDbs ? (
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                          <LoadingSpinner size={10} />
-                          <span>Đang tải...</span>
-                        </span>
-                      ) : 'Tải danh sách'}
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    className="form-input"
-                    list="my-dbs"
-                    value={myDatabase}
-                    onChange={(e) => setMyDatabase(e.target.value)}
-                    placeholder="Không bắt buộc"
-                  />
-                  <datalist id="my-dbs">
-                    {availableDatabases.map(db => (
-                      <option key={db} value={db} />
-                    ))}
-                  </datalist>
-                </div>
-              </>
-            )}
-
-            {activeType !== 'sqlite' && (
-              <div className="aws-iam-section" style={{ marginTop: '12px' }}>
-                <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)' }}>Phương thức xác thực</label>
-                <div style={{ display: 'flex', gap: '6px', margin: '6px 0 10px' }}>
-                  {(['password', 'aws_iam'] as const).map(m => (
-                    <button
-                      key={m}
-                      type="button"
-                      onClick={() => setAuthMethod(m)}
-                      style={{
-                        padding: '6px 12px', fontSize: '11px', fontWeight: 600, borderRadius: '4px',
-                        border: '1px solid var(--win-border)', cursor: 'pointer',
-                        background: authMethod === m ? 'var(--win-accent)' : 'transparent',
-                        color: authMethod === m ? '#fff' : 'var(--win-text-secondary)',
-                      }}
-                    >
-                      {m === 'password' ? 'Mật khẩu' : 'AWS IAM (RDS/Aurora)'}
-                    </button>
-                  ))}
                 </div>
 
                 {authMethod === 'aws_iam' && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '12px', background: 'rgba(0,0,0,0.12)', border: '1px solid var(--win-border)', borderRadius: '6px', marginBottom: '10px' }}>
-                    <div style={{ fontSize: '10.5px', color: 'var(--win-text-disabled)', lineHeight: 1.4 }}>
-                      Token IAM 15 phút thay cho mật khẩu; SSL sẽ tự ép <b>Required</b>. Điền <b>DB user</b> ở ô User phía trên (user đã cấu hình IAM).
+                  <div className="cm-subcard">
+                    <div className="cm-subcard-head">
+                      <Cloud size={13} />
+                      <span>AWS IAM authentication</span>
                     </div>
-                    <div style={{ display: 'flex', gap: '6px' }}>
-                      {(['access_key', 'profile'] as const).map(t => (
-                        <button
-                          key={t}
-                          type="button"
-                          onClick={() => setAwsAuthType(t)}
-                          style={{
-                            flex: 1, padding: '5px', fontSize: '11px', borderRadius: '4px', cursor: 'pointer',
-                            border: '1px solid var(--win-border)',
-                            background: awsAuthType === t ? 'var(--win-accent)' : 'transparent',
-                            color: awsAuthType === t ? '#fff' : 'var(--win-text-secondary)',
-                          }}
-                        >
-                          {t === 'access_key' ? 'Access Key' : 'Profile (~/.aws)'}
-                        </button>
-                      ))}
+                    <div className="cm-hint" style={{ marginBottom: '12px' }}>
+                      TableNova sinh token IAM (hiệu lực 15 phút) thay cho mật khẩu và tự ép SSL <b>REQUIRED</b>.
                     </div>
-
-                    {awsAuthType === 'access_key' ? (
-                      <>
+                    <div className="cm-seg" style={{ marginBottom: '12px' }}>
+                      <button type="button" className={awsAuthType === 'access_key' ? 'on' : ''} onClick={() => setAwsAuthType('access_key')}>Access Key</button>
+                      <button type="button" className={awsAuthType === 'profile' ? 'on' : ''} onClick={() => setAwsAuthType('profile')}>Profile (~/.aws)</button>
+                    </div>
+                    <div className="cm-fields" style={{ marginTop: 0 }}>
+                      {awsAuthType === 'access_key' ? (
+                        <>
+                          <div className="form-group">
+                            <label>Access Key ID</label>
+                            <input type="text" className="form-input" value={awsAccessKeyId} onChange={(e) => setAwsAccessKeyId(e.target.value)} placeholder="AKIA..." autoComplete="off" />
+                          </div>
+                          <div className="cm-grid two">
+                            <div className="form-group">
+                              <label>Secret Access Key</label>
+                              <div className="input-icon-wrapper">
+                                <input type={showPw ? 'text' : 'password'} className="form-input" value={awsSecretAccessKey} onChange={(e) => setAwsSecretAccessKey(e.target.value)} autoComplete="off" style={{ paddingRight: '32px', paddingLeft: '10px' }} />
+                                <EyeBtn on={showPw} onClick={() => setShowPw((v) => !v)} />
+                              </div>
+                            </div>
+                            <div className="form-group">
+                              <label>Session Token (tuỳ chọn)</label>
+                              <div className="input-icon-wrapper">
+                                <input type={showPw ? 'text' : 'password'} className="form-input" value={awsSessionToken} onChange={(e) => setAwsSessionToken(e.target.value)} autoComplete="off" style={{ paddingRight: '32px', paddingLeft: '10px' }} />
+                                <EyeBtn on={showPw} onClick={() => setShowPw((v) => !v)} />
+                              </div>
+                            </div>
+                          </div>
+                        </>
+                      ) : (
                         <div className="form-group">
-                          <label>Access Key ID</label>
-                          <input type="text" className="form-input" value={awsAccessKeyId} onChange={(e) => setAwsAccessKeyId(e.target.value)} placeholder="AKIA..." autoComplete="off" />
+                          <label>Tên profile</label>
+                          <input type="text" className="form-input" value={awsProfile} onChange={(e) => setAwsProfile(e.target.value)} placeholder="default" autoComplete="off" />
                         </div>
-                        <div className="form-group">
-                          <label>Secret Access Key</label>
-                          <input type="password" className="form-input" value={awsSecretAccessKey} onChange={(e) => setAwsSecretAccessKey(e.target.value)} autoComplete="off" />
-                        </div>
-                        <div className="form-group">
-                          <label>Session Token (không bắt buộc)</label>
-                          <input type="password" className="form-input" value={awsSessionToken} onChange={(e) => setAwsSessionToken(e.target.value)} autoComplete="off" />
-                        </div>
-                      </>
-                    ) : (
+                      )}
                       <div className="form-group">
-                        <label>Tên profile</label>
-                        <input type="text" className="form-input" value={awsProfile} onChange={(e) => setAwsProfile(e.target.value)} placeholder="default" autoComplete="off" />
+                        <label>AWS Region</label>
+                        <input type="text" className="form-input" value={awsRegion} onChange={(e) => setAwsRegion(e.target.value)} placeholder="Bỏ trống = tự dò từ host RDS" autoComplete="off" />
                       </div>
-                    )}
-
-                    <div className="form-group">
-                      <label>AWS Region (để trống = tự dò từ host RDS)</label>
-                      <input type="text" className="form-input" value={awsRegion} onChange={(e) => setAwsRegion(e.target.value)} placeholder="vd: ap-southeast-1" autoComplete="off" />
                     </div>
                   </div>
                 )}
               </div>
-            )}
+            </div>
+          </>
+        );
+      })()}
+    </>
+  );
 
-            {activeType !== 'sqlite' && (
-              <div className="ssh-tunnel-section" style={{ marginTop: '12px' }}>
+  // ——— Tab "SSL" (Postgres / MySQL) ———
+  const renderSslTab = () => {
+    const prefix = activeType === 'postgres' ? 'pg' : 'my';
+    const sslOn = sslMode !== 'DISABLED';
+    // Hai mode VERIFY_* mới thực sự kiểm tra chứng chỉ máy chủ -> CA cert lúc đó
+    // là bắt buộc (nếu CA không nằm trong store của hệ thống). REQUIRED thì 3 ô
+    // này chỉ phục vụ mTLS.
+    const needVerify = sslMode === 'VERIFY_CA' || sslMode === 'VERIFY_IDENTITY';
+    return (
+      <div className="cm-section">
+        <div className="cm-section-title">Mã hoá đường truyền (SSL/TLS)</div>
+        <div className="cm-section-desc">Chọn mức độ yêu cầu mã hoá. Với máy chủ trên Internet nên dùng ít nhất <b>REQUIRED</b>.</div>
+        <div className="cm-fields">
+          <div className="form-group">
+            <label>SSL mode</label>
+            <select className="form-input" value={sslMode} onChange={(e) => setSslMode(e.target.value)} style={{ maxWidth: '240px' }}>
+              {Object.keys(SSL_MODE_DESC).map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+            <span className="cm-hint">{SSL_MODE_DESC[sslMode] || ''}</span>
+          </div>
+
+          {renderSslWarning()}
+
+          {sslOn && (
+            <div className="cm-subcard">
+              <div className="cm-label-row" style={{ marginBottom: '12px' }}>
+                <div className="cm-subcard-head" style={{ margin: 0 }}>
+                  <ShieldCheck size={13} />
+                  <span>{needVerify ? 'Chứng chỉ' : 'Chứng chỉ (tuỳ chọn)'}</span>
+                </div>
                 <button
                   type="button"
-                  onClick={() => setSshEnabled(!sshEnabled)}
-                  style={{
-                    padding: '6px 12px',
-                    fontSize: '11px',
-                    fontWeight: 600,
-                    borderRadius: '4px',
-                    border: '1px solid var(--win-border)',
-                    background: sshEnabled ? 'var(--win-accent-alpha, rgba(46, 204, 113, 0.2))' : 'transparent',
-                    color: sshEnabled ? '#2ecc71' : 'var(--win-text-secondary)',
-                    cursor: 'pointer',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    marginBottom: '10px'
-                  }}
+                  className="cm-mini-btn"
+                  onClick={() => { setSslKeyPath(''); setSslCertPath(''); setSslCaPath(''); }}
+                  disabled={!sslKeyPath && !sslCertPath && !sslCaPath}
                 >
-                  <Server size={12} />
-                  {sshEnabled ? 'Over SSH: Bật' : 'Over SSH'}
+                  <X size={10} /> <span>Xoá tất cả</span>
                 </button>
-
-                {sshEnabled && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '16px' }}>
-                    <div className="form-row">
-                      <div className="form-group" style={{ flex: 3 }}>
-                        <label>SSH Host</label>
-                        <input
-                          type="text"
-                          className="form-input"
-                          value={sshHost}
-                          onChange={(e) => setSshHost(e.target.value)}
-                          placeholder="ví dụ: ssh.server.com"
-                        />
-                      </div>
-                      <div className="form-group" style={{ flex: 1 }}>
-                        <label>SSH Port</label>
-                        <input
-                          type="number"
-                          className="form-input"
-                          value={sshPort}
-                          onChange={(e) => setSshPort(parseInt(e.target.value) || 22)}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="form-row">
-                      <div className="form-group">
-                        <label>SSH Username</label>
-                        <input
-                          type="text"
-                          className="form-input"
-                          value={sshUser}
-                          onChange={(e) => setSshUser(e.target.value)}
-                          placeholder="root"
-                        />
-                      </div>
-                      <div className="form-group">
-                        <label>Phương thức xác thực SSH</label>
-                        <select
-                          className="form-input"
-                          value={sshAuthType}
-                          onChange={(e: any) => setSshAuthType(e.target.value)}
-                        >
-                          <option value="password">Mật khẩu (Password)</option>
-                          <option value="key">Khóa riêng tư (Private Key)</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    {sshAuthType === 'password' ? (
-                      <div className="form-group">
-                        <label>SSH Mật khẩu</label>
-                        <input
-                          type="password"
-                          className="form-input"
-                          value={sshPassword}
-                          onChange={(e) => setSshPassword(e.target.value)}
-                          placeholder="••••••••"
-                        />
-                      </div>
-                    ) : (
-                      <>
-                        <div className="form-group">
-                          <label>Đường dẫn file Private Key (hoặc nhập trực tiếp bên dưới)</label>
-                          <div style={{ display: 'flex', gap: '8px' }}>
-                            <input
-                              type="text"
-                              className="form-input"
-                              value={sshKeyPath}
-                              onChange={(e) => setSshKeyPath(e.target.value)}
-                              placeholder="C:\Users\username\.ssh\id_rsa"
-                              style={{ flex: 1 }}
-                            />
-                            <input
-                              type="file"
-                              id="ssh-key-file-picker"
-                              style={{ display: 'none' }}
-                              onChange={(e) => {
-                                const file = e.target.files?.[0];
-                                if (file) {
-                                  const absolutePath = (file as any).path || file.name;
-                                  setSshKeyPath(absolutePath);
-                                }
-                              }}
-                            />
-                            <button
-                              type="button"
-                              className="btn btn-secondary"
-                              onClick={() => document.getElementById('ssh-key-file-picker')?.click()}
-                              style={{ height: '30px', fontSize: '11px', padding: '0 10px', whiteSpace: 'nowrap' }}
-                            >
-                              Chọn tệp...
-                            </button>
-                          </div>
-                        </div>
-                        <div className="form-group">
-                          <label>Nội dung Private Key</label>
-                          <textarea
-                            className="form-input"
-                            style={{ minHeight: '80px', fontFamily: 'monospace', fontSize: '11px', resize: 'vertical' }}
-                            value={sshKeyContent}
-                            onChange={(e) => setSshKeyContent(e.target.value)}
-                            placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;..."
-                          />
-                        </div>
-                        <div className="form-group">
-                          <label>Mật khẩu giải mã Khóa (Passphrase) - nếu có</label>
-                          <input
-                            type="password"
-                            className="form-input"
-                            value={sshPassphrase}
-                            onChange={(e) => setSshPassphrase(e.target.value)}
-                            placeholder="••••••••"
-                          />
-                        </div>
-                      </>
-                    )}
-                  </div>
+              </div>
+              <div className="cm-grid three">
+                <div className="form-group">
+                  <label>Client key</label>
+                  <FilePick id={`${prefix}-ssl-key-picker`} value={sslKeyPath} label="Chọn key..." onPick={setSslKeyPath} />
+                </div>
+                <div className="form-group">
+                  <label>Client cert</label>
+                  <FilePick id={`${prefix}-ssl-cert-picker`} value={sslCertPath} label="Chọn cert..." onPick={setSslCertPath} />
+                </div>
+                <div className="form-group">
+                  <label>CA cert{needVerify ? ' *' : ''}</label>
+                  <FilePick id={`${prefix}-ssl-ca-picker`} value={sslCaPath} label="Chọn CA..." onPick={setSslCaPath} />
+                </div>
+              </div>
+              <div className="cm-hint" style={{ marginTop: '10px' }}>
+                <b>Client key + cert</b> chỉ cần khi máy chủ bắt client tự xác thực (mTLS) — không liên quan tới việc kiểm tra máy chủ.{' '}
+                {needVerify ? (
+                  <><b>CA cert</b> cần điền nếu CA của máy chủ không nằm trong store chứng chỉ hệ thống; thiếu thì kết nối sẽ bị từ chối.</>
+                ) : activeType === 'postgres' ? (
+                  <>Riêng Postgres: nếu điền <b>CA cert</b> thì REQUIRED sẽ tự kiểm tra chứng chỉ như VERIFY_CA.</>
+                ) : (
+                  <>REQUIRED không kiểm tra chứng chỉ máy chủ, nên <b>CA cert</b> ở đây không có tác dụng.</>
                 )}
               </div>
-            )}
-
-            {(activeType as any) === 'backup_restore' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid var(--win-border)', paddingBottom: '8px', marginBottom: '8px' }}>
-                  <button
-                    onClick={() => setBrAction('backup')}
-                    style={{
-                      padding: '6px 12px', fontSize: '11px', fontWeight: 600, border: 'none', borderRadius: '4px',
-                      background: brAction === 'backup' ? 'var(--win-accent)' : 'transparent',
-                      color: brAction === 'backup' ? '#fff' : 'var(--win-text-secondary)', cursor: 'pointer'
-                    }}
-                  >
-                    Sao lưu (Backup)
-                  </button>
-                  <button
-                    onClick={() => setBrAction('restore')}
-                    style={{
-                      padding: '6px 12px', fontSize: '11px', fontWeight: 600, border: 'none', borderRadius: '4px',
-                      background: brAction === 'restore' ? 'var(--win-accent)' : 'transparent',
-                      color: brAction === 'restore' ? '#fff' : 'var(--win-text-secondary)', cursor: 'pointer'
-                    }}
-                  >
-                    Khôi phục (Restore)
-                  </button>
-                </div>
-
-                <div className="form-group">
-                  <label>Chọn Kết nối đã lưu (Saved Connection)</label>
-                  <select
-                    className="form-input"
-                    value={selectedBrProfileId || ''}
-                    onChange={(e) => {
-                      const profId = e.target.value;
-                      setSelectedBrProfileId(profId);
-                      const selectedProf = profiles.find(p => p.id === profId);
-                      if (selectedProf) {
-                        setBrType(selectedProf.type);
-                        const c = selectedProf.config;
-                        if (selectedProf.type === 'sqlite') {
-                          setBrSqlitePath(c.sqlitePath || 'demo.db');
-                        } else if (selectedProf.type === 'postgres') {
-                          setBrPgHost(c.host || 'localhost');
-                          setBrPgPort(c.port || 5432);
-                          setBrPgUser(c.user || 'postgres');
-                          setBrPgPassword(c.password || '');
-                          setBrPgDatabase(c.database || 'postgres');
-                        } else if (selectedProf.type === 'mysql') {
-                          setBrMyHost(c.host || 'localhost');
-                          setBrMyPort(c.port || 3306);
-                          setBrMyUser(c.user || 'root');
-                          setBrMyPassword(c.password || '');
-                          setBrMyDatabase(c.database || '');
-                        }
-                      }
-                    }}
-                    style={{ height: '32px', fontSize: '11px' }}
-                  >
-                    <option value="">-- Chọn kết nối cấu hình sẵn --</option>
-                    {profiles.map(p => (
-                      <option key={p.id} value={p.id}>{p.name} ({p.type.toUpperCase()})</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="form-group">
-                  <label>Loại Cơ sở dữ liệu</label>
-                  <select
-                    className="form-input"
-                    value={brType}
-                    onChange={(e) => setBrType(e.target.value as any)}
-                    style={{ height: '32px', fontSize: '11px' }}
-                  >
-                    <option value="sqlite">SQLite</option>
-                    <option value="postgres">PostgreSQL</option>
-                    <option value="mysql">MySQL</option>
-                  </select>
-                </div>
-
-                {brType === 'sqlite' ? (
-                  <div className="form-group">
-                    <label>Đường dẫn tệp SQLite (.db, .sqlite)</label>
-                    <input
-                      type="text"
-                      className="form-input"
-                      value={brSqlitePath}
-                      onChange={(e) => setBrSqlitePath(e.target.value)}
-                    />
-                  </div>
-                ) : (
-                  <>
-                    <div className="form-row">
-                      <div className="form-group" style={{ flex: 3 }}>
-                        <label>Địa chỉ máy chủ (Host)</label>
-                        <input
-                          type="text"
-                          className="form-input"
-                          value={brType === 'postgres' ? brPgHost : brMyHost}
-                          onChange={(e) => brType === 'postgres' ? setBrPgHost(e.target.value) : setBrMyHost(e.target.value)}
-                        />
-                      </div>
-                      <div className="form-group" style={{ flex: 1 }}>
-                        <label>Cổng (Port)</label>
-                        <input
-                          type="number"
-                          className="form-input"
-                          value={brType === 'postgres' ? brPgPort : brMyPort}
-                          onChange={(e) => brType === 'postgres' ? setBrPgPort(parseInt(e.target.value) || 5432) : setBrMyPort(parseInt(e.target.value) || 3306)}
-                        />
-                      </div>
-                    </div>
-                    <div className="form-row">
-                      <div className="form-group">
-                        <label>Tên đăng nhập (User)</label>
-                        <input
-                          type="text"
-                          className="form-input"
-                          value={brType === 'postgres' ? brPgUser : brMyUser}
-                          onChange={(e) => brType === 'postgres' ? setBrPgUser(e.target.value) : setBrMyUser(e.target.value)}
-                        />
-                      </div>
-                      <div className="form-group">
-                        <label>Mật khẩu (Password)</label>
-                        <input
-                          type="password"
-                          className="form-input"
-                          value={brType === 'postgres' ? brPgPassword : brMyPassword}
-                          onChange={(e) => brType === 'postgres' ? setBrPgPassword(e.target.value) : setBrMyPassword(e.target.value)}
-                        />
-                      </div>
-                    </div>
-                    <div className="form-group">
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                        <label style={{ margin: 0 }}>Tên cơ sở dữ liệu (Database)</label>
-                        <button
-                          type="button"
-                          className="btn btn-secondary"
-                          onClick={() => fetchDatabases(brType === 'postgres' ? 'br_postgres' : 'br_mysql')}
-                          disabled={loadingDbs}
-                          style={{ height: '18px', fontSize: '10px', padding: '0 6px', display: 'flex', alignItems: 'center', gap: '2px' }}
-                        >
-                          {loadingDbs ? 'Đang tải...' : 'Tải danh sách'}
-                        </button>
-                      </div>
-                      <input
-                        type="text"
-                        className="form-input"
-                        list="br-dbs"
-                        value={brType === 'postgres' ? brPgDatabase : brMyDatabase}
-                        onChange={(e) => brType === 'postgres' ? setBrPgDatabase(e.target.value) : setBrMyDatabase(e.target.value)}
-                      />
-                      <datalist id="br-dbs">
-                        {availableDatabases.map(db => (
-                          <option key={db} value={db} />
-                        ))}
-                      </datalist>
-                    </div>
-                  </>
-                )}
-
-                <div style={{ borderTop: '1px solid var(--win-border)', paddingTop: '10px', marginTop: '6px' }} />
-
-                {brAction === 'backup' ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    <div className="form-group">
-                      <label>Tên tệp sao lưu (Backup Name)</label>
-                      <input
-                        type="text"
-                        className="form-input"
-                        value={brFilename}
-                        onChange={(e) => setBrFilename(e.target.value)}
-                      />
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', color: 'var(--win-text-primary)' }}>
-                        <input type="checkbox" checked={brDropTable} onChange={(e) => setBrDropTable(e.target.checked)} />
-                        <span>Drop table if exists</span>
-                      </label>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', color: 'var(--win-text-primary)' }}>
-                        <input type="checkbox" checked={brIncludeStructure} onChange={(e) => setBrIncludeStructure(e.target.checked)} />
-                        <span>Include table structure</span>
-                      </label>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', color: 'var(--win-text-primary)' }}>
-                        <input type="checkbox" checked={brIncludeContent} onChange={(e) => setBrIncludeContent(e.target.checked)} />
-                        <span>Include table content</span>
-                      </label>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', color: 'var(--win-text-primary)' }}>
-                        <input type="checkbox" checked={brCompressGzip} onChange={(e) => setBrCompressGzip(e.target.checked)} />
-                        <span>Compress file using Gzip (.sql.gz)</span>
-                      </label>
-                    </div>
-                    <button
-                      className="btn btn-primary"
-                      onClick={handleBrSubmit}
-                      disabled={brLoading}
-                      style={{ height: '32px', fontSize: '11px', background: 'var(--win-accent)', color: '#fff', border: 'none', fontWeight: 600, borderRadius: '4px', marginTop: '6px' }}
-                    >
-                      {brLoading ? (
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                          <LoadingSpinner size={12} />
-                          <span>Đang thực hiện sao lưu...</span>
-                        </span>
-                      ) : 'Bắt đầu Sao lưu (Backup)'}
-                    </button>
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    <div className="form-group">
-                      <label>Chọn tệp sao lưu (.sql hoặc .sql.gz)</label>
-                      <input
-                        type="file"
-                        accept=".sql,.dump,.gz"
-                        onChange={(e) => setBrFile(e.target.files?.[0] || null)}
-                        style={{ fontSize: '11px' }}
-                      />
-                    </div>
-
-                    {brParsing && (
-                      <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)', marginTop: '4px' }}>
-                        Đang đọc danh sách bảng từ file...
-                      </div>
-                    )}
-
-                    {brParsedTables.length > 0 && (
-                      <div style={{ marginTop: '8px', border: '1px solid var(--win-border)', borderRadius: '4px', padding: '10px', background: 'rgba(0,0,0,0.1)' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', borderBottom: '1px solid var(--win-border)', paddingBottom: '4px' }}>
-                          <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-primary)' }}>Chọn bảng muốn import ({brSelectedTables.length}/{brParsedTables.length})</span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (brSelectedTables.length === brParsedTables.length) {
-                                setBrSelectedTables([]);
-                              } else {
-                                setBrSelectedTables([...brParsedTables]);
-                              }
-                            }}
-                            style={{ padding: '2px 6px', fontSize: '9px', cursor: 'pointer', background: 'var(--win-bg-card)', border: '1px solid var(--win-border)', borderRadius: '3px', color: 'var(--win-text-primary)' }}
-                          >
-                            {brSelectedTables.length === brParsedTables.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
-                          </button>
-                        </div>
-                        <div style={{ maxHeight: '120px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                          {brParsedTables.map(t => {
-                            const isChecked = brSelectedTables.includes(t);
-                            return (
-                              <label key={t} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}>
-                                <input
-                                  type="checkbox"
-                                  checked={isChecked}
-                                  onChange={() => {
-                                    if (isChecked) {
-                                      setBrSelectedTables(brSelectedTables.filter(x => x !== t));
-                                    } else {
-                                      setBrSelectedTables([...brSelectedTables, t]);
-                                    }
-                                  }}
-                                />
-                                <span>{t}</span>
-                              </label>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-
-                    <button
-                      className="btn btn-primary"
-                      onClick={handleBrSubmit}
-                      disabled={brLoading || !brFile || (brParsedTables.length > 0 && brSelectedTables.length === 0)}
-                      style={{ height: '32px', fontSize: '11px', background: 'var(--win-accent)', color: '#fff', border: 'none', fontWeight: 600, borderRadius: '4px', marginTop: '6px' }}
-                    >
-                      {brLoading ? (
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                          <LoadingSpinner size={12} />
-                          <span>Đang khôi phục dữ liệu...</span>
-                        </span>
-                      ) : 'Bắt đầu Khôi phục (Restore)'}
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="connection-footer">
-          {activeType !== 'backup_restore' && (
-            <div style={{ display: 'flex', gap: '8px', width: '100%', justifyContent: 'flex-end' }}>
-              {activeProfileId && (
-                <button
-                  className="btn btn-secondary"
-                  onClick={handleSaveProfile}
-                  style={{ marginRight: 'auto' }}
-                >
-                  Save
-                </button>
-              )}
-              <button
-                className="btn btn-secondary"
-                onClick={handleTestConnection}
-                disabled={loading}
-              >
-                Test
-              </button>
-              <button
-                className="btn btn-primary"
-                onClick={() => handleConnect(false)}
-                disabled={loading}
-                style={{ background: 'var(--win-accent)', color: '#fff', border: 'none', fontWeight: 600 }}
-              >
-                {loading ? (
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                    <LoadingSpinner size={12} />
-                    <span>Connecting...</span>
-                  </span>
-                ) : 'Connect'}
-              </button>
             </div>
           )}
         </div>
       </div>
+    );
+  };
 
+  // ——— Tab "SSH Tunnel" ———
+  const renderSshTab = () => (
+    <div className="cm-section">
+      <div className="cm-section-title">SSH Tunnel</div>
+      <div className="cm-section-desc">Kết nối qua một máy chủ trung gian (bastion/jump host) khi cơ sở dữ liệu không mở ra ngoài.</div>
+      <div className="cm-fields">
+        <div className="cm-switch-row">
+          <button type="button" className={`cm-switch ${sshEnabled ? 'on' : ''}`} onClick={() => setSshEnabled(!sshEnabled)} aria-label="Bật SSH tunnel" />
+          <div style={{ flex: 1 }}>
+            <div className="cm-switch-label">Kết nối qua SSH</div>
+            <div className="cm-hint">Host/port của cơ sở dữ liệu sẽ được truy cập từ phía máy chủ SSH.</div>
+          </div>
+        </div>
+
+        {sshEnabled && (
+          <>
+            <div className="cm-grid host">
+              <div className="form-group">
+                <label>SSH host</label>
+                <div className="input-icon-wrapper">
+                  <input type="text" className="form-input" value={sshHost} onChange={(e) => setSshHost(e.target.value)} placeholder="bastion.example.com" />
+                  <Network size={14} className="input-icon" />
+                </div>
+              </div>
+              <div className="form-group">
+                <label>SSH port</label>
+                <div className="input-icon-wrapper">
+                  <input type="number" className="form-input" value={sshPort} onChange={(e) => setSshPort(parseInt(e.target.value) || 22)} />
+                  <Hash size={14} className="input-icon" />
+                </div>
+              </div>
+            </div>
+            {/* Chọn cách xác thực bằng segmented ở dòng tiêu đề (giống khối
+                "Xác thực" ở tab Chung) để user + mật khẩu/passphrase luôn nằm
+                cùng một dòng 2 cột, không còn field lẻ loi nửa dòng. */}
+            <div className="cm-label-row">
+              <span className="cm-subhead">Xác thực SSH</span>
+              <div className="cm-seg">
+                <button type="button" className={sshAuthType === 'password' ? 'on' : ''} onClick={() => setSshAuthType('password')}>Mật khẩu</button>
+                <button type="button" className={sshAuthType === 'key' ? 'on' : ''} onClick={() => setSshAuthType('key')}>Private key</button>
+              </div>
+            </div>
+
+            <div className="cm-grid two">
+              <div className="form-group">
+                <label>SSH user</label>
+                <div className="input-icon-wrapper">
+                  <input type="text" className="form-input" value={sshUser} onChange={(e) => setSshUser(e.target.value)} placeholder="ubuntu" />
+                  <User size={14} className="input-icon" />
+                </div>
+              </div>
+              {sshAuthType === 'password' ? (
+                <div className="form-group">
+                  <label>Mật khẩu SSH</label>
+                  <div className="input-icon-wrapper">
+                    <input
+                      type={showPw ? 'text' : 'password'}
+                      className="form-input"
+                      value={sshPassword}
+                      onChange={(e) => setSshPassword(e.target.value)}
+                      placeholder="••••••••"
+                      style={{ paddingRight: '32px' }}
+                    />
+                    <Key size={14} className="input-icon" />
+                    <EyeBtn on={showPw} onClick={() => setShowPw((v) => !v)} />
+                  </div>
+                </div>
+              ) : (
+                <div className="form-group">
+                  <label>Passphrase (nếu key có mật khẩu)</label>
+                  <div className="input-icon-wrapper">
+                    <input
+                      type={showPw ? 'text' : 'password'}
+                      className="form-input"
+                      value={sshPassphrase}
+                      onChange={(e) => setSshPassphrase(e.target.value)}
+                      placeholder="••••••••"
+                      style={{ paddingRight: '32px' }}
+                    />
+                    <Key size={14} className="input-icon" />
+                    <EyeBtn on={showPw} onClick={() => setShowPw((v) => !v)} />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {sshAuthType === 'key' && (
+              <div className="cm-subcard">
+                <div className="cm-subcard-head">
+                  <Key size={13} />
+                  <span>Private key</span>
+                </div>
+                <div className="cm-fields" style={{ marginTop: 0 }}>
+                  <div className="form-group">
+                    <label>Đường dẫn tệp key</label>
+                    <div className="cm-file-row">
+                      <input
+                        type="text"
+                        className="form-input"
+                        value={sshKeyPath}
+                        onChange={(e) => setSshKeyPath(e.target.value)}
+                        placeholder="C:\Users\me\.ssh\id_rsa"
+                      />
+                      <FilePick id="ssh-key-file-picker" value="" label="Chọn tệp..." onPick={setSshKeyPath} />
+                    </div>
+                  </div>
+                  <div className="form-group">
+                    <label>Hoặc dán trực tiếp nội dung key</label>
+                    <textarea
+                      className="form-input cm-key-area"
+                      value={sshKeyContent}
+                      onChange={(e) => setSshKeyContent(e.target.value)}
+                      placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;..."
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+
+  // ——— Chế độ Sao lưu & Phục hồi (không cần kết nối sẵn) ———
+  const renderBackupRestore = () => (
+    <>
+      <div className="cm-section">
+        <div className="cm-label-row">
+          <div>
+            <div className="cm-section-title">{brAction === 'backup' ? 'Sao lưu cơ sở dữ liệu' : 'Phục hồi từ tệp sao lưu'}</div>
+            <div className="cm-section-desc">
+              {brAction === 'backup'
+                ? 'Xuất toàn bộ cấu trúc và dữ liệu ra tệp .sql (có thể nén gzip).'
+                : 'Chạy lại tệp .sql / .sql.gz vào cơ sở dữ liệu đích, chọn được từng bảng.'}
+            </div>
+          </div>
+          <div className="cm-seg">
+            <button type="button" className={brAction === 'backup' ? 'on' : ''} onClick={() => setBrAction('backup')}>Sao lưu</button>
+            <button type="button" className={brAction === 'restore' ? 'on' : ''} onClick={() => setBrAction('restore')}>Phục hồi</button>
+          </div>
+        </div>
+
+        <div className="cm-fields">
+          <div className="cm-grid two">
+            <div className="form-group">
+              <label>Lấy cấu hình từ kết nối đã lưu</label>
+              <select
+                className="form-input"
+                value={selectedBrProfileId || ''}
+                onChange={(e) => {
+                  const profId = e.target.value;
+                  setSelectedBrProfileId(profId);
+                  const selectedProf = profiles.find(p => p.id === profId);
+                  if (selectedProf) {
+                    setBrType(selectedProf.type === 'redis' ? 'sqlite' : selectedProf.type);
+                    const c = selectedProf.config;
+                    if (selectedProf.type === 'sqlite') {
+                      setBrSqlitePath(c.sqlitePath || 'demo.db');
+                    } else if (selectedProf.type === 'postgres') {
+                      setBrPgHost(c.host || 'localhost');
+                      setBrPgPort(c.port || 5432);
+                      setBrPgUser(c.user || 'postgres');
+                      setBrPgPassword(c.password || '');
+                      setBrPgDatabase(c.database || 'postgres');
+                    } else if (selectedProf.type === 'mysql') {
+                      setBrMyHost(c.host || 'localhost');
+                      setBrMyPort(c.port || 3306);
+                      setBrMyUser(c.user || 'root');
+                      setBrMyPassword(c.password || '');
+                      setBrMyDatabase(c.database || '');
+                    }
+                  }
+                }}
+              >
+                <option value="">— Nhập thủ công —</option>
+                {profiles.map(p => (
+                  <option key={p.id} value={p.id}>{p.name} ({p.type.toUpperCase()})</option>
+                ))}
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Loại cơ sở dữ liệu</label>
+              <select className="form-input" value={brType} onChange={(e) => setBrType(e.target.value as any)}>
+                <option value="sqlite">SQLite</option>
+                <option value="postgres">PostgreSQL</option>
+                <option value="mysql">MySQL</option>
+              </select>
+            </div>
+          </div>
+
+          {brType === 'sqlite' ? (
+            <div className="form-group">
+              <label>Đường dẫn tệp SQLite</label>
+              <div className="input-icon-wrapper">
+                <input type="text" className="form-input" value={brSqlitePath} onChange={(e) => setBrSqlitePath(e.target.value)} />
+                <FolderOpen size={14} className="input-icon" />
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="cm-grid host">
+                <div className="form-group">
+                  <label>Host</label>
+                  <div className="input-icon-wrapper">
+                    <input
+                      type="text"
+                      className="form-input"
+                      value={brType === 'postgres' ? brPgHost : brMyHost}
+                      onChange={(e) => brType === 'postgres' ? setBrPgHost(e.target.value) : setBrMyHost(e.target.value)}
+                    />
+                    <Server size={14} className="input-icon" />
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label>Port</label>
+                  <div className="input-icon-wrapper">
+                    <input
+                      type="number"
+                      className="form-input"
+                      value={brType === 'postgres' ? brPgPort : brMyPort}
+                      onChange={(e) => brType === 'postgres' ? setBrPgPort(parseInt(e.target.value) || 5432) : setBrMyPort(parseInt(e.target.value) || 3306)}
+                    />
+                    <Hash size={14} className="input-icon" />
+                  </div>
+                </div>
+              </div>
+              <div className="cm-grid two">
+                <div className="form-group">
+                  <label>Tên đăng nhập</label>
+                  <div className="input-icon-wrapper">
+                    <input
+                      type="text"
+                      className="form-input"
+                      value={brType === 'postgres' ? brPgUser : brMyUser}
+                      onChange={(e) => brType === 'postgres' ? setBrPgUser(e.target.value) : setBrMyUser(e.target.value)}
+                    />
+                    <User size={14} className="input-icon" />
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label>Mật khẩu</label>
+                  <div className="input-icon-wrapper">
+                    <input
+                      type={showPw ? 'text' : 'password'}
+                      className="form-input"
+                      value={brType === 'postgres' ? brPgPassword : brMyPassword}
+                      onChange={(e) => brType === 'postgres' ? setBrPgPassword(e.target.value) : setBrMyPassword(e.target.value)}
+                      style={{ paddingRight: '32px' }}
+                    />
+                    <Key size={14} className="input-icon" />
+                    <EyeBtn on={showPw} onClick={() => setShowPw((v) => !v)} />
+                  </div>
+                </div>
+              </div>
+              {renderDatabaseField(
+                brType === 'postgres' ? brPgDatabase : brMyDatabase,
+                brType === 'postgres' ? setBrPgDatabase : setBrMyDatabase,
+                brType === 'postgres' ? 'br_postgres' : 'br_mysql',
+                brType === 'postgres' ? 'postgres' : 'Không bắt buộc',
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="cm-section">
+        {brAction === 'backup' ? (
+          <>
+            <div className="cm-section-title">Tuỳ chọn xuất</div>
+            <div className="cm-fields">
+              <div className="form-group" style={{ maxWidth: '340px' }}>
+                <label>Tên tệp sao lưu</label>
+                <input type="text" className="form-input" value={brFilename} onChange={(e) => setBrFilename(e.target.value)} />
+              </div>
+              <div className="cm-check-grid">
+                <label className="cm-check"><input type="checkbox" checked={brDropTable} onChange={(e) => setBrDropTable(e.target.checked)} /><span>DROP TABLE IF EXISTS</span></label>
+                <label className="cm-check"><input type="checkbox" checked={brIncludeStructure} onChange={(e) => setBrIncludeStructure(e.target.checked)} /><span>Kèm cấu trúc bảng</span></label>
+                <label className="cm-check"><input type="checkbox" checked={brIncludeContent} onChange={(e) => setBrIncludeContent(e.target.checked)} /><span>Kèm dữ liệu</span></label>
+                <label className="cm-check"><input type="checkbox" checked={brCompressGzip} onChange={(e) => setBrCompressGzip(e.target.checked)} /><span>Nén gzip (.sql.gz)</span></label>
+              </div>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="cm-section-title">Tệp sao lưu</div>
+            <div className="cm-fields">
+              <label className="cm-dropzone">
+                <input
+                  type="file"
+                  accept=".sql,.dump,.gz"
+                  onChange={(e) => setBrFile(e.target.files?.[0] || null)}
+                  style={{ display: 'none' }}
+                />
+                <Upload size={18} />
+                <div>
+                  <div className="cm-dropzone-title">{brFile ? brFile.name : 'Chọn tệp .sql hoặc .sql.gz'}</div>
+                  <div className="cm-hint">{brFile ? `${(brFile.size / 1024 / 1024).toFixed(2)} MB — bấm để đổi tệp` : 'Bấm để chọn tệp từ máy của bạn'}</div>
+                </div>
+              </label>
+
+              {brParsing && (
+                <div className="cm-hint" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <LoadingSpinner size={11} /> Đang đọc danh sách bảng từ tệp...
+                </div>
+              )}
+
+              {brParsedTables.length > 0 && (
+                <div className="cm-subcard">
+                  <div className="cm-label-row" style={{ marginBottom: '10px' }}>
+                    <div className="cm-subcard-head" style={{ margin: 0 }}>
+                      <Database size={13} />
+                      <span>Bảng sẽ phục hồi ({brSelectedTables.length}/{brParsedTables.length})</span>
+                    </div>
+                    <button
+                      type="button"
+                      className="cm-mini-btn"
+                      onClick={() => setBrSelectedTables(brSelectedTables.length === brParsedTables.length ? [] : [...brParsedTables])}
+                    >
+                      {brSelectedTables.length === brParsedTables.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
+                    </button>
+                  </div>
+                  <div className="cm-table-picker">
+                    {brParsedTables.map(t => {
+                      const isChecked = brSelectedTables.includes(t);
+                      return (
+                        <label key={t} className="cm-check">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => setBrSelectedTables(isChecked ? brSelectedTables.filter(x => x !== t) : [...brSelectedTables, t])}
+                          />
+                          <span>{t}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </>
+  );
+
+  return (
+    <div className={`connection-manager-container ${isSuccessConnecting ? 'connecting-zoom-out' : ''}`} style={{ position: 'relative' }}>
+      {isSuccessConnecting && (
+        <div className="connection-success-overlay">
+          <div className="connection-success-card">
+            <div className="connection-success-icon-wrap">
+              <Database size={32} className="connection-success-icon" />
+              <CheckCircle2 size={16} className="connection-success-badge" />
+            </div>
+            <div className="connection-success-title">Kết nối thành công!</div>
+            <div className="connection-success-subtitle">
+              Đang chuẩn bị workspace cho <strong>{connectingDbName}</strong>...
+            </div>
+            <div className="connection-success-loader">
+              <LoadingSpinner size={16} />
+              <span>Đang mở giao diện CSDL...</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="connection-card">
+        <div className="cm-shell">
+          {/* ————— Sidebar: danh sách kết nối đã lưu ————— */}
+          <aside className="cm-side">
+            <div className="cm-side-head">
+              <span className="cm-side-title">Kết nối · {profiles.length}</span>
+              <button className="cm-icon-btn" title="Nhập từ tệp cấu hình" onClick={() => document.getElementById('cm-import-file')?.click()}>
+                <Upload size={13} />
+              </button>
+              <input id="cm-import-file" type="file" accept=".tableplusconnection,.tableforgeconnection,.json" onChange={handleFileImportSelect} style={{ display: 'none' }} />
+              <button className="cm-icon-btn" title="Xuất tất cả kết nối" onClick={() => openExportModal('all')}>
+                <Download size={13} />
+              </button>
+            </div>
+
+            <div className="cm-new-wrap">
+              <button className="cm-new-btn" onClick={() => setShowNewMenu((v) => !v)}>
+                <Plus size={14} /> Kết nối mới
+                <ChevronDown size={13} style={{ opacity: 0.6, marginLeft: 'auto' }} />
+              </button>
+              {showNewMenu && (
+                <>
+                  <div className="cm-pop-backdrop" onClick={() => setShowNewMenu(false)} />
+                  <div className="cm-pop">
+                    {NEW_TYPES.map(t => {
+                      const m = TYPE_META[t.val];
+                      return (
+                        <button
+                          key={t.val}
+                          className="cm-pop-item"
+                          onClick={() => { setShowNewMenu(false); handleCreateNewProfile(t.val); }}
+                        >
+                          <span className="cm-badge sm" style={{ background: m.color }}><m.Icon size={13} /></span>
+                          <span>{t.label}</span>
+                        </button>
+                      );
+                    })}
+                    <div className="cm-pop-sep" />
+                    <button className="cm-pop-item" onClick={() => { setShowNewMenu(false); setShowImportUrlModal(true); }}>
+                      <span className="cm-badge sm ghost"><Link size={12} /></span>
+                      <span>Từ connection URL...</span>
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="cm-search">
+              <Search size={13} style={{ color: 'var(--win-text-disabled)', flexShrink: 0 }} />
+              <input
+                type="text"
+                value={profileSearch}
+                onChange={(e) => setProfileSearch(e.target.value)}
+                placeholder="Tìm theo tên, host, database..."
+              />
+              {profileSearch && (
+                <button className="cm-icon-btn sm" onClick={() => setProfileSearch('')} title="Xoá tìm kiếm">
+                  <X size={12} />
+                </button>
+              )}
+            </div>
+
+            <div
+              className="cm-list"
+              onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, scope: 'all' }); }}
+            >
+              {groupNames.length === 0 && (
+                <div className="cm-empty">
+                  {profiles.length === 0
+                    ? <>Chưa có kết nối nào.<br />Bấm <b>Kết nối mới</b> để bắt đầu.</>
+                    : <>Không có kết nối nào khớp<br />với “{profileSearch}”.</>}
+                </div>
+              )}
+
+              {groupNames.map(groupName => {
+                const collapsed = !!collapsedGroups[groupName] && !_pq;
+                return (
+                  <div key={groupName} className="cm-group">
+                    <button
+                      className="cm-group-head"
+                      onClick={() => toggleGroup(groupName)}
+                      onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenu({ x: e.clientX, y: e.clientY, scope: 'group', groupName }); }}
+                    >
+                      {collapsed ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
+                      <span>{groupName}</span>
+                      <span className="cm-group-count">{groupedProfiles[groupName].length}</span>
+                    </button>
+
+                    {!collapsed && groupedProfiles[groupName].map(p => {
+                      const m = TYPE_META[p.type] || TYPE_META.sqlite;
+                      const isActive = activeProfileId === p.id && !isBrMode;
+                      const sub = p.config?.host
+                        ? `${p.config.host}${p.config.database ? ' / ' + p.config.database : ''}`
+                        : (p.config?.sqlitePath || '');
+                      // Đèn trạng thái: chỉ dòng đang được tác động mới có, và chỉ
+                      // 'busy' được nháy. Màn hình này chỉ tồn tại khi chưa có kết
+                      // nối nào mở, nên "đang mở" không phải trạng thái khả dụng —
+                      // thay vào đó là đang kết nối/kiểm tra và kết quả kiểm tra.
+                      const led: 'busy' | 'ok' | 'fail' | null = !isActive
+                        ? null
+                        : loading ? 'busy'
+                          : testStatus === 'ok' ? 'ok'
+                            : testStatus === 'fail' ? 'fail'
+                              : null;
+                      return (
+                        <div
+                          key={p.id}
+                          className={`cm-item ${isActive ? 'active' : ''}`}
+                          onClick={() => selectProfile(p)}
+                          onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenu({ x: e.clientX, y: e.clientY, scope: 'single', groupName, profile: p }); }}
+                        >
+                          <span className="cm-badge" style={{ background: m.color }}><m.Icon size={15} /></span>
+                          <div className="cm-item-body">
+                            <div className="cm-item-name">
+                              <span className="cm-ellipsis">{p.name}</span>
+                              {/* Đèn trạng thái: chỉ 'busy' nháy. */}
+                              {led && <span className={`cm-item-led ${led}`} title={LED_TITLE[led]} />}
+                              {defaultProfileId === p.id && <Star size={10} style={{ fill: 'var(--st-warn)', color: 'var(--st-warn)', flexShrink: 0 }} aria-label="Kết nối mặc định" />}
+                            </div>
+                            <div className="cm-item-sub">{m.label}{sub ? ` · ${sub}` : ''}</div>
+                          </div>
+                          <div className="cm-item-actions">
+                            <button
+                              className="cm-icon-btn sm"
+                              onClick={(e) => handleToggleDefaultProfile(p.id, e)}
+                              title={defaultProfileId === p.id ? 'Bỏ kết nối mặc định' : 'Đặt làm kết nối mặc định'}
+                            >
+                              {/* fill đặt qua CSS chứ không qua prop: prop thành thuộc
+                                  tính SVG, mà thuộc tính SVG không nhận var(). */}
+                              <Star size={12} style={{ fill: defaultProfileId === p.id ? 'var(--st-warn)' : 'none', color: defaultProfileId === p.id ? 'var(--st-warn)' : 'currentColor' }} />
+                            </button>
+                            <button className="cm-icon-btn sm" onClick={(e) => handleDuplicateProfile(p, e)} title="Nhân bản kết nối">
+                              <Copy size={12} />
+                            </button>
+                            {p.id !== 'demo' && (
+                              <button className="cm-icon-btn sm danger" onClick={(e) => handleDeleteProfile(p.id, e)} title="Xoá kết nối">
+                                <Trash2 size={12} />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="cm-side-foot">
+              <button
+                className={`cm-ghost-row ${isBrMode ? 'active' : ''}`}
+                onClick={() => setActiveType('backup_restore' as any)}
+              >
+                <HardDriveDownload size={14} />
+                <span>Sao lưu &amp; Phục hồi</span>
+              </button>
+            </div>
+          </aside>
+
+          {/* ————— Pane chính ————— */}
+          <main className="cm-main">
+            {isBrMode ? (
+              <header className="cm-main-head">
+                <button className="cm-icon-btn lg" title="Quay lại danh sách kết nối" onClick={() => setActiveType(((profiles.find(p => p.id === activeProfileId)?.type) || 'sqlite') as any)}>
+                  <ArrowLeft size={16} />
+                </button>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="cm-head-name">Sao lưu &amp; Phục hồi</div>
+                  <div className="cm-head-meta">Không cần mở kết nối trước — chỉ cần thông tin máy chủ.</div>
+                </div>
+              </header>
+            ) : hasProfile ? (
+              <>
+                <header className="cm-main-head">
+                  <div className="cm-avatar" style={{ background: activeMeta.color }}>
+                    <activeMeta.Icon size={22} />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="cm-head-name">
+                      <span className="cm-ellipsis">{profileNameInput || 'Kết nối mới'}</span>
+                    </div>
+                    <div className="cm-head-meta">
+                      <span>{activeMeta.label}</span>
+                      {profileGroup && <span className="cm-chip">{profileGroup}</span>}
+                      <span className={`cm-pill ${testStatus === 'ok' ? 'ok' : testStatus === 'fail' ? 'fail' : 'idle'}`}>
+                        <i />
+                        {testStatus === 'ok' ? 'Đã kiểm tra' : testStatus === 'fail' ? 'Kiểm tra thất bại' : 'Chưa kiểm tra'}
+                      </span>
+                    </div>
+                  </div>
+                  <button className="cm-uri" onClick={handleCopyUri} title="Sao chép connection string (không kèm mật khẩu)">
+                    <span>{connectionUri}</span>
+                    {uriCopied ? <Check size={12} style={{ flexShrink: 0, color: 'var(--st-ok)' }} /> : <Copy size={12} style={{ flexShrink: 0, opacity: 0.7 }} />}
+                  </button>
+                </header>
+
+                {isServerDb && (
+                  <nav className="cm-tabs">
+                    <button className={`cm-tab ${formTab === 'general' ? 'active' : ''}`} onClick={() => setFormTab('general')}>
+                      <Server size={13} /> Chung
+                      {authMethod === 'aws_iam' && <span className="cm-tab-dot" title="Đang dùng AWS IAM" />}
+                    </button>
+                    <button className={`cm-tab ${formTab === 'ssl' ? 'active' : ''}`} onClick={() => setFormTab('ssl')}>
+                      <ShieldCheck size={13} /> SSL
+                      {sslMode !== 'DISABLED' && <span className="cm-tab-dot" title={`SSL: ${sslMode}`} />}
+                    </button>
+                    <button className={`cm-tab ${formTab === 'ssh' ? 'active' : ''}`} onClick={() => setFormTab('ssh')}>
+                      <Network size={13} /> SSH Tunnel
+                      {sshEnabled && <span className="cm-tab-dot" title="SSH tunnel đang bật" />}
+                    </button>
+                  </nav>
+                )}
+              </>
+            ) : null}
+
+            <div className="cm-pane">
+              <div className="cm-pane-inner">
+                {errorMsg && (
+                  <div className="cm-alert err">
+                    <AlertTriangle size={15} style={{ flexShrink: 0 }} />
+                    <span style={{ flex: 1 }}>{errorMsg}</span>
+                    {/* Máy chủ bắt buộc SSL mà đang để DISABLED -> mở đường sửa ngay,
+                        vì lỗi trả về từ driver khá khó hiểu với người mới. */}
+                    {isServerDb && sslMode === 'DISABLED' && /ssl|no encryption|secure transport/i.test(errorMsg) && (
+                      <button
+                        className="cm-alert-btn"
+                        onClick={() => { setSslMode('REQUIRED'); setFormTab('ssl'); setErrorMsg(null); }}
+                      >
+                        Bật SSL
+                      </button>
+                    )}
+                    <button className="cm-icon-btn sm" onClick={() => setErrorMsg(null)} title="Đóng"><X size={12} /></button>
+                  </div>
+                )}
+                {successMsg && (
+                  <div className="cm-alert ok">
+                    <CheckCircle2 size={15} style={{ flexShrink: 0 }} />
+                    <span style={{ flex: 1 }}>{successMsg}</span>
+                    <button className="cm-icon-btn sm" onClick={() => setSuccessMsg(null)} title="Đóng"><X size={12} /></button>
+                  </div>
+                )}
+
+                {isBrMode
+                  ? renderBackupRestore()
+                  : !hasProfile
+                    ? (
+                      <div className="cm-blank">
+                        <Database size={34} style={{ opacity: 0.35 }} />
+                        <div className="cm-blank-title">Chưa chọn kết nối</div>
+                        <div className="cm-hint">Chọn một kết nối ở cột bên trái, hoặc tạo kết nối mới để bắt đầu.</div>
+                      </div>
+                    )
+                    : formTab === 'ssl' && isServerDb
+                      ? renderSslTab()
+                      : formTab === 'ssh' && isServerDb
+                        ? renderSshTab()
+                        : renderGeneralTab()}
+              </div>
+            </div>
+
+            <footer className="cm-foot">
+              {isBrMode ? (
+                <>
+                  <span className="cm-foot-msg cm-hint">
+                    {brAction === 'restore' && brFile && brParsedTables.length > 0
+                      ? `${brSelectedTables.length}/${brParsedTables.length} bảng được chọn`
+                      : ''}
+                  </span>
+                  <button
+                    className="cm-btn primary"
+                    onClick={handleBrSubmit}
+                    disabled={brLoading || (brAction === 'restore' && (!brFile || (brParsedTables.length > 0 && brSelectedTables.length === 0)))}
+                  >
+                    {brLoading
+                      ? <><LoadingSpinner size={13} /> {brAction === 'backup' ? 'Đang sao lưu...' : 'Đang phục hồi...'}</>
+                      : <>{brAction === 'backup' ? <><Download size={14} /> Bắt đầu sao lưu</> : <><Upload size={14} /> Bắt đầu phục hồi</>}</>}
+                  </button>
+                </>
+              ) : hasProfile ? (
+                <>
+                  <button className="cm-btn" onClick={handleSaveProfile}>
+                    <Save size={13} /> Lưu thay đổi
+                  </button>
+                  <span className="cm-foot-msg" />
+                  <button className="cm-btn" onClick={handleTestConnection} disabled={loading}>
+                    {loading ? <LoadingSpinner size={13} /> : <CheckCircle2 size={13} />} Kiểm tra
+                  </button>
+                  <button className="cm-btn primary" onClick={() => handleConnect(false)} disabled={loading}>
+                    {loading ? <><LoadingSpinner size={13} /> Đang kết nối...</> : <><Server size={14} /> Kết nối</>}
+                  </button>
+                </>
+              ) : null}
+            </footer>
+          </main>
+        </div>
+      </div>
+
+      {/* ————— Modal: nhập từ connection URL ————— */}
       {showImportUrlModal && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: 'rgba(0, 0, 0, 0.65)',
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          zIndex: 10000,
-          backdropFilter: 'blur(2px)'
-        }}>
-          <div style={{
-            background: 'var(--win-bg-card)',
-            border: '1px solid var(--win-border-strong, var(--win-border))',
-            borderRadius: '8px',
-            width: '420px',
-            boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
-            padding: '20px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '16px'
-          }} onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ margin: 0, fontSize: '15px', color: 'var(--win-text-primary)' }}>Import Connection URL</h3>
-            <p style={{ margin: 0, fontSize: '11.5px', color: 'var(--win-text-secondary)', lineHeight: '1.4' }}>
-              Dán đường dẫn kết nối URL của bạn vào ô dưới đây để tự động nhập cấu hình.
-            </p>
-            <div className="form-group" style={{ margin: 0 }}>
+        <div className="cm-modal-backdrop">
+          <div className="cm-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="cm-modal-head">
+              <Link size={16} style={{ color: 'var(--win-accent)' }} />
+              <h3>Nhập từ connection URL</h3>
+              <button className="cm-icon-btn" onClick={() => { setShowImportUrlModal(false); setImportUrlInput(''); }} title="Đóng"><X size={14} /></button>
+            </div>
+            <div className="form-group">
               <label>Connection URL</label>
               <input
                 type="text"
                 className="form-input"
                 value={importUrlInput}
                 onChange={(e) => setImportUrlInput(e.target.value)}
-                placeholder="postgresql://user:password@host:port/database"
-                style={{ width: '100%', boxSizing: 'border-box' }}
+                placeholder="postgresql://user:password@host:5432/database"
+                onKeyDown={(e) => { if (e.key === 'Enter' && importUrlInput.trim()) handleImportUrlSubmit(); }}
                 autoFocus
               />
+              <span className="cm-hint">Hỗ trợ <code>postgres://</code>, <code>postgresql://</code>, <code>mysql://</code> và <code>sqlite://</code>.</span>
             </div>
-            <div style={{ fontSize: '10.5px', color: 'var(--win-text-disabled)' }}>
-              Ví dụ: <code style={{ background: 'rgba(255,255,255,0.05)', padding: '2px 4px', borderRadius: '3px' }}>postgres://user:password@host:5432/database</code>
-            </div>
-            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '4px' }}>
-              <button
-                className="btn btn-secondary"
-                onClick={() => {
-                  setShowImportUrlModal(false);
-                  setImportUrlInput('');
-                }}
-              >
-                Hủy (Cancel)
-              </button>
-              <button
-                className="btn btn-primary"
-                onClick={handleImportUrlSubmit}
-                disabled={!importUrlInput.trim()}
-                style={{ background: '#2ecc71', color: '#fff', border: 'none', fontWeight: 600 }}
-              >
-                Nhập (Import)
-              </button>
+            <div className="cm-modal-foot">
+              <button className="cm-btn" onClick={() => { setShowImportUrlModal(false); setImportUrlInput(''); }}>Huỷ</button>
+              <button className="cm-btn primary" onClick={handleImportUrlSubmit} disabled={!importUrlInput.trim()}>Nhập</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Context Menu for Connections & Groups */}
+      {/* ————— Context menu cho kết nối / nhóm ————— */}
       {contextMenu && (
         <>
           <div style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={() => setContextMenu(null)} />
-          <div style={{
-            position: 'fixed',
-            top: contextMenu.y,
-            left: contextMenu.x,
-            width: 'max-content',
-            minWidth: '220px',
-            background: 'var(--win-bg-card, #2d3139)',
-            border: '1px solid var(--win-border-strong, #383b44)',
-            borderRadius: '6px',
-            boxShadow: '0 12px 36px rgba(0,0,0,0.45)',
-            zIndex: 9999,
-            padding: '4px 0',
-            boxSizing: 'border-box'
-          }}>
+          <div className="cm-ctx" style={{ top: contextMenu.y, left: contextMenu.x }}>
             {contextMenu.scope === 'single' && contextMenu.profile && (
-              <button
-                className="context-menu-item"
-                onClick={() => { setTerminalProfile(contextMenu.profile!); setContextMenu(null); }}
-              >
-                <TerminalSquare size={13} style={{ flexShrink: 0 }} />
-                <span>
-                  {contextMenu.profile.config?.sshEnabled && contextMenu.profile.config?.sshHost
-                    ? 'Mở SSH Terminal'
-                    : 'Mở Terminal (local)'}
-                </span>
-              </button>
-            )}
-            {contextMenu.scope === 'single' && contextMenu.profile && (
-              <button
-                className="context-menu-item"
-                onClick={() => openExportModal('single', undefined, contextMenu.profile)}
-              >
-                <Download size={13} style={{ flexShrink: 0 }} />
-                <span>Xuất kết nối này</span>
-              </button>
+              <>
+                <button className="context-menu-item" onClick={() => { handleToggleDefaultProfile(contextMenu.profile!.id); setContextMenu(null); }}>
+                  <Star size={13} style={{ fill: defaultProfileId === contextMenu.profile.id ? 'var(--st-warn)' : 'none', color: 'var(--st-warn)', flexShrink: 0 }} />
+                  <span>{defaultProfileId === contextMenu.profile.id ? 'Bỏ kết nối mặc định' : 'Đặt làm kết nối mặc định'}</span>
+                </button>
+                <button className="context-menu-item" onClick={() => { handleDuplicateProfile(contextMenu.profile!, { stopPropagation: () => { } } as any); setContextMenu(null); }}>
+                  <Copy size={13} style={{ flexShrink: 0 }} />
+                  <span>Nhân bản kết nối</span>
+                </button>
+                <button className="context-menu-item" onClick={() => { setTerminalProfile(contextMenu.profile!); setContextMenu(null); }}>
+                  <TerminalSquare size={13} style={{ flexShrink: 0 }} />
+                  <span>
+                    {contextMenu.profile.config?.sshEnabled && contextMenu.profile.config?.sshHost
+                      ? 'Mở SSH Terminal'
+                      : 'Mở Terminal (local)'}
+                  </span>
+                </button>
+                <div className="cm-pop-sep" />
+                <button className="context-menu-item" onClick={() => openExportModal('single', undefined, contextMenu.profile)}>
+                  <Download size={13} style={{ flexShrink: 0 }} />
+                  <span>Xuất kết nối này</span>
+                </button>
+              </>
             )}
             {(contextMenu.scope === 'group' || contextMenu.scope === 'single') && contextMenu.groupName && (
-              <button 
-                className="context-menu-item" 
-                onClick={() => openExportModal('group', contextMenu.groupName)}
-              >
+              <button className="context-menu-item" onClick={() => openExportModal('group', contextMenu.groupName)}>
                 <Download size={13} style={{ flexShrink: 0 }} />
                 <span>Xuất nhóm "{contextMenu.groupName}"</span>
               </button>
             )}
-            <button 
-              className="context-menu-item" 
-              onClick={() => openExportModal('all')}
-            >
+            <button className="context-menu-item" onClick={() => openExportModal('all')}>
               <Download size={13} style={{ flexShrink: 0 }} />
               <span>Xuất tất cả kết nối</span>
             </button>
@@ -2356,103 +2527,67 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
         />
       )}
 
-      {/* Export Connections Options Modal */}
+      {/* ————— Modal: tuỳ chọn xuất kết nối ————— */}
       {showExportModal && (
-        <div style={{
-          position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.65)',
-          display: 'flex', justifyContent: 'center', alignItems: 'center',
-          zIndex: 10000, backdropFilter: 'blur(2px)'
-        }}>
-          <div style={{
-            background: 'var(--win-bg-card)', border: '1px solid var(--win-border-strong, var(--win-border))',
-            borderRadius: '8px', width: '420px', boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
-            padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px'
-          }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Download size={18} style={{ color: 'var(--win-accent)' }} />
-              <h3 style={{ margin: 0, fontSize: '15px', color: 'var(--win-text-primary)' }}>
-                {exportScope === 'group' ? `Xuất nhóm kết nối: "${exportGroupTarget}"` :
-                 exportScope === 'single' ? `Xuất kết nối: "${exportSingleProfile?.name}"` :
-                 'Xuất tất cả kết nối (Export All)'}
+        <div className="cm-modal-backdrop">
+          <div className="cm-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="cm-modal-head">
+              <Download size={16} style={{ color: 'var(--win-accent)' }} />
+              <h3>
+                {exportScope === 'group' ? `Xuất nhóm "${exportGroupTarget}"` :
+                  exportScope === 'single' ? `Xuất "${exportSingleProfile?.name}"` :
+                    'Xuất tất cả kết nối'}
               </h3>
+              <button className="cm-icon-btn" onClick={() => setShowExportModal(false)} title="Đóng" disabled={exporting}><X size={14} /></button>
             </div>
-            
 
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', background: 'rgba(0,0,0,0.1)', padding: '12px', borderRadius: '6px', border: '1px solid var(--win-border)' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11.5px', color: 'var(--win-text-primary)', cursor: 'pointer' }}>
-                <input 
-                  type="checkbox" 
-                  checked={exportIncludePasswords} 
-                  onChange={(e) => setExportIncludePasswords(e.target.checked)} 
-                />
-                <span style={{ fontWeight: 600 }}>Kèm theo Mật khẩu Database / Server (Include Passwords)</span>
+            <div className="cm-subcard">
+              <label className="cm-check">
+                <input type="checkbox" checked={exportIncludePasswords} onChange={(e) => setExportIncludePasswords(e.target.checked)} />
+                <span style={{ fontWeight: 600 }}>Kèm mật khẩu database / SSH</span>
               </label>
-              <div style={{ fontSize: '10.5px', color: 'var(--win-text-disabled)', marginLeft: '24px' }}>
-                {exportIncludePasswords ? '⚠ Cảnh báo: Mật khẩu kết nối sẽ được lưu trong tệp xuất.' : '✓ An toàn: Mật khẩu kết nối sẽ bị xóa khỏi tệp xuất.'}
+              <div className={`cm-hint ${exportIncludePasswords ? 'warn' : ''}`} style={{ marginLeft: '24px', marginTop: '4px' }}>
+                {exportIncludePasswords
+                  ? '⚠ Mật khẩu sẽ nằm trong tệp xuất — nên đặt mật khẩu bảo vệ tệp bên dưới.'
+                  : '✓ Mật khẩu sẽ bị loại khỏi tệp xuất.'}
               </div>
-
-              <div className="form-group" style={{ margin: 0, marginTop: '4px' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px' }}>
-                  <Lock size={12} />
-                  <span>Mật khẩu bảo vệ tệp (Set File Password - Tùy chọn)</span>
+              <div className="form-group" style={{ marginTop: '14px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Lock size={11} /> Mật khẩu bảo vệ tệp (tuỳ chọn)
                 </label>
                 <input
                   type="password"
                   className="form-input"
                   value={exportFilePassword}
                   onChange={(e) => setExportFilePassword(e.target.value)}
-                  placeholder="Để trống nếu không muốn đặt mật khẩu"
-                  style={{ width: '100%', boxSizing: 'border-box', height: '28px', fontSize: '11px' }}
+                  placeholder="Để trống nếu không đặt mật khẩu"
                 />
               </div>
             </div>
 
-            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-              <button
-                className="btn btn-secondary"
-                onClick={() => setShowExportModal(false)}
-                disabled={exporting}
-              >
-                Hủy (Cancel)
-              </button>
-              <button
-                className="btn btn-primary"
-                onClick={handlePerformExport}
-                disabled={exporting}
-                style={{ background: 'var(--win-accent)', color: '#fff', border: 'none', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}
-              >
-                {exporting ? <LoadingSpinner size={12} /> : <Download size={12} />}
-                <span>Xuất (Export)</span>
+            <div className="cm-modal-foot">
+              <button className="cm-btn" onClick={() => setShowExportModal(false)} disabled={exporting}>Huỷ</button>
+              <button className="cm-btn primary" onClick={handlePerformExport} disabled={exporting}>
+                {exporting ? <LoadingSpinner size={12} /> : <Download size={13} />} Xuất
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Import Password Prompt Modal */}
+      {/* ————— Modal: nhập mật khẩu giải mã tệp ————— */}
       {showImportPasswordModal && (
-        <div style={{
-          position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.65)',
-          display: 'flex', justifyContent: 'center', alignItems: 'center',
-          zIndex: 10000, backdropFilter: 'blur(2px)'
-        }}>
-          <div style={{
-            background: 'var(--win-bg-card)', border: '1px solid var(--win-border-strong, var(--win-border))',
-            borderRadius: '8px', width: '380px', boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
-            padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px'
-          }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Lock size={18} style={{ color: '#f59e0b' }} />
-              <h3 style={{ margin: 0, fontSize: '15px', color: 'var(--win-text-primary)' }}>Tệp kết nối bị khóa</h3>
+        <div className="cm-modal-backdrop">
+          <div className="cm-modal sm" onClick={(e) => e.stopPropagation()}>
+            <div className="cm-modal-head">
+              <Lock size={16} style={{ color: 'var(--st-warn)' }} />
+              <h3>Tệp kết nối được mã hoá</h3>
             </div>
-            
-            <p style={{ margin: 0, fontSize: '11.5px', color: 'var(--win-text-secondary)', lineHeight: '1.4' }}>
-              Tệp kết nối này được mã hóa bằng mật khẩu. Vui lòng nhập mật khẩu giải mã để tiếp tục nhập kết nối.
+            <p className="cm-hint" style={{ margin: 0 }}>
+              Nhập mật khẩu đã dùng khi xuất tệp để tiếp tục nhập kết nối.
             </p>
-
-            <div className="form-group" style={{ margin: 0 }}>
-              <label>Mật khẩu tệp (File Password)</label>
+            <div className="form-group">
+              <label>Mật khẩu tệp</label>
               <input
                 type="password"
                 className="form-input"
@@ -2460,30 +2595,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                 onChange={(e) => setImportPasswordInput(e.target.value)}
                 placeholder="Nhập mật khẩu..."
                 onKeyDown={(e) => { if (e.key === 'Enter') handlePasswordDecryptSubmit(); }}
-                style={{ width: '100%', boxSizing: 'border-box' }}
                 autoFocus
               />
             </div>
-
-            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '4px' }}>
-              <button
-                className="btn btn-secondary"
-                onClick={() => {
-                  setShowImportPasswordModal(false);
-                  setPendingImportContent(null);
-                }}
-                disabled={importing}
-              >
-                Hủy (Cancel)
-              </button>
-              <button
-                className="btn btn-primary"
-                onClick={handlePasswordDecryptSubmit}
-                disabled={importing || !importPasswordInput.trim()}
-                style={{ background: 'var(--win-accent)', color: '#fff', border: 'none', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}
-              >
-                {importing ? <LoadingSpinner size={12} /> : <Key size={12} />}
-                <span>Giải mã & Nhập</span>
+            <div className="cm-modal-foot">
+              <button className="cm-btn" onClick={() => { setShowImportPasswordModal(false); setPendingImportContent(null); }} disabled={importing}>Huỷ</button>
+              <button className="cm-btn primary" onClick={handlePasswordDecryptSubmit} disabled={importing || !importPasswordInput.trim()}>
+                {importing ? <LoadingSpinner size={12} /> : <Key size={13} />} Giải mã &amp; nhập
               </button>
             </div>
           </div>

@@ -79,3 +79,4 @@ Thumbs.db
 .stylelintcache
 .oxlintcache
 .vite/
+coverage/

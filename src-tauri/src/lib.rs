@@ -1,4 +1,6 @@
 pub mod database;
+pub mod db_stats;
+pub mod redis_db;
 pub mod ssh_tunnel;
 pub mod ssh_terminal;
 pub mod local_terminal;
@@ -8,7 +10,6 @@ pub mod export;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU64};
-use tauri::menu::{Menu, MenuItem, Submenu};
 
 pub struct AppState {
     pub db_manager: Mutex<database::DatabaseManager>,
@@ -21,6 +22,8 @@ pub struct AppState {
     pub local_terminals: local_terminal::LocalTerminalMap,
     // Tăng mỗi lần connect/disconnect. Task làm mới token IAM dùng để biết kết nối còn "đời" của nó không.
     pub conn_generation: AtomicU64,
+    // Kết nối Redis (tách biệt khỏi DbConnection SQL).
+    pub redis: redis_db::RedisState,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -29,23 +32,48 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .setup(|app| {
-            let handle = app.handle();
-            let edit_menu = Submenu::new(
-                handle,
-                "Edit",
-                true,
-            )?;
-            let undo = MenuItem::with_id(handle, "undo", "Undo", true, Some("CmdOrCtrl+Z"))?;
-            let redo = MenuItem::with_id(handle, "redo", "Redo", true, Some("CmdOrCtrl+Shift+Z"))?;
-            let cut = MenuItem::with_id(handle, "cut", "Cut", true, Some("CmdOrCtrl+X"))?;
-            let copy = MenuItem::with_id(handle, "copy", "Copy", true, Some("CmdOrCtrl+C"))?;
-            let paste = MenuItem::with_id(handle, "paste", "Paste", true, Some("CmdOrCtrl+V"))?;
-            let select_all = MenuItem::with_id(handle, "selectall", "Select All", true, Some("CmdOrCtrl+A"))?;
-            edit_menu.append_items(&[&undo, &redo, &cut, &copy, &paste, &select_all])?;
-            
-            let menu = Menu::new(handle)?;
-            menu.append(&edit_menu)?;
-            app.set_menu(menu)?;
+            use tauri::Manager;
+            // Vật liệu kính của cửa sổ được áp DUY NHẤT ở đây, không dùng
+            // windowEffects trong tauri.conf.json — nếu khai cả hai thì effect bị
+            // áp hai lần. Chọn cách gọi thủ công vì Tauri xử lý windowEffects bằng
+            // cách lấy variant khớp đầu tiên rồi bỏ qua lỗi trả về, tức KHÔNG có
+            // fallback thật; còn ở đây mica lỗi thì còn tụt xuống blur được.
+            if let Some(window) = app.get_webview_window("main") {
+                #[cfg(target_os = "macos")]
+                let _ = window_vibrancy::apply_vibrancy(
+                    &window,
+                    window_vibrancy::NSVisualEffectMaterial::UnderWindow,
+                    // Active: giữ kính sáng đầy đủ cả khi cửa sổ mất focus (mặc định
+                    // macOS sẽ làm xám đi). 12.0: bo góc khớp với CSS
+                    // [data-os='macos'] #root vì decorations = false.
+                    Some(window_vibrancy::NSVisualEffectState::Active),
+                    Some(12.0),
+                );
+
+                #[cfg(target_os = "windows")]
+                {
+                    // dark = None -> Mica đi theo tuỳ chọn sáng/tối của hệ thống.
+                    // Trước đây truyền Some(true) là ép tối, nên theme sáng của app
+                    // vẫn nằm trên nền kính tối. Máy không hỗ trợ Mica (Win 10) thì
+                    // tụt xuống Blur.
+                    if window_vibrancy::apply_mica(&window, None).is_err() {
+                        let _ = window_vibrancy::apply_blur(&window, Some((18, 20, 26, 125)));
+                    }
+                }
+            }
+
+            // KHÔNG set_menu ở đây. Trước đây có một menu "Edit" tự dựng bằng
+            // MenuItem::with_id, nhưng nó vô dụng và còn gây hại:
+            //  - Không có on_menu_event nào -> bấm vào các mục không làm gì cả,
+            //    trong khi vẫn chiếm accelerator Ctrl+Z/X/C/V/A.
+            //  - Trên Windows với decorations = false, thanh menu native được vẽ
+            //    trong client area -> hiện chữ "Edit" mờ đè lên TitleBar tự làm.
+            //  - Trên macOS, Tauri đã tự gắn Menu::default() đầy đủ (App/File/Edit/
+            //    View/Window/Help) với các mục copy/paste hoạt động thật khi builder
+            //    không gọi .menu() — xem tauri/src/app.rs. set_menu() trong setup()
+            //    chạy sau nên đang GHI ĐÈ menu tốt đó bằng menu hỏng.
+            // Bỏ hẳn: macOS lấy lại menu mặc định, Windows/Linux thì WebView2/
+            // WebKitGTK vốn tự xử lý clipboard trong input.
 
             Ok(())
         })
@@ -60,6 +88,7 @@ pub fn run() {
             ssh_terminals: Mutex::new(HashMap::new()),
             local_terminals: Mutex::new(HashMap::new()),
             conn_generation: AtomicU64::new(0),
+            redis: redis_db::RedisState::new(),
         })
         .invoke_handler(tauri::generate_handler![
             database::connect_db,
@@ -105,7 +134,23 @@ pub fn run() {
             database::get_db_charsets,
             database::get_database_objects,
             database::get_object_definition,
-            database::open_url
+            database::open_url,
+            database::set_app_window_size,
+            db_stats::get_database_stats,
+            db_stats::get_exact_table_row_count,
+            redis_db::redis_connect,
+            redis_db::redis_disconnect,
+            redis_db::redis_select_db,
+            redis_db::redis_scan_keys,
+            redis_db::redis_scan_stream,
+            redis_db::redis_get_key,
+            redis_db::redis_set_key,
+            redis_db::redis_delete_keys,
+            redis_db::redis_set_ttl,
+            redis_db::redis_rename_key,
+            redis_db::redis_flush_db,
+            redis_db::redis_info,
+            redis_db::redis_execute_cmd
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

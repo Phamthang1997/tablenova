@@ -2,11 +2,12 @@ import { invoke, Channel } from '@tauri-apps/api/core';
 
 // Message do backend đẩy qua Channel khi stream kết quả SQL (execute_query_stream).
 export interface QueryStreamMessage {
-  type: 'columns' | 'rows' | 'done' | 'error';
+  type: 'columns' | 'rows' | 'affected' | 'done' | 'error';
   stmtIndex?: number;
   query?: string;
   columns?: string[];
   rows?: any[];
+  affected?: number;
   stmtCount?: number;
   cancelled?: boolean;
   message?: string;
@@ -20,13 +21,14 @@ export interface SshTerminalMessage {
 }
 
 export interface DbConnectionConfig {
-  type: 'sqlite' | 'postgres' | 'mysql';
+  type: 'sqlite' | 'postgres' | 'mysql' | 'redis';
   sqlitePath?: string;
   host?: string;
   port?: number;
   user?: string;
   password?: string;
   database?: string;
+  dbIndex?: number; // Redis: chỉ số database 0-15
   sshEnabled?: boolean;
   sshHost?: string;
   sshPort?: number;
@@ -79,8 +81,46 @@ export interface GridChange {
   newData?: any;
 }
 
+// ---- Redis types ----
+export interface RedisKeyItem {
+  key: string;
+  type: string; // string | hash | list | set | zset | stream
+  ttl: number; // -1 = không hết hạn, -2 = không tồn tại
+}
+
+export interface RedisValueDetail {
+  success: boolean;
+  key: string;
+  type: string;
+  ttl: number;
+  memory: number | null;
+  value: any; // shape tùy kind (xem redis_get_key backend)
+  message?: string;
+}
+
 export const dbHelper = {
   async connect(config: DbConnectionConfig): Promise<{ success: boolean; message: string; database?: string }> {
+    // Redis đi qua bộ command redis_* riêng (không dùng connect_db của SQL).
+    if (config.type === 'redis') {
+      try {
+        const res: any = await invoke('redis_connect', {
+          config: {
+            host: config.host,
+            port: config.port,
+            user: config.user,
+            password: config.password,
+            dbIndex: config.dbIndex ?? 0,
+            sslEnabled: config.sslEnabled,
+          },
+        });
+        if (res.success) {
+          return { success: true, message: 'Kết nối Redis thành công', database: `db${res.dbIndex ?? config.dbIndex ?? 0}` };
+        }
+        return { success: false, message: res.message || 'Lỗi kết nối Redis' };
+      } catch (err: any) {
+        return { success: false, message: `Không thể kết nối Redis: ${err}` };
+      }
+    }
     try {
       const mappedConfig = {
         dbType: config.type,
@@ -215,9 +255,9 @@ export const dbHelper = {
     }
   },
 
-  async executeQuery(sql: string): Promise<{ success: boolean; data?: any[]; columns?: string[]; affectedRows?: number; executionTime?: number; error?: string; results?: any[] }> {
+  async executeQuery(sql: string, params?: any[]): Promise<{ success: boolean; data?: any[]; columns?: string[]; affectedRows?: number; executionTime?: number; error?: string; results?: any[] }> {
     try {
-      const res: any = await invoke('execute_query', { sql });
+      const res: any = await invoke('execute_query', { sql, params: params ?? null });
       if (res.success && res.results && res.results.length > 0) {
         return {
           success: true,
@@ -254,11 +294,14 @@ export const dbHelper = {
   async executeQueryStream(
     sql: string,
     queryId: string,
-    onMessage: (msg: QueryStreamMessage) => void
+    onMessage: (msg: QueryStreamMessage) => void,
+    params?: any[]
   ): Promise<void> {
     const channel = new Channel<QueryStreamMessage>();
     channel.onmessage = onMessage;
-    await invoke('execute_query_stream', { sql, queryId, channel });
+    // params: mảng giá trị đã ép kiểu (number/bool/null/string) để backend bind ở tầng driver
+    // (parameterized query, chống SQL injection). Bỏ qua nếu không dùng Tham số Truy vấn.
+    await invoke('execute_query_stream', { sql, queryId, channel, params: params ?? null });
   },
 
   // Yêu cầu dừng một truy vấn đang stream. Bỏ qua nếu queryId không còn chạy.
@@ -361,50 +404,64 @@ export const dbHelper = {
 
   // Dò đường dẫn file log của DB server bằng cách hỏi chính DB (chạy trên kết nối đang mở).
   // Trả về danh sách {label, path}. Rỗng nếu DB ghi log ra stderr/syslog/TABLE (không có file).
-  async detectLogPaths(dbType: 'sqlite' | 'postgres' | 'mysql'): Promise<{ label: string; path: string }[]> {
+  // Dò đường dẫn file log của DB server.
+  // Trả về cả `error` chứ KHÔNG nuốt lỗi: trước đây try/catch trả về mảng rỗng nên
+  // mọi thất bại (mất kết nối, thiếu quyền, driver không hỗ trợ) đều hiện ra y như
+  // "không có file log" — không thể biết vì sao tính năng không chạy.
+  // Mỗi dialect chỉ dùng MỘT câu lệnh, không dựa vào multi-statement của driver.
+  async detectLogPaths(
+    dbType: 'sqlite' | 'postgres' | 'mysql' | 'redis'
+  ): Promise<{ paths: { label: string; path: string }[]; error?: string }> {
     const isAbs = (s: string) => /^([/~]|[A-Za-z]:[\\/])/.test(s);
-    const out: { label: string; path: string }[] = [];
+    const paths: { label: string; path: string }[] = [];
+    const pick = (row: any, key: string) =>
+      String(row?.[key] ?? row?.[key.toLowerCase()] ?? '').trim();
+
     try {
       if (dbType === 'mysql') {
-        const vars = ['log_error', 'slow_query_log_file', 'general_log_file', 'datadir'];
-        const res = await this.executeQueryMulti(vars.map(v => `SHOW VARIABLES LIKE '${v}'`).join('; '));
-        res.results.forEach((r: { columns: string[]; data: any[] }, i: number) => {
-          const row = r.data && r.data[0];
-          const val = row ? String((row as any).Value ?? (row as any).value ?? Object.values(row)[1] ?? '') : '';
-          if (val && val.trim() && val.toLowerCase() !== 'stderr') {
-            out.push({ label: vars[i], path: val.trim() });
-          }
-        });
-      } else if (dbType === 'postgres') {
-        const res = await this.executeQueryMulti(
-          'SELECT pg_current_logfile() AS f; SHOW data_directory; SHOW log_directory; SHOW log_filename;'
+        const res = await this.executeQuery(
+          "SHOW VARIABLES WHERE Variable_name IN ('log_error','slow_query_log_file','general_log_file','datadir')"
         );
-        const cell = (idx: number) => {
-          const r = res.results[idx];
-          const row = r && r.data && r.data[0];
-          return row ? String(Object.values(row)[0] ?? '') : '';
-        };
-        const cur = cell(0);
-        const dataDir = cell(1);
-        const logDir = cell(2);
-        if (cur && cur.trim()) {
-          out.push({ label: 'current_logfile', path: isAbs(cur) ? cur : `${dataDir}/${cur}` });
+        if (!res.success) return { paths, error: res.error || 'Không đọc được SHOW VARIABLES' };
+        for (const row of res.data || []) {
+          const name = pick(row, 'Variable_name');
+          const val = pick(row, 'Value');
+          // MySQL trả 'stderr' khi log không ra file -> không có gì để tail
+          if (name && val && val.toLowerCase() !== 'stderr') {
+            paths.push({ label: name, path: val });
+          }
         }
-        if (logDir && logDir.trim()) {
-          out.push({ label: 'log_directory', path: isAbs(logDir) ? logDir : `${dataDir}/${logDir}` });
+      } else if (dbType === 'postgres') {
+        const res = await this.executeQuery(
+          `SELECT 'current_logfile' AS name, pg_current_logfile() AS setting
+           UNION ALL
+           SELECT name, setting FROM pg_settings
+           WHERE name IN ('data_directory','log_directory','log_filename')`
+        );
+        if (!res.success) return { paths, error: res.error || 'Không đọc được pg_settings' };
+        const map: Record<string, string> = {};
+        for (const row of res.data || []) {
+          map[pick(row, 'name')] = pick(row, 'setting');
         }
+        const dataDir = map['data_directory'] || '';
+        const cur = map['current_logfile'];
+        const logDir = map['log_directory'];
+        if (cur) paths.push({ label: 'current_logfile', path: isAbs(cur) ? cur : `${dataDir}/${cur}` });
+        if (logDir) paths.push({ label: 'log_directory', path: isAbs(logDir) ? logDir : `${dataDir}/${logDir}` });
+      } else {
+        return { paths, error: `${dbType} không có log file phía server để dò.` };
       }
-    } catch {
-      /* không dò được -> trả rỗng */
+    } catch (e: any) {
+      return { paths, error: String(e?.message || e) };
     }
-    return out;
+    return { paths };
   },
 
   // Bật ghi log ở phía DB server (chạy trên kết nối hiện tại). Cần quyền cao (SUPER/superuser).
   // kind: mysql 'general'|'slow'; postgres 'statements'|'collector'.
   // needsRestart = true nghĩa là phải khởi động lại server thủ công thì mới có tác dụng.
   async enableLogging(
-    dbType: 'sqlite' | 'postgres' | 'mysql',
+    dbType: 'sqlite' | 'postgres' | 'mysql' | 'redis',
     kind: string
   ): Promise<{ success: boolean; message: string; needsRestart: boolean }> {
     let sql = '';
@@ -422,7 +479,7 @@ export const dbHelper = {
     return { success: res.success, message: res.error || '', needsRestart };
   },
 
-  async disableLogging(dbType: 'sqlite' | 'postgres' | 'mysql', kind: string): Promise<{ success: boolean; message: string }> {
+  async disableLogging(dbType: 'sqlite' | 'postgres' | 'mysql' | 'redis', kind: string): Promise<{ success: boolean; message: string }> {
     let sql = '';
     if (dbType === 'mysql') {
       sql = kind === 'general' ? "SET GLOBAL general_log='OFF';" : "SET GLOBAL slow_query_log='OFF';";
@@ -708,5 +765,151 @@ export const dbHelper = {
     } catch (err) {
       console.error('Failed to open url:', err);
     }
+  },
+
+  // ---- Redis ----
+  async redisDisconnect(): Promise<void> {
+    try { await invoke('redis_disconnect'); } catch { /* bỏ qua */ }
+  },
+
+  async redisSelectDb(index: number): Promise<{ success: boolean; dbIndex?: number; error?: string }> {
+    try {
+      const res: any = await invoke('redis_select_db', { index });
+      return { success: !!res.success, dbIndex: res.dbIndex };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  async redisScanKeys(
+    pattern: string,
+    cursor: number,
+    count: number,
+    typeFilter?: string
+  ): Promise<{ success: boolean; cursor: number; keys: RedisKeyItem[]; error?: string }> {
+    try {
+      const res: any = await invoke('redis_scan_keys', { pattern, cursor, count, typeFilter: typeFilter || null });
+      return { success: !!res.success, cursor: res.cursor ?? 0, keys: res.keys || [] };
+    } catch (err: any) {
+      return { success: false, cursor: 0, keys: [], error: err.toString() };
+    }
+  },
+
+  // Stream danh sách key: nhận batch qua Channel. Message: {type:'keys',keys[]} | {type:'done',total,cancelled} | {type:'error',message}.
+  // Dừng bằng cancelQuery(queryId).
+  async redisScanStream(pattern: string, count: number, queryId: string, onMessage: (msg: any) => void): Promise<void> {
+    const channel = new Channel<any>();
+    channel.onmessage = onMessage;
+    await invoke('redis_scan_stream', { pattern, count, queryId, channel });
+  },
+
+  async redisGetKey(key: string): Promise<RedisValueDetail> {
+    try {
+      const res: any = await invoke('redis_get_key', { key });
+      return res as RedisValueDetail;
+    } catch (err: any) {
+      return { success: false, key, type: '', ttl: -1, memory: null, value: null, message: err.toString() };
+    }
+  },
+
+  async redisSetKey(payload: any): Promise<{ success: boolean; error?: string }> {
+    try {
+      const res: any = await invoke('redis_set_key', { payload });
+      return { success: !!res.success, error: res.message };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  async redisDeleteKeys(keys: string[]): Promise<{ success: boolean; deleted?: number; error?: string }> {
+    try {
+      const res: any = await invoke('redis_delete_keys', { keys });
+      return { success: !!res.success, deleted: res.deleted };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  async redisSetTtl(key: string, ttl: number): Promise<{ success: boolean; error?: string }> {
+    try {
+      const res: any = await invoke('redis_set_ttl', { key, ttl });
+      return { success: !!res.success };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  async redisRenameKey(oldKey: string, newKey: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const res: any = await invoke('redis_rename_key', { oldKey, newKey });
+      return { success: !!res.success };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  async redisFlushDb(): Promise<{ success: boolean; error?: string }> {
+    try {
+      const res: any = await invoke('redis_flush_db');
+      return { success: !!res.success };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  async redisInfo(): Promise<{ success: boolean; info?: any; raw?: string; error?: string }> {
+    try {
+      const res: any = await invoke('redis_info');
+      return { success: !!res.success, info: res.info, raw: res.raw };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  async redisExecuteCmd(command: string): Promise<{ success: boolean; result?: any; error?: string }> {
+    try {
+      const res: any = await invoke('redis_execute_cmd', { command });
+      return { success: !!res.success, result: res.result, error: res.message };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  async getDatabaseStats(): Promise<{ success: boolean; stats?: DatabaseStats; error?: string }> {
+    try {
+      const res: any = await invoke('get_database_stats');
+      return { success: true, stats: res };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  async getExactTableRowCount(tableName: string): Promise<{ success: boolean; exact_rows?: number; error?: string }> {
+    try {
+      const res: any = await invoke('get_exact_table_row_count', { tableName });
+      return { success: true, exact_rows: res.exact_rows };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
   }
 };
+
+export interface TableStatItem {
+  table_name: string;
+  rows: number;
+  is_exact: boolean;
+  data_size_bytes: number | null;
+  index_size_bytes: number | null;
+  total_size_bytes: number | null;
+  engine: string;
+  collation: string | null;
+}
+
+export interface DatabaseStats {
+  db_name: string;
+  db_type: string;
+  total_size_bytes: number;
+  total_tables: number;
+  total_rows: number;
+  tables: TableStatItem[];
+}

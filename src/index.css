@@ -5,72 +5,85 @@
   box-sizing: border-box;
 }
 
-:root {
-  /* TablePlus Dark Theme (Default) */
-  --win-bg-sidebar: #191b1d;   /* Left sidebar */
-  --win-bg-window: #22252a;    /* Main workspace */
-  --win-bg-tab-bar: #141618;   /* Tab bar background */
-  --win-bg-card: #2d3139;      /* Popups and connection cards */
-  --win-bg-hover: rgba(255, 255, 255, 0.04);
-  --win-bg-active: #2f343f;    /* Active table list items */
+:root,
+[data-theme='dark'] {
+  /* Liquid Glass Dark Theme (Default) */
+  --win-bg-sidebar: rgba(18, 20, 26, 0.70);
+  --win-bg-window: rgba(16, 18, 24, 0.60);
+  --win-bg-tab-bar: rgba(12, 14, 18, 0.75);
+  --win-bg-card: rgba(28, 32, 42, 0.82);
+  --win-bg-hover: rgba(255, 255, 255, 0.10);
+  --win-bg-active: rgba(255, 255, 255, 0.16);
   
-  /* TablePlus Flat Accent Colors */
-  --win-accent: #4d8bf4;       /* TablePlus Blue */
-  --win-accent-secondary: #3b7ad6;
-  --win-accent-glow: rgba(77, 139, 244, 0.15);
+  --win-accent: #60a5fa;
+  --win-accent-secondary: #3b82f6;
+  --win-accent-glow: rgba(96, 165, 250, 0.35);
   
-  /* Text styling */
-  --win-text-primary: #e2e8f0;
-  --win-text-secondary: #94a3b8;
-  --win-text-disabled: #475569;
+  --win-text-primary: #f8fafc;
+  --win-text-secondary: #cbd5e1;
+  --win-text-disabled: #64748b;
   
-  /* Clean Flat Borders */
-  --win-border: #2a2c33;
-  --win-border-strong: #383b44;
-  
+  --win-border: rgba(255, 255, 255, 0.12);
+  --win-border-strong: rgba(255, 255, 255, 0.22);
+
   --win-font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   --win-font-mono: 'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace;
-  
-  /* Buttons custom variables */
-  --win-bg-btn-secondary: #2d3139;
-  --win-border-btn-secondary: #383b44;
-  --win-text-btn-secondary: #e2e8f0;
-  --win-bg-btn-secondary-hover: #363a44;
 
-  /* Subtle TablePlus Grid indicators */
-  --win-status-added: rgba(16, 185, 129, 0.06);
+  --win-bg-btn-secondary: rgba(255, 255, 255, 0.10);
+  --win-border-btn-secondary: rgba(255, 255, 255, 0.20);
+  --win-text-btn-secondary: #f8fafc;
+  --win-bg-btn-secondary-hover: rgba(255, 255, 255, 0.18);
+
+  --win-status-added: rgba(16, 185, 129, 0.12);
   --win-status-added-border: #10b981;
-  --win-status-modified: rgba(245, 158, 11, 0.06);
+  --win-status-modified: rgba(245, 158, 11, 0.12);
   --win-status-modified-border: #f59e0b;
-  --win-status-deleted: rgba(239, 68, 68, 0.04);
+  --win-status-deleted: rgba(239, 68, 68, 0.10);
   --win-status-deleted-border: #ef4444;
 }
 
 [data-theme='light'] {
-  /* TablePlus Light Theme exact colors */
-  --win-bg-sidebar: #f6f6f6;
-  --win-bg-window: #ffffff;
-  --win-bg-tab-bar: #ececec;
-  --win-bg-card: #ffffff;
-  --win-bg-hover: rgba(0, 0, 0, 0.03);
-  --win-bg-active: #e0e0e0;
+  /* Liquid Glass Light Theme */
+  --win-bg-sidebar: rgba(245, 247, 250, 0.78);
+  --win-bg-window: rgba(255, 255, 255, 0.65);
+  --win-bg-tab-bar: rgba(235, 238, 243, 0.82);
+  --win-bg-card: rgba(255, 255, 255, 0.88);
+  --win-bg-hover: rgba(0, 0, 0, 0.05);
+  --win-bg-active: rgba(0, 0, 0, 0.10);
   
-  --win-accent: #4d8bf4; /* Blue accent is same as TablePlus */
-  --win-accent-secondary: #3b7ad6;
-  --win-accent-glow: rgba(77, 139, 244, 0.15);
+  --win-accent: #2563eb;
+  --win-accent-secondary: #1d4ed8;
+  --win-accent-glow: rgba(37, 99, 235, 0.20);
   
-  --win-text-primary: #202020;
-  --win-text-secondary: #6b7280;
-  --win-text-disabled: #9ca3af;
+  --win-text-primary: #0f172a;
+  --win-text-secondary: #475569;
+  --win-text-disabled: #94a3b8;
   
-  --win-border: #e2e8f0; /* Ultra clean slate border */
-  --win-border-strong: #cbd5e1;
+  --win-border: rgba(0, 0, 0, 0.10);
+  --win-border-strong: rgba(0, 0, 0, 0.18);
 
-  /* Buttons custom variables - TablePlus Light */
-  --win-bg-btn-secondary: #ffffff;
-  --win-border-btn-secondary: #cbd5e1;
-  --win-text-btn-secondary: #202020;
-  --win-bg-btn-secondary-hover: #f3f3f3;
+  --win-bg-btn-secondary: rgba(255, 255, 255, 0.80);
+  --win-border-btn-secondary: rgba(0, 0, 0, 0.15);
+  --win-text-btn-secondary: #0f172a;
+  --win-bg-btn-secondary-hover: rgba(255, 255, 255, 0.95);
+
+  --win-status-added: rgba(16, 185, 129, 0.08);
+  --win-status-added-border: #10b981;
+  --win-status-modified: rgba(245, 158, 11, 0.08);
+  --win-status-modified-border: #f59e0b;
+  --win-status-deleted: rgba(239, 68, 68, 0.06);
+  --win-status-deleted-border: #ef4444;
+}
+
+body,
+.sidebar,
+.tab-bar,
+.modal-content,
+.card,
+.connection-card,
+.title-bar-dropdown {
+  backdrop-filter: blur(40px) saturate(210%);
+  -webkit-backdrop-filter: blur(40px) saturate(210%);
 }
 
 body {
@@ -114,39 +127,52 @@ body {
   overflow: hidden;
 }
 
-/* TitleBar matches Sidebar background */
+/* TitleBar: nền kính mỏng + hairline sáng ở cạnh trên cho khớp vật liệu cửa sổ */
 .title-bar {
-  height: 34px;
-  background: var(--win-bg-sidebar);
+  height: 36px;
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.34);
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0 16px;
+  padding: 0 8px 0 12px;
   border-bottom: 1px solid var(--win-border);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
   -webkit-app-region: drag;
   z-index: 1000;
+}
+
+[data-theme='dark'] .title-bar {
+  background: rgba(18, 22, 30, 0.42);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
 }
 
 .title-bar-left {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--win-text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  min-width: 0;
+}
+
+/* Chỉ brand mới giãn chữ. Trước đây uppercase + letter-spacing đặt trên cả
+   .title-bar-left nên "TableNova" bị hiển thị thành "TABLENOVA", và các nhãn
+   menu phải tự hủy bằng text-transform: none. */
+.title-bar-brand {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  color: var(--win-text-primary);
+  white-space: nowrap;
 }
 
 /* TitleBar Menu Bar styling */
 .title-bar-menu {
   display: flex;
   align-items: center;
-  gap: 2px;
-  margin-left: 16px;
+  gap: 1px;
+  margin-left: 14px;
   height: 100%;
   -webkit-app-region: no-drag;
-  text-transform: none;
 }
 
 .title-bar-menu-item-container {
@@ -157,65 +183,85 @@ body {
 }
 
 .title-bar-menu-btn {
-  height: 24px;
-  padding: 0 8px;
+  height: 26px;
+  padding: 0 10px;
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: 7px;
   color: var(--win-text-secondary);
   font-family: var(--win-font-sans);
   font-size: 12px;
   font-weight: 500;
+  white-space: nowrap;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.1s ease;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 
-.title-bar-menu-btn:hover,
-.title-bar-menu-btn.active {
-  background: var(--win-bg-hover);
+.title-bar-menu-btn:hover {
+  background: rgba(255, 255, 255, 0.45);
   color: var(--win-text-primary);
+}
+
+/* Menu đang mở: chip sáng nổi lên, cùng chất liệu với segmented control */
+.title-bar-menu-btn.active {
+  background: linear-gradient(rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.72));
+  color: var(--win-text-primary);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12), inset 0 1px 0 rgba(255, 255, 255, 1);
+}
+
+[data-theme='dark'] .title-bar-menu-btn:hover { background: rgba(255, 255, 255, 0.08); }
+[data-theme='dark'] .title-bar-menu-btn.active {
+  background: linear-gradient(rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.08));
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.20);
 }
 
 .title-bar-dropdown {
   position: absolute;
-  top: 30px;
+  top: 32px;
   left: 0;
   background: var(--win-bg-card);
   border: 1px solid var(--win-border-strong);
-  border-radius: 6px;
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.35);
-  padding: 4px 0;
-  min-width: 190px;
+  border-radius: 10px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  padding: 5px;
+  min-width: 232px;
   z-index: 10000;
   animation: contextMenuFadeIn 0.08s ease-out;
 }
 
 [data-theme='light'] .title-bar-dropdown {
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.85);
 }
 
 .title-bar-dropdown-item {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 6px 14px;
+  gap: 9px;
+  padding: 7px 9px;
+  border-radius: 7px;
   color: var(--win-text-primary);
   font-size: 12px;
   cursor: pointer;
   user-select: none;
   transition: background 0.1s ease;
   white-space: nowrap;
-  text-transform: none;
   font-weight: 400;
 }
+
+.title-bar-dropdown-icon { flex-shrink: 0; opacity: 0.7; }
+.title-bar-dropdown-label { flex: 1; }
+.title-bar-dropdown-sep { height: 1px; margin: 4px 6px; background: var(--win-border); }
 
 .title-bar-dropdown-item:hover {
   background: var(--win-bg-hover);
   color: var(--win-accent);
 }
+
+.title-bar-dropdown-item:hover .title-bar-dropdown-icon { opacity: 1; }
 
 .title-bar-dropdown-item.danger {
   color: #ef4444;
@@ -235,10 +281,45 @@ body {
 .title-bar-dropdown-shortcut {
   font-size: 10px;
   color: var(--win-text-secondary);
-  margin-left: 20px;
-  opacity: 0.8;
 }
 
+/* macOS Traffic Lights Window Controls */
+.mac-traffic-lights {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  -webkit-app-region: no-drag;
+}
+
+.mac-traffic-btn {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  transition: opacity 0.15s ease, filter 0.15s ease;
+  outline: none;
+}
+
+.mac-traffic-btn:hover {
+  filter: brightness(0.85);
+}
+
+.mac-close {
+  background-color: #ff5f56;
+  border: 0.5px solid rgba(0, 0, 0, 0.2);
+}
+
+.mac-minimize {
+  background-color: #ffbd2e;
+  border: 0.5px solid rgba(0, 0, 0, 0.2);
+}
+
+.mac-maximize {
+  background-color: #27c93f;
+  border: 0.5px solid rgba(0, 0, 0, 0.2);
+}
 
 .title-bar-logo {
   color: var(--win-accent);
@@ -248,12 +329,17 @@ body {
 
 .title-bar-right {
   display: flex;
+  align-items: center;
+  gap: 2px;
   -webkit-app-region: no-drag;
 }
 
+/* Nút điều khiển cửa sổ bo góc thay vì ô vuông cao hết thanh, cho khớp với các
+   nút bo tròn khác trên nền kính. */
 .title-bar-btn {
-  width: 44px;
-  height: 34px;
+  width: 30px;
+  height: 26px;
+  border-radius: 7px;
   display: flex;
   justify-content: center;
   align-items: center;
@@ -261,105 +347,157 @@ body {
   border: none;
   color: var(--win-text-secondary);
   cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 
 .title-bar-btn:hover {
-  background: var(--win-bg-hover);
+  background: rgba(255, 255, 255, 0.45);
   color: var(--win-text-primary);
 }
+
+[data-theme='dark'] .title-bar-btn:hover { background: rgba(255, 255, 255, 0.10); }
 
 .title-bar-btn.close:hover {
   background: #e81123 !important;
   color: #fff;
 }
 
-/* Connection Manager Dialog */
+@keyframes windowFade {
+  0% {
+    opacity: 0.15;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes workspaceZoomIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.92);
+    filter: blur(6px);
+  }
+  60% {
+    opacity: 0.96;
+    transform: scale(1.01);
+    filter: blur(0px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0px);
+  }
+}
+
+/* Connection Manager Full Page View (Option 1 - Start Workspace) */
 .connection-manager-container {
   display: flex;
-  justify-content: center;
-  align-items: center;
   height: 100%;
   width: 100%;
   background: var(--win-bg-window);
+  overflow: hidden;
+  animation: windowFade 0.2s ease-out;
+  transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.45s cubic-bezier(0.16, 1, 0.3, 1), filter 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.connection-manager-container.connecting-zoom-out {
+  transform: scale(1.05);
+  opacity: 0.25;
+  filter: blur(8px);
+}
+
+.workspace-container {
+  display: flex;
+  flex: 1;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  animation: workspaceZoomIn 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  transform-origin: center center;
 }
 
 .connection-card {
-  width: 740px;
-  background: var(--win-bg-card);
-  border: 1px solid var(--win-border-strong);
-  border-radius: 6px;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  background: var(--win-bg-window);
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
-.connection-header {
-  padding: 20px 24px;
-  border-bottom: 1px solid var(--win-border);
+/* Input with Embedded Lucide Icon */
+.input-icon-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
 }
 
-.connection-header h2 {
-  margin: 0 0 4px 0;
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--win-text-primary);
-}
-
-.connection-header p {
-  margin: 0;
-  font-size: 12px;
+.input-icon-wrapper .input-icon {
+  position: absolute;
+  left: 10px;
   color: var(--win-text-secondary);
+  pointer-events: none;
+  opacity: 0.75;
+  transition: color 0.15s ease;
+  z-index: 2;
 }
 
-.connection-body {
-  display: flex;
-  height: 440px;
+.input-icon-wrapper input {
+  padding-left: 32px !important;
+  width: 100%;
 }
 
-.connection-sidebar {
-  width: 170px;
-  border-right: 1px solid var(--win-border);
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  background: rgba(0, 0, 0, 0.1);
+.input-icon-wrapper input:focus ~ .input-icon,
+.input-icon-wrapper input:focus + .input-icon {
+  color: var(--win-accent) !important;
+  opacity: 1 !important;
 }
 
-.connection-type-btn {
-  padding: 8px 12px;
-  border-radius: 4px;
+/* Segmented control (Mật khẩu / AWS IAM, Sao lưu / Phục hồi...) */
+/* Track 3px padding + pill bo 6px = ngoài bo 9px, hai đường cong đồng tâm. */
+.cm-seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 9px;
+  border: 1px solid var(--win-border);
+  background: var(--win-bg-hover);
+  flex-shrink: 0;
+}
+
+.cm-seg button {
+  height: 24px;
+  padding: 0 12px;
   border: none;
+  border-radius: 6px;
   background: transparent;
   color: var(--win-text-secondary);
   font-family: var(--win-font-sans);
-  font-size: 13px;
-  text-align: left;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.connection-type-btn:hover {
-  background: var(--win-bg-hover);
-  color: var(--win-text-primary);
-}
-
-.connection-type-btn.active {
-  background: var(--win-bg-hover);
-  color: var(--win-accent);
+  font-size: 11.5px;
   font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 
-.connection-form-container {
-  flex: 1;
-  padding: 20px 24px;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
+.cm-seg button:hover:not(.on) { color: var(--win-text-primary); }
+
+/* Mục đang chọn nổi lên bằng pill sáng + đổ bóng mảnh (kiểu segmented control
+   của macOS) thay vì đổi chữ sang màu accent — dễ đọc và bớt rối hơn. */
+.cm-seg button.on {
+  background: var(--win-bg-card);
+  color: var(--win-text-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
+}
+
+[data-theme='light'] .cm-seg button.on {
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.10), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
 }
 
 .form-group {
@@ -374,24 +512,64 @@ body {
   font-weight: 600;
 }
 
-.form-input {
-  background: rgba(0, 0, 0, 0.15);
+.form-input,
+input[type="text"],
+input[type="number"],
+input[type="password"],
+select,
+textarea {
+  background: rgba(10, 12, 16, 0.55);
   border: 1px solid var(--win-border-strong);
-  border-radius: 4px;
+  border-radius: 6px;
   padding: 6px 10px;
   color: var(--win-text-primary);
   font-family: var(--win-font-sans);
   font-size: 13px;
   outline: none;
+  transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-[data-theme='light'] .form-input {
-  background: #ffffff;
-  border: 1px solid var(--win-border-strong);
+.form-input::placeholder,
+input::placeholder,
+textarea::placeholder {
+  color: var(--win-text-disabled);
+  opacity: 0.7;
 }
 
-.form-input:focus {
+.form-input:focus,
+input:focus,
+select:focus,
+textarea:focus {
   border-color: var(--win-accent);
+  box-shadow: 0 0 0 3px var(--win-accent-glow);
+  background: rgba(10, 12, 16, 0.75);
+}
+
+[data-theme='light'] .form-input,
+[data-theme='light'] input[type="text"],
+[data-theme='light'] input[type="number"],
+[data-theme='light'] input[type="password"],
+[data-theme='light'] select,
+[data-theme='light'] textarea {
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  color: #0f172a;
+}
+
+[data-theme='light'] .form-input::placeholder,
+[data-theme='light'] input::placeholder,
+[data-theme='light'] textarea::placeholder {
+  color: #64748b;
+  opacity: 0.75;
+}
+
+[data-theme='light'] .form-input:focus,
+[data-theme='light'] input:focus,
+[data-theme='light'] select:focus,
+[data-theme='light'] textarea:focus {
+  background: #ffffff;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.20);
 }
 
 .form-row {
@@ -406,92 +584,6 @@ body {
 select.form-input {
   cursor: pointer;
   padding: 6px 10px;
-}
-
-/* SSH Tunnel UI Enhancements */
-.ssh-tunnel-section {
-  margin-top: 10px;
-}
-
-.section-divider {
-  display: flex;
-  align-items: center;
-  margin: 16px 0;
-  text-align: center;
-}
-
-.section-divider::before,
-.section-divider::after {
-  content: "";
-  flex: 1;
-  border-bottom: 1px solid var(--win-border);
-}
-
-.section-divider span {
-  padding: 0 10px;
-  font-size: 10px;
-  font-weight: 700;
-  color: var(--win-text-secondary);
-  letter-spacing: 1px;
-}
-
-.ssh-toggle-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 12px;
-  background: rgba(0, 0, 0, 0.02);
-  border: 1px solid var(--win-border-strong);
-  border-radius: 6px;
-  margin-bottom: 14px;
-  transition: all 0.2s ease;
-}
-
-[data-theme='dark'] .ssh-toggle-row {
-  background: rgba(255, 255, 255, 0.01);
-}
-
-.ssh-toggle-row:hover {
-  border-color: var(--win-accent);
-  background: rgba(0, 0, 0, 0.04);
-}
-
-[data-theme='dark'] .ssh-toggle-row:hover {
-  background: rgba(255, 255, 255, 0.02);
-}
-
-.ssh-checkbox {
-  width: 15px;
-  height: 15px;
-  margin-top: 2px;
-  cursor: pointer;
-  accent-color: var(--win-accent);
-}
-
-.ssh-label {
-  display: flex;
-  flex-direction: column;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--win-text-primary);
-  cursor: pointer;
-  user-select: none;
-}
-
-.ssh-sublabel {
-  font-size: 11px;
-  color: var(--win-text-secondary);
-  font-weight: 400;
-  margin-top: 2px;
-}
-
-.connection-footer {
-  padding: 14px 24px;
-  border-top: 1px solid var(--win-border);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  background: rgba(0, 0, 0, 0.05);
 }
 
 /* TablePlus Styled Flat Buttons */
@@ -730,7 +822,7 @@ select.form-input {
 .tab-bar {
   height: 32px;
   background: var(--win-bg-tab-bar);
-  border-bottom: 1px solid var(--win-border);
+  border-bottom: none;
   display: flex;
   align-items: flex-end;
   padding: 0;
@@ -760,8 +852,8 @@ select.form-input {
   gap: 4px;
   padding: 0 6px;
   height: 100%;
-  border-bottom: 1px solid var(--win-border);
-  background: var(--win-bg-tab-bar);
+  border-bottom: none;
+  background: transparent;
   flex-shrink: 0;
 }
 
@@ -790,26 +882,36 @@ select.form-input {
   position: absolute;
   right: 8px;
   top: 34px;
-  width: 240px;
-  max-height: 320px;
-  background: var(--win-bg-card);
-  border: 1px solid var(--win-border-strong, var(--win-border));
-  border-radius: 4px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  width: 260px;
+  max-height: 360px;
+  background: rgba(26, 30, 40, 0.94) !important;
+  border: 1px solid rgba(255, 255, 255, 0.20) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55), 0 4px 16px rgba(0, 0, 0, 0.35) !important;
+  backdrop-filter: blur(40px) saturate(210%) !important;
+  -webkit-backdrop-filter: blur(40px) saturate(210%) !important;
   display: flex;
   flex-direction: column;
-  z-index: 9999;
+  z-index: 100000 !important;
+  animation: contextMenuFadeIn 0.12s ease-out;
+}
+
+[data-theme='light'] .tab-list-dropdown {
+  background: rgba(255, 255, 255, 0.96) !important;
+  border: 1px solid rgba(0, 0, 0, 0.16) !important;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.20), 0 4px 16px rgba(0, 0, 0, 0.08) !important;
+  color: #0f172a !important;
 }
 
 .tab-list-dropdown-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 8px 12px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--win-border);
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--win-text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--win-text-primary);
 }
 
 .tab-list-dropdown-header button {
@@ -837,22 +939,31 @@ select.form-input {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 12px;
+  padding: 8px 10px;
+  margin: 2px 6px;
+  border-radius: 6px;
   font-size: 12px;
-  color: var(--win-text-secondary);
+  font-weight: 500;
+  color: var(--win-text-primary);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.12s ease;
 }
 
 .tab-list-dropdown-item:hover {
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--win-text-primary);
+  background: var(--win-accent) !important;
+  color: #ffffff !important;
+}
+
+.tab-list-dropdown-item:hover svg,
+.tab-list-dropdown-item:hover .tab-list-dropdown-title,
+.tab-list-dropdown-item:hover .tab-list-dropdown-close {
+  color: #ffffff !important;
 }
 
 .tab-list-dropdown-item.active {
-  background: rgba(0, 102, 204, 0.15);
+  background: var(--win-bg-active);
   color: var(--win-accent);
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .tab-list-dropdown-title {
@@ -1981,6 +2092,16 @@ select.form-input {
   flex-shrink: 0;
 }
 
+/* Menu "Chạy" trong SqlEditor: span là nhãn văn bản (không phải icon 16px),
+   nên bỏ ràng buộc width:16px để nhãn không tràn/đè lên phím tắt. */
+.sql-run-menu .context-menu-item span {
+  width: auto;
+  text-align: left;
+  font-size: inherit;
+  flex: 1;
+  min-width: 0;
+}
+
 /* ─── Premium Database Table Icons & UI Styling ─── */
 .sidebar-item .icon-table {
   color: #3b82f6; /* Premium TablePlus Blue */
@@ -2247,6 +2368,2501 @@ select.form-input {
   color: var(--win-accent);
 }
 
+/* ─── Connection Manager Success Overlay & Loading Transition ─── */
+.connection-success-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(16, 18, 24, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  animation: connectionOverlayFadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+[data-theme='light'] .connection-success-overlay {
+  background: rgba(255, 255, 255, 0.85);
+}
+
+@keyframes connectionOverlayFadeIn {
+  from {
+    opacity: 0;
+    backdrop-filter: blur(0px);
+    -webkit-backdrop-filter: blur(0px);
+  }
+  to {
+    opacity: 1;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+}
+
+.connection-success-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 32px 48px;
+  background: var(--win-bg-card, rgba(28, 32, 42, 0.92));
+  border: 1px solid var(--win-border-strong, rgba(255, 255, 255, 0.22));
+  border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5), 0 0 30px rgba(16, 185, 129, 0.15);
+  text-align: center;
+  animation: connectionCardPop 0.38s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+}
+
+@keyframes connectionCardPop {
+  0% {
+    opacity: 0;
+    transform: scale(0.82) translateY(10px);
+    filter: blur(6px);
+  }
+  45% {
+    opacity: 1;
+    transform: scale(1.04);
+    filter: blur(0px);
+  }
+  100% {
+    opacity: 0.95;
+    transform: scale(1.12);
+    filter: blur(1px);
+  }
+}
+
+.connection-success-icon-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  margin-bottom: 4px;
+  box-shadow: 0 0 24px rgba(16, 185, 129, 0.25);
+}
+
+.connection-success-icon {
+  animation: pulseSuccessIcon 1.6s ease-in-out infinite;
+}
+
+@keyframes pulseSuccessIcon {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.08);
+  }
+}
+
+.connection-success-badge {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  color: #10b981;
+  background: var(--win-bg-card, #1c202a);
+  border-radius: 50%;
+  padding: 1px;
+}
+
+.connection-success-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--win-text-primary);
+  letter-spacing: -0.2px;
+}
+
+.connection-success-subtitle {
+  font-size: 12px;
+  color: var(--win-text-secondary);
+  max-width: 300px;
+  line-height: 1.5;
+}
+
+.connection-success-loader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--win-accent, #60a5fa);
+  font-weight: 500;
+  padding: 6px 16px;
+  background: rgba(96, 165, 250, 0.08);
+  border-radius: 20px;
+  border: 1px solid rgba(96, 165, 250, 0.18);
+}
 
 
+
+
+
+/* =====================================================================
+   Connection Manager — bố cục lại (sidebar + header profile + tab form)
+   Tham khảo cách sắp xếp của TablePlus / DataGrip: phần cấu hình nâng cao
+   (SSL, SSH) tách ra tab riêng để form chính luôn ngắn, không phải scroll.
+   ===================================================================== */
+.cm-shell {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ————— Sidebar ————— */
+.cm-side {
+  width: 272px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--win-border);
+  background: var(--win-bg-sidebar);
+}
+
+.cm-side-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 14px 12px 10px;
+}
+
+.cm-side-title {
+  flex: 1;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--win-text-secondary);
+}
+
+.cm-icon-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--win-text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.cm-icon-btn.sm { width: 21px; height: 21px; border-radius: 6px; }
+.cm-icon-btn.lg { width: 32px; height: 32px; border-radius: 9px; }
+.cm-icon-btn:hover { background: var(--win-bg-hover); color: var(--win-text-primary); }
+.cm-icon-btn.danger:hover { background: rgba(239, 68, 68, 0.16); color: #ef4444; }
+.cm-icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Nút tạo kết nối mới + menu chọn loại DB */
+.cm-new-wrap { position: relative; padding: 0 12px 10px; }
+
+.cm-new-btn {
+  width: 100%;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--win-border-strong);
+  background: var(--win-bg-btn-secondary);
+  color: var(--win-text-primary);
+  font-family: var(--win-font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.cm-new-btn:hover { background: var(--win-bg-btn-secondary-hover); }
+
+.cm-pop-backdrop { position: fixed; inset: 0; z-index: 40; }
+
+.cm-pop {
+  position: absolute;
+  z-index: 41;
+  top: calc(100% - 4px);
+  left: 12px;
+  right: 12px;
+  padding: 4px;
+  border-radius: 10px;
+  border: 1px solid var(--win-border-strong);
+  background: var(--win-bg-card);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.38);
+  backdrop-filter: blur(30px) saturate(180%);
+}
+
+.cm-pop-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--win-text-primary);
+  font-family: var(--win-font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+}
+.cm-pop-item:hover { background: var(--win-bg-hover); }
+
+.cm-pop-sep { height: 1px; margin: 4px 6px; background: var(--win-border); }
+
+/* Ô tìm kiếm */
+.cm-search {
+  margin: 0 12px 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 4px 0 9px;
+  border: 1px solid var(--win-border);
+  border-radius: 8px;
+  background: var(--win-bg-window);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.cm-search:focus-within { border-color: var(--win-accent); box-shadow: 0 0 0 3px var(--win-accent-glow); }
+.cm-search input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  /* Khung + focus ring do .cm-search (phần tử cha) vẽ, input phải phẳng hoàn toàn
+     — kể cả outline mặc định của trình duyệt. */
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+  font-size: 12px;
+  color: var(--win-text-primary);
+}
+
+/* Danh sách kết nối */
+.cm-list { flex: 1; overflow-y: auto; padding: 0 8px 10px; }
+
+.cm-empty {
+  padding: 30px 14px;
+  text-align: center;
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: var(--win-text-disabled);
+}
+
+.cm-group + .cm-group { margin-top: 4px; }
+
+.cm-group-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 6px 4px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-family: var(--win-font-sans);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+  color: var(--win-text-disabled);
+}
+.cm-group-head:hover { color: var(--win-text-secondary); }
+.cm-group-count { margin-left: auto; letter-spacing: 0; opacity: 0.8; }
+
+.cm-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  overflow: hidden;
+}
+.cm-item:hover { background: var(--win-bg-hover); }
+.cm-item.active { background: var(--win-bg-active); border-color: var(--win-border-strong); }
+.cm-item.active .cm-item-name { font-weight: 600; }
+
+.cm-badge {
+  width: 27px;
+  height: 27px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  color: #fff;
+}
+.cm-badge.sm { width: 22px; height: 22px; border-radius: 6px; font-size: 8px; }
+.cm-badge.ghost { background: var(--win-bg-hover); color: var(--win-text-secondary); }
+
+.cm-item-body { flex: 1; min-width: 0; }
+
+.cm-item-name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--win-text-primary);
+}
+
+.cm-item-sub {
+  margin-top: 1px;
+  font-size: 10.5px;
+  color: var(--win-text-disabled);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cm-ellipsis { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+.cm-item-actions { display: none; align-items: center; gap: 1px; flex-shrink: 0; }
+.cm-item:hover .cm-item-actions,
+.cm-item.active .cm-item-actions { display: flex; }
+
+/* Chiều cao dùng chung cho footer sidebar và footer pane phải, để đường kẻ trên
+   và nội dung hai bên thẳng đúng một hàng. Đổi ở đây là cả hai đổi theo. */
+.connection-manager-container { --cm-foot-h: 57px; }
+
+.cm-side-foot {
+  border-top: 1px solid var(--win-border);
+  min-height: var(--cm-foot-h);
+  padding: 0 8px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+}
+
+/* Cao bằng .cm-btn (32px) để căn giữa trùng với nút bên phải. */
+.cm-side-foot .cm-ghost-row {
+  height: 32px;
+  padding: 0 8px;
+}
+
+.cm-ghost-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--win-text-secondary);
+  font-family: var(--win-font-sans);
+  font-size: 11.5px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+.cm-ghost-row:hover { background: var(--win-bg-hover); color: var(--win-text-primary); }
+.cm-ghost-row.active { background: var(--win-bg-active); color: var(--win-accent); font-weight: 600; }
+
+/* ————— Pane chính ————— */
+.cm-main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+
+.cm-main-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 24px 15px;
+  border-bottom: 1px solid var(--win-border);
+  flex-shrink: 0;
+}
+
+.cm-avatar {
+  width: 42px;
+  height: 42px;
+  border-radius: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 800;
+  color: #fff;
+}
+
+.cm-head-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.2px;
+  color: var(--win-text-primary);
+}
+
+.cm-head-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--win-text-secondary);
+}
+
+.cm-chip {
+  padding: 1.5px 7px;
+  border-radius: 5px;
+  background: var(--win-bg-hover);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--win-text-secondary);
+}
+
+.cm-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2.5px 9px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.cm-pill i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.cm-pill.ok { background: rgba(16, 185, 129, 0.14); color: #10b981; }
+.cm-pill.fail { background: rgba(239, 68, 68, 0.14); color: #ef4444; }
+.cm-pill.idle { background: rgba(148, 163, 184, 0.16); color: var(--win-text-secondary); }
+
+.cm-uri {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 320px;
+  flex-shrink: 1;
+  min-width: 0;
+  padding: 6px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--win-border);
+  background: var(--win-bg-window);
+  color: var(--win-text-secondary);
+  font-family: var(--win-font-mono);
+  font-size: 10.5px;
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease;
+}
+.cm-uri:hover { border-color: var(--win-border-strong); color: var(--win-text-primary); }
+.cm-uri span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Tab (Chung / SSL / SSH) */
+.cm-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--win-border);
+  flex-shrink: 0;
+}
+
+.cm-tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 14px;
+  margin-bottom: -1px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--win-text-secondary);
+  font-family: var(--win-font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.12s ease;
+}
+.cm-tab:hover { color: var(--win-text-primary); }
+.cm-tab.active { color: var(--win-accent); border-bottom-color: var(--win-accent); }
+.cm-tab-dot { width: 6px; height: 6px; border-radius: 50%; background: #10b981; }
+
+/* Vùng form */
+.cm-pane { flex: 1; overflow-y: auto; padding: 22px 24px 30px; }
+.cm-pane-inner { max-width: 860px; }
+
+.cm-section + .cm-section {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--win-border);
+}
+
+.cm-section-title { font-size: 12.5px; font-weight: 700; color: var(--win-text-primary); }
+.cm-section-desc { margin-top: 3px; font-size: 11.5px; line-height: 1.5; color: var(--win-text-secondary); }
+
+.cm-fields { display: flex; flex-direction: column; gap: 14px; margin-top: 14px; }
+
+.cm-grid { display: grid; gap: 12px; align-items: end; }
+.cm-grid.two { grid-template-columns: 1fr 1fr; }
+.cm-grid.three { grid-template-columns: 1fr 1fr 1fr; }
+.cm-grid.host { grid-template-columns: 1fr 120px; }
+.cm-grid.basic { grid-template-columns: minmax(0, 1fr) 200px; }
+
+.cm-label-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.cm-label-row label { margin: 0; }
+
+/* Tiêu đề nhóm nhỏ bên trong một section (vd "Xác thực SSH"). */
+.cm-subhead { font-size: 12px; font-weight: 700; color: var(--win-text-primary); }
+
+.cm-pane .form-group label,
+.cm-modal .form-group label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--win-text-secondary);
+}
+
+.cm-pane .form-input,
+.cm-modal .form-input {
+  width: 100%;
+  height: 32px;
+  font-size: 12.5px;
+}
+/* Chừa chỗ cho mũi tên mặc định của select để chữ không bị đè lên. */
+.cm-pane select.form-input,
+.cm-modal select.form-input { height: 32px; padding-right: 28px; }
+.cm-pane textarea.form-input { height: auto; }
+
+.cm-key-area {
+  min-height: 92px;
+  font-family: var(--win-font-mono) !important;
+  font-size: 11px !important;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.cm-hint { font-size: 11px; line-height: 1.55; color: var(--win-text-disabled); }
+.cm-hint.warn { color: #f59e0b; }
+.cm-hint code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--win-bg-hover);
+  font-family: var(--win-font-mono);
+  font-size: 10.5px;
+}
+
+/* Ô "vừa nhập vừa chọn": input tự do + dropdown gợi ý tự dựng. */
+.cm-combo { position: relative; display: flex; align-items: center; }
+.cm-combo .form-input { padding-right: 28px; }
+.cm-combo.two-btn .form-input { padding-right: 54px; }
+.cm-combo-btn.second { right: 32px; }
+.cm-combo-btn.on { color: var(--win-accent); }
+.cm-combo-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.cm-combo-empty {
+  padding: 9px 8px;
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--win-text-disabled);
+}
+
+.cm-combo-pop {
+  position: absolute;
+  z-index: 41;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  min-width: 150px;
+  max-height: 208px;
+  overflow-y: auto;
+  padding: 4px;
+  border-radius: 9px;
+  border: 1px solid var(--win-border-strong);
+  background: var(--win-bg-card);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(30px) saturate(180%);
+}
+
+.cm-combo-opt {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--win-text-primary);
+  font-family: var(--win-font-sans);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.cm-combo-opt:hover { background: var(--win-bg-hover); }
+.cm-combo-opt.on { color: var(--win-accent); font-weight: 600; }
+.cm-combo-opt span { flex: 1; }
+
+.cm-eye,
+.cm-combo-btn {
+  position: absolute;
+  right: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  display: flex;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--win-text-secondary);
+  cursor: pointer;
+}
+.cm-eye:hover,
+.cm-combo-btn:hover { color: var(--win-text-primary); }
+
+/* Nút phụ nhỏ (Tải danh sách, Xoá tất cả...) */
+.cm-mini-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid var(--win-border);
+  background: var(--win-bg-hover);
+  color: var(--win-text-secondary);
+  font-family: var(--win-font-sans);
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.cm-mini-btn:hover:not(:disabled) { background: var(--win-bg-active); color: var(--win-text-primary); }
+.cm-mini-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* Khối con (chứng chỉ SSL, AWS IAM, private key...) */
+/* Khối con chỉ dùng viền để nhóm nội dung — nền để trong suốt cho khớp với
+   phần còn lại của form (không tạo ô xám nổi lên giữa các field). */
+.cm-subcard {
+  padding: 14px;
+  border-radius: 10px;
+  border: 1px solid var(--win-border);
+  background: transparent;
+}
+
+.cm-subcard-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 10px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--win-text-primary);
+}
+
+.cm-file-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 7px;
+  border: 1px dashed var(--win-border-strong);
+  background: transparent;
+  color: var(--win-text-secondary);
+  font-family: var(--win-font-sans);
+  font-size: 11.5px;
+  cursor: pointer;
+  overflow: hidden;
+}
+.cm-file-btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Ô nhập đường dẫn + nút chọn tệp trên cùng một dòng: input chiếm phần còn lại,
+   nút co về đúng bề rộng nội dung (mặc định .cm-file-btn rộng 100% cho grid). */
+.cm-file-row { display: flex; gap: 8px; align-items: center; }
+.cm-file-row .form-input { flex: 1; min-width: 0; }
+.cm-file-row .cm-file-btn { width: auto; flex: 0 0 auto; padding: 0 12px; }
+.cm-file-btn:hover { border-color: var(--win-accent); color: var(--win-text-primary); }
+.cm-file-btn.has-file {
+  border-style: solid;
+  color: var(--win-text-primary);
+  background: var(--win-bg-card);
+}
+
+/* Công tắc bật/tắt (SSH tunnel, TLS Redis) */
+.cm-switch-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 13px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--win-border);
+  background: var(--win-bg-card);
+}
+
+.cm-switch-label { font-size: 12px; font-weight: 600; color: var(--win-text-primary); margin-bottom: 2px; }
+
+.cm-switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 36px;
+  height: 20px;
+  margin-top: 1px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--win-border-strong);
+  background: var(--win-bg-active);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.cm-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--win-text-secondary);
+  transition: left 0.15s ease, background 0.15s ease;
+}
+.cm-switch.on { background: var(--win-accent); border-color: var(--win-accent); }
+.cm-switch.on::after { left: 18px; background: #fff; }
+
+/* Cảnh báo & thông báo */
+/* Cảnh báo nằm giữa form nên giữ nhẹ: nền nhạt, viền mảnh, nút chỉ viền —
+   đủ để chú ý mà không thành một khối vàng đè lên các field xung quanh. */
+.cm-warn {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  border: 1px solid rgba(245, 158, 11, 0.30);
+  background: rgba(245, 158, 11, 0.08);
+  color: #a16207;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+[data-theme='dark'] .cm-warn { color: #fbbf24; background: rgba(245, 158, 11, 0.10); }
+
+.cm-warn-btn {
+  flex-shrink: 0;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(245, 158, 11, 0.5);
+  background: transparent;
+  color: inherit;
+  font-family: var(--win-font-sans);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.cm-warn-btn:hover { background: rgba(245, 158, 11, 0.16); }
+
+.cm-alert {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 18px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.cm-alert.err { background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.35); color: #ef4444; }
+.cm-alert.ok { background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.35); color: #10b981; }
+
+/* Banner mờ dần đúng lúc ConnectionManager tự ẩn nó. Thời lượng phải khớp với
+   setTimeout trong component: thành công 4s, lỗi 8s. */
+@keyframes cmAlertLife {
+  0% { opacity: 0; transform: translateY(-4px); }
+  5% { opacity: 1; transform: none; }
+  86% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes cmAlertLifeLong {
+  0% { opacity: 0; transform: translateY(-4px); }
+  2.5% { opacity: 1; transform: none; }
+  93% { opacity: 1; }
+  100% { opacity: 0; }
+}
+/* Nút hành động trong banner thông báo — lấy màu theo chính banner. */
+.cm-alert-btn {
+  flex-shrink: 0;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  font-family: var(--win-font-sans);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  opacity: 0.8;
+  transition: opacity 0.12s ease;
+}
+.cm-alert-btn:hover { opacity: 1; }
+
+.cm-alert.ok { animation: cmAlertLife 4s ease-out forwards; }
+.cm-alert.err { animation: cmAlertLifeLong 8s ease-out forwards; }
+
+.cm-blank {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 70px 20px;
+  text-align: center;
+  color: var(--win-text-secondary);
+}
+.cm-blank-title { font-size: 13.5px; font-weight: 700; color: var(--win-text-primary); }
+
+/* Checkbox & danh sách bảng (Backup/Restore) */
+.cm-check-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; }
+
+.cm-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--win-text-primary);
+  cursor: pointer;
+}
+.cm-check input[type='checkbox'] { width: 14px; height: 14px; accent-color: var(--win-accent); cursor: pointer; flex-shrink: 0; }
+
+.cm-table-picker {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 16px;
+  max-height: 168px;
+  overflow-y: auto;
+}
+
+.cm-dropzone {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 10px;
+  border: 1px dashed var(--win-border-strong);
+  background: transparent;
+  color: var(--win-text-secondary);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.cm-dropzone:hover { border-color: var(--win-accent); background: var(--win-bg-hover); }
+.cm-dropzone-title { font-size: 12.5px; font-weight: 600; color: var(--win-text-primary); margin-bottom: 2px; }
+
+/* ————— Footer hành động ————— */
+.cm-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 24px;
+  border-top: 1px solid var(--win-border);
+  background: var(--win-bg-sidebar);
+  flex-shrink: 0;
+  min-height: var(--cm-foot-h);
+}
+.cm-foot-msg { flex: 1; min-width: 0; }
+
+.cm-btn {
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: 1px solid var(--win-border-strong);
+  background: var(--win-bg-btn-secondary);
+  color: var(--win-text-primary);
+  font-family: var(--win-font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.cm-btn:hover:not(:disabled) { background: var(--win-bg-btn-secondary-hover); }
+.cm-btn.primary {
+  padding: 0 20px;
+  border-color: var(--win-accent-secondary);
+  background: var(--win-accent);
+  color: #fff;
+  font-weight: 700;
+}
+.cm-btn.primary:hover:not(:disabled) { background: var(--win-accent-secondary); }
+.cm-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* ————— Modal dùng chung ————— */
+.cm-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(3px);
+}
+
+.cm-modal {
+  width: 460px;
+  max-width: calc(100vw - 48px);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  border-radius: 14px;
+  border: 1px solid var(--win-border-strong);
+  background: var(--win-bg-card);
+  box-shadow: 0 26px 60px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(40px) saturate(200%);
+}
+.cm-modal.sm { width: 400px; }
+
+.cm-modal-head { display: flex; align-items: center; gap: 9px; }
+.cm-modal-head h3 {
+  flex: 1;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--win-text-primary);
+}
+
+.cm-modal-foot { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* Context menu kết nối */
+.cm-ctx {
+  position: fixed;
+  z-index: 9999;
+  min-width: 224px;
+  width: max-content;
+  padding: 4px 0;
+  border-radius: 9px;
+  border: 1px solid var(--win-border-strong);
+  background: var(--win-bg-card);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(30px) saturate(180%);
+}
+
+/* Màn hình hẹp: thu gọn sidebar và bỏ preview connection string */
+@media (max-width: 980px) {
+  .cm-side { width: 232px; }
+  .cm-uri { display: none; }
+  .cm-grid.two,
+  .cm-grid.three,
+  .cm-check-grid,
+  .cm-table-picker { grid-template-columns: 1fr; }
+  .cm-grid.basic { grid-template-columns: 1fr; }
+}
+
+
+/* Cột nội dung của pane phải: rộng tối đa 860px và canh giữa.
+   Dùng padding động thay vì wrapper riêng để header, tab bar, form và footer
+   luôn thẳng cùng một trục, đồng thời không để trống hẳn một khoảng lớn bên
+   phải khi cửa sổ rộng. Đặt sau mọi khai báo padding của 4 khối này. */
+.cm-main-head,
+.cm-tabs,
+.cm-pane,
+.cm-foot {
+  padding-left: max(24px, calc((100% - 860px) / 2));
+  padding-right: max(24px, calc((100% - 860px) / 2));
+}
+
+
+/* =====================================================================
+   Liquid glass cho màn hình kết nối
+   ---------------------------------------------------------------------
+   Hai nguồn tạo chất kính:
+   1) Vật liệu Mica của Windows 11 (src-tauri/tauri.conf.json >
+      windowEffects) — nằm DƯỚI webview nên backdrop-filter không blur
+      được nó, nó chỉ ăn qua độ trong suốt của các lớp nền.
+   2) Lớp aurora ::before ngay trong trang — cái này mới là thứ để các
+      panel blur ra được vệt màu loang, đồng thời giữ hiệu ứng ngay cả
+      khi máy không hỗ trợ Mica/Acrylic.
+
+   Điều kiện tiên quyết: KHÔNG xếp chồng nhiều lớp nền mờ giống nhau.
+   Trước đây body + container + card đều tô --win-bg-window (0.65) rồi
+   sidebar 0.78 nữa nên alpha cộng dồn ~0.96 => đục, mất hẳn chất kính.
+   ===================================================================== */
+.connection-manager-container {
+  --cm-glass-weak: rgba(255, 255, 255, 0.34);
+  --cm-glass: rgba(255, 255, 255, 0.46);
+  --cm-glass-strong: rgba(255, 255, 255, 0.60);
+  --cm-hairline: rgba(255, 255, 255, 0.75);
+  --cm-glass-shadow: rgba(15, 23, 42, 0.12);
+  background: transparent;
+}
+
+[data-theme='dark'] .connection-manager-container {
+  --cm-glass-weak: rgba(18, 22, 30, 0.40);
+  --cm-glass: rgba(24, 28, 38, 0.50);
+  --cm-glass-strong: rgba(16, 19, 26, 0.62);
+  --cm-hairline: rgba(255, 255, 255, 0.12);
+  --cm-glass-shadow: rgba(0, 0, 0, 0.38);
+}
+
+/* Lớp màu loang phía sau toàn bộ nội dung. inset âm + overflow:hidden của
+   container để các quầng sáng bị cắt gọn ở viền, không thấy mép gradient. */
+.connection-manager-container::before {
+  content: '';
+  position: absolute;
+  inset: -20%;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(38% 42% at 16% 10%, rgba(96, 165, 250, 0.50), transparent 70%),
+    radial-gradient(32% 38% at 84% 6%, rgba(168, 85, 247, 0.34), transparent 70%),
+    radial-gradient(40% 44% at 72% 90%, rgba(45, 212, 191, 0.30), transparent 70%),
+    radial-gradient(34% 36% at 6% 84%, rgba(244, 114, 182, 0.24), transparent 70%);
+  filter: blur(40px) saturate(140%);
+  opacity: 0.42;
+}
+
+[data-theme='dark'] .connection-manager-container::before { opacity: 0.34; }
+
+/* Card không tự tô nền và không blur nữa: nó chỉ còn là khung layout, để lộ
+   lớp aurora + vật liệu cửa sổ cho các panel con xử lý. */
+.connection-manager-container .connection-card {
+  position: relative;
+  z-index: 1;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* Hai panel lớn là nơi đặt blur — chỉ 2 chỗ để không lồng backdrop-filter
+   nhiều tầng (vừa tốn GPU vừa dễ lỗi render). */
+.cm-side {
+  background: var(--cm-glass-strong);
+  backdrop-filter: blur(34px) saturate(190%);
+  -webkit-backdrop-filter: blur(34px) saturate(190%);
+  box-shadow: inset 0 1px 0 var(--cm-hairline);
+}
+
+.cm-main {
+  background: var(--cm-glass-weak);
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+}
+
+/* Header/footer chỉ thêm tint + hairline sáng ở cạnh trên (kiểu ánh sáng rọi
+   từ trên xuống của vật liệu kính), không blur thêm tầng nữa. */
+.cm-main-head,
+.cm-foot {
+  background: var(--cm-glass);
+  box-shadow: inset 0 1px 0 var(--cm-hairline);
+}
+
+.cm-pane { background: transparent; }
+
+/* Popup/menu/modal: giữ blur riêng nhưng thêm hairline + bóng theo tông kính
+   để cùng một chất liệu với panel. */
+.cm-pop,
+.cm-combo-pop,
+.cm-ctx {
+  box-shadow: 0 18px 44px var(--cm-glass-shadow), inset 0 1px 0 var(--cm-hairline);
+}
+
+.cm-modal {
+  box-shadow: 0 26px 60px var(--cm-glass-shadow), inset 0 1px 0 var(--cm-hairline);
+}
+
+/* Ô nhập trên nền kính: bớt đặc hơn mặc định để thấy màu loang phía sau,
+   nhưng vẫn đủ tương phản cho chữ. */
+.connection-manager-container .form-input {
+  background: rgba(255, 255, 255, 0.55);
+  border-color: rgba(15, 23, 42, 0.12);
+}
+.connection-manager-container .form-input:focus {
+  background: rgba(255, 255, 255, 0.85);
+}
+
+[data-theme='dark'] .connection-manager-container .form-input {
+  background: rgba(8, 10, 14, 0.42);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+[data-theme='dark'] .connection-manager-container .form-input:focus {
+  background: rgba(8, 10, 14, 0.70);
+}
+
+/* Panel/nút phụ cũng cần trong hơn để không thành mảng đặc trên kính. */
+.connection-manager-container .cm-switch-row { background: var(--cm-glass-weak); }
+.connection-manager-container .cm-search { background: var(--cm-glass-weak); }
+.connection-manager-container .cm-uri { background: var(--cm-glass-weak); }
+.connection-manager-container .cm-new-btn { background: var(--cm-glass); }
+.connection-manager-container .cm-new-btn:hover { background: var(--cm-glass-strong); }
+.connection-manager-container .cm-btn { background: var(--cm-glass); }
+.connection-manager-container .cm-btn:hover:not(:disabled) { background: var(--cm-glass-strong); }
+.connection-manager-container .cm-btn.primary { background: var(--win-accent); }
+.connection-manager-container .cm-btn.primary:hover:not(:disabled) { background: var(--win-accent-secondary); }
+
+/* Máy yếu / user tắt hiệu ứng chuyển động: bỏ luôn lớp màu loang cho nhẹ. */
+@media (prefers-reduced-transparency: reduce) {
+  .connection-manager-container::before { display: none; }
+  .cm-side { background: var(--win-bg-sidebar); backdrop-filter: none; }
+  .cm-main { background: var(--win-bg-window); backdrop-filter: none; }
+}
+
+
+/* macOS: cửa sổ không decoration thì hệ điều hành KHÔNG tự bo góc, phải tự bo
+   cho khớp windowEffects.radius (12px) — nếu không, nội dung vuông sẽ tràn ra
+   ngoài 4 góc tròn của lớp vibrancy. Windows 11 tự bo nên bỏ qua. */
+[data-os='macos'] #root {
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+
+/* Selection/hover trên nền kính -----------------------------------------
+   Mặc định của app dùng scrim TỐI (--win-bg-hover 0.05 / --win-bg-active 0.10
+   + viền 0.18 đen). Trên vật liệu kính, tô tối làm item trông như một viên xám
+   dán lên bề mặt. Kính thì ngược lại: lớp được chọn phải SÁNG hơn nền, có
+   hairline ở cạnh trên và bóng mềm để thấy nó nổi lên. */
+.connection-manager-container {
+  --cm-item-hover: rgba(255, 255, 255, 0.42);
+  --cm-item-active: linear-gradient(rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.66));
+  --cm-item-active-border: rgba(255, 255, 255, 0.90);
+}
+
+[data-theme='dark'] .connection-manager-container {
+  --cm-item-hover: rgba(255, 255, 255, 0.07);
+  --cm-item-active: linear-gradient(rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.08));
+  --cm-item-active-border: rgba(255, 255, 255, 0.20);
+}
+
+.connection-manager-container .cm-item:hover {
+  background: var(--cm-item-hover);
+}
+
+.connection-manager-container .cm-item.active {
+  background: var(--cm-item-active);
+  border-color: var(--cm-item-active-border);
+  box-shadow: 0 2px 10px var(--cm-glass-shadow), inset 0 1px 0 var(--cm-hairline);
+}
+
+/* Dòng "Sao lưu & Phục hồi" ở chân sidebar dùng cùng chất liệu để không lệch. */
+.connection-manager-container .cm-ghost-row:hover { background: var(--cm-item-hover); }
+.connection-manager-container .cm-ghost-row.active {
+  background: var(--cm-item-active);
+  box-shadow: 0 2px 10px var(--cm-glass-shadow), inset 0 1px 0 var(--cm-hairline);
+}
+
+
+
+/* Đèn trạng thái sau tên kết nối. Đây là thứ DUY NHẤT được nháy trên danh sách,
+   nên mọi chuyển động ở đây đều mang nghĩa "đang có việc chạy". */
+.cm-item-led {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: currentColor;
+  box-shadow: 0 0 6px currentColor;
+}
+
+.cm-item-led.ok { color: #10b981; }
+.cm-item-led.fail { color: #ef4444; }
+
+/* Đang kết nối / đang kiểm tra: nhịp nhanh hơn nhãn cũ (1.1s) để đọc ra ngay là
+   "đang chạy", và opacity chạm 0.35 chứ không về 0 nên chấm không mất hẳn. */
+.cm-item-led.busy {
+  color: var(--win-accent);
+  animation: cmLedPulse 1.1s ease-in-out infinite;
+}
+
+@keyframes cmLedPulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(0.6); opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cm-item-led.busy { animation: none; }
+}
+
+/* Segmented control trên nền kính ---------------------------------------
+   Track là một "rãnh" lõm trong suốt (inset shadow), mục đang chọn là chip
+   kính nổi lên — cùng ngôn ngữ với item active ở sidebar. Bản cũ tô xám đặc
+   nên trông như miếng nhựa dán lên kính. */
+.connection-manager-container .cm-seg {
+  background: rgba(255, 255, 255, 0.22);
+  border-color: rgba(255, 255, 255, 0.55);
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.10);
+  backdrop-filter: blur(10px) saturate(180%);
+  -webkit-backdrop-filter: blur(10px) saturate(180%);
+}
+
+.connection-manager-container .cm-seg button.on {
+  background: linear-gradient(rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.76));
+  box-shadow: 0 2px 6px var(--cm-glass-shadow), inset 0 1px 0 rgba(255, 255, 255, 1);
+}
+
+[data-theme='dark'] .connection-manager-container .cm-seg {
+  background: rgba(0, 0, 0, 0.26);
+  border-color: rgba(255, 255, 255, 0.10);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+[data-theme='dark'] .connection-manager-container .cm-seg button.on {
+  background: linear-gradient(rgba(255, 255, 255, 0.17), rgba(255, 255, 255, 0.09));
+  box-shadow: 0 2px 6px var(--cm-glass-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+
+/* =====================================================================
+   Workspace (sau khi kết nối) — cùng ngôn ngữ thiết kế với màn hình kết nối:
+   nền kính, hairline sáng ở cạnh trên, mục đang chọn là chip SÁNG nổi lên
+   thay vì scrim tối.
+   ===================================================================== */
+.workspace-container {
+  --ws-glass-weak: rgba(255, 255, 255, 0.30);
+  --ws-glass: rgba(255, 255, 255, 0.42);
+  --ws-glass-strong: rgba(255, 255, 255, 0.58);
+  --ws-hairline: rgba(255, 255, 255, 0.70);
+  --ws-shadow: rgba(15, 23, 42, 0.12);
+  --ws-sel: linear-gradient(rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.66));
+  --ws-sel-border: rgba(255, 255, 255, 0.90);
+  --ws-hover: rgba(255, 255, 255, 0.42);
+  /* Chiều cao dùng chung cho MỌI thanh chân: chân sidebar, thanh trạng thái của
+     SQL editor và thanh phân trang của DataGrid. Trước đây lần lượt là ~50px /
+     26px / 34px nên "Ngắt kết nối" không bao giờ thẳng hàng với thanh bên phải. */
+  --ws-foot-h: 34px;
+}
+
+[data-theme='dark'] .workspace-container {
+  --ws-glass-weak: rgba(18, 22, 30, 0.34);
+  --ws-glass: rgba(20, 24, 32, 0.46);
+  --ws-glass-strong: rgba(16, 19, 26, 0.60);
+  --ws-hairline: rgba(255, 255, 255, 0.10);
+  --ws-shadow: rgba(0, 0, 0, 0.38);
+  --ws-sel: linear-gradient(rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.08));
+  --ws-sel-border: rgba(255, 255, 255, 0.20);
+  --ws-hover: rgba(255, 255, 255, 0.07);
+}
+
+/* ————— Sidebar —————
+   KHÔNG dùng backdrop-filter ở đây. Thuộc tính này tạo containing block cho con
+   position: fixed, mà Sidebar.tsx render 7 overlay fixed bên trong (modal Tạo
+   bảng, context menu, backdrop...) — chúng sẽ bị nhốt trong cột sidebar 240px và
+   bị overflow: hidden cắt mất. Đổi lại cũng không mất gì: phía sau sidebar chỉ là
+   một mảng nền phẳng nên blur không tạo khác biệt nhìn thấy được. */
+.workspace-container .sidebar-navigation {
+  background: var(--ws-glass-strong);
+  box-shadow: inset 0 1px 0 var(--ws-hairline);
+}
+
+.workspace-container .sidebar-search-input {
+  height: 30px;
+  border-radius: 8px;
+  background: var(--ws-glass-weak);
+  border: 1px solid var(--win-border);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+.workspace-container .sidebar-search-input:focus {
+  background: var(--ws-glass-strong);
+  border-color: var(--win-accent);
+  box-shadow: 0 0 0 3px var(--win-accent-glow);
+}
+
+.workspace-container .sidebar-item {
+  border-radius: 7px;
+  border: 1px solid transparent;
+}
+.workspace-container .sidebar-item:hover { background: var(--ws-hover); }
+
+/* Mục đang mở: chip sáng nổi lên. Màu chữ dùng biến theme thay vì #fff/#000
+   cứng, vì trên chip sáng thì chữ trắng biến mất ở giao diện sáng. */
+.workspace-container .sidebar-item.active {
+  background: var(--ws-sel);
+  border-color: var(--ws-sel-border);
+  color: var(--win-text-primary);
+  font-weight: 600;
+  box-shadow: 0 1px 4px var(--ws-shadow), inset 0 1px 0 var(--ws-hairline);
+}
+
+/* ————— Tab bar —————
+   Thanh tab hơi tối/lõm xuống để mảng nền sáng của tab đang xem nổi rõ. Nếu để
+   thanh sáng như panel thì tab active gần như hoà vào nền. */
+.workspace-container .tab-bar {
+  background: rgba(15, 23, 42, 0.07);
+  box-shadow: inset 0 1px 0 var(--ws-hairline);
+}
+
+[data-theme='dark'] .workspace-container .tab-bar { background: rgba(0, 0, 0, 0.30); }
+
+/* Chừa lề trái rõ ràng để tab đầu tiên không dán sát mép khung. */
+.workspace-container .tab-bar-items { gap: 2px; padding: 0 6px 0 10px; }
+
+/* Tab phẳng, cao hết thanh: không viền, không bo góc. Bỏ luôn vạch chia dựng
+   đứng của bản gốc — phân tách dựa vào khoảng cách và mảng nền của tab đang xem. */
+.workspace-container .tab-item {
+  height: 32px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  max-width: 170px;
+}
+
+.workspace-container .tab-item:hover {
+  background: var(--ws-hover);
+  color: var(--win-text-primary);
+}
+
+/* Phân biệt active / không active CHỈ bằng màu, và đẩy tương phản lên cao:
+   - active   : nền gần như trắng đục + chữ màu accent + đậm 700
+   - không    : nền trong suốt trên thanh xám + chữ màu mờ nhất
+   Ba yếu tố (nền, màu chữ, độ đậm) cùng lệch nhau nên không cần viền vẫn rõ. */
+.workspace-container .tab-item {
+  color: var(--win-text-disabled);
+}
+
+.workspace-container .tab-item:hover {
+  color: var(--win-text-primary);
+  background: rgba(255, 255, 255, 0.34);
+}
+
+.workspace-container .tab-item.active {
+  background: rgba(255, 255, 255, 0.96);
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  color: var(--win-accent);
+  font-weight: 700;
+}
+
+[data-theme='dark'] .workspace-container .tab-item:hover { background: rgba(255, 255, 255, 0.08); }
+
+[data-theme='dark'] .workspace-container .tab-item.active {
+  background: rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+}
+
+.workspace-container .tab-close-btn:hover {
+  background: var(--ws-hover);
+  color: var(--win-text-primary);
+}
+
+.workspace-container .tab-new-btn,
+.workspace-container .tab-list-dropdown-btn {
+  margin-bottom: 2px;
+  border-radius: 7px;
+}
+.workspace-container .tab-new-btn:hover,
+.workspace-container .tab-list-dropdown-btn:hover { background: var(--ws-hover); }
+
+/* ————— Toolbar (Chạy / Định dạng / phân trang grid) ————— */
+.workspace-container .sql-toolbar,
+.workspace-container .grid-toolbar {
+  background: var(--ws-glass-weak);
+  box-shadow: inset 0 1px 0 var(--ws-hairline);
+}
+
+/* ————— Ba thanh chân cùng chiều cao ————— */
+.workspace-container .sidebar-footer {
+  height: var(--ws-foot-h);
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  background: var(--ws-glass);
+  box-shadow: inset 0 1px 0 var(--ws-hairline);
+}
+
+/* Nút Ngắt kết nối thu lại cho vừa thanh chân 34px. */
+.workspace-container .sidebar-footer .btn {
+  height: 26px;
+  border-radius: 7px;
+}
+
+.workspace-container .sql-results-status,
+.workspace-container .grid-pagination {
+  height: var(--ws-foot-h);
+  background: var(--ws-glass);
+  box-shadow: inset 0 1px 0 var(--ws-hairline);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .workspace-container .sidebar-navigation { background: var(--win-bg-sidebar); }
+}
+
+
+/* =====================================================================
+   Modal "Tạo bảng mới"
+   Bảng cột có tới 8 cột (tên, kiểu, rỗng, khóa chính, tự tăng, mặc định,
+   chú thích, xóa) nên khung 740px cũ quá chật: tiêu đề tab bị xuống dòng,
+   các ô input bị bóp. Nới khung và cho bảng cuộn ngang khi cần.
+   ===================================================================== */
+.ctm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 999999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(3px);
+}
+
+.ctm-dialog {
+  width: min(980px, 100%);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 14px;
+  border: 1px solid var(--win-border-strong);
+  background: var(--win-bg-card);
+  box-shadow: 0 26px 60px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(40px) saturate(200%);
+}
+
+[data-theme='dark'] .ctm-dialog {
+  box-shadow: 0 26px 60px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+}
+
+.ctm-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--win-border);
+  flex-shrink: 0;
+}
+
+.ctm-title {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--win-text-primary);
+}
+
+.ctm-close {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  border: none;
+  background: transparent;
+  color: var(--win-text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.ctm-close:hover { background: var(--win-bg-hover); color: var(--win-text-primary); }
+
+.ctm-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.ctm-name { max-width: 360px; }
+.ctm-name label { font-size: 11px; font-weight: 600; color: var(--win-text-secondary); }
+.ctm-name .form-input { height: 32px; font-size: 12.5px; width: 100%; }
+
+/* Tab: dùng gạch chân accent, đếm số hiển thị bằng pill để tiêu đề không dài
+   thành hai dòng như bản cũ ("Cột dữ liệu (1)"). */
+.ctm-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--win-border);
+  flex-shrink: 0;
+}
+
+.ctm-tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 14px;
+  margin-bottom: -1px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--win-text-secondary);
+  font-family: var(--win-font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.12s ease;
+}
+.ctm-tab:hover { color: var(--win-text-primary); }
+.ctm-tab.active { color: var(--win-accent); border-bottom-color: var(--win-accent); }
+
+.ctm-tab-count {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--win-bg-hover);
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+.ctm-tab.active .ctm-tab-count { background: var(--win-accent-glow); color: var(--win-accent); }
+
+.ctm-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--win-border);
+  flex-shrink: 0;
+}
+
+.ctm-foot-hint {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--win-text-disabled);
+}
+
+/* Bảng khai báo cột: cho cuộn ngang thay vì bóp các ô lại, và các ô nhập cao
+   đều nhau. */
+.ctm-body table { min-width: 100%; }
+.ctm-body table input[type='text'],
+.ctm-body table select {
+  height: 26px;
+  border-radius: 6px;
+  font-size: 11.5px;
+}
+.ctm-body table input[type='checkbox'] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--win-accent);
+  cursor: pointer;
+}
+
+
+/* =====================================================================
+   Tab Structure (xem/sửa cấu trúc bảng) — chuyển sang liquid glass.
+   Bản cũ tô đặc hoàn toàn ở giao diện sáng: .structure-section #ffffff,
+   th #f1f5f9, .segmented-control #e2e8f0 — nằm trên nền kính nhưng lại là
+   những mảng phẳng đục nên phá hết chất liệu.
+   ===================================================================== */
+.workspace-container .structure-view-container {
+  background: transparent;
+}
+
+/* Card từng nhóm (Cột dữ liệu / Chỉ mục / Khóa ngoại) */
+.workspace-container .structure-section {
+  background: var(--ws-glass-weak);
+  border: 1px solid var(--win-border);
+  border-radius: 12px;
+  box-shadow: 0 1px 3px var(--ws-shadow), inset 0 1px 0 var(--ws-hairline);
+  overflow: hidden;
+}
+
+[data-theme='light'] .workspace-container .structure-section {
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.workspace-container .structure-section h3 {
+  font-size: 11px;
+  letter-spacing: 0.6px;
+  color: var(--win-text-secondary);
+}
+
+/* Hàng tiêu đề bảng: mảng lõm trong suốt thay cho #f1f5f9 đặc */
+.workspace-container .structure-table th {
+  background: rgba(15, 23, 42, 0.05);
+  border-bottom: 1px solid var(--win-border);
+  color: var(--win-text-secondary);
+}
+
+[data-theme='dark'] .workspace-container .structure-table th {
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.workspace-container .structure-table td {
+  border-bottom: 1px solid var(--win-border);
+}
+
+.workspace-container .structure-table tr:hover td {
+  background: var(--ws-hover);
+}
+
+/* ————— Segmented control (Data | Structure, và mọi chỗ khác dùng chung) —————
+   Track lõm trong suốt + chip sáng nổi lên, giống .cm-seg ở màn hình kết nối. */
+.workspace-container .segmented-control {
+  padding: 3px;
+  gap: 2px;
+  border-radius: 9px;
+  background: rgba(15, 23, 42, 0.07);
+  border: 1px solid var(--win-border);
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.10);
+}
+
+[data-theme='dark'] .workspace-container .segmented-control {
+  background: rgba(0, 0, 0, 0.28);
+  border-color: rgba(255, 255, 255, 0.10);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.workspace-container .segment-btn {
+  height: 22px;
+  padding: 0 12px;
+  border-radius: 6px;
+  font-weight: 600;
+  color: var(--win-text-secondary);
+}
+
+.workspace-container .segment-btn:hover:not(.active) { color: var(--win-text-primary); }
+
+.workspace-container .segment-btn.active {
+  background: linear-gradient(rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.76));
+  color: var(--win-text-primary);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12), inset 0 1px 0 rgba(255, 255, 255, 1);
+}
+
+[data-theme='dark'] .workspace-container .segment-btn.active {
+  background: linear-gradient(rgba(255, 255, 255, 0.17), rgba(255, 255, 255, 0.09));
+  color: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+/* ————— Nút trên thanh công cụ (Thêm cột / Thêm chỉ mục / Definition...) ————— */
+.workspace-container .sql-toolbar .btn-secondary {
+  height: 28px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid var(--win-border);
+  box-shadow: inset 0 1px 0 var(--ws-hairline);
+}
+
+.workspace-container .sql-toolbar .btn-secondary:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.85);
+}
+
+[data-theme='dark'] .workspace-container .sql-toolbar .btn-secondary {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+[data-theme='dark'] .workspace-container .sql-toolbar .btn-secondary:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+
+/* Dòng vừa thêm (chưa lưu) --------------------------------------------
+   --win-status-added chỉ là xanh 8% alpha nên trên nền trắng gần như không
+   thấy: người dùng bấm "+ Row" mà tưởng không có gì xảy ra. Tô đậm hơn và
+   thêm vạch xanh ở đầu dòng để nhận ra ngay đây là dòng chưa lưu.
+   Đặt trên > td (kèm !important) vì nền sọc chẵn/lẻ của .grid-table tr
+   sẽ phủ lên nền đặt ở thẻ tr. */
+.grid-row-added > td {
+  background: rgba(16, 185, 129, 0.15) !important;
+}
+
+.grid-row-added > td:first-child {
+  box-shadow: inset 3px 0 0 #10b981;
+}
+
+.grid-row-added.selected > td {
+  background: rgba(16, 185, 129, 0.24) !important;
+}
+
+/* Ô chưa có giá trị trong dòng mới */
+.grid-cell-empty {
+  color: var(--win-text-disabled);
+  font-style: italic;
+  user-select: none;
+}
+
+
+/* =====================================================================
+   Cụm nút ở thanh chân bảng dữ liệu (+ Row / − Row / Lưu / Columns /
+   Import / Export / Filters / phân trang).
+   Bản cũ mỗi nút tự set inline background + border + height nên vừa lệch
+   nhau vừa đè mất glass (inline luôn thắng CSS). Gom về một họ class.
+   ===================================================================== */
+.gp-btn {
+  height: 26px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  border: 1px solid var(--win-border);
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.70);
+  color: var(--win-text-primary);
+  font-family: var(--win-font-sans);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.gp-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.88); }
+.gp-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.gp-btn.icon { padding: 0 7px; }
+
+/* Đang bật (Columns / Export / Filters đang mở): tô accent nhạt + chữ accent
+   thay vì nền accent đặc + chữ trắng như bản cũ — đỡ chói trên nền kính. */
+.gp-btn.on {
+  background: var(--win-accent-glow);
+  border-color: var(--win-accent);
+  color: var(--win-accent);
+}
+
+/* Xóa dòng: chỉ đỏ khi thực sự bấm được */
+.gp-btn.danger:not(:disabled) { color: #ef4444; }
+.gp-btn.danger:not(:disabled):hover {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.45);
+}
+
+/* Lưu thay đổi: nút chính duy nhất trong cụm nên để nền đặc cho nổi */
+.gp-btn.save {
+  background: #10b981;
+  border-color: #059669;
+  color: #ffffff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+.gp-btn.save:hover:not(:disabled) { background: #059669; }
+
+[data-theme='dark'] .gp-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+[data-theme='dark'] .gp-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.16); }
+[data-theme='dark'] .gp-btn.save { background: #10b981; }
+
+/* ————— Cụm phân trang: một khối liền, gạch phân cách ở giữa ————— */
+.gp-pager {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  border-radius: 8px;
+  border: 1px solid var(--win-border);
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.70);
+  overflow: hidden;
+}
+
+[data-theme='dark'] .gp-pager {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.gp-pager-btn {
+  height: 100%;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  border: none;
+  background: transparent;
+  color: var(--win-text-primary);
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.gp-pager-btn:hover:not(:disabled) { background: var(--win-bg-hover); }
+.gp-pager-btn:disabled { color: var(--win-text-disabled); cursor: default; }
+
+.gp-pager-sep { width: 1px; height: 14px; background: var(--win-border); flex-shrink: 0; }
+
+.gp-pager-select {
+  height: 100%;
+  padding: 0 4px;
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: none;
+  color: var(--win-text-primary);
+  font-family: var(--win-font-sans);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+
+/* ————— Hộp thoại "Về TableNova" ————— */
+.about-dialog {
+  position: relative;
+  width: 420px;
+  max-width: calc(100vw - 48px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 28px 24px 18px;
+  border-radius: 16px;
+  border: 1px solid var(--win-border-strong);
+  background: var(--win-bg-card);
+  box-shadow: 0 26px 60px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(40px) saturate(200%);
+  text-align: center;
+}
+
+[data-theme='dark'] .about-dialog {
+  box-shadow: 0 26px 60px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+}
+
+.about-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  border: none;
+  background: transparent;
+  color: var(--win-text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.about-close:hover { background: var(--win-bg-hover); color: var(--win-text-primary); }
+
+/* Logo: bỏ nền trắng bo góc của bản cũ, thay bằng quầng sáng nhẹ cho hoà vào kính */
+.about-logo {
+  width: 68px;
+  height: 68px;
+  object-fit: contain;
+  filter: drop-shadow(0 6px 16px rgba(15, 23, 42, 0.22));
+}
+
+.about-name {
+  margin-top: 14px;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  color: var(--win-text-primary);
+}
+
+.about-version {
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--win-text-disabled);
+  font-family: var(--win-font-mono);
+}
+
+.about-desc {
+  margin: 16px 0 0;
+  max-width: 330px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--win-text-secondary);
+}
+
+/* Hàng chip các hệ DB được hỗ trợ — dùng lại logo thương hiệu ở DbIcons */
+.about-engines {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 18px;
+}
+
+.about-engine {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.about-author {
+  margin-top: 20px;
+  font-size: 11.5px;
+  color: var(--win-text-secondary);
+}
+.about-author strong { color: var(--win-text-primary); }
+
+.about-links {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 5px;
+}
+
+.about-links button {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--win-accent);
+  font-family: var(--win-font-sans);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.about-links button:hover { text-decoration: underline; }
+.about-link-sep { color: var(--win-text-disabled); }
+
+.about-foot {
+  width: 100%;
+  margin-top: 22px;
+  padding-top: 14px;
+  border-top: 1px solid var(--win-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.about-copy {
+  font-size: 10.5px;
+  color: var(--win-text-disabled);
+  text-align: left;
+}
+
+
+/* =====================================================================
+   Menu nổi trong workspace (chuyển database, menu terminal, context menu bảng)
+   --win-bg-card chỉ 0.88 alpha nên 12% nội dung sidebar phía sau xuyên qua, mà
+   menu lại không có backdrop-filter để làm nhoè -> chữ phía sau đọc rõ và chồng
+   lên chữ trong menu. Menu là chỗ cần đọc chính xác nên để gần như đục hẳn,
+   chất "kính" giữ bằng blur + hairline chứ không bằng độ trong suốt.
+   ===================================================================== */
+.ws-menu {
+  padding: 5px;
+  border-radius: 10px;
+  border: 1px solid var(--win-border-strong);
+  background: rgba(252, 253, 255, 0.97);
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.20), inset 0 1px 0 rgba(255, 255, 255, 0.90);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+}
+
+[data-theme='dark'] .ws-menu {
+  background: rgba(26, 30, 40, 0.97);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.50), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+}
+
+/* Mục trong menu: bo góc và cao đều nhau */
+.ws-menu > div[class*='item'],
+.ws-menu > .context-menu-item,
+.ws-menu > .sidebar-context-item {
+  border-radius: 7px;
+}
+
+
+/* Card ở tab Structure nằm trong flex column có overflow-y: auto. Flex item mặc
+   định flex-shrink: 1 nên khi tổng chiều cao vượt khung, các card bị BÓP lại
+   thay vì để khung cuộn — cộng thêm overflow: hidden thì phần bị bóp bị cắt mất
+   (tiêu đề "CHỈ MỤC (INDEXES)" biến mất, hàng tiêu đề bảng bị cắt nửa).
+   flex-shrink: 0 giữ đúng chiều cao nội dung và trả việc cuộn về cho khung. */
+.structure-section { flex-shrink: 0; }
+
+/* Dòng vừa thêm ở tab Structure (cột / chỉ mục / khóa ngoại).
+   Bản cũ tô rgba(16,185,129,0.03) — 3% alpha, còn mờ hơn cả dòng mới ở
+   DataGrid nên bấm "Thêm cột" xong gần như không thấy gì. */
+.structure-row-new > td {
+  background: rgba(16, 185, 129, 0.14) !important;
+}
+
+.structure-row-new > td:first-child {
+  box-shadow: inset 3px 0 0 #10b981;
+}
+
+/* Context menu của tab: đưa về cùng chất liệu với .ws-menu (0.88 alpha + không
+   blur thì chữ phía sau xuyên qua, khó đọc). */
+.tab-context-menu {
+  padding: 5px;
+  border-radius: 10px;
+  background: rgba(252, 253, 255, 0.97);
+  border: 1px solid var(--win-border-strong);
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.20), inset 0 1px 0 rgba(255, 255, 255, 0.90);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+}
+
+[data-theme='dark'] .tab-context-menu {
+  background: rgba(26, 30, 40, 0.97);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.50), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+}
+
+.tab-context-menu .tab-context-menu-item { border-radius: 7px; }
+
+/* Mục trong dropdown Export cũng bo góc cho khớp .ws-menu */
+.export-dropdown-item { border-radius: 7px; }
+.export-dropdown-item:hover { background: var(--win-bg-hover); }
+
+
+/* =====================================================================
+   Thanh lọc dữ liệu (Filters) — chuyển sang liquid glass, đồng bộ chiều cao.
+   Bản cũ: nền --win-bg-window đục, select/input tô #ffffff + viền #cbd5e1
+   hardcode (dark theme sai màu), nút cao 26px lệch với 28px ở nơi khác,
+   và đường kẻ gạch đứt trông rời rạc.
+   ===================================================================== */
+.visual-filter-container {
+  background: var(--ws-glass-weak, rgba(255, 255, 255, 0.30));
+  border-bottom: 1px solid var(--win-border);
+  box-shadow: inset 0 1px 0 var(--ws-hairline, rgba(255, 255, 255, 0.70));
+  padding: 12px 16px;
+  gap: 10px;
+}
+
+.visual-filter-checkbox { width: 15px; height: 15px; }
+
+.visual-filter-select,
+.visual-filter-input {
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid var(--win-border);
+  background: rgba(255, 255, 255, 0.55);
+  color: var(--win-text-primary);
+  font-size: 11.5px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.visual-filter-select { padding-right: 26px; }
+.visual-filter-input { width: 220px; }
+
+.visual-filter-select:focus,
+.visual-filter-input:focus {
+  border-color: var(--win-accent);
+  box-shadow: 0 0 0 3px var(--win-accent-glow);
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.visual-filter-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+[data-theme='dark'] .visual-filter-select,
+[data-theme='dark'] .visual-filter-input {
+  background: rgba(8, 10, 14, 0.42);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+[data-theme='dark'] .visual-filter-select:focus,
+[data-theme='dark'] .visual-filter-input:focus { background: rgba(8, 10, 14, 0.70); }
+
+/* Nút phụ + nút icon: cùng chất liệu với .gp-btn ở thanh chân bảng */
+.visual-filter-btn-apply,
+.visual-filter-btn-icon {
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid var(--win-border);
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.70);
+  color: var(--win-text-primary);
+  font-family: var(--win-font-sans);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.visual-filter-btn-apply { padding: 0 10px; }
+.visual-filter-btn-icon { width: 28px; padding: 0; }
+
+.visual-filter-btn-apply:hover,
+.visual-filter-btn-icon:hover { background: rgba(255, 255, 255, 0.88); }
+
+[data-theme='dark'] .visual-filter-btn-apply,
+[data-theme='dark'] .visual-filter-btn-icon {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+[data-theme='dark'] .visual-filter-btn-apply:hover,
+[data-theme='dark'] .visual-filter-btn-icon:hover { background: rgba(255, 255, 255, 0.16); }
+
+/* Nút chính của thanh lọc: dùng accent xanh dương. Xanh lá được giữ riêng cho
+   "Lưu" ở thanh chân bảng — đó là hành động ghi xuống DB, còn lọc thì không. */
+.visual-filter-btn-primary {
+  height: 28px;
+  padding: 0 16px;
+  border-radius: 8px;
+  border: 1px solid var(--win-accent-secondary);
+  background: var(--win-accent);
+  color: #fff;
+  font-family: var(--win-font-sans);
+  font-size: 11.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  transition: background 0.12s ease;
+}
+.visual-filter-btn-primary:hover { background: var(--win-accent-secondary); }
+
+/* Chân thanh lọc: đường kẻ liền mảnh thay cho gạch đứt */
+.visual-filter-footer {
+  margin-top: 2px;
+  padding-top: 10px;
+  border-top: 1px solid var(--win-border);
+}
+
+.visual-filter-footer-info { gap: 14px; font-size: 11px; }
+
+.visual-filter-footer-info kbd {
+  padding: 1px 5px;
+  border-radius: 5px;
+  border: 1px solid var(--win-border);
+  background: var(--win-bg-hover);
+  font-family: var(--win-font-mono);
+  font-size: 10px;
+  color: var(--win-text-secondary);
+}
+
+
+/* =====================================================================
+   Xanh lá hệ thống của macOS. Thay cho #10b981 (emerald của Tailwind) —
+   tông macOS trong và tươi hơn, khớp với các nút màu khác đã chỉnh.
+   Dùng biến để nút "Áp dụng tất cả" và nút "Lưu" luôn cùng một màu.
+   ===================================================================== */
+:root,
+[data-theme='dark'] {
+  --mac-green: #32D74B;
+  --mac-green-hover: #28C840;
+}
+
+[data-theme='light'] {
+  --mac-green: #28CD41;
+  --mac-green-hover: #1FB534;
+}
+
+/* Nút chính thanh lọc */
+.visual-filter-btn-primary {
+  background: var(--mac-green);
+  border-color: var(--mac-green-hover);
+  color: #fff;
+}
+.visual-filter-btn-primary:hover { background: var(--mac-green-hover); }
+
+/* Nút Lưu ở thanh chân bảng dữ liệu */
+.gp-btn.save {
+  background: var(--mac-green);
+  border-color: var(--mac-green-hover);
+  color: #fff;
+}
+.gp-btn.save:hover:not(:disabled) { background: var(--mac-green-hover); }
+[data-theme='dark'] .gp-btn.save { background: var(--mac-green); }
+
+/* Nút có icon trong thanh lọc cần canh giữa icon + chữ */
+.visual-filter-btn-apply {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+
+/* =====================================================================
+   CHUẨN HOÁ NÚT TOÀN APP
+   ---------------------------------------------------------------------
+   Khảo sát: ~90 nút .btn nằm rải trong 12 file, .btn có định nghĩa chuẩn
+   nhưng bị inline style ghi đè mỗi nơi một số:
+     - 7 chiều cao khác nhau: 20/22/24/26/28/30/32px
+     - 7 bán kính khác nhau:  2/3/4/6/8/10/12px
+     - 10 cỡ chữ khác nhau:   9/9.5/10/10.5/11/11.5/12/13...
+
+   Cách chuẩn hoá KHÔNG phải sửa 90 chỗ JSX:
+
+   1) border-radius + font-size dùng !important để thắng inline. Hai thuộc
+      tính này thuần thị giác, không ảnh hưởng dòng chảy layout.
+   2) min-height KHÔNG cần !important: theo spec min-height thắng height, nên
+      nút inline 20/22/24px tự được nâng lên 26px, nút cao hơn giữ nguyên.
+      Thanh công cụ chứa chúng cao 40px nên còn dư chỗ.
+   3) background/border/color KHÔNG ép. Nhiều nút dùng inline background để
+      báo trạng thái bật/tắt (Filters, Export, Columns, Chỉ đọc...) — ép
+      !important sẽ xoá mất tín hiệu trạng thái đó.
+   ===================================================================== */
+/* Đã xoá hết inline height/fontSize/borderRadius trên nút (56 chỗ) nên KHÔNG
+   còn cần !important — CSS là nguồn duy nhất một cách đường hoàng. Giai đoạn
+   ép !important trước đó tạo ra cái bẫy: JSX ghi height:'22px' mà render 28px,
+   người đọc code hiểu sai và mọi inline style mới thêm đều bị vô hiệu hoá. */
+.btn {
+  height: 28px;
+  gap: 6px;
+  border-radius: 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+/* Tier "compact" của workspace: tất cả về 28px cho thẳng hàng với .btn */
+.gp-btn,
+.gp-pager { height: 28px; }
+
+/* Nút ghép "Chạy + ▾": mặt tiếp giáp phải phẳng */
+.btn-join-l {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.btn-join-r {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+/* Nút phụ: thêm hairline sáng cho cùng chất liệu với .gp-btn / .cm-btn.
+   Chỉ đặt box-shadow (inline hầu như không dùng thuộc tính này) nên không
+   đụng tới các nút đang tự tô background báo trạng thái. */
+.btn-secondary { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55); }
+[data-theme='dark'] .btn-secondary { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08); }
+.btn-primary { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22); }
+
+/* Đưa các họ nút tự viết về đúng một bán kính 8px với .btn */
+.gp-btn,
+.gp-pager,
+.cm-btn,
+.visual-filter-btn-apply,
+.visual-filter-btn-icon,
+.visual-filter-btn-primary,
+.visual-filter-select,
+.visual-filter-input { border-radius: 8px; }
+
+/* Nút chỉ có icon: giữ vuông vắn, bán kính nhỏ hơn cho cân với kích thước */
+.cm-icon-btn,
+.title-bar-btn,
+.tab-new-btn,
+.tab-list-dropdown-btn { border-radius: 7px; }
+
+
+/* =====================================================================
+   TOKEN MÀU TRẠNG THÁI
+   ---------------------------------------------------------------------
+   Trước đây 3 màu này được viết thẳng dạng hex ở 48 chỗ rải khắp 12 file
+   (#10b981 x20, #ef4444 x21, #f59e0b x7). Hệ quả trực tiếp: khi nút Lưu và
+   "Áp dụng tất cả" đổi sang xanh macOS (#28CD41) thì 20 chỗ kia vẫn là
+   emerald #10b981 -> trong app tồn tại HAI màu xanh lá khác nhau.
+
+   --st-ok trỏ thẳng vào --mac-green nên chỉ còn một nguồn sự thật cho màu
+   xanh; sửa một chỗ là đổi toàn bộ.
+
+   Lưu ý khi dùng: chỉ đặt được trong CSS hoặc trong style={{ }}. KHÔNG đặt
+   vào prop color=/fill= của lucide, vì prop trở thành thuộc tính SVG mà
+   thuộc tính SVG không hiểu var() (icon sẽ mất màu). Muốn tô icon thì dùng
+   style={{ color: 'var(--st-ok)' }} — lucide mặc định stroke="currentColor".
+   ===================================================================== */
+:root,
+[data-theme='dark'] {
+  --st-ok: var(--mac-green);
+  --st-danger: #FF453A;
+  --st-warn: #FF9F0A;
+}
+
+[data-theme='light'] {
+  --st-ok: var(--mac-green);
+  --st-danger: #FF3B30;
+  --st-warn: #FF9500;
+}
+
+
+/* =====================================================================
+   Terminal panel — header + ô chạy SQL
+   Panel luôn tối (#1c1c1e) kể cả ở giao diện sáng, nên các nút ở đây dùng
+   thang màu riêng thay vì .btn của app (nút sáng trên nền đen bị chói).
+   ===================================================================== */
+.tp-title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  color: #e5e5e7;
+}
+
+.tp-title-main {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tp-title-sub {
+  font-size: 10.5px;
+  color: #8a8a8f;
+  font-family: var(--win-font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Đèn trạng thái phiên shell: trước đây phải đọc chữ trong terminal mới biết
+   phiên còn sống hay không. */
+.tp-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 6px currentColor;
+}
+.tp-dot.on { background: var(--mac-green); color: var(--mac-green); }
+.tp-dot.off { background: #ff453a; color: #ff453a; }
+
+.tp-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.tp-btn {
+  height: 26px;
+  padding: 0 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.07);
+  color: #e5e5e7;
+  font-family: var(--win-font-sans);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.tp-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.15); }
+.tp-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.tp-btn.icon { padding: 0 7px; }
+
+/* Đang mở (menu/ô SQL đang bật) */
+.tp-btn.on {
+  background: rgba(96, 165, 250, 0.22);
+  border-color: rgba(96, 165, 250, 0.55);
+  color: #93c5fd;
+}
+
+.tp-btn.warn {
+  background: rgba(255, 159, 10, 0.18);
+  border-color: rgba(255, 159, 10, 0.5);
+  color: #ffb340;
+}
+.tp-btn.warn:hover { background: rgba(255, 159, 10, 0.3); }
+
+/* ————— Ô chạy SQL ————— */
+.tp-sqlbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+}
+
+.tp-sql-prompt {
+  flex-shrink: 0;
+  font-family: var(--win-font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: #c084fc;
+}
+
+.tp-sql-input {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 9px;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  background: rgba(0, 0, 0, 0.45) !important;
+  color: #e5e5e7 !important;
+  font-family: var(--win-font-mono);
+  font-size: 12px;
+  outline: none;
+}
+.tp-sql-input::placeholder { color: #6b6b70; font-family: var(--win-font-sans); }
+.tp-sql-input:focus {
+  border-color: rgba(96, 165, 250, 0.7) !important;
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.18) !important;
+}
+
+
+/* Dropdown thuộc chrome của terminal -> cũng phải tối.
+   Trước đây header và 2 dropdown này tô bằng var(--win-bg-card): ở giao diện SÁNG
+   biến đó là trắng 88%, mà chữ/nút bên trong (.tp-title, .tp-btn) lại là màu sáng
+   dành cho nền tối -> sáng trên sáng, tàng hình hoàn toàn ở chế độ tab. */
+.tp-menu {
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(38, 39, 43, 0.98);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  color: #e5e5e7;
+}
+
+/* Nội dung trong dropdown vốn dùng biến theme (sáng ở light theme) -> ép về tông tối */
+.tp-menu,
+.tp-menu * {
+  --win-text-primary: #e5e5e7;
+  --win-text-secondary: #a1a1a6;
+  --win-text-disabled: #6b6b70;
+  --win-border: rgba(255, 255, 255, 0.12);
+  --win-bg-hover: rgba(255, 255, 255, 0.10);
+  --win-bg-window: rgba(0, 0, 0, 0.40);
+  --win-bg-card: rgba(38, 39, 43, 0.98);
+}
+
+.tp-menu .context-menu-item { border-radius: 7px; }
+
+.tp-menu input {
+  border-radius: 7px !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  background: rgba(0, 0, 0, 0.40) !important;
+  color: #e5e5e7 !important;
+}
+
+
+/* Thanh thông báo của app trong terminal panel. Đặt ngoài buffer xterm vì
+   PowerShell/PSReadLine tự vẽ lại dòng bằng cursor movement và sẽ ghi đè lên
+   bất cứ chữ nào app chèn vào buffer. */
+.tp-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  flex-shrink: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+}
+.tp-banner span { flex: 1; min-width: 0; }
+.tp-banner.info { background: rgba(96, 165, 250, 0.16); color: #bfdbfe; }
+.tp-banner.ok { background: rgba(40, 205, 65, 0.16); color: #a7f3b0; }
+.tp-banner.err { background: rgba(255, 69, 58, 0.18); color: #fecaca; }
+
+.tp-banner-close {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: 0.7;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.tp-banner-close:hover { opacity: 1; background: rgba(255, 255, 255, 0.14); }
 

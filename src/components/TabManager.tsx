@@ -95,13 +95,9 @@ export const TabManager: React.FC<TabManagerProps> = ({
               onClick={() => onSelectTab(tab.id)}
               onContextMenu={(e) => handleContextMenu(e, tab.id)}
             >
-              {tab.type === 'table' ? (
-                <Table size={12} className="tab-icon-table" style={{ flexShrink: 0 }} />
-              ) : tab.type === 'terminal' ? (
-                <TerminalSquare size={12} style={{ flexShrink: 0, color: 'var(--win-accent)' }} />
-              ) : (
-                <Terminal size={12} style={{ flexShrink: 0, color: 'var(--win-accent)' }} />
-              )}
+              {/* Bỏ icon loại tab: tab chỉ phân biệt bằng màu (nền sáng + chữ
+                  đậm cho tab đang xem), tiêu đề đã đủ cho biết đó là bảng hay
+                  truy vấn. Danh sách tab ở dropdown vẫn giữ icon. */}
               <span className="tab-title" title={tab.label}>
                 {tab.label}
               </span>
@@ -124,8 +120,9 @@ export const TabManager: React.FC<TabManagerProps> = ({
           <button 
             className="tab-list-dropdown-btn" 
             onClick={(e) => {
+              e.preventDefault();
               e.stopPropagation();
-              setShowListDropdown(!showListDropdown);
+              setShowListDropdown((prev) => !prev);
             }}
             title="Danh sách tất cả các tab đang mở"
           >
@@ -228,7 +225,7 @@ export const TabManager: React.FC<TabManagerProps> = ({
                   onCloseAll();
                   setContextMenu((prev) => ({ ...prev, visible: false }));
                 }}
-                style={{ color: '#ef4444' }}
+                style={{ color: 'var(--st-danger)' }}
               >
                 <Trash2 size={13} style={{ flexShrink: 0 }} />
                 <span>Đóng tất cả tab</span>

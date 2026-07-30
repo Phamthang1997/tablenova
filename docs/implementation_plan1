@@ -1,0 +1,54 @@
+# Implementation Plan - Redesign Connection Manager Modal (macOS Sequoia Liquid Glass)
+
+Tái thiết kế toàn bộ giao diện Modal Quản lý Kết nối Cơ sở Dữ liệu (`ConnectionManager.tsx`) theo ngôn ngữ thiết kế **macOS Sequoia / VisionOS Liquid Glass** siêu sang trọng, tương phản cao, hỗ trợ cả 2 chế độ Sáng và Tối.
+
+## User Review Required
+
+> [!IMPORTANT]
+> Giao diện mới sẽ sắp xếp lại bố cục phân vùng thông tin kết nối, tích hợp Icon trong ô nhập dữ liệu (Host, Port, User, Pass, Database), bổ sung Tab phân loại cấu hình (Cơ bản / SSL / SSH Tunnel / Nâng cao) và tối ưu hóa hoàn toàn trải nghiệm thao tác của người dùng.
+
+## Proposed Changes
+
+---
+
+### [Component 1] CSS Design System & Micro-animations
+
+#### [MODIFY] [index.css](file:///c:/workspace/table/src/index.css)
+- Bổ sung các CSS Tokens và Class chuyên dụng cho Modal Kính lỏng cao cấp: `.connection-card`, `.connection-sidebar`, `.connection-form-container`, `.form-input-with-icon`, `.segmented-tabs`.
+- Định nghĩa hiệu ứng kính lỏng đa tầng (Multi-layer Frosted Glass) với độ mờ `blur(40px)`, độ sặc mỡ `saturate(210%)` và đường viền kim cương phản quang `inset 0 1px 1px rgba(...)`.
+- Thiết kế riêng bộ ô nhập liệu kèm Icon (`.input-icon-wrapper`) mượt mà, phản hồi chuyển động mượt khi Focus.
+
+---
+
+### [Component 2] Connection Manager React Component
+
+#### [MODIFY] [ConnectionManager.tsx](file:///c:/workspace/table/src/components/ConnectionManager.tsx)
+1. **Sidebar Trái (Saved Profiles & Quick Actions)**:
+   - Tái cấu trúc danh sách kết nối đã lưu theo nhóm (MẶC ĐỊNH, STG, DEV, PROD) với Badge đếm số lượng và nút bấm hành động nhanh.
+   - Thêm nút tạo nhanh gọn: `+ SQLite`, `+ PostgreSQL`, `+ MySQL` dạng Segmented Pills.
+   - Nút Nhập/Xuất & Backup & Restore được gom nhóm tinh tế ở đáy Sidebar.
+2. **Khu vực Form Phải (Configuration Panel)**:
+   - Thêm thanh điều hướng Tab phụ (Nâng cao/SSL/SSH Tunnel) giúp giao diện thoáng đãng, không bị rối khi cấu hình SSH/SSL phức tạp.
+   - Thêm Icon minh họa trực quan trong từng ô input:
+     - 🌐 **Host**: Icon Server
+     - 🔌 **Port**: Icon Hash / Plug
+     - 👤 **User**: Icon User
+     - 🔑 **Password**: Icon Key / Lock
+     - 🗄️ **Database**: Icon Database
+   - Cải tiến bảng chọn màu sắc (Color Dots) và Nhóm phân loại (Group Tagging).
+3. **Thanh Thao tác Đáy (Footer Actions)**:
+   - Nút **Kết nối (Connect)** nổi bật với hiệu ứng bừng sáng (Accent Glow).
+   - Nút **Kiểm tra (Test Connection)** với bộ đếm thời gian phản hồi (Ping latencyms).
+   - Nút **Lưu cấu hình (Save Profile)**.
+
+---
+
+## Verification Plan
+
+### Automated Verification
+- Chạy lệnh `npm run build-frontend` để đảm bảo 0 lỗi TypeScript và 0 lỗi Vite bundling.
+
+### Manual Verification
+- Mở Modal Kết nối ở chế độ **Liquid Glass Dark** và **Liquid Glass Light**.
+- Kiểm tra tính dễ đọc của chữ, độ tương phản của ô input, màu sắc placeholder.
+- Thao tác thử tạo kết nối SQLite / PostgreSQL / MySQL, kiểm tra lưu cấu hình, nhập từ URL và chuyển nhóm.

@@ -1,5 +1,12 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "ignorePatterns": [
+    "public/vs/**",
+    "dist/**",
+    "coverage/**",
+    "src-tauri/target/**",
+    "node_modules/**"
+  ],
   "plugins": ["react", "typescript", "oxc"],
   "rules": {
     "react/rules-of-hooks": "error",

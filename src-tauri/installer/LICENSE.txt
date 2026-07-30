@@ -1,0 +1,53 @@
+===============================================================================
+                       ĐIỀU KHOẢN SỬ DỤNG VÀ CHÍNH SÁCH BẢO MẬT
+                                 (EULA & PRIVACY POLICY)
+                                       TABLENOVA
+===============================================================================
+
+Phiên bản: 1.0.0
+Ngày hiệu lực: 2026
+
+Chào mừng bạn đến với TableNova - Phần mềm quản trị và thao tác cơ sở dữ liệu.
+Bằng việc tải xuống, cài đặt hoặc sử dụng phần mềm này, bạn đồng ý tuân thủ các
+điều khoản và điều kiện được quy định dưới đây.
+
+-------------------------------------------------------------------------------
+1. QUYỀN SỬ DỤNG LẮP ĐẶT (LICENSE GRANT)
+-------------------------------------------------------------------------------
+- TableNova cấp cho bạn quyền sử dụng phần mềm cá nhân, phi thương mại hoặc thương
+  mại theo giấy phép sử dụng hợp lệ.
+- Bạn có quyền cài đặt phần mềm trên các thiết bị máy tính cá nhân thuộc sở hữu
+  hoặc quyền quản lý của bạn.
+
+-------------------------------------------------------------------------------
+2. BẢO MẬT DỮ LIỆU & QUYỀN RIÊNG TƯ (DATA PRIVACY & SECURITY)
+-------------------------------------------------------------------------------
+- AN TOÀN KẾT NỐI: Tất cả thông tin cấu hình kết nối cơ sở dữ liệu (Database Host,
+  Username, Password, SSH Keys) được lưu trữ hoàn toàn cục bộ (Local Storage) trên
+  máy tính của bạn và được mã hóa bảo mật.
+- KHÔNG THU THẬP DỮ LIỆU CƠ SỞ DỮ LIỆU: Chúng tôi KHÔNG truyền tải, thu thập hay
+  lưu trữ bất kỳ dữ liệu bảng, truy vấn SQL hay kết quả truy vấn nào của bạn lên
+  máy chủ bên ngoài.
+- TÍNH NĂNG AI ASSISTANT: Khi sử dụng trợ lý AI tích hợp trong ứng dụng, chỉ có
+  cấu trúc Schema (tên bảng, tên cột) hoặc câu hỏi truy vấn do bạn yêu cầu mới
+  được gửi tới API xử lý để hỗ trợ sinh câu lệnh SQL.
+
+-------------------------------------------------------------------------------
+3. TRÁCH NHIỆM NGHĨA VỤ NGUỜI DÙNG (USER RESPONSIBILITIES)
+-------------------------------------------------------------------------------
+- Bạn chịu trách nhiệm duy trì tính mật khẩu kết nối và sao lưu cơ sở dữ liệu của
+  chính mình.
+- Bạn không được phép thực hiện hành vi đảo ngược mã nguồn (Reverse Engineering),
+  decompile hoặc tạo các bản phân phối lại trái phép mà không có sự đồng ý.
+
+-------------------------------------------------------------------------------
+4. GIỚI HẠN TRÁCH NHIỆM (LIMITATION OF LIABILITY)
+-------------------------------------------------------------------------------
+- Phần mềm được cung cấp "NGUYÊN BẢN" (AS IS) mà không có bất kỳ sự bảo đảm trực
+  tiếp hay gián tiếp nào về khả năng mất mát dữ liệu do thao tác SQL của người dùng.
+- Chúng tôi khuyên bạn luôn kiểm tra kỹ các câu lệnh thao tác ghi/xóa (UPDATE, DELETE,
+  DROP) trước khi thực thi trên môi trường Production.
+
+-------------------------------------------------------------------------------
+Cảm ơn bạn đã tin tưởng và sử dụng TableNova!
+===============================================================================

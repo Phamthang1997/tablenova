@@ -14,13 +14,16 @@ export interface QueryParamPattern {
 export const QUERY_PARAM_PATTERNS: QueryParamPattern[] = [
   {
     id: 0,
-    label: ':[\w.]',
+    // Nhãn này được render cho người dùng xem. Phải escape thành '\\w': trong
+    // chuỗi JS thì '\w' bị hiểu là 'w' (backslash bị ăn mất) nên UI đang hiện
+    // sai thành ':[w.]'.
+    label: ':[\\w.]',
     example: 'SELECT * FROM users WHERE id = :user_id AND org = :org.id',
     regex: /(?<!:):([a-zA-Z0-9_.]+)/g
   },
   {
     id: 1,
-    label: '%[\w.]%',
+    label: '%[\\w.]%',
     example: 'SELECT * FROM users WHERE id = %user_id% AND org = %org.id%',
     regex: /%([a-zA-Z0-9_.]+)%/g
   },
@@ -33,7 +36,7 @@ export const QUERY_PARAM_PATTERNS: QueryParamPattern[] = [
   },
   {
     id: 3,
-    label: '${[\w.]+}',
+    label: '${[\\w.]+}',
     example: 'SELECT * FROM users WHERE id = ${user_id} AND org = ${org.id}',
     regex: /\$\{([a-zA-Z0-9_.]+)\}/g
   }
@@ -153,6 +156,97 @@ export function extractQueryParams(sql: string, patternIndex: number): string[] 
   }
 
   return matches;
+}
+
+// Kiểu dữ liệu người dùng chọn cho mỗi tham số trong QueryParamsModal.
+export type QueryParamType = 'auto' | 'text' | 'number' | 'boolean' | 'null';
+
+// Giá trị + kiểu của một tham số (do modal thu thập).
+export interface TypedParamValue {
+  value: string;
+  type: QueryParamType;
+}
+
+/**
+ * Ép giá trị chuỗi người dùng nhập sang giá trị JSON đúng kiểu để bind ở tầng driver.
+ * 'auto' tự suy luận; các kiểu còn lại tôn trọng lựa chọn của người dùng.
+ */
+export function resolveParamValue(raw: string, type: QueryParamType): string | number | boolean | null {
+  switch (type) {
+    case 'null':
+      return null;
+    case 'text':
+      return raw;
+    case 'boolean':
+      return /^(true|1|yes|t|y)$/i.test(raw.trim());
+    case 'number': {
+      const n = Number(raw.trim());
+      return Number.isFinite(n) ? n : raw; // không parse được -> giữ chuỗi để DB tự báo lỗi rõ ràng
+    }
+    case 'auto':
+    default: {
+      const t = raw.trim();
+      if (t === '') return null;
+      if (/^(true|false)$/i.test(t)) return /^true$/i.test(t);
+      // Số nguyên: tránh mất số 0 ở đầu (vd mã bưu chính '01234') -> giữ chuỗi nếu có 0 đứng đầu
+      if (/^-?[1-9]\d*$/.test(t) || t === '0') {
+        const n = Number(t);
+        if (Number.isSafeInteger(n)) return n;
+      }
+      if (/^-?\d*\.\d+$/.test(t)) {
+        const n = Number(t);
+        if (Number.isFinite(n)) return n;
+      }
+      return raw;
+    }
+  }
+}
+
+/**
+ * Chuyển SQL có placeholder (:name, %name%, ?, ${name}) thành SQL với placeholder NATIVE của driver
+ * (`?` cho SQLite/MySQL, `$1..$n` cho Postgres) kèm mảng giá trị đã ép kiểu theo đúng thứ tự bind.
+ *
+ * Mỗi lần xuất hiện của một tham số -> một placeholder + một giá trị (tham số lặp lại được bind lặp lại),
+ * đảm bảo ngữ nghĩa đồng nhất trên cả 3 driver. Placeholder nằm trong chuỗi/comment được giữ nguyên.
+ *
+ * Đây là điểm mấu chốt để KHÔNG nội suy giá trị vào SQL (chống SQL injection) — giá trị được gửi
+ * riêng cho backend để bind ở tầng driver.
+ */
+export function buildParameterizedSql(
+  sql: string,
+  patternIndex: number,
+  valuesMap: Record<string, TypedParamValue>,
+  dialect: string
+): { sql: string; values: (string | number | boolean | null)[] } {
+  const patternObj = QUERY_PARAM_PATTERNS[patternIndex] || QUERY_PARAM_PATTERNS[0];
+  const isPg = dialect === 'postgres';
+  const mask = maskCommentsAndStrings(sql);
+  const isMasked = (offset: number) => mask[offset] !== sql[offset];
+  const values: (string | number | boolean | null)[] = [];
+
+  const pushValue = (key: string, altKey?: string) => {
+    const entry = valuesMap[key] ?? (altKey ? valuesMap[altKey] : undefined);
+    values.push(resolveParamValue(entry?.value ?? '', entry?.type ?? 'auto'));
+    // Postgres đánh số $1..$n theo thứ tự bind; SQLite/MySQL dùng `?`.
+    return isPg ? `$${values.length}` : '?';
+  };
+
+  if (patternObj.isPositional) {
+    let index = 0;
+    const outSql = sql.replace(/\?/g, (m, offset: number) => {
+      if (isMasked(offset)) return m; // ? trong chuỗi/comment -> giữ nguyên
+      index++;
+      return pushValue(`Tham số ? #${index}`);
+    });
+    return { sql: outSql, values };
+  }
+
+  const re = new RegExp(patternObj.regex.source, 'g');
+  const outSql = sql.replace(re, (m, p1, offset: number) => {
+    if (isMasked(offset)) return m;
+    return pushValue(m, p1);
+  });
+  return { sql: outSql, values };
 }
 
 /**

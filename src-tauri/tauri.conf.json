@@ -12,28 +12,45 @@
     "windows": [
       {
         "title": "TableNova",
-        "width": 1240,
-        "height": 840,
+        "width": 1060,
+        "height": 680,
         "resizable": true,
         "fullscreen": false,
         "decorations": false,
+        "transparent": true,
+        "shadow": true,
         "center": true,
-        "backgroundColor": "#1c1c1e"
+        "backgroundColor": "#00000000"
       }
     ],
     "security": {
       "csp": null
-    }
+    },
+    "macOSPrivateApi": true
   },
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "TableNova Team",
+    "copyright": "Copyright © 2026 TableNova. All rights reserved.",
+    "licenseFile": "installer/LICENSE.txt",
+    "shortDescription": "TableNova - Trình quản trị cơ sở dữ liệu hiện đại",
+    "longDescription": "TableNova là ứng dụng quản lý cơ sở dữ liệu tốc độ cao hỗ trợ SQLite, MySQL, PostgreSQL tích hợp trợ lý AI và SSH Tunneling.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "headerImage": "installer/header.png",
+        "sidebarImage": "installer/sidebar.png",
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "installMode": "both"
+      }
+    }
   }
 }
