@@ -1,6 +1,9 @@
 // Đọc file .xlsx phía client (không phụ thuộc thư viện ngoài) -> mảng object keyed theo header hàng đầu.
 // Tự giải nén ZIP: entry STORED copy thẳng, entry DEFLATE giải nén bằng DecompressionStream('deflate-raw') native.
-// Parse XML bằng DOMParser có sẵn của webview.
+// Parse XML bằng parser chuỗi tự viết (./xmlParser) — cố tình KHÔNG dùng DOMParser: nội dung
+// file do người dùng chọn là dữ liệu không tin cậy, không nên diễn giải thành DOM.
+
+import { parseXml, XmlParseError, type XmlElement } from './xmlParser';
 
 async function inflateRaw(bytes: Uint8Array): Promise<Uint8Array> {
   const ds = new DecompressionStream('deflate-raw');
@@ -62,16 +65,18 @@ async function readEntryData(buf: Uint8Array, entry: ZipEntry): Promise<Uint8Arr
   throw new Error('Phương thức nén ZIP không hỗ trợ: ' + entry.method);
 }
 
-function parseXml(text: string): Document {
-  const doc = new DOMParser().parseFromString(text, 'application/xml');
-  if (doc.getElementsByTagName('parsererror').length > 0) {
-    throw new Error('Lỗi phân tích XML trong XLSX');
+// Bọc parser để lỗi cú pháp hiện ra dưới dạng thông báo quen thuộc của luồng import.
+function parseXmlPart(text: string): XmlElement {
+  try {
+    return parseXml(text);
+  } catch (e) {
+    if (e instanceof XmlParseError) throw new Error('Lỗi phân tích XML trong XLSX: ' + e.message);
+    throw e;
   }
-  return doc;
 }
 
 // Bảng sharedStrings: mỗi <si> có thể chứa nhiều <t> (rich text) -> nối lại.
-function parseSharedStrings(doc: Document): string[] {
+function parseSharedStrings(doc: XmlElement): string[] {
   const out: string[] = [];
   const sis = doc.getElementsByTagName('si');
   for (let i = 0; i < sis.length; i++) {
@@ -107,7 +112,7 @@ function looksLikeDateFormat(code: string): boolean {
 }
 
 // Parse styles.xml -> mảng boolean theo chỉ số cellXfs: cột (style) đó có phải định dạng ngày không.
-function parseStyles(doc: Document): boolean[] {
+function parseStyles(doc: XmlElement): boolean[] {
   const customIsDate = new Map<number, boolean>();
   const numFmts = doc.getElementsByTagName('numFmt');
   for (let i = 0; i < numFmts.length; i++) {
@@ -138,7 +143,7 @@ function excelSerialToDate(serial: number, date1904: boolean): string {
   return hasTime ? `${ymd} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}` : ymd;
 }
 
-function cellValue(c: Element, shared: string[], xfIsDate: boolean[], date1904: boolean): any {
+function cellValue(c: XmlElement, shared: string[], xfIsDate: boolean[], date1904: boolean): any {
   const t = c.getAttribute('t');
   if (t === 'inlineStr') {
     const ts = c.getElementsByTagName('t');
@@ -161,7 +166,7 @@ function cellValue(c: Element, shared: string[], xfIsDate: boolean[], date1904: 
   return num;
 }
 
-function parseSheet(doc: Document, shared: string[], xfIsDate: boolean[], date1904: boolean): any[] {
+function parseSheet(doc: XmlElement, shared: string[], xfIsDate: boolean[], date1904: boolean): any[] {
   const rowsEl = doc.getElementsByTagName('row');
   const matrix: any[][] = [];
   for (let i = 0; i < rowsEl.length; i++) {
@@ -211,11 +216,11 @@ export async function parseXlsx(buffer: ArrayBuffer): Promise<any[]> {
   // sharedStrings (nếu có)
   let shared: string[] = [];
   const ssText = await textOf('xl/sharedStrings.xml');
-  if (ssText) shared = parseSharedStrings(parseXml(ssText));
+  if (ssText) shared = parseSharedStrings(parseXmlPart(ssText));
 
   // styles.xml -> nhận biết cột định dạng ngày
   const stylesText = await textOf('xl/styles.xml');
-  const xfIsDate = stylesText ? parseStyles(parseXml(stylesText)) : [];
+  const xfIsDate = stylesText ? parseStyles(parseXmlPart(stylesText)) : [];
 
   // Xác định đường dẫn worksheet của sheet đầu tiên qua workbook + rels; fallback sheet1.xml.
   let sheetPath = 'xl/worksheets/sheet1.xml';
@@ -224,7 +229,7 @@ export async function parseXlsx(buffer: ArrayBuffer): Promise<any[]> {
   const relsText = await textOf('xl/_rels/workbook.xml.rels');
   if (wbText) {
     try {
-      const pr = parseXml(wbText).getElementsByTagName('workbookPr')[0];
+      const pr = parseXmlPart(wbText).getElementsByTagName('workbookPr')[0];
       const d = pr?.getAttribute('date1904');
       date1904 = d === '1' || d === 'true';
     } catch {
@@ -233,13 +238,11 @@ export async function parseXlsx(buffer: ArrayBuffer): Promise<any[]> {
   }
   if (wbText && relsText) {
     try {
-      const wb = parseXml(wbText);
+      const wb = parseXmlPart(wbText);
       const firstSheet = wb.getElementsByTagName('sheet')[0];
-      const rid =
-        firstSheet?.getAttribute('r:id') ||
-        firstSheet?.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id') ||
-        '';
-      const rels = parseXml(relsText);
+      // getAttribute khớp cả tên đầy đủ 'r:id' lẫn phần local 'id' -> không cần bản NS riêng.
+      const rid = firstSheet?.getAttribute('r:id') || '';
+      const rels = parseXmlPart(relsText);
       const relEls = rels.getElementsByTagName('Relationship');
       for (let i = 0; i < relEls.length; i++) {
         if (relEls[i].getAttribute('Id') === rid) {
@@ -257,5 +260,5 @@ export async function parseXlsx(buffer: ArrayBuffer): Promise<any[]> {
   if (!sheetText) sheetText = await textOf('xl/worksheets/sheet1.xml');
   if (!sheetText) throw new Error('Không tìm thấy worksheet trong file XLSX');
 
-  return parseSheet(parseXml(sheetText), shared, xfIsDate, date1904);
+  return parseSheet(parseXmlPart(sheetText), shared, xfIsDate, date1904);
 }
