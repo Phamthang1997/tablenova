@@ -991,7 +991,6 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
       config = { type: 'sqlite', sqlitePath: 'demo.db' };
     } else if (activeType === 'sqlite') {
       config = { type: 'sqlite', sqlitePath };
-      localStorage.setItem('tf_sqlite_path', sqlitePath);
     } else if (activeType === 'postgres') {
       config = {
         type: 'postgres',
@@ -1022,10 +1021,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
         awsProfile,
         awsRegion
       };
-      localStorage.setItem('tf_pg_config', JSON.stringify({ host: pgHost, port: pgPort, user: pgUser, database: pgDatabase }));
-      // Đã bỏ cache 'tf_ssh_config': nó ghi thẳng sshKeyContent (private key) + sshPassphrase
-      // xuống localStorage dạng thô mà không chỗ nào đọc lại. Bí mật SSH nay nằm trong kho
-      // bảo mật của HĐH theo từng profile (dbHelper.setSecrets).
+      // Đã bỏ các cache 'tf_pg_config' / 'tf_ssh_config' ở đây: không chỗ nào đọc lại chúng,
+      // riêng 'tf_ssh_config' còn ghi thẳng sshKeyContent (private key) + sshPassphrase xuống
+      // localStorage dạng thô. Cấu hình kết nối chỉ còn sống trong profile (localStorage đã
+      // bóc bí mật) và bí mật thì nằm trong kho bảo mật của HĐH (dbHelper.setSecrets).
     } else if (activeType === 'redis') {
       config = {
         type: 'redis',
@@ -1036,7 +1035,6 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
         dbIndex: redisDbIndex,
         sslEnabled,
       };
-      localStorage.setItem('tf_redis_config', JSON.stringify({ host: redisHost, port: redisPort, user: redisUser, dbIndex: redisDbIndex }));
     } else {
       config = {
         type: 'mysql',
@@ -1067,11 +1065,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
         awsProfile,
         awsRegion
       };
-      localStorage.setItem('tf_my_config', JSON.stringify({ host: myHost, port: myPort, user: myUser, database: myDatabase }));
-      // Xem ghi chú ở nhánh postgres: cache 'tf_ssh_config' đã bị bỏ.
+      // Xem ghi chú ở nhánh postgres: các cache 'tf_my_config' / 'tf_ssh_config' đã bị bỏ.
     }
 
-    localStorage.setItem('tf_last_type', isDemo ? 'sqlite' : activeType);
+    // 'tf_last_type' cũng đã bỏ: ghi xuống nhưng không nơi nào đọc.
 
     const res = await dbHelper.connect(config);
 
