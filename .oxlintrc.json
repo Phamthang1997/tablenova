@@ -1,10 +1,9 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "ignorePatterns": [
-    "public/vs/**",
     "dist/**",
     "coverage/**",
-    "src-tauri/target/**",
+    "src-tauri/target*/**",
     "node_modules/**"
   ],
   "plugins": ["react", "typescript", "oxc"],
