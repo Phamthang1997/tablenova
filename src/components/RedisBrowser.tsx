@@ -55,7 +55,7 @@ export const RedisBrowser: React.FC<RedisBrowserProps> = ({ dbName, initialDbInd
   // (server có thể không hỗ trợ SCAN TYPE). Truyền pattern/type tường minh tránh stale-closure.
   const startScan = (pat: string, type: string) => {
     if (scanIdRef.current) dbHelper.cancelQuery(scanIdRef.current); // dừng scan cũ nếu đang chạy
-    const id = `rscan_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const id = `rscan_${crypto.randomUUID()}`;
     scanIdRef.current = id;
     setKeys([]);
     setStreaming(true);

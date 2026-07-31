@@ -784,7 +784,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     addToHistory(textToRun); // Log query history immediately
 
     const isPane1 = pane === 1;
-    const queryId = `q_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const queryId = `q_${crypto.randomUUID()}`;
 
     if (isPane1) {
       setLoading(true);

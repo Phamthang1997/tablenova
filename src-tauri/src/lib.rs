@@ -6,6 +6,7 @@ pub mod ssh_terminal;
 pub mod local_terminal;
 pub mod aws_iam;
 pub mod export;
+pub mod secret_store;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -136,6 +137,12 @@ pub fn run() {
             database::get_object_definition,
             database::open_url,
             database::set_app_window_size,
+            secret_store::secret_set,
+            secret_store::secret_get,
+            secret_store::secret_delete,
+            secret_store::secret_get_many,
+            secret_store::secret_set_many,
+            secret_store::secret_delete_many,
             db_stats::get_database_stats,
             db_stats::get_exact_table_row_count,
             redis_db::redis_connect,

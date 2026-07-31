@@ -45,6 +45,19 @@ regex = "1.13.0"
 hmac = "0.12"
 sha2 = "0.10"
 redis = { version = "1.4.1", features = ["tokio-comp", "tokio-rustls-comp"] }
+# Kho bí mật của HĐH (Windows Credential Manager / Keychain / Secret Service).
+# Tắt default-features rồi bật đúng backend theo từng nền tảng bên dưới, tránh kéo
+# zbus + secret-service vào bản build Windows.
+keyring = { version = "4.1.5", default-features = false, features = ["v1"] }
 
 [build-dependencies]
 tauri-build = { version = "2.6.3", features = [] }
+
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "4.1.5", features = ["windows-native-keyring-store"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "4.1.5", features = ["apple-native-keyring-store"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "4.1.5", features = ["zbus-secret-service-keyring-store"] }

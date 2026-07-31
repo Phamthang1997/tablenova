@@ -36,7 +36,9 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   closable: _closable = true,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
-  const sessionIdRef = useRef<string>(`term_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`);
+  // crypto.randomUUID thay cho Math.random: sessionId là định danh phiên gửi xuống backend,
+  // không nên đoán trước được (cũng loại luôn khả năng trùng id).
+  const sessionIdRef = useRef<string>(`term_${crypto.randomUUID()}`);
   const apiRef = useRef<{ input: (d: string) => void } | null>(null);
   const termRef = useRef<Terminal | null>(null);
 
@@ -84,7 +86,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     // Mỗi lần kết nối lại phải dùng sessionId mới: backend giữ phiên theo id, dùng
     // lại id cũ (đã bị đóng) sẽ mở không được.
     if (epoch > 0) {
-      sessionIdRef.current = `term_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      sessionIdRef.current = `term_${crypto.randomUUID()}`;
     }
     const sessionId = sessionIdRef.current;
     setAlive(true);

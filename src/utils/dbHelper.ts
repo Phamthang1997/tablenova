@@ -313,6 +313,26 @@ export const dbHelper = {
     }
   },
 
+  // ---- Kho bí mật của HĐH ----
+  // Mật khẩu DB, mật khẩu/passphrase/private key SSH, AWS secret key... nằm trong
+  // Windows Credential Manager / Keychain / Secret Service chứ không trong localStorage.
+  // Xem src-tauri/src/secret_store.rs và src/utils/secretFields.ts.
+
+  // Đọc các bí mật của một profile. Field chưa từng lưu sẽ không có trong kết quả.
+  async getSecrets(profileId: string, fields: string[]): Promise<Record<string, string>> {
+    return await invoke('secret_get_many', { profileId, fields });
+  },
+
+  // Ghi các bí mật của một profile. Giá trị rỗng đồng nghĩa với xoá field đó.
+  async setSecrets(profileId: string, values: Record<string, string>): Promise<void> {
+    await invoke('secret_set_many', { profileId, values });
+  },
+
+  // Xoá bí mật của một profile (khi xoá profile).
+  async deleteSecrets(profileId: string, fields: string[]): Promise<void> {
+    await invoke('secret_delete_many', { profileId, fields });
+  },
+
   // ---- SSH Terminal ----
   // Mở phiên SSH + PTY/shell. output server đẩy về qua Channel (onMessage).
   async openSshTerminal(

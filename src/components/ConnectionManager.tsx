@@ -4,7 +4,18 @@ import type { DbConnectionConfig } from '../utils/dbHelper';
 import { Database, Server, CheckCircle2, AlertTriangle, Plus, Trash2, Save, Copy, Download, Upload, Lock, Key, TerminalSquare, Hash, FolderOpen, User, Link, Star, Eye, EyeOff, ShieldAlert, Search, X, ChevronDown, ChevronRight, RefreshCw, ShieldCheck, Network, ArrowLeft, Check, Cloud, HardDriveDownload } from 'lucide-react';
 import { PostgresIcon, MySqlIcon, RedisIcon, SqliteIcon } from './DbIcons';
 import { encryptConnectionExport, decryptConnectionExport } from '../utils/cryptoHelper';
+import {
+  SECRET_FIELDS,
+  hasInlineSecrets,
+  mergeSecrets,
+  newProfileId,
+  splitSecrets,
+  stripSecrets,
+} from '../utils/secretFields';
 import { TerminalPanel } from './TerminalPanel';
+
+const PROFILES_KEY = 'tf_connection_profiles';
+const SECRET_FIELD_LIST: string[] = [...SECRET_FIELDS];
 
 const LoadingSpinner: React.FC<{ size?: number; style?: React.CSSProperties; className?: string }> = ({ size = 16, style, className }) => (
   <svg
@@ -403,6 +414,44 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
   const [profileNameInput, setProfileNameInput] = useState('');
   const [profileColor, setProfileColor] = useState('');
   const [profileGroup, setProfileGroup] = useState('');
+  const [secretError, setSecretError] = useState<string | null>(null); // lỗi khi thao tác với kho bí mật HĐH
+
+  // Điểm ghi profile DUY NHẤT: luôn bóc bí mật ra khỏi config trước khi chạm localStorage,
+  // đồng thời đẩy bí mật sang kho bảo mật của HĐH. State trong bộ nhớ cũng giữ bản đã bóc
+  // để không có đường nào vô tình serialize lại mật khẩu.
+  const persistProfiles = async (list: SavedProfile[]): Promise<SavedProfile[]> => {
+    const stripped: SavedProfile[] = [];
+    const pending: Array<Promise<void>> = [];
+
+    for (const p of list) {
+      const { safe, secrets } = splitSecrets(p.config);
+      stripped.push({ ...p, config: safe });
+      if (Object.keys(secrets).length > 0) pending.push(dbHelper.setSecrets(p.id, secrets));
+    }
+
+    setProfiles(stripped);
+    localStorage.setItem(PROFILES_KEY, JSON.stringify(stripped));
+
+    try {
+      await Promise.all(pending);
+      setSecretError(null);
+    } catch (e: any) {
+      // Cấu hình vẫn được lưu, chỉ riêng bí mật không vào được kho HĐH -> phải nói rõ.
+      setSecretError('Không lưu được mật khẩu vào kho bảo mật của hệ điều hành: ' + (e?.message || e));
+    }
+    return stripped;
+  };
+
+  // Đọc lại bí mật của một profile từ kho HĐH và ghép vào config để đem đi dùng.
+  const configWithSecrets = async (profile: SavedProfile): Promise<any> => {
+    try {
+      const secrets = await dbHelper.getSecrets(profile.id, SECRET_FIELD_LIST);
+      return mergeSecrets(profile.config, secrets);
+    } catch (e: any) {
+      setSecretError('Không đọc được mật khẩu từ kho bảo mật của hệ điều hành: ' + (e?.message || e));
+      return profile.config;
+    }
+  };
 
   const handleToggleDefaultProfile = (profileId: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
@@ -471,20 +520,25 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
         return;
       }
 
-      // Strip password fields if includePasswords is false
-      const processedProfiles = targetProfiles.map(p => {
-        const cloned = JSON.parse(JSON.stringify(p));
-        if (!exportIncludePasswords && cloned.config) {
-          delete cloned.config.password;
-          delete cloned.config.pgPassword;
-          delete cloned.config.myPassword;
-          delete cloned.config.sshPassword;
-          delete cloned.config.sshPassphrase;
-          delete cloned.config.awsSecretAccessKey;
-          delete cloned.config.awsSessionToken;
+      // profiles trong bộ nhớ đã không còn bí mật -> muốn xuất kèm mật khẩu thì phải
+      // đọc lại từ kho bảo mật của HĐH. Không kèm thì giữ nguyên bản đã bóc.
+      const processedProfiles = await Promise.all(
+        targetProfiles.map(async p => {
+          const cloned = JSON.parse(JSON.stringify(p));
+          cloned.config = exportIncludePasswords ? await configWithSecrets(p) : stripSecrets(cloned.config);
+          return cloned;
+        })
+      );
+
+      if (exportIncludePasswords && !exportFilePassword.trim()) {
+        const ok = confirm(
+          'Tệp xuất sẽ chứa mật khẩu ở dạng thô vì bạn chưa đặt mật khẩu bảo vệ tệp.\nVẫn tiếp tục?'
+        );
+        if (!ok) {
+          setExporting(false);
+          return;
         }
-        return cloned;
-      });
+      }
 
       const encryptedText = await encryptConnectionExport(processedProfiles, exportFilePassword);
 
@@ -564,15 +618,16 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
         if (!item.name || !item.type || !item.config) continue;
         let itemToSave = { ...item };
         if (existingIds.has(itemToSave.id)) {
-          itemToSave.id = 'profile_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+          itemToSave.id = newProfileId();
         }
         merged.push(itemToSave);
         existingIds.add(itemToSave.id);
         importedCount++;
       }
 
-      setProfiles(merged);
-      localStorage.setItem('tf_connection_profiles', JSON.stringify(merged));
+      // Tệp import có thể chứa mật khẩu dạng thô -> persistProfiles đẩy chúng sang kho HĐH
+      // và chỉ ghi phần cấu hình sạch xuống localStorage.
+      await persistProfiles(merged);
       setShowImportPasswordModal(false);
       setPendingImportContent(null);
       setSuccessMsg(`Đã nhập thành công ${importedCount} kết nối!`);
@@ -650,21 +705,19 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     }
   };
 
-  const handleImportUrlSubmit = () => {
+  const handleImportUrlSubmit = async () => {
     const res = parseConnectionUrl(importUrlInput);
     if (!res) return;
 
-    const newId = 'profile_' + Date.now();
     const newProfile: SavedProfile = {
-      id: newId,
+      id: newProfileId(),
       name: `Imported ${res.type.toUpperCase()} (${res.config.host || res.config.sqlitePath || 'DB'})`,
       type: res.type,
       config: res.config
     };
 
-    const newProfiles = [...profiles, newProfile];
-    setProfiles(newProfiles);
-    localStorage.setItem('tf_connection_profiles', JSON.stringify(newProfiles));
+    // URL kết nối thường có sẵn mật khẩu -> tách sang kho HĐH ngay khi lưu.
+    await persistProfiles([...profiles, newProfile]);
     selectProfile(newProfile);
 
     setShowImportUrlModal(false);
@@ -675,12 +728,18 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
 
   // Load saved connection configurations from localStorage
   useEffect(() => {
-    const saved = localStorage.getItem('tf_connection_profiles');
+    const saved = localStorage.getItem(PROFILES_KEY);
     const savedDefaultId = localStorage.getItem('tf_default_profile_id');
     if (saved) {
       try {
         const parsed: SavedProfile[] = JSON.parse(saved);
-        setProfiles(parsed);
+        // Di trú bản cũ: profile lưu trước đây còn mật khẩu nằm thẳng trong localStorage.
+        // Đẩy chúng sang kho bảo mật của HĐH rồi ghi đè lại bản đã bóc sạch.
+        if (parsed.some(p => hasInlineSecrets(p.config))) {
+          persistProfiles(parsed);
+        } else {
+          setProfiles(parsed);
+        }
         if (parsed.length > 0) {
           const defaultProf = parsed.find(p => p.id === savedDefaultId) || parsed[0];
           selectProfile(defaultProf);
@@ -696,12 +755,15 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
         }
       ];
       setProfiles(defaultProfiles);
-      localStorage.setItem('tf_connection_profiles', JSON.stringify(defaultProfiles));
+      localStorage.setItem(PROFILES_KEY, JSON.stringify(defaultProfiles));
       selectProfile(defaultProfiles[0]);
     }
   }, []);
 
-  const selectProfile = (profile: SavedProfile) => {
+  // Điền form từ một profile. Bí mật không nằm trong profile.config nữa nên phải đọc
+  // từ kho HĐH -> hàm này bất đồng bộ; phần không nhạy cảm hiện ra ngay, ô mật khẩu
+  // được điền ngay sau đó.
+  const selectProfile = async (profile: SavedProfile) => {
     setActiveProfileId(profile.id);
     setActiveType(profile.type);
     setTestStatus('untested');
@@ -712,7 +774,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     setProfileColor(profile.color || '');
     setProfileGroup(profile.group || '');
 
-    const config = profile.config;
+    const config = await configWithSecrets(profile);
     if (profile.type === 'sqlite') {
       setSqlitePath(config.sqlitePath || 'demo.db');
     } else if (profile.type === 'redis') {
@@ -779,7 +841,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     }
   };
 
-  const handleSaveProfile = () => {
+  const handleSaveProfile = async () => {
     if (!activeProfileId) return;
     const targetName = profileNameInput.trim() || 'Kết nối mới';
 
@@ -855,15 +917,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
       return p;
     });
 
-    setProfiles(updatedProfiles);
-    localStorage.setItem('tf_connection_profiles', JSON.stringify(updatedProfiles));
+    // config lấy từ form nên có mật khẩu; persistProfiles tách ra kho HĐH trước khi ghi.
+    await persistProfiles(updatedProfiles);
     setSuccessMsg('Đã lưu cấu hình kết nối!');
   };
 
-  const handleCreateNewProfile = (type: 'sqlite' | 'postgres' | 'mysql' | 'redis') => {
-    const newId = 'profile_' + Date.now();
+  const handleCreateNewProfile = async (type: 'sqlite' | 'postgres' | 'mysql' | 'redis') => {
     const newProfile: SavedProfile = {
-      id: newId,
+      id: newProfileId(),
       name: `Kết nối ${type.toUpperCase()}`,
       type,
       config: type === 'sqlite'
@@ -875,13 +936,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
             : { type, host: 'localhost', port: 3306, user: 'root', database: '' }
     };
 
-    const newProfiles = [...profiles, newProfile];
-    setProfiles(newProfiles);
-    localStorage.setItem('tf_connection_profiles', JSON.stringify(newProfiles));
+    await persistProfiles([...profiles, newProfile]);
     selectProfile(newProfile);
   };
 
-  const handleDeleteProfile = (id: string, e: React.MouseEvent) => {
+  const handleDeleteProfile = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (id === 'demo') {
       alert('Không thể xóa kết nối demo.');
@@ -890,8 +949,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     if (!confirm('Bạn có chắc chắn muốn xóa cấu hình kết nối này?')) return;
 
     const newProfiles = profiles.filter(p => p.id !== id);
-    setProfiles(newProfiles);
-    localStorage.setItem('tf_connection_profiles', JSON.stringify(newProfiles));
+    await persistProfiles(newProfiles);
+    // Dọn luôn bí mật trong kho HĐH, đừng để lại mục mồ côi.
+    try {
+      await dbHelper.deleteSecrets(id, SECRET_FIELD_LIST);
+    } catch (err: any) {
+      setSecretError('Không xoá được mật khẩu khỏi kho bảo mật của hệ điều hành: ' + (err?.message || err));
+    }
 
     if (activeProfileId === id) {
       if (newProfiles.length > 0) {
@@ -902,17 +966,17 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     }
   };
 
-  const handleDuplicateProfile = (profile: SavedProfile, e: React.MouseEvent) => {
+  const handleDuplicateProfile = async (profile: SavedProfile, e: React.MouseEvent) => {
     e.stopPropagation();
-    const newId = 'profile_' + Date.now();
+    // Bản sao phải mang theo cả bí mật -> đọc từ kho HĐH của profile gốc rồi ghi lại
+    // dưới id mới (persistProfiles lo phần tách/ghi).
     const duplicated: SavedProfile = {
       ...profile,
-      id: newId,
-      name: `${profile.name} (Copy)`
+      id: newProfileId(),
+      name: `${profile.name} (Copy)`,
+      config: await configWithSecrets(profile)
     };
-    const newProfiles = [...profiles, duplicated];
-    setProfiles(newProfiles);
-    localStorage.setItem('tf_connection_profiles', JSON.stringify(newProfiles));
+    await persistProfiles([...profiles, duplicated]);
     selectProfile(duplicated);
   };
 
@@ -959,16 +1023,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
         awsRegion
       };
       localStorage.setItem('tf_pg_config', JSON.stringify({ host: pgHost, port: pgPort, user: pgUser, database: pgDatabase }));
-      localStorage.setItem('tf_ssh_config', JSON.stringify({
-        sshEnabled,
-        sshHost,
-        sshPort,
-        sshUser,
-        sshAuthType,
-        sshKeyPath,
-        sshKeyContent,
-        sshPassphrase
-      }));
+      // Đã bỏ cache 'tf_ssh_config': nó ghi thẳng sshKeyContent (private key) + sshPassphrase
+      // xuống localStorage dạng thô mà không chỗ nào đọc lại. Bí mật SSH nay nằm trong kho
+      // bảo mật của HĐH theo từng profile (dbHelper.setSecrets).
     } else if (activeType === 'redis') {
       config = {
         type: 'redis',
@@ -1011,16 +1068,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
         awsRegion
       };
       localStorage.setItem('tf_my_config', JSON.stringify({ host: myHost, port: myPort, user: myUser, database: myDatabase }));
-      localStorage.setItem('tf_ssh_config', JSON.stringify({
-        sshEnabled,
-        sshHost,
-        sshPort,
-        sshUser,
-        sshAuthType,
-        sshKeyPath,
-        sshKeyContent,
-        sshPassphrase
-      }));
+      // Xem ghi chú ở nhánh postgres: cache 'tf_ssh_config' đã bị bỏ.
     }
 
     localStorage.setItem('tf_last_type', isDemo ? 'sqlite' : activeType);
@@ -1929,13 +1977,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
               <select
                 className="form-input"
                 value={selectedBrProfileId || ''}
-                onChange={(e) => {
+                onChange={async (e) => {
                   const profId = e.target.value;
                   setSelectedBrProfileId(profId);
                   const selectedProf = profiles.find(p => p.id === profId);
                   if (selectedProf) {
                     setBrType(selectedProf.type === 'redis' ? 'sqlite' : selectedProf.type);
-                    const c = selectedProf.config;
+                    // Mật khẩu nằm trong kho HĐH -> phải đọc ra mới điền được vào form sao lưu.
+                    const c = await configWithSecrets(selectedProf);
                     if (selectedProf.type === 'sqlite') {
                       setBrSqlitePath(c.sqlitePath || 'demo.db');
                     } else if (selectedProf.type === 'postgres') {
@@ -2387,6 +2436,15 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                     <button className="cm-icon-btn sm" onClick={() => setSuccessMsg(null)} title="Đóng"><X size={12} /></button>
                   </div>
                 )}
+                {/* Kho bí mật HĐH hỏng thì cấu hình vẫn lưu được nhưng mật khẩu thì không —
+                    phải báo rõ, đừng để người dùng tưởng đã lưu xong. */}
+                {secretError && (
+                  <div className="cm-alert err">
+                    <ShieldAlert size={15} style={{ flexShrink: 0 }} />
+                    <span style={{ flex: 1 }}>{secretError}</span>
+                    <button className="cm-icon-btn sm" onClick={() => setSecretError(null)} title="Đóng"><X size={12} /></button>
+                  </div>
+                )}
 
                 {isBrMode
                   ? renderBackupRestore()
@@ -2488,7 +2546,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                   <Copy size={13} style={{ flexShrink: 0 }} />
                   <span>Nhân bản kết nối</span>
                 </button>
-                <button className="context-menu-item" onClick={() => { setTerminalProfile(contextMenu.profile!); setContextMenu(null); }}>
+                <button className="context-menu-item" onClick={async () => { const p = contextMenu.profile!; setContextMenu(null); /* SSH terminal cần mật khẩu/private key -> lấy từ kho HĐH */ setTerminalProfile({ ...p, config: await configWithSecrets(p) }); }}>
                   <TerminalSquare size={13} style={{ flexShrink: 0 }} />
                   <span>
                     {contextMenu.profile.config?.sshEnabled && contextMenu.profile.config?.sshHost
