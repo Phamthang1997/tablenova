@@ -284,7 +284,7 @@ function minifySql(sql: string): string {
     if (index % 2 === 1) return part; // Keep string literals untouched
     return part
       .replace(/\s+/g, ' ')
-      .replace(/\s*([,;()=><+\-*\/])\s*/g, '$1');
+      .replace(/\s*([,;()=><+\-*/])\s*/g, '$1');
   }).join('').trim();
 
   // Ensure SQL keywords and word boundaries have clean single space padding
@@ -309,7 +309,7 @@ if (!isFormatRegistered) {
   });
 }
 import { Play, Clipboard, Trash2, CheckCircle2, AlertTriangle, ChevronLeft, ChevronRight, Copy, AlignLeft, ChevronsLeft, ChevronsRight, History, X, Bookmark, ChevronDown, MoreHorizontal, Star, Columns, Rows, Settings, Network, Zap, FileText, Square } from 'lucide-react';
-import { getQueryParamsConfig, saveQueryParamsConfig, extractQueryParams, substituteQueryParams, type QueryParamsConfig } from '../utils/queryParamHelper';
+import { getQueryParamsConfig, saveQueryParamsConfig, extractQueryParams, buildParameterizedSql, type QueryParamsConfig } from '../utils/queryParamHelper';
 import { buildExplainQuery, parseExplainOutput, type ExplainResult } from '../utils/explainHelper';
 import { QueryParamsConfigModal } from './QueryParamsConfigModal';
 import { QueryParamsModal } from './QueryParamsModal';
@@ -420,7 +420,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   // Query Parameters State
   const [queryParamsConfig, setQueryParamsConfig] = useState<QueryParamsConfig>(getQueryParamsConfig());
   const [showQueryParamsConfigModal, setShowQueryParamsConfigModal] = useState(false);
-  const [paramPromptData, setParamPromptData] = useState<{ pane: 1 | 2; originalSql: string; params: string[] } | null>(null);
+  const [paramPromptData, setParamPromptData] = useState<{ pane: 1 | 2; originalSql: string; params: string[]; action: 'run' | 'explain'; variant?: 'explain' | 'analyze' | 'json' } | null>(null);
 
   // EXPLAIN State
   const [explainResult1, setExplainResult1] = useState<ExplainResult | null>(null);
@@ -770,7 +770,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
         setParamPromptData({
           pane,
           originalSql: textToRun,
-          params: detectedParams
+          params: detectedParams,
+          action: 'run'
         });
         return;
       }
@@ -779,11 +780,11 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     await runRawSql(textToRun, pane);
   };
 
-  const runRawSql = async (textToRun: string, pane: 1 | 2) => {
+  const runRawSql = async (textToRun: string, pane: 1 | 2, params?: any[]) => {
     addToHistory(textToRun); // Log query history immediately
 
     const isPane1 = pane === 1;
-    const queryId = `q_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const queryId = `q_${crypto.randomUUID()}`;
 
     if (isPane1) {
       setLoading(true);
@@ -811,14 +812,14 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
 
     // Gom kết quả stream vào acc rồi phản chiếu ra state. Trong lúc stream chỉ hiển thị live
     // câu lệnh đầu tiên (tab 0); các câu lệnh sau vẫn được tích lũy và xem được khi bấm sang tab.
-    const acc: { query: string; columns: string[]; data: any[] }[] = [];
+    const acc: { query: string; columns: string[]; data: any[]; affected?: number }[] = [];
     let errText: string | null = null;
     let cancelled = false;
     const t0 = performance.now();
     let tFirst = 0; // thời điểm nhận batch dữ liệu đầu tiên (~ thực thi xong, bắt đầu tải)
 
     const flush = () => {
-      const snapshot = acc.map(r => ({ query: r.query, columns: r.columns, data: r.data }));
+      const snapshot = acc.map(r => ({ query: r.query, columns: r.columns, data: r.data, affected: r.affected }));
       if (isPane1) {
         setAllResults(snapshot);
         const first = snapshot[0];
@@ -842,12 +843,18 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
           if (!acc[i]) acc[i] = { query: '', columns: [], data: [] };
           acc[i].data.push(...(msg.rows || []));
           flush();
+        } else if (msg.type === 'affected') {
+          // Câu lệnh ghi (INSERT/UPDATE/DELETE/DDL): không có cột/dòng, chỉ có số dòng ảnh hưởng.
+          if (tFirst === 0) tFirst = performance.now();
+          const i = msg.stmtIndex ?? 0;
+          acc[i] = { query: msg.query || '', columns: [], data: [], affected: msg.affected ?? 0 };
+          flush();
         } else if (msg.type === 'error') {
           errText = msg.message || 'Lỗi không rõ khi thực thi SQL.';
         } else if (msg.type === 'done') {
           cancelled = !!msg.cancelled;
         }
-      });
+      }, params);
     } catch (e: any) {
       errText = `Lỗi truy vấn: ${e}`;
     }
@@ -855,6 +862,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     flush(); // phản chiếu lần cuối (đảm bảo batch cuối cùng đã vào state)
 
     const totalRows = acc.reduce((s, r) => s + r.data.length, 0);
+    const affectedTotal = acc.reduce((s, r) => s + (r.affected || 0), 0);
     const elapsed = performance.now() - t0;
     const execMs = tFirst > 0 ? tFirst - t0 : elapsed;
     const timeInfo = `thực thi ${execMs.toFixed(0)}ms, tải ${elapsed.toFixed(0)}ms`;
@@ -875,7 +883,9 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       const head = cancelled
         ? `Đã dừng truy vấn`
         : (n > 1 ? `Thực thi thành công ${n} câu lệnh` : 'Thực thi thành công');
-      setStat(`${head} — ${totalRows.toLocaleString('vi-VN')} dòng (${timeInfo}).`);
+      const parts: string[] = [`${totalRows.toLocaleString('vi-VN')} dòng`];
+      if (affectedTotal > 0) parts.push(`${affectedTotal.toLocaleString('vi-VN')} dòng bị ảnh hưởng`);
+      setStat(`${head} — ${parts.join(', ')} (${timeInfo}).`);
       if (onRunSuccess) onRunSuccess();
     }
   };
@@ -885,6 +895,20 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     const textToRun = editorInstance ? getCurrentStatement(editorInstance) : (paneId === 1 ? sql : sql2);
     if (!textToRun.trim()) return;
 
+    // Nếu bật Tham số Truy vấn và câu lệnh có placeholder -> prompt giá trị rồi EXPLAIN bản parameterized.
+    if (queryParamsConfig.enabled) {
+      const detectedParams = extractQueryParams(textToRun, queryParamsConfig.patternIndex);
+      if (detectedParams.length > 0) {
+        setParamPromptData({ pane: paneId, originalSql: textToRun, params: detectedParams, action: 'explain', variant });
+        return;
+      }
+    }
+
+    await runExplainQuery(buildExplainQuery(textToRun, dbType, variant), paneId);
+  };
+
+  // Chạy một câu EXPLAIN đã dựng sẵn (có thể kèm params đã bind ở tầng driver) và hiển thị kế hoạch.
+  const runExplainQuery = async (explainQuery: string, paneId: 1 | 2, params?: any[]) => {
     const isPane1 = paneId === 1;
     if (isPane1) {
       setLoading(true);
@@ -895,8 +919,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     }
 
     try {
-      const explainQuery = buildExplainQuery(textToRun, dbType, variant);
-      const res = await dbHelper.executeQuery(explainQuery);
+      const res = await dbHelper.executeQuery(explainQuery, params);
       const rows = res.data || (res as any).rows || [];
       if (res.success && rows.length > 0) {
         const parsed = parseExplainOutput(rows, dbType);
@@ -1139,17 +1162,17 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
             {/* Split button: Chạy + dropdown */}
             <div style={{ position: 'relative', display: 'flex' }}>
               <button
-                className="btn btn-primary"
+                className="btn btn-primary btn-join-l"
                 onClick={() => handleRun(paneId)}
                 disabled={paneId === 1 ? loading : loading2}
-                style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '2px 8px', fontSize: '11px', height: '22px', borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
+                style={{ display: 'flex', alignItems: 'center', padding: '0 10px' }}
                 title="Chạy câu hiện tại (Ctrl+Enter)"
               >
                 <Play size={11} fill="#fff" />
                 <span>Chạy</span>
               </button>
               <button
-                className="btn btn-primary"
+                className="btn btn-primary btn-join-r"
                 onClick={(e) => {
                   setMoreMenuPane(null);
                   setSplitMenuPane(null);
@@ -1157,7 +1180,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                   toggleDropdown('run', paneId, e, setRunMenuPane);
                 }}
                 disabled={paneId === 1 ? loading : loading2}
-                style={{ padding: '0 4px', fontSize: '11px', height: '22px', display: 'flex', alignItems: 'center', borderTopLeftRadius: 0, borderBottomLeftRadius: 0, borderLeft: '1px solid rgba(255,255,255,0.3)' }}
+                style={{ padding: '0 5px', display: 'flex', alignItems: 'center', borderLeft: '1px solid rgba(255,255,255,0.3)' }}
                 title="Tùy chọn chạy"
               >
                 <ChevronDown size={12} />
@@ -1165,7 +1188,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
               {runMenuPane === paneId && (
                 <>
                   <div style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={() => setRunMenuPane(null)} />
-                  <div style={{
+                  <div className="sql-run-menu" style={{
                     position: 'absolute',
                     top: dropdownPlacement[`run_${paneId}`] === 'up' ? undefined : 'calc(100% + 4px)',
                     bottom: dropdownPlacement[`run_${paneId}`] === 'up' ? 'calc(100% + 4px)' : undefined,
@@ -1186,7 +1209,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                       <kbd style={{ marginLeft: 'auto', paddingLeft: '12px', fontSize: '10.5px', color: 'var(--win-text-disabled)', fontFamily: 'inherit' }}>Ctrl+Enter</kbd>
                     </button>
                     <button className="context-menu-item" onClick={() => { setRunMenuPane(null); runAll(paneId); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}>
-                      <Zap size={13} style={{ flexShrink: 0, color: '#f59e0b' }} />
+                      <Zap size={13} style={{ flexShrink: 0, color: 'var(--st-warn)' }} />
                       <span>Chạy tất cả câu lệnh</span>
                       <kbd style={{ marginLeft: 'auto', paddingLeft: '12px', fontSize: '10.5px', color: 'var(--win-text-disabled)', fontFamily: 'inherit' }}>Ctrl+Shift+Enter</kbd>
                     </button>
@@ -1210,7 +1233,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                       onClick={() => { setRunMenuPane(null); handleExplain(paneId, 'analyze'); }}
                       style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}
                     >
-                      <Zap size={13} style={{ flexShrink: 0, color: '#10b981' }} />
+                      <Zap size={13} style={{ flexShrink: 0, color: 'var(--st-ok)' }} />
                       <span>EXPLAIN ANALYZE (Thực tế)</span>
                     </button>
                     <button
@@ -1241,7 +1264,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
               <button
                 className="btn btn-secondary"
                 onClick={() => stopQuery(paneId)}
-                style={{ padding: '2px 8px', fontSize: '11px', height: '22px', display: 'flex', alignItems: 'center', gap: '4px', color: '#ef4444', borderColor: '#ef4444' }}
+                style={{ padding: '2px 8px', fontSize: '11px', height: '22px', display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--st-danger)', borderColor: 'var(--st-danger)' }}
                 title="Dừng truy vấn đang chạy"
               >
                 <X size={12} />
@@ -1259,7 +1282,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                   setSplitMenuPane(null);
                   toggleDropdown('format', paneId, e, setFormatMenuPane);
                 }}
-                style={{ padding: '2px 6px', fontSize: '11px', height: '22px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                style={{ padding: '2px 6px', display: 'flex', alignItems: 'center', gap: '4px' }}
                 title="Tùy chọn Định dạng / Làm đẹp / Nén 1 dòng SQL"
               >
                 <AlignLeft size={11} />
@@ -1378,7 +1401,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                   setMoreMenuPane(null);
                   toggleDropdown('split', paneId, e, setSplitMenuPane);
                 }}
-                style={{ padding: '2px 6px', fontSize: '11px', height: '22px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                style={{ padding: '2px 6px', display: 'flex', alignItems: 'center', gap: '4px' }}
                 title="Chia khung (Split Panes)"
               >
                 {splitMode === 'none' && <Columns size={11} />}
@@ -1437,7 +1460,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
             <button 
               className="btn btn-secondary" 
               onClick={() => setShowHistory(!showHistory)} 
-              style={{ padding: '2px 6px', fontSize: '11px', height: '22px', display: 'flex', alignItems: 'center', gap: '4px' }} 
+              style={{ padding: '2px 6px', display: 'flex', alignItems: 'center', gap: '4px' }} 
               title="Lịch sử & câu lệnh đã lưu"
             >
               <History size={11} />
@@ -1650,7 +1673,11 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
             {pAllResults.length > 0 ? (
               pAllResults.map((resItem, idx) => {
                 const firstWord = resItem.query.trim().split(/\s+/)[0].toUpperCase();
-                const label = `${idx + 1}: ${firstWord || 'SQL'}`;
+                // Hậu tố đếm: câu ghi hiện "✓N" (dòng ảnh hưởng), câu đọc hiện "(N)" (số dòng trả về).
+                const countSuffix = resItem.affected !== undefined && resItem.affected !== null
+                  ? ` ✓${Number(resItem.affected).toLocaleString('vi-VN')}`
+                  : ` (${(resItem.data?.length || 0).toLocaleString('vi-VN')})`;
+                const label = `${idx + 1}: ${firstWord || 'SQL'}${countSuffix}`;
                 const isActive = pActiveTabType === 'data' && pActiveTabIndex === idx;
                 return (
                   <div
@@ -1715,7 +1742,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                 <button 
                   className="btn btn-secondary" 
                   onClick={() => pSetShowCopyDropdown(!pShowCopyDropdown)}
-                  style={{ padding: '2px 6px', fontSize: '10px', height: '20px', minWidth: 'auto', display: 'flex', alignItems: 'center', gap: '3px' }}
+                  style={{ padding: '2px 6px', display: 'flex', alignItems: 'center', gap: '3px' }}
                   title="Sao chép kết quả dưới nhiều định dạng"
                 >
                   <span>Sao chép</span>
@@ -1748,8 +1775,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                   </>
                 )}
               </div>
-              <button className="btn btn-secondary" onClick={() => handleExportCsv(paneId)} style={{ padding: '2px 6px', fontSize: '10px', height: '20px', minWidth: 'auto' }}>CSV</button>
-              <button className="btn btn-secondary" onClick={() => handleExportJson(paneId)} style={{ padding: '2px 6px', fontSize: '10px', height: '20px', minWidth: 'auto' }}>JSON</button>
+              <button className="btn btn-secondary" onClick={() => handleExportCsv(paneId)} style={{ padding: '2px 6px' }}>CSV</button>
+              <button className="btn btn-secondary" onClick={() => handleExportJson(paneId)} style={{ padding: '2px 6px' }}>JSON</button>
             </div>
           )}
         </div>
@@ -1760,7 +1787,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
           ) : (
             <>
               {pErrorMsg && (
-                <div style={{ padding: '16px', color: '#ef4444', fontFamily: 'var(--win-font-mono)', fontSize: '12px', whiteSpace: 'pre-wrap' }}>
+                <div style={{ padding: '16px', color: 'var(--st-danger)', fontFamily: 'var(--win-font-mono)', fontSize: '12px', whiteSpace: 'pre-wrap' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', fontWeight: 600 }}>
                     <AlertTriangle size={16} />
                     <span>LỖI TRUY VẤN SQL</span>
@@ -1777,7 +1804,9 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                       <span>Đang chạy truy vấn...</span>
                     </div>
                   ) : pHasRun ? (
-                    'Truy vấn đã thực thi thành công nhưng không trả về dữ liệu (0 dòng).'
+                    activeResult && activeResult.affected !== undefined && activeResult.affected !== null
+                      ? `Thực thi thành công — ${Number(activeResult.affected).toLocaleString('vi-VN')} dòng bị ảnh hưởng.`
+                      : 'Truy vấn đã thực thi thành công nhưng không trả về dữ liệu (0 dòng).'
                   ) : (
                     'Nhấn nút "Chạy" để xem kết quả truy vấn tại đây.'
                   )}
@@ -1890,8 +1919,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {pStatusMsg ? (
               <>
-                <CheckCircle2 size={12} color="#10b981" style={{ flexShrink: 0 }} />
-                <span style={{ color: '#10b981' }}>
+                <CheckCircle2 size={12} style={{ color: 'var(--st-ok)', flexShrink: 0 }} />
+                <span style={{ color: 'var(--st-ok)' }}>
                   {pStatusMsg}
                   {activeResult && activeResult.query && (
                     <span style={{ fontSize: '10.5px', color: 'var(--win-text-secondary)', marginLeft: '6px' }}>
@@ -2147,7 +2176,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                                   <Copy size={11} /> Sao chép
                                 </span>
                                 <span 
-                                  style={{ cursor: 'pointer', color: '#ef4444', display: 'flex', alignItems: 'center', gap: '2px' }}
+                                  style={{ cursor: 'pointer', color: 'var(--st-danger)', display: 'flex', alignItems: 'center', gap: '2px' }}
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     if (confirm("Xóa câu lệnh này khỏi lịch sử?")) {
@@ -2205,7 +2234,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                             <Copy size={11} /> Sao chép
                           </span>
                           <span 
-                            style={{ cursor: 'pointer', color: '#ef4444' }}
+                            style={{ cursor: 'pointer', color: 'var(--st-danger)' }}
                             onClick={(e) => handleDeleteSaved(item.id, e)}
                             title="Xóa câu lệnh đã lưu này"
                           >
@@ -2227,7 +2256,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
               <button 
                 className="btn btn-secondary" 
                 onClick={handleClearHistory}
-                style={{ width: '100%', fontSize: '11px', height: '26px' }}
+                style={{ width: '100%' }}
               >
                 Xóa tất cả lịch sử
               </button>
@@ -2290,14 +2319,14 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                   setShowSaveModal(false);
                   setNewQueryName('');
                 }}
-                style={{ padding: '4px 12px', fontSize: '11px', height: '26px' }}
+                style={{ padding: '4px 12px' }}
               >
                 Hủy
               </button>
               <button 
                 className="btn btn-primary" 
                 onClick={handleConfirmSaveQuery}
-                style={{ padding: '4px 12px', fontSize: '11px', height: '26px' }}
+                style={{ padding: '4px 12px' }}
               >
                 Lưu lại
               </button>
@@ -2324,10 +2353,25 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
           params={paramPromptData.params}
           sqlPreview={paramPromptData.originalSql}
           onSubmit={(valuesMap) => {
-            const finalSql = substituteQueryParams(paramPromptData.originalSql, queryParamsConfig.patternIndex, valuesMap);
+            // Với EXPLAIN: bọc EXPLAIN quanh câu gốc trước rồi mới đổi placeholder -> native + values.
+            // Với chạy thường: đổi trực tiếp câu gốc. Cả hai đều bind ở tầng driver (không nội suy -> chống SQL injection).
             const p = paramPromptData.pane;
+            const isExplain = paramPromptData.action === 'explain';
+            const srcSql = isExplain
+              ? buildExplainQuery(paramPromptData.originalSql, dbType, paramPromptData.variant || 'explain')
+              : paramPromptData.originalSql;
+            const { sql: finalSql, values } = buildParameterizedSql(
+              srcSql,
+              queryParamsConfig.patternIndex,
+              valuesMap,
+              dbType
+            );
             setParamPromptData(null);
-            runRawSql(finalSql, p);
+            if (isExplain) {
+              runExplainQuery(finalSql, p, values);
+            } else {
+              runRawSql(finalSql, p, values);
+            }
           }}
           onClose={() => setParamPromptData(null)}
         />

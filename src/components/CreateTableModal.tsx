@@ -165,52 +165,21 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
   };
 
   return (
-    <div style={{
-      position: 'fixed',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      background: 'rgba(0,0,0,0.5)',
-      display: 'flex',
-      justifyContent: 'center',
-      alignItems: 'center',
-      zIndex: 999999
-    }}>
-      <div style={{
-        background: 'var(--win-bg-card)',
-        border: '1px solid var(--win-border)',
-        borderRadius: '6px',
-        width: '740px',
-        maxHeight: '90vh',
-        boxShadow: '0 12px 32px rgba(0,0,0,0.4)',
-        display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden'
-      }}>
+    <div className="ctm-backdrop">
+      <div className="ctm-dialog">
         {/* Header */}
-        <div style={{
-          padding: '12px 16px',
-          borderBottom: '1px solid var(--win-border)',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          background: 'var(--win-bg-tab-bar)'
-        }}>
-          <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--win-text-primary)' }}>Tạo Bảng Mới</span>
-          <button 
-            onClick={onClose}
-            style={{ background: 'transparent', border: 'none', color: 'var(--win-text-secondary)', cursor: 'pointer' }}
-          >
-            <X size={14} />
+        <div className="ctm-head">
+          <span className="ctm-title">Tạo bảng mới</span>
+          <button className="ctm-close" onClick={onClose} title="Đóng" aria-label="Đóng">
+            <X size={15} />
           </button>
         </div>
 
         {/* Content Area */}
-        <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px', overflowY: 'auto', flex: 1 }}>
+        <div className="ctm-body">
           {/* Table Name Input */}
-          <div className="form-group" style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)' }}>Tên bảng:</label>
+          <div className="form-group ctm-name">
+            <label>Tên bảng</label>
             <input
               type="text"
               className="form-input"
@@ -218,65 +187,28 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
               onChange={(e) => setTableName(e.target.value)}
               placeholder="nhap_ten_bang"
               autoFocus
-              style={{
-                fontSize: '11px',
-                padding: '6px 10px',
-                borderRadius: '4px',
-                border: '1px solid var(--win-border)',
-                background: 'var(--win-bg-input)',
-                color: 'var(--win-text-primary)',
-                outline: 'none',
-                cursor: 'text'
-              }}
             />
           </div>
 
           {/* Tabs header */}
-          <div style={{ display: 'flex', borderBottom: '1px solid var(--win-border)', gap: '4px' }}>
+          <div className="ctm-tabs">
             <button
+              className={`ctm-tab ${activeTab === 'columns' ? 'active' : ''}`}
               onClick={() => setActiveTab('columns')}
-              style={{
-                padding: '6px 12px',
-                fontSize: '11px',
-                background: activeTab === 'columns' ? 'var(--win-bg-hover)' : 'transparent',
-                border: 'none',
-                borderBottom: activeTab === 'columns' ? '2px solid var(--win-accent)' : 'none',
-                color: activeTab === 'columns' ? 'var(--win-text-primary)' : 'var(--win-text-secondary)',
-                cursor: 'pointer',
-                fontWeight: 600
-              }}
             >
-              Cột dữ liệu ({cols.length})
+              Cột dữ liệu <span className="ctm-tab-count">{cols.length}</span>
             </button>
             <button
+              className={`ctm-tab ${activeTab === 'indexes' ? 'active' : ''}`}
               onClick={() => setActiveTab('indexes')}
-              style={{
-                padding: '6px 12px',
-                fontSize: '11px',
-                background: activeTab === 'indexes' ? 'var(--win-bg-hover)' : 'transparent',
-                border: 'none',
-                borderBottom: activeTab === 'indexes' ? '2px solid var(--win-accent)' : 'none',
-                color: activeTab === 'indexes' ? 'var(--win-text-primary)' : 'var(--win-text-secondary)',
-                cursor: 'pointer',
-                fontWeight: 600
-              }}
             >
-              Chỉ mục ({idxs.length})
+              Chỉ mục <span className="ctm-tab-count">{idxs.length}</span>
             </button>
             <button
+              className={`ctm-tab ${activeTab === 'foreignKeys' ? 'active' : ''}`}
               onClick={() => setActiveTab('foreignKeys')}
-              style={{
-                padding: '6px 12px',
-                fontSize: '11px',
-                background: activeTab === 'foreignKeys' ? 'var(--win-bg-hover)' : 'transparent',
-                border: 'none',
-                borderBottom: activeTab === 'foreignKeys' ? '2px solid var(--win-accent)' : 'none',
-                color: activeTab === 'foreignKeys' ? 'var(--win-text-primary)' : 'var(--win-text-secondary)',
-                cursor: 'pointer',
-                fontWeight: 600
-              }}
             >
-              Khóa ngoại ({fks.length})
+              Khóa ngoại <span className="ctm-tab-count">{fks.length}</span>
             </button>
           </div>
 
@@ -288,7 +220,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                   <button 
                     className="btn btn-secondary" 
                     onClick={handleAddColumn}
-                    style={{ height: '24px', fontSize: '10px', display: 'flex', alignItems: 'center', gap: '4px', padding: '0 8px' }}
+                    style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '0 8px' }}
                   >
                     <Plus size={10} />
                     <span>Thêm cột</span>
@@ -375,7 +307,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                         <td style={{ padding: '4px', textAlign: 'center' }}>
                           <button 
                             onClick={() => handleRemoveColumn(idx)}
-                            style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer' }}
+                            style={{ background: 'transparent', border: 'none', color: 'var(--st-danger)', cursor: 'pointer' }}
                           >
                             <Trash2 size={12} />
                           </button>
@@ -393,7 +325,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                   <button 
                     className="btn btn-secondary" 
                     onClick={handleAddIndex}
-                    style={{ height: '24px', fontSize: '10px', display: 'flex', alignItems: 'center', gap: '4px', padding: '0 8px' }}
+                    style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '0 8px' }}
                   >
                     <Plus size={10} />
                     <span>Thêm chỉ mục</span>
@@ -439,7 +371,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                         <td style={{ padding: '4px', textAlign: 'center' }}>
                           <button 
                             onClick={() => handleRemoveIndex(idx)}
-                            style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer' }}
+                            style={{ background: 'transparent', border: 'none', color: 'var(--st-danger)', cursor: 'pointer' }}
                           >
                             <Trash2 size={12} />
                           </button>
@@ -457,7 +389,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                   <button 
                     className="btn btn-secondary" 
                     onClick={handleAddFk}
-                    style={{ height: '24px', fontSize: '10px', display: 'flex', alignItems: 'center', gap: '4px', padding: '0 8px' }}
+                    style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '0 8px' }}
                   >
                     <Plus size={10} />
                     <span>Thêm khóa ngoại</span>
@@ -515,7 +447,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                         <td style={{ padding: '4px', textAlign: 'center' }}>
                           <button 
                             onClick={() => handleRemoveFk(idx)}
-                            style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer' }}
+                            style={{ background: 'transparent', border: 'none', color: 'var(--st-danger)', cursor: 'pointer' }}
                           >
                             <Trash2 size={12} />
                           </button>
@@ -530,28 +462,12 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
         </div>
 
         {/* Footer Actions */}
-        <div style={{
-          padding: '12px 16px',
-          borderTop: '1px solid var(--win-border)',
-          display: 'flex',
-          justifyContent: 'flex-end',
-          gap: '8px',
-          background: 'var(--win-bg-card)'
-        }}>
-          <button 
-            className="btn btn-secondary" 
-            onClick={onClose}
-            style={{ height: '28px', fontSize: '11px', padding: '0 16px', borderRadius: '4px' }}
-          >
-            Hủy bỏ
-          </button>
-          <button 
-            className="btn btn-primary" 
-            onClick={handleSubmit}
-            style={{ height: '28px', fontSize: '11px', padding: '0 16px', borderRadius: '4px', background: 'var(--win-accent)', color: '#fff', border: 'none', cursor: 'pointer' }}
-          >
-            Tạo bảng
-          </button>
+        <div className="ctm-foot">
+          <span className="ctm-foot-hint">
+            {cols.length} cột · {idxs.length} chỉ mục · {fks.length} khóa ngoại
+          </span>
+          <button className="cm-btn" onClick={onClose}>Hủy bỏ</button>
+          <button className="cm-btn primary" onClick={handleSubmit}>Tạo bảng</button>
         </div>
       </div>
     </div>

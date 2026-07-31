@@ -14,6 +14,11 @@ const IAM_REFRESH_SECS: u64 = 780;
 // Số dòng gom lại trước mỗi lần đẩy batch qua Channel về frontend khi stream kết quả SQL.
 const STREAM_BATCH: usize = 500;
 
+// Timeout cho lệnh liệt kê database (nút "Tải danh sách" ở form kết nối).
+// Mặc định của sqlx là 30s — quá lâu cho một thao tác dò thông tin, người dùng
+// tưởng app treo. 10s đủ cho cả máy chủ ở xa mà vẫn báo lỗi sớm.
+const LIST_DB_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 // Giải mã một ô dữ liệu Postgres sang serde_json::Value.
 // Thử lần lượt nhiều kiểu để không mất dữ liệu: số nguyên/thực, bool, NUMERIC, ngày giờ, UUID, JSON, chuỗi, blob.
 // Kiểu ngày/số thập phân/json/uuid được hỗ trợ nhờ bật feature trên sqlx-postgres (không kéo sqlx-sqlite).
@@ -68,6 +73,60 @@ macro_rules! decode_mysql_cell {
     }};
 }
 
+// Chuyển một giá trị JSON (do frontend gửi kèm tham số truy vấn) sang rusqlite Value để bind.
+// Dùng cho parameterized query ở SQLite — tránh nội suy chuỗi (chống SQL injection).
+fn json_to_sqlite_value(v: &Value) -> rusqlite::types::Value {
+    use rusqlite::types::Value as SV;
+    match v {
+        Value::Null => SV::Null,
+        Value::Bool(b) => SV::Integer(if *b { 1 } else { 0 }),
+        Value::Number(n) if n.is_i64() => SV::Integer(n.as_i64().unwrap()),
+        Value::Number(n) if n.is_u64() => SV::Integer(n.as_u64().unwrap() as i64),
+        Value::Number(n) => SV::Real(n.as_f64().unwrap_or(0.0)),
+        Value::String(s) => SV::Text(s.clone()),
+        other => SV::Text(other.to_string()),
+    }
+}
+
+// Bind lần lượt danh sách tham số JSON vào một sqlx::query cho Postgres (giữ nguyên kiểu để DB không báo lỗi cast).
+fn bind_pg_params<'q>(
+    mut q: sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments>,
+    params: &[Value],
+) -> sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments> {
+    for p in params {
+        q = match p {
+            Value::Null => q.bind(Option::<String>::None),
+            Value::Bool(b) => q.bind(*b),
+            Value::Number(n) if n.is_i64() => q.bind(n.as_i64().unwrap()),
+            Value::Number(n) if n.is_u64() => q.bind(n.as_u64().unwrap() as i64),
+            Value::Number(n) => q.bind(n.as_f64().unwrap_or(0.0)),
+            Value::String(s) => q.bind(s.clone()),
+            other => q.bind(other.to_string()),
+        };
+    }
+    q
+}
+
+// Bind lần lượt danh sách tham số JSON vào một sqlx::query cho MySQL.
+fn bind_mysql_params<'q>(
+    mut q: sqlx::query::Query<'q, sqlx::MySql, sqlx::mysql::MySqlArguments>,
+    params: &[Value],
+) -> sqlx::query::Query<'q, sqlx::MySql, sqlx::mysql::MySqlArguments> {
+    for p in params {
+        q = match p {
+            Value::Null => q.bind(Option::<String>::None),
+            Value::Bool(b) => q.bind(*b),
+            Value::Number(n) if n.is_i64() => q.bind(n.as_i64().unwrap()),
+            Value::Number(n) if n.is_u64() => q.bind(n.as_u64().unwrap() as i64),
+            Value::Number(n) => q.bind(n.as_f64().unwrap_or(0.0)),
+            Value::String(s) => q.bind(s.clone()),
+            other => q.bind(other.to_string()),
+        };
+    }
+    q
+}
+
+#[derive(Clone)]
 pub enum DbConnection {
     Sqlite(Arc<Mutex<SqliteConnection>>),
     Postgres(PgPool),
@@ -131,6 +190,11 @@ fn build_pg_url(config: &Value, db_override: Option<&str>) -> String {
         if let Some(key) = config.get("sslKeyPath").and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()) {
             url.push_str(&format!("&sslkey={}", key));
         }
+    } else {
+        // Phải nói rõ "disable": không truyền sslmode thì sqlx dùng default
+        // PgSslMode::Prefer (vẫn bật TLS nếu server hỗ trợ) và còn đọc cả biến
+        // môi trường PGSSLMODE -> UI chọn DISABLED mà thực tế lại đang mã hoá.
+        url.push_str("?sslmode=disable");
     }
     url
 }
@@ -166,6 +230,9 @@ fn build_mysql_url(config: &Value, db_override: Option<&str>) -> String {
         if let Some(key) = config.get("sslKeyPath").and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()) {
             url.push_str(&format!("&ssl-key={}", key));
         }
+    } else {
+        // Tương tự Postgres: default của sqlx là MySqlSslMode::Preferred.
+        url.push_str("?ssl-mode=DISABLED");
     }
     url
 }
@@ -1085,7 +1152,7 @@ pub async fn preview_alter_schema(state: tauri::State<'_, crate::AppState>, name
 }
 
 #[tauri::command]
-pub async fn execute_query(state: tauri::State<'_, crate::AppState>, sql: String) -> Result<Value, String> {
+pub async fn execute_query(state: tauri::State<'_, crate::AppState>, sql: String, params: Option<Vec<Value>>) -> Result<Value, String> {
     let conn_type = {
         let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
         match manager.connection.as_ref() {
@@ -1095,8 +1162,14 @@ pub async fn execute_query(state: tauri::State<'_, crate::AppState>, sql: String
             None => return Err("Chưa kết nối CSDL".to_string()),
         }
     };
-    
-    let results = execute_raw_sql_generic(&conn_type, sql.clone()).await?;
+
+    // Có tham số -> bind ở tầng driver (parameterized, một câu lệnh). Không có -> giữ nguyên hành vi cũ.
+    let params = params.unwrap_or_default();
+    let results = if params.is_empty() {
+        execute_raw_sql_generic(&conn_type, sql.clone()).await?
+    } else {
+        run_bound_query(&conn_type, sql.clone(), &params).await?
+    };
     Ok(json!({ "success": true, "results": results }))
 }
 
@@ -1206,6 +1279,7 @@ pub async fn execute_query_stream(
     sql: String,
     query_id: String,
     channel: Channel<Value>,
+    params: Option<Vec<Value>>,
 ) -> Result<Value, String> {
     let conn_type = {
         let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
@@ -1224,7 +1298,8 @@ pub async fn execute_query_stream(
         flags.insert(query_id.clone(), cancel_flag.clone());
     }
 
-    let outcome = stream_sql_statements(&conn_type, &sql, &channel, &cancel_flag).await;
+    let params = params.unwrap_or_default();
+    let outcome = stream_sql_statements(&conn_type, &sql, &params, &channel, &cancel_flag).await;
 
     // Luôn gỡ cờ khi kết thúc (dù thành công hay lỗi)
     if let Ok(mut flags) = state.cancel_flags.lock() {
@@ -1258,16 +1333,23 @@ pub async fn cancel_query(state: tauri::State<'_, crate::AppState>, query_id: St
 async fn stream_sql_statements(
     conn: &DbConnection,
     sql: &str,
+    params: &[Value],
     channel: &Channel<Value>,
     cancel: &Arc<AtomicBool>,
 ) -> Result<(usize, bool), (usize, String)> {
     let statements = split_sql_statements(sql);
+    // Tham số truy vấn (parameterized) chỉ hỗ trợ đúng MỘT câu lệnh: binding theo vị trí
+    // không thể phân bổ an toàn qua nhiều câu lệnh. Báo lỗi rõ ràng thay vì đoán mò.
+    if !params.is_empty() && statements.len() > 1 {
+        return Err((0, "Tham số truy vấn chỉ hỗ trợ một câu lệnh. Vui lòng chạy từng câu lệnh riêng hoặc tắt Tham số Truy vấn.".to_string()));
+    }
     let mut idx = 0usize;
     for stmt in statements {
         if cancel.load(Ordering::Relaxed) {
             return Ok((idx, true));
         }
-        stream_one_statement(conn, &stmt, idx, channel, cancel)
+        // params chỉ áp cho câu lệnh duy nhất (đã chặn multi-statement ở trên).
+        stream_one_statement(conn, &stmt, params, idx, channel, cancel)
             .await
             .map_err(|e| (idx, e))?;
         idx += 1;
@@ -1279,6 +1361,7 @@ async fn stream_sql_statements(
 async fn stream_one_statement(
     conn: &DbConnection,
     sql: &str,
+    params: &[Value],
     stmt_index: usize,
     channel: &Channel<Value>,
     cancel: &Arc<AtomicBool>,
@@ -1290,17 +1373,26 @@ async fn stream_one_statement(
             let channel = channel.clone();
             let cancel = cancel.clone();
             let sql = sql.to_string();
+            let sqlite_params: Vec<rusqlite::types::Value> = params.iter().map(json_to_sqlite_value).collect();
             tokio::task::spawn_blocking(move || -> Result<(), String> {
                 let c = conn_arc.lock().map_err(|e| e.to_string())?;
                 let mut stmt = c.prepare(&sql).map_err(|e| e.to_string())?;
                 let col_count = stmt.column_count();
+                // Câu lệnh không trả về cột (INSERT/UPDATE/DELETE/DDL...) -> execute và báo số dòng ảnh hưởng.
+                if col_count == 0 {
+                    let affected = stmt
+                        .execute(rusqlite::params_from_iter(sqlite_params.iter()))
+                        .map_err(|e| e.to_string())?;
+                    let _ = channel.send(json!({ "type": "affected", "stmtIndex": stmt_index, "query": sql, "affected": affected }));
+                    return Ok(());
+                }
                 let mut columns = Vec::with_capacity(col_count);
                 for i in 0..col_count {
                     columns.push(stmt.column_name(i).map_err(|e| e.to_string())?.to_string());
                 }
                 let _ = channel.send(json!({ "type": "columns", "stmtIndex": stmt_index, "query": sql, "columns": columns }));
 
-                let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
+                let mut rows = stmt.query(rusqlite::params_from_iter(sqlite_params.iter())).map_err(|e| e.to_string())?;
                 let mut batch: Vec<Value> = Vec::with_capacity(STREAM_BATCH);
                 loop {
                     if cancel.load(Ordering::Relaxed) {
@@ -1345,8 +1437,22 @@ async fn stream_one_statement(
                 return Ok(());
             }
             let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
+            // Dò xem câu lệnh có trả về cột không (qua prepared statement). Nếu không -> execute + báo affected.
+            let returns_rows = match (&mut *conn).prepare(sqlx::AssertSqlSafe(sql.to_string()).into_sql_str()).await {
+                Ok(st) => !st.columns().is_empty(),
+                Err(_) => true, // prepare lỗi -> cứ thử fetch theo đường cũ
+            };
+            if !returns_rows {
+                let r = bind_pg_params(sqlx::query(sqlx::AssertSqlSafe(sql.to_string())), params)
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let _ = channel.send(json!({ "type": "affected", "stmtIndex": stmt_index, "query": sql, "affected": r.rows_affected() }));
+                return Ok(());
+            }
             let mut columns: Vec<String> = Vec::new();
-            let mut stream = sqlx::query(sqlx::AssertSqlSafe(sql.to_string())).fetch(&mut *conn);
+            let pg_query = bind_pg_params(sqlx::query(sqlx::AssertSqlSafe(sql.to_string())), params);
+            let mut stream = pg_query.fetch(&mut *conn);
             let mut batch: Vec<Value> = Vec::with_capacity(STREAM_BATCH);
             while let Some(r) = stream.try_next().await.map_err(|e| e.to_string())? {
                 if cancel.load(Ordering::Relaxed) {
@@ -1390,8 +1496,22 @@ async fn stream_one_statement(
                 return Ok(());
             }
             let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
+            // Dò xem câu lệnh có trả về cột không. Nếu không -> execute + báo affected.
+            let returns_rows = match (&mut *conn).prepare(sqlx::AssertSqlSafe(sql.to_string()).into_sql_str()).await {
+                Ok(st) => !st.columns().is_empty(),
+                Err(_) => true,
+            };
+            if !returns_rows {
+                let r = bind_mysql_params(sqlx::query(sqlx::AssertSqlSafe(sql.to_string())), params)
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let _ = channel.send(json!({ "type": "affected", "stmtIndex": stmt_index, "query": sql, "affected": r.rows_affected() }));
+                return Ok(());
+            }
             let mut columns: Vec<String> = Vec::new();
-            let mut stream = sqlx::query(sqlx::AssertSqlSafe(sql.to_string())).fetch(&mut *conn);
+            let mysql_query = bind_mysql_params(sqlx::query(sqlx::AssertSqlSafe(sql.to_string())), params);
+            let mut stream = mysql_query.fetch(&mut *conn);
             let mut batch: Vec<Value> = Vec::with_capacity(STREAM_BATCH);
             while let Some(r) = stream.try_next().await.map_err(|e| e.to_string())? {
                 if cancel.load(Ordering::Relaxed) {
@@ -2245,8 +2365,72 @@ pub async fn restore_backup_old(_state: tauri::State<'_, crate::AppState>, _file
 }
 
 #[tauri::command]
-pub async fn import_new_table(_state: tauri::State<'_, crate::AppState>, _table_name: String, _rows: Vec<Value>) -> Result<Value, String> {
-    Ok(json!({ "success": true }))
+pub async fn import_new_table(state: tauri::State<'_, crate::AppState>, table_name: String, rows: Vec<Value>) -> Result<Value, String> {
+    let conn_type = {
+        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
+        match manager.connection.as_ref() {
+            Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
+            Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
+            Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
+            None => return Err("Chưa kết nối CSDL".to_string()),
+        }
+    };
+    if rows.is_empty() {
+        return Err("Không có dữ liệu để tạo bảng".to_string());
+    }
+    let is_mysql = matches!(&conn_type, DbConnection::Mysql(_));
+    let is_pg = matches!(&conn_type, DbConnection::Postgres(_));
+    let q = if is_mysql { '`' } else { '"' };
+
+    // Cột = hợp các key (giữ thứ tự xuất hiện lần đầu).
+    let mut col_order: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for row in &rows {
+        if let Some(obj) = row.as_object() {
+            for k in obj.keys() {
+                if seen.insert(k.clone()) {
+                    col_order.push(k.clone());
+                }
+            }
+        }
+    }
+    if col_order.is_empty() {
+        return Err("Dữ liệu import không có cột nào".to_string());
+    }
+
+    // Suy kiểu mỗi cột: mọi giá trị non-null là số nguyên -> INT; là số (có phần thập phân) -> REAL/DOUBLE; còn lại -> TEXT.
+    let mut defs: Vec<String> = Vec::new();
+    for c in &col_order {
+        let (mut all_int, mut all_num, mut any) = (true, true, false);
+        for row in &rows {
+            if let Some(v) = row.as_object().and_then(|o| o.get(c)) {
+                if v.is_null() {
+                    continue;
+                }
+                any = true;
+                if !(v.is_i64() || v.is_u64()) {
+                    all_int = false;
+                }
+                if !v.is_number() {
+                    all_num = false;
+                }
+            }
+        }
+        let ty = if any && all_int {
+            if is_pg || is_mysql { "BIGINT" } else { "INTEGER" }
+        } else if any && all_num {
+            if is_pg { "DOUBLE PRECISION" } else if is_mysql { "DOUBLE" } else { "REAL" }
+        } else {
+            "TEXT"
+        };
+        defs.push(format!("{q}{}{q} {}", c, ty));
+    }
+
+    let create_sql = format!("CREATE TABLE {q}{}{q} ({})", table_name, defs.join(", "));
+    execute_raw_sql_generic(&conn_type, create_sql).await?;
+
+    let inserted = bulk_insert(&conn_type, &table_name, &rows).await?;
+    Ok(json!({ "success": true, "inserted": inserted }))
 }
 
 #[tauri::command]
@@ -2487,9 +2671,76 @@ pub async fn rename_table(state: tauri::State<'_, crate::AppState>, old_name: St
     Ok(json!({ "success": true }))
 }
 
+// Định dạng một giá trị JSON thành literal SQL (theo cùng quy ước với commit_changes/export):
+// null -> NULL, chuỗi -> '...' (escape nháy đơn), còn lại (số/bool) -> to_string().
+fn sql_literal(v: Option<&Value>) -> String {
+    match v {
+        None | Some(Value::Null) => "NULL".to_string(),
+        Some(Value::String(s)) => format!("'{}'", s.replace('\'', "''")),
+        Some(other) => other.to_string(),
+    }
+}
+
+// Chèn hàng loạt dòng vào một bảng đã tồn tại. Gộp mỗi BATCH dòng vào một câu INSERT nhiều VALUES.
+// Cột lấy từ hợp (union) các key của các dòng, giữ thứ tự xuất hiện lần đầu.
+async fn bulk_insert(conn: &DbConnection, table: &str, rows: &[Value]) -> Result<usize, String> {
+    if rows.is_empty() {
+        return Ok(0);
+    }
+    let is_mysql = matches!(conn, DbConnection::Mysql(_));
+    let q = if is_mysql { '`' } else { '"' };
+
+    let mut col_order: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for row in rows {
+        if let Some(obj) = row.as_object() {
+            for k in obj.keys() {
+                if seen.insert(k.clone()) {
+                    col_order.push(k.clone());
+                }
+            }
+        }
+    }
+    if col_order.is_empty() {
+        return Err("Dữ liệu import không có cột nào".to_string());
+    }
+
+    let quoted_table = format!("{q}{}{q}", table);
+    let cols_sql = col_order.iter().map(|c| format!("{q}{}{q}", c)).collect::<Vec<_>>().join(", ");
+
+    const BATCH: usize = 500;
+    let mut inserted = 0usize;
+    for chunk in rows.chunks(BATCH) {
+        let mut values_list: Vec<String> = Vec::with_capacity(chunk.len());
+        for row in chunk {
+            let obj = row.as_object();
+            let vals: Vec<String> = col_order
+                .iter()
+                .map(|c| sql_literal(obj.and_then(|o| o.get(c))))
+                .collect();
+            values_list.push(format!("({})", vals.join(", ")));
+        }
+        // MySQL/SQLite/PG đều chấp nhận cú pháp INSERT nhiều VALUES.
+        let sql = format!("INSERT INTO {} ({}) VALUES {};", quoted_table, cols_sql, values_list.join(", "));
+        execute_raw_sql_generic(conn, sql).await?;
+        inserted += chunk.len();
+    }
+    Ok(inserted)
+}
+
 #[tauri::command]
-pub async fn import_table_data(_state: tauri::State<'_, crate::AppState>, _name: String, _rows: Vec<Value>) -> Result<Value, String> {
-    Ok(json!({ "success": true }))
+pub async fn import_table_data(state: tauri::State<'_, crate::AppState>, name: String, rows: Vec<Value>) -> Result<Value, String> {
+    let conn_type = {
+        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
+        match manager.connection.as_ref() {
+            Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
+            Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
+            Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
+            None => return Err("Chưa kết nối CSDL".to_string()),
+        }
+    };
+    let inserted = bulk_insert(&conn_type, &name, &rows).await?;
+    Ok(json!({ "success": true, "inserted": inserted }))
 }
 
 // Utility: executes raw SQL statements across all databases and maps to standard outputs
@@ -2599,6 +2850,111 @@ async fn execute_raw_sql_generic(conn: &DbConnection, sql: String) -> Result<Vec
     Ok(results)
 }
 
+// Như execute_raw_sql_generic nhưng bind tham số ở tầng driver (parameterized query).
+// Chỉ dùng cho MỘT câu lệnh (vd EXPLAIN <query có :param>) — không tách nhiều câu lệnh.
+// SQL truyền vào phải đã dùng placeholder native (`?` cho SQLite/MySQL, `$1..$n` cho Postgres).
+async fn run_bound_query(conn: &DbConnection, sql: String, params: &[Value]) -> Result<Vec<Value>, String> {
+    let mut results = Vec::new();
+    match conn {
+        DbConnection::Sqlite(conn_arc) => {
+            let conn = conn_arc.lock().map_err(|e| e.to_string())?;
+            let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+            let col_count = stmt.column_count();
+            let mut columns = Vec::new();
+            for i in 0..col_count {
+                columns.push(stmt.column_name(i).map_err(|e| e.to_string())?.to_string());
+            }
+            let sqlite_params: Vec<rusqlite::types::Value> = params.iter().map(json_to_sqlite_value).collect();
+            let mut rows_json = Vec::new();
+            let mut rows = stmt.query(rusqlite::params_from_iter(sqlite_params.iter())).map_err(|e| e.to_string())?;
+            while let Some(row) = rows.next().map_err(|e| e.to_string())? {
+                let mut map = serde_json::Map::new();
+                for i in 0..col_count {
+                    let val: Value = match row.get_ref(i) {
+                        Ok(rusqlite::types::ValueRef::Null) => Value::Null,
+                        Ok(rusqlite::types::ValueRef::Integer(n)) => json!(n),
+                        Ok(rusqlite::types::ValueRef::Real(r)) => json!(r),
+                        Ok(rusqlite::types::ValueRef::Text(t)) => json!(String::from_utf8_lossy(t)),
+                        Ok(rusqlite::types::ValueRef::Blob(b)) => json!(b),
+                        _ => Value::Null,
+                    };
+                    map.insert(columns[i].clone(), val);
+                }
+                rows_json.push(Value::Object(map));
+            }
+            results.push(json!({ "columns": columns, "data": rows_json }));
+        }
+        DbConnection::Postgres(pool) => {
+            let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
+            let query = bind_pg_params(sqlx::query(sqlx::AssertSqlSafe(sql.clone())), params);
+            let rows = query.fetch_all(&mut *conn).await.map_err(|e| e.to_string())?;
+            let mut rows_json = Vec::new();
+            let mut columns = Vec::new();
+            if !rows.is_empty() {
+                for col in rows[0].columns() {
+                    columns.push(col.name().to_string());
+                }
+                for r in rows {
+                    let mut map = serde_json::Map::new();
+                    for col_name in &columns {
+                        let val: Value = decode_pg_cell!(&r, col_name.as_str());
+                        map.insert(col_name.clone(), val);
+                    }
+                    rows_json.push(Value::Object(map));
+                }
+            }
+            results.push(json!({ "columns": columns, "data": rows_json }));
+        }
+        DbConnection::Mysql(pool) => {
+            let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
+            let query = bind_mysql_params(sqlx::query(sqlx::AssertSqlSafe(sql.clone())), params);
+            let rows = query.fetch_all(&mut *conn).await.map_err(|e| e.to_string())?;
+            let mut rows_json = Vec::new();
+            let mut columns = Vec::new();
+            if !rows.is_empty() {
+                for col in rows[0].columns() {
+                    columns.push(col.name().to_string());
+                }
+                for r in rows {
+                    let mut map = serde_json::Map::new();
+                    for col_name in &columns {
+                        let val: Value = decode_mysql_cell!(&r, col_name.as_str());
+                        map.insert(col_name.clone(), val);
+                    }
+                    rows_json.push(Value::Object(map));
+                }
+            }
+            results.push(json!({ "columns": columns, "data": rows_json }));
+        }
+    }
+    Ok(results)
+}
+
+// Pool tối giản chỉ để chạy 1 câu liệt kê database (1 connection, timeout ngắn).
+async fn open_list_pool_pg(url: &str) -> Result<PgPool, String> {
+    sqlx::pool::PoolOptions::<sqlx::Postgres>::new()
+        .max_connections(1)
+        .acquire_timeout(LIST_DB_TIMEOUT)
+        .connect(url)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+async fn open_list_pool_mysql(url: &str) -> Result<MySqlPool, String> {
+    sqlx::pool::PoolOptions::<sqlx::MySql>::new()
+        .max_connections(1)
+        .acquire_timeout(LIST_DB_TIMEOUT)
+        .connect(url)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+// Lỗi thuộc dạng "database không tồn tại" (MySQL 1049, Postgres 3D000) thì đáng
+// thử lại bằng DB hệ thống; lỗi mạng/xác thực thì thử lại chỉ tốn thêm timeout.
+fn is_unknown_database_err(err: &str) -> bool {
+    err.contains("atabase")
+}
+
 #[tauri::command]
 pub async fn get_databases_list(config: Value) -> Result<Value, String> {
     let db_type = config.get("dbType").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -2609,8 +2965,18 @@ pub async fn get_databases_list(config: Value) -> Result<Value, String> {
         "postgres" => {
             // Giữ tunnel sống trong suốt thao tác liệt kê (nếu bật SSH)
             let (conn_config, _tunnel) = apply_ssh_tunnel(&config, 5432).await?;
-            let url = build_pg_url(&conn_config, None);
-            let pool = PgPool::connect(&url).await.map_err(|e| e.to_string())?;
+            // Ưu tiên database đang điền (user bị giới hạn quyền — vd Postgres
+            // managed trên cloud — thường chỉ vào được đúng DB của mình). Nếu tên
+            // đó không tồn tại (đang gõ dở) thì lùi về DB hệ thống "postgres".
+            let pool = match open_list_pool_pg(&build_pg_url(&conn_config, None)).await {
+                Ok(p) => p,
+                Err(first) if is_unknown_database_err(&first) => {
+                    open_list_pool_pg(&build_pg_url(&conn_config, Some("postgres")))
+                        .await
+                        .map_err(|_| first)?
+                }
+                Err(first) => return Err(first),
+            };
             let rows = sqlx::query("SELECT datname FROM pg_database WHERE datistemplate = false AND datallowconn = true")
                 .fetch_all(&pool)
                 .await
@@ -2624,8 +2990,15 @@ pub async fn get_databases_list(config: Value) -> Result<Value, String> {
         }
         "mysql" => {
             let (conn_config, _tunnel) = apply_ssh_tunnel(&config, 3306).await?;
-            let url = build_mysql_url(&conn_config, None);
-            let pool = MySqlPool::connect(&url).await.map_err(|e| e.to_string())?;
+            let pool = match open_list_pool_mysql(&build_mysql_url(&conn_config, None)).await {
+                Ok(p) => p,
+                Err(first) if is_unknown_database_err(&first) => {
+                    open_list_pool_mysql(&build_mysql_url(&conn_config, Some("mysql")))
+                        .await
+                        .map_err(|_| first)?
+                }
+                Err(first) => return Err(first),
+            };
             let rows = sqlx::query("SHOW DATABASES")
                 .fetch_all(&pool)
                 .await
@@ -3040,4 +3413,64 @@ pub fn open_url(url: String) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+#[tauri::command]
+pub fn set_app_window_size(window: tauri::Window, width: u32, height: u32) -> Result<(), String> {
+    let _ = window.unmaximize();
+    let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize {
+        width: width as f64,
+        height: height as f64,
+    }));
+    let _ = window.center();
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use rusqlite::types::Value as SV;
+
+    #[test]
+    fn test_json_to_sqlite_value_null() {
+        let val = json!(null);
+        assert_eq!(json_to_sqlite_value(&val), SV::Null);
+    }
+
+    #[test]
+    fn test_json_to_sqlite_value_bool() {
+        assert_eq!(json_to_sqlite_value(&json!(true)), SV::Integer(1));
+        assert_eq!(json_to_sqlite_value(&json!(false)), SV::Integer(0));
+    }
+
+    #[test]
+    fn test_json_to_sqlite_value_number() {
+        assert_eq!(json_to_sqlite_value(&json!(100)), SV::Integer(100));
+        assert_eq!(json_to_sqlite_value(&json!(3.14159)), SV::Real(3.14159));
+    }
+
+    #[test]
+    fn test_json_to_sqlite_value_string() {
+        assert_eq!(json_to_sqlite_value(&json!("TableNova")), SV::Text("TableNova".into()));
+    }
+
+    #[test]
+    fn test_sqlite_in_memory_query() -> Result<(), Box<dyn std::error::Error>> {
+        let conn = SqliteConnection::open_in_memory()?;
+        conn.execute("CREATE TABLE test_users (id INTEGER PRIMARY KEY, name TEXT NOT NULL);", [])?;
+        conn.execute("INSERT INTO test_users (name) VALUES (?1), (?2);", ["Alice", "Bob"])?;
+
+        let mut stmt = conn.prepare("SELECT id, name FROM test_users ORDER BY id ASC;")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?;
+
+        let results: Vec<(i64, String)> = rows.collect::<Result<_, _>>()?;
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0], (1, "Alice".into()));
+        assert_eq!(results[1], (2, "Bob".into()));
+
+        Ok(())
+    }
 }

@@ -34,9 +34,9 @@ export const ExplainRawView: React.FC<ExplainRawViewProps> = ({ rawText }) => {
         <button
           className="btn btn-secondary"
           onClick={handleCopy}
-          style={{ padding: '4px 10px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '6px' }}
+          style={{ padding: '4px 10px', display: 'flex', alignItems: 'center', gap: '6px' }}
         >
-          {copied ? <Check size={13} style={{ color: '#10b981' }} /> : <Copy size={13} />}
+          {copied ? <Check size={13} style={{ color: 'var(--st-ok)' }} /> : <Copy size={13} />}
           <span>{copied ? 'Đã sao chép!' : 'Sao chép văn bản (Copy Raw)'}</span>
         </button>
       </div>

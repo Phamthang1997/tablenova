@@ -118,10 +118,10 @@ export const QueryParamsConfigModal: React.FC<QueryParamsConfigModalProps> = ({
 
         {/* Buttons */}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
-          <button className="btn btn-secondary" onClick={onClose} style={{ padding: '6px 16px', fontSize: '12px' }}>
+          <button className="btn btn-secondary" onClick={onClose} style={{ padding: '6px 16px' }}>
             Hủy
           </button>
-          <button className="btn btn-primary" onClick={handleSave} style={{ padding: '6px 16px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <button className="btn btn-primary" onClick={handleSave} style={{ padding: '6px 16px', display: 'flex', alignItems: 'center', gap: '6px' }}>
             <Check size={14} />
             <span>Lưu cài đặt</span>
           </button>

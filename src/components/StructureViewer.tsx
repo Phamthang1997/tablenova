@@ -1,5 +1,5 @@
 // Premium Database Table Structure Viewer & Editor Component
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import type { SchemaInfo, ColumnInfo } from '../utils/dbHelper';
 import { dbHelper } from '../utils/dbHelper';
 import { Save, Plus, Trash2, RotateCcw, AlertTriangle, CheckCircle2, Code } from 'lucide-react';
@@ -100,7 +100,11 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
     })));
     setDeletedFkNames([]);
     setEditingFkCell(null);
-  }, [schema]);
+    // tableName được dùng bên trong effect để đặt tên khóa ngoại chưa có tên
+    // (`fk_${tableName}_col_...`), nên phải nằm trong deps. Thực tế đổi bảng thì
+    // schema cũng được nạp lại nên effect vẫn chạy, nhưng khai đủ deps mới đúng ý
+    // định và bỏ được cảnh báo exhaustive-deps.
+  }, [schema, tableName]);
 
   // Track pending changes
   const hasChanges = () => {
@@ -189,7 +193,11 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
       isPrimaryKey: false,
       defaultValue: null
     };
-    setCols([...cols, newCol]);
+    const newCols = [...cols, newCol];
+    setCols(newCols);
+    // Mở sẵn ô nhập tên cột như handleAddIndex vẫn làm — bấm "Thêm cột" mà dòng
+    // mới chỉ nằm im ở dưới thì người dùng không biết phải nhấp đôi để sửa.
+    setTimeout(() => startEditCol(newCols.length - 1, 'name', newCol.name), 50);
   };
 
   const handleDeleteColumn = (colName: string, isNewColumn: boolean) => {
@@ -315,23 +323,53 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
     }
   };
 
+  // Lấy danh sách cột của một bảng để chọn "Cột tham chiếu".
+  // Bản cũ gọi getTableSchema(refTable) MỖI LẦN nhấp đôi vào ô — mỗi lần là một
+  // vòng round-trip tới DB, và getTableSchema còn lấy cả index + khóa ngoại dù ở
+  // đây chỉ cần tên cột. Với DB ở xa thì mỗi lần mở dropdown phải chờ.
+  // Nay dùng getFullCatalog(): lấy cột của TẤT CẢ bảng trong ít truy vấn rồi cache
+  // lại, nên chỉ chậm đúng một lần đầu, sau đó mọi bảng đều tức thì.
+  const catalogRef = useRef<Record<string, string[]> | null>(null);
+  const [loadingRefCols, setLoadingRefCols] = useState(false);
+
+  const getColumnsOf = async (table: string): Promise<string[]> => {
+    if (!table) return [];
+    const cached = catalogRef.current?.[table];
+    if (cached && cached.length) return cached;
+
+    setLoadingRefCols(true);
+    try {
+      if (!catalogRef.current) {
+        const cat = await dbHelper.getFullCatalog();
+        const map: Record<string, string[]> = {};
+        for (const [tbl, cols] of Object.entries(cat.columns || {})) {
+          map[tbl] = (cols as any[]).map(c => c?.name).filter(Boolean);
+        }
+        catalogRef.current = map;
+      }
+      let cols = catalogRef.current[table] || [];
+      // Catalog lỗi hoặc không có bảng này (view, schema khác...) -> lùi về cách cũ
+      // cho đúng một bảng, rồi cache lại để lần sau không phải gọi nữa.
+      if (cols.length === 0) {
+        const schemaInfo = await dbHelper.getTableSchema(table);
+        cols = schemaInfo.columns.map(c => c.name);
+        catalogRef.current[table] = cols;
+      }
+      return cols;
+    } catch {
+      return [];
+    } finally {
+      setLoadingRefCols(false);
+    }
+  };
+
   const startEditFk = async (rowIndex: number, field: 'column' | 'refTable' | 'refColumn', val: any) => {
     setEditingFkCell({ rowIndex, field });
     setEditFkValue(String(val));
-    
-    // Nếu bắt đầu sửa refColumn, load danh sách cột của refTable tương ứng của hàng đó
+
     if (field === 'refColumn') {
       const fkRow = fks[rowIndex];
-      if (fkRow && fkRow.refTable) {
-        try {
-          const schemaInfo = await dbHelper.getTableSchema(fkRow.refTable);
-          setRefColumns(schemaInfo.columns.map(c => c.name));
-        } catch {
-          setRefColumns([]);
-        }
-      } else {
-        setRefColumns([]);
-      }
+      setRefColumns(await getColumnsOf(fkRow?.refTable || ''));
     }
   };
 
@@ -345,6 +383,12 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
       return fk;
     }));
     setEditingFkCell(null);
+
+    // Vừa chọn bảng tham chiếu -> nạp sẵn cột của nó ngay, để khi người dùng mở ô
+    // "Cột tham chiếu" thì danh sách đã có, không phải chờ.
+    if (field === 'refTable' && finalVal) {
+      void getColumnsOf(finalVal).then(setRefColumns);
+    }
   };
 
   // -------------------------------------------------------------
@@ -647,7 +691,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
             <button 
               className="btn btn-secondary" 
               onClick={handleAddColumn}
-              style={{ display: 'flex', alignItems: 'center', gap: '4px', height: '26px', fontSize: '11px' }}
+              style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
             >
               <Plus size={12} />
               <span>Thêm cột</span>
@@ -655,7 +699,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
             <button 
               className="btn btn-secondary" 
               onClick={handleAddIndex}
-              style={{ display: 'flex', alignItems: 'center', gap: '4px', height: '26px', fontSize: '11px' }}
+              style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
             >
               <Plus size={12} />
               <span>Thêm chỉ mục</span>
@@ -663,7 +707,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
             <button
               className="btn btn-secondary"
               onClick={handleAddFK}
-              style={{ display: 'flex', alignItems: 'center', gap: '4px', height: '26px', fontSize: '11px' }}
+              style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
             >
               <Plus size={12} />
               <span>Thêm khóa ngoại</span>
@@ -671,7 +715,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
             <button
               className="btn btn-secondary"
               onClick={handleShowDefinition}
-              style={{ display: 'flex', alignItems: 'center', gap: '4px', height: '26px', fontSize: '11px' }}
+              style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
               title="Xem câu lệnh CREATE TABLE và các dump script (CREATE/DROP/TRUNCATE)"
             >
               <Code size={12} />
@@ -686,7 +730,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
               className="btn btn-secondary" 
               onClick={handleDiscard}
               disabled={loading}
-              style={{ display: 'flex', alignItems: 'center', gap: '4px', height: '26px', fontSize: '11px' }}
+              style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
             >
               <RotateCcw size={12} />
               <span>Hủy bỏ</span>
@@ -695,7 +739,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
               className="btn btn-primary" 
               onClick={handleSaveStructure}
               disabled={loading}
-              style={{ display: 'flex', alignItems: 'center', gap: '4px', height: '26px', fontSize: '11px', background: '#10b981', borderColor: '#10b981' }}
+              style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'var(--st-ok)', borderColor: 'var(--st-ok)' }}
             >
               <Save size={12} />
               <span>{loading ? 'Đang lưu...' : 'Lưu cấu trúc'}</span>
@@ -706,18 +750,18 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
 
       {/* Messages */}
       {successMsg && (
-        <div className="info-bar" style={{ background: 'rgba(16, 185, 129, 0.1)', borderLeftColor: '#10b981', margin: '8px 16px', flexShrink: 0 }}>
+        <div className="info-bar" style={{ background: 'rgba(16, 185, 129, 0.1)', borderLeftColor: 'var(--st-ok)', margin: '8px 16px', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <CheckCircle2 size={16} color="#10b981" />
+            <CheckCircle2 size={16} style={{ color: 'var(--st-ok)' }} />
             <span>{successMsg}</span>
           </div>
         </div>
       )}
 
       {errorMsg && (
-        <div className="info-bar" style={{ background: 'rgba(239, 68, 68, 0.1)', borderLeftColor: '#ef4444', margin: '8px 16px', flexShrink: 0 }}>
+        <div className="info-bar" style={{ background: 'rgba(239, 68, 68, 0.1)', borderLeftColor: 'var(--st-danger)', margin: '8px 16px', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <AlertTriangle size={16} color="#ef4444" />
+            <AlertTriangle size={16} style={{ color: 'var(--st-danger)' }} />
             <span style={{ whiteSpace: 'pre-line' }}>{errorMsg}</span>
           </div>
         </div>
@@ -749,7 +793,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                 const isEditing = editingColCell?.rowIndex === index;
 
                 return (
-                  <tr key={col.name + '_' + index} style={isNew ? { background: 'rgba(16,185,129,0.03)' } : {}}>
+                  <tr key={col.name + '_' + index} className={isNew ? 'structure-row-new' : ''}>
                     <td style={{ textAlign: 'center', color: 'var(--win-text-secondary)', fontWeight: 600 }}>{index + 1}</td>
                     
                     {/* Column Name */}
@@ -829,7 +873,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                       title="Click để bật/tắt Khóa Chính"
                     >
                       {col.isPrimaryKey ? (
-                        <span className="badge-pk" style={{ userSelect: 'none', background: 'rgba(239, 68, 68, 0.12)', color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.25)' }}>PRIMARY KEY</span>
+                        <span className="badge-pk" style={{ userSelect: 'none', background: 'rgba(239, 68, 68, 0.12)', color: 'var(--st-danger)', borderColor: 'rgba(239, 68, 68, 0.25)' }}>PRIMARY KEY</span>
                       ) : (
                         <span style={{ color: 'var(--win-text-disabled)', userSelect: 'none' }}>-</span>
                       )}
@@ -930,7 +974,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                         style={{
                           border: 'none',
                           background: 'transparent',
-                          color: col.isPrimaryKey ? 'var(--win-text-disabled)' : '#ef4444',
+                          color: col.isPrimaryKey ? 'var(--win-text-disabled)' : 'var(--st-danger)',
                           cursor: col.isPrimaryKey ? 'not-allowed' : 'pointer',
                           padding: '4px'
                         }}
@@ -966,11 +1010,11 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                 const idxType = (idx as any).type || (idx.unique ? 'UNIQUE' : 'INDEX');
 
                 return (
-                  <tr key={idx.name + '_' + index} style={isNew ? { background: 'rgba(16,185,129,0.03)' } : {}}>
+                  <tr key={idx.name + '_' + index} className={isNew ? 'structure-row-new' : ''}>
                     {/* Index Name */}
                     <td 
                       onDoubleClick={() => startEditIdx(index, 'name', idx.name)}
-                      style={{ fontWeight: 600, color: '#f59e0b', cursor: 'pointer' }}
+                      style={{ fontWeight: 600, color: 'var(--st-warn)', cursor: 'pointer' }}
                     >
                       {isEditing && editingIdxCell?.field === 'name' ? (
                         <input
@@ -1051,7 +1095,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                           className="badge-pk" 
                           style={{ 
                             background: idxType === 'UNIQUE' ? 'rgba(16, 185, 129, 0.12)' : 'rgba(245, 158, 11, 0.12)', 
-                            color: idxType === 'UNIQUE' ? '#10b981' : '#f59e0b', 
+                            color: idxType === 'UNIQUE' ? '#10b981' : 'var(--st-warn)', 
                             borderColor: idxType === 'UNIQUE' ? 'rgba(16, 185, 129, 0.25)' : 'rgba(245, 158, 11, 0.25)' 
                           }}
                         >
@@ -1065,7 +1109,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                       <button
                         className="btn-secondary"
                         onClick={() => handleDeleteIndex(idx.name, isNew)}
-                        style={{ border: 'none', background: 'transparent', color: '#ef4444', cursor: 'pointer', padding: '4px' }}
+                        style={{ border: 'none', background: 'transparent', color: 'var(--st-danger)', cursor: 'pointer', padding: '4px' }}
                         title="Xóa chỉ mục"
                       >
                         <Trash2 size={14} />
@@ -1109,7 +1153,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                 const onDeleteAct = (fk as any).onDelete || 'NO ACTION';
 
                 return (
-                  <tr key={fk.name + '_' + index} style={isNew ? { background: 'rgba(16,185,129,0.03)' } : {}}>
+                  <tr key={fk.name + '_' + index} className={isNew ? 'structure-row-new' : ''}>
                     {/* FK Name */}
                     <td style={{ fontWeight: 600, color: 'var(--win-text-secondary)' }}>{fk.name}</td>
 
@@ -1178,7 +1222,9 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                           autoFocus
                           style={{ width: '100%', padding: '2px', fontSize: '12px', height: '24px' }}
                         >
-                          <option value="">-- Chọn cột --</option>
+                          {/* Cho biết đang nạp, thay vì dropdown trống trơn khiến
+                              người dùng tưởng bảng không có cột nào. */}
+                          <option value="">{loadingRefCols ? 'Đang nạp danh sách cột...' : '-- Chọn cột --'}</option>
                           {refColumns.map(colName => (
                             <option key={colName} value={colName}>{colName}</option>
                           ))}
@@ -1261,7 +1307,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                       <button
                         className="btn-secondary"
                         onClick={() => handleDeleteFK(fk.name, isNew)}
-                        style={{ border: 'none', background: 'transparent', color: '#ef4444', cursor: 'pointer', padding: '4px' }}
+                        style={{ border: 'none', background: 'transparent', color: 'var(--st-danger)', cursor: 'pointer', padding: '4px' }}
                         title="Xóa khóa ngoại"
                       >
                         <Trash2 size={14} />
@@ -1325,7 +1371,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
             </div>
             <div style={{ padding: '12px 16px', borderTop: '1px solid var(--win-border)', display: 'flex', justifyContent: 'flex-end', gap: '8px', background: 'var(--win-bg-card)' }}>
               <button className="btn btn-secondary" onClick={() => setPreviewSqls(null)} disabled={loading}>Hủy</button>
-              <button className="btn btn-primary" onClick={handleExecuteAlter} disabled={loading || previewSqls.length === 0} style={{ background: '#10b981', borderColor: '#10b981' }}>
+              <button className="btn btn-primary" onClick={handleExecuteAlter} disabled={loading || previewSqls.length === 0} style={{ background: 'var(--st-ok)', borderColor: 'var(--st-ok)' }}>
                 {loading ? 'Đang thực thi...' : 'Xác nhận thực thi'}
               </button>
             </div>
@@ -1355,7 +1401,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
               <button className="btn btn-secondary" onClick={() => copyText(definitionSql, 'CREATE TABLE')}>Copy CREATE</button>
               <button className="btn btn-secondary" onClick={() => copyText(dropScript, 'DROP TABLE')}>Copy DROP</button>
               <button className="btn btn-secondary" onClick={() => copyText(truncateScript, 'TRUNCATE')}>Copy TRUNCATE</button>
-              <button className="btn btn-primary" onClick={() => setDefinitionSql(null)} style={{ background: '#10b981', borderColor: '#10b981' }}>Đóng</button>
+              <button className="btn btn-primary" onClick={() => setDefinitionSql(null)} style={{ background: 'var(--st-ok)', borderColor: 'var(--st-ok)' }}>Đóng</button>
             </div>
           </div>
         </div>

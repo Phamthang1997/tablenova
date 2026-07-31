@@ -104,7 +104,7 @@ export const ExplainViewer: React.FC<ExplainViewerProps> = ({ explainResult }) =
             </div>
           )}
           {executionTimeMs !== undefined && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#10b981' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--st-ok)' }}>
               <Zap size={12} />
               <span>Thực thi: <strong>{executionTimeMs.toFixed(2)} ms</strong></span>
             </div>

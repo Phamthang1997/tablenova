@@ -6,7 +6,7 @@ import type { DbConnectionConfig } from './dbHelper';
 // Cấu hình được truyền qua query string ?term=<json> để cửa sổ mới tự khởi tạo phiên.
 export function openTerminalWindow(config: DbConnectionConfig, profileName?: string) {
   const payload = encodeURIComponent(JSON.stringify({ config, profileName }));
-  const label = `terminal_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const label = `terminal_${crypto.randomUUID()}`;
   new WebviewWindow(label, {
     url: `index.html?term=${payload}`,
     title: profileName ? `Terminal — ${profileName}` : 'Terminal',

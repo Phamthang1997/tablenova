@@ -1,0 +1,80 @@
+# Implementation Plan - Internationalization (i18n) using react-i18next
+
+Add full i18n localization support to TableNova for **English (en)**, **Vietnamese (vi)**, and **Japanese (ja)** using `react-i18next` & `i18next`.
+
+## User Review Required
+
+> [!IMPORTANT]
+> The app will use `react-i18next` with automatic language detection (`i18next-browser-languagedetector`), fallback to `vi` / `en`, and seamless persistence in `localStorage`.
+
+## Library Versions
+
+The following npm packages are specified and installed in `package.json`:
+
+- **`i18next`**: `^26.3.6` — Core internationalization framework
+- **`react-i18next`**: `^17.0.11` — React 19 integration & translation hooks (`useTranslation`)
+- **`i18next-browser-languagedetector`**: `^8.2.1` — Language detector (detects browser settings & saves preference in `localStorage`)
+
+---
+
+## Proposed Changes
+
+### `src/i18n/` (i18n Setup & Translation Resources)
+
+#### [NEW] [locales/en.ts](file:///c:/workspace/table/src/i18n/locales/en.ts)
+- Complete English translation dictionary covering:
+  - `common`: OK, Cancel, Save, Delete, Close, Search, Refresh, Copy, Edit, Loading, Success, Error, Confirm, etc.
+  - `titlebar`: Menu categories (Connection, Database, View, Help) and menu items (New Connection, Disconnect, New Query, Backup & Restore, Language, Theme, etc.).
+  - `sidebar`: Tables, Views, Search, New Table, Drop Table, Rename Table, Export Table, Import Data, Query, AI Assistant, Terminal, Migration, Redis, etc.
+  - `connection`: Connection Manager, DB types (SQLite, PostgreSQL, MySQL, Redis), Host, Port, Database, User, Password, Test Connection, Connect, Saved Connections, etc.
+  - `datagrid`: Apply, Cancel, Add Row, Delete Selected, Search, Filter, Pagination, Row Count, Null, Empty.
+  - `sqleditor`: Run, Format, Clear, History, Save Query, Export Results, Execution Time, Results, Messages, Explain.
+  - `structure`: Columns, Indexes, Foreign Keys, Primary Key, Auto Increment, Not Null, Default, Preview SQL, Save Schema.
+  - `createtable`: Table Name, Columns, Data Type, Add Column, Create Table.
+  - `backup`: Backup & Restore, Export Backup, Restore Database, Select Tables, Start Backup, Start Restore.
+  - `ai`: AI Assistant, Ask AI, Send, SQL Generator, Clear.
+
+#### [NEW] [locales/vi.ts](file:///c:/workspace/table/src/i18n/locales/vi.ts)
+- Complete Vietnamese translation dictionary matching all keys in `en.ts`.
+
+#### [NEW] [locales/ja.ts](file:///c:/workspace/table/src/i18n/locales/ja.ts)
+- Complete Japanese translation dictionary matching all keys in `en.ts`.
+
+#### [NEW] [index.ts](file:///c:/workspace/table/src/i18n/index.ts)
+- Initialize `i18next` with `initReactI18next` and `LanguageDetector`.
+- Configure `en`, `vi`, `ja` resources.
+
+---
+
+### `src/` & `src/components/`
+
+#### [MODIFY] [main.tsx](file:///c:/workspace/table/src/main.tsx)
+- Import `./i18n` to initialize i18next before React renders.
+
+#### [MODIFY] [TitleBar.tsx](file:///c:/workspace/table/src/components/TitleBar.tsx)
+- Use `useTranslation()` hook.
+- Add "Language / Ngôn ngữ / 言語" selector in TitleBar allowing fast selection of:
+  - 🇬🇧 English (`en`)
+  - 🇻🇳 Tiếng Việt (`vi`)
+  - 🇯🇵 日本語 (`ja`)
+- Localize top-level menus and action items.
+
+#### [MODIFY] [Sidebar.tsx](file:///c:/workspace/table/src/components/Sidebar.tsx)
+- Use `useTranslation()` for tooltips, search placeholders, context menu items, and section titles.
+
+#### [MODIFY] [ConnectionManager.tsx](file:///c:/workspace/table/src/components/ConnectionManager.tsx)
+- Use `useTranslation()` for connection setup fields, tab headers, buttons, and connection status messages.
+
+#### [MODIFY] [CreateTableModal.tsx](file:///c:/workspace/table/src/components/CreateTableModal.tsx)
+- Use `useTranslation()` for modal titles, column definitions, data types, and action buttons.
+
+---
+
+## Verification Plan
+
+### Automated Tests
+- Run `npm run build-frontend` (`tsc -b && vite build`) to verify type safety and build success.
+
+### Manual Verification
+- Test switching language dynamically between English, Vietnamese, and Japanese via TitleBar.
+- Verify active language persists across page refreshes.

@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { dbHelper } from '../utils/dbHelper';
 import type { TableItem } from '../utils/dbHelper';
-import { Search, Table, Terminal, TerminalSquare, LogOut, RefreshCw, Layers, Database, Plus, ChevronDown, ChevronRight, Trash2, Check, Pencil, Braces, Cog, X } from 'lucide-react';
+import { Search, Table, Terminal, TerminalSquare, LogOut, RefreshCw, Layers, Database, Plus, ChevronDown, ChevronRight, Trash2, Check, Pencil, Braces, Cog, X, Info } from 'lucide-react';
 import { CreateTableModal } from './CreateTableModal';
 import { openTerminalWindow } from '../utils/terminalWindow';
-import { PanelBottom, ExternalLink } from 'lucide-react';
+import { PanelBottom, ExternalLink, GitCompare } from 'lucide-react';
 
 interface SidebarProps {
   dbName: string;
@@ -18,6 +18,8 @@ interface SidebarProps {
   onImportToTable: (tableName: string) => void;
   onExportTable: (tableName: string) => void;
   onBackupRestore: () => void;
+  onOpenDbInfo?: () => void;
+  onSchemaMigration?: () => void;
   onTableRenamed?: (oldName: string, newName: string) => void;
   onTableDropped?: (tableName: string) => void;
   onDatabaseChanged?: (name: string) => void;
@@ -35,6 +37,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onImportToTable,
   onExportTable,
   onBackupRestore,
+  onOpenDbInfo,
+  onSchemaMigration,
   onTableRenamed,
   onTableDropped,
   onDatabaseChanged,
@@ -359,10 +363,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {showDbMenu && canManageDatabases && (
           <>
             <div style={{ position: 'fixed', inset: 0, zIndex: 998 }} onClick={() => setShowDbMenu(false)} />
-            <div style={{
-              position: 'absolute', top: 'calc(100% + 2px)', left: '8px', right: '8px', zIndex: 999,
-              background: 'var(--win-bg-card)', border: '1px solid var(--win-border)', borderRadius: '6px',
-              boxShadow: '0 8px 24px rgba(0,0,0,0.4)', maxHeight: '320px', overflowY: 'auto', padding: '4px 0'
+            {/* Nền/viền/bóng lấy từ .ws-menu — menu cần đủ đục để đọc được,
+                không để nội dung sidebar phía sau xuyên qua. */}
+            <div className="ws-menu" style={{
+              position: 'absolute', top: 'calc(100% + 4px)', left: '8px', right: '8px', zIndex: 999,
+              maxHeight: '320px', overflowY: 'auto'
             }}>
               <div style={{ padding: '4px 10px', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--win-text-disabled)' }}>
                 Databases {dbLoading ? '(đang tải...)' : `(${dbList.length})`}
@@ -391,7 +396,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       style={{ display: 'flex', flexShrink: 0 }}
                       onClick={(e) => handleDropDatabase(db, e)}
                     >
-                      <Trash2 size={12} style={{ opacity: 0.6, color: '#ef4444' }} />
+                      <Trash2 size={12} style={{ opacity: 0.6, color: 'var(--st-danger)' }} />
                     </span>
                   )}
                 </div>
@@ -446,6 +451,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <Database size={14} className="title-bar-logo" />
               <span>Sao lưu & Phục hồi</span>
             </div>
+            {onOpenDbInfo && (
+              <div className="sidebar-item" onClick={onOpenDbInfo}>
+                <Info size={14} className="title-bar-logo" />
+                <span>Thông tin Database</span>
+              </div>
+            )}
+            {onSchemaMigration && (
+              <div className="sidebar-item" onClick={onSchemaMigration}>
+                <GitCompare size={14} className="title-bar-logo" />
+                <span>Diff Schema & Migration</span>
+              </div>
+            )}
             <div style={{ position: 'relative' }}>
               <div className="sidebar-item" onClick={() => setShowTermMenu(v => !v)}>
                 <TerminalSquare size={14} className="title-bar-logo" />
@@ -455,7 +472,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               {showTermMenu && (
                 <>
                   <div style={{ position: 'fixed', inset: 0, zIndex: 998 }} onClick={() => setShowTermMenu(false)} />
-                  <div style={{ position: 'absolute', left: '8px', top: '100%', minWidth: '190px', background: 'var(--win-bg-card)', border: '1px solid var(--win-border)', borderRadius: '6px', boxShadow: '0 8px 24px rgba(0,0,0,0.4)', zIndex: 999, padding: '4px 0' }}>
+                  <div className="ws-menu" style={{ position: 'absolute', left: '8px', top: 'calc(100% + 4px)', minWidth: '190px', zIndex: 999 }}>
                     <button className="context-menu-item" onClick={() => { setShowTermMenu(false); onOpenTerminal(); }}>
                       <PanelBottom size={13} /> Mở trong tab
                     </button>
@@ -601,17 +618,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {contextMenu && (() => {
         const isView = tables.find(t => t.name === contextMenu.tableName)?.type === 'view';
         return (
-          <div style={{
+          <div className="ws-menu" style={{
             position: 'fixed',
             top: contextMenu.y,
             left: contextMenu.x,
             zIndex: 99999,
-            background: 'var(--win-bg-card)',
-            border: '1px solid var(--win-border)',
-            borderRadius: '4px',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-            padding: '4px 0',
-            minWidth: '150px'
+            minWidth: '170px'
           }}>
             <div 
               onClick={(e) => {
@@ -679,7 +691,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   setContextMenu(null);
                   handleTruncateTable(contextMenu.tableName);
                 }}
-                style={{ padding: '6px 12px', fontSize: '11px', color: '#f59e0b', cursor: 'pointer' }}
+                style={{ padding: '6px 12px', fontSize: '11px', color: 'var(--st-warn)', cursor: 'pointer' }}
                 className="sidebar-context-item"
               >
                 Xóa sạch dữ liệu (Truncate)
@@ -762,7 +774,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <button
                 className="btn btn-primary"
                 onClick={submitRename}
-                style={{ height: '24px', fontSize: '11px', padding: '0 12px', background: 'var(--win-accent)', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                style={{ padding: '0 12px', background: 'var(--win-accent)', color: '#fff', border: 'none', cursor: 'pointer' }}
               >
                 Lưu
               </button>
@@ -835,8 +847,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </select>
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '4px' }}>
-              <button className="btn btn-secondary" onClick={() => setShowCreateDb(false)} style={{ height: '26px', fontSize: '11px', padding: '0 12px' }}>Hủy</button>
-              <button className="btn btn-primary" onClick={handleCreateDatabase} style={{ height: '26px', fontSize: '11px', padding: '0 12px', background: 'var(--win-accent)', color: '#fff', border: 'none' }}>Tạo</button>
+              <button className="btn btn-secondary" onClick={() => setShowCreateDb(false)} style={{ padding: '0 12px' }}>Hủy</button>
+              <button className="btn btn-primary" onClick={handleCreateDatabase} style={{ padding: '0 12px', background: 'var(--win-accent)', color: '#fff', border: 'none' }}>Tạo</button>
             </div>
           </div>
         </div>
@@ -863,8 +875,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
               style={{ fontSize: '11px', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--win-border)', background: 'var(--win-bg-input)', color: 'var(--win-text-primary)', outline: 'none' }}
             />
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '4px' }}>
-              <button className="btn btn-secondary" onClick={() => setRenameDbState(null)} style={{ height: '26px', fontSize: '11px', padding: '0 12px' }}>Hủy</button>
-              <button className="btn btn-primary" onClick={handleRenameDatabase} style={{ height: '26px', fontSize: '11px', padding: '0 12px', background: 'var(--win-accent)', color: '#fff', border: 'none' }}>Đổi tên</button>
+              <button className="btn btn-secondary" onClick={() => setRenameDbState(null)} style={{ padding: '0 12px' }}>Hủy</button>
+              <button className="btn btn-primary" onClick={handleRenameDatabase} style={{ padding: '0 12px', background: 'var(--win-accent)', color: '#fff', border: 'none' }}>Đổi tên</button>
             </div>
           </div>
         </div>
@@ -890,7 +902,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
             <div style={{ padding: '12px 16px', borderTop: '1px solid var(--win-border)', display: 'flex', justifyContent: 'flex-end', gap: '8px', background: 'var(--win-bg-card)' }}>
               <button className="btn btn-secondary" onClick={() => { navigator.clipboard.writeText(objDef.sql).catch(() => {}); }}>Sao chép</button>
-              <button className="btn btn-primary" onClick={() => setObjDef(null)} style={{ background: '#10b981', borderColor: '#10b981' }}>Đóng</button>
+              <button className="btn btn-primary" onClick={() => setObjDef(null)} style={{ background: 'var(--st-ok)', borderColor: 'var(--st-ok)' }}>Đóng</button>
             </div>
           </div>
         </div>

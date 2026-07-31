@@ -88,10 +88,10 @@ export const ExplainDiagramView: React.FC<ExplainDiagramViewProps> = ({ rootNode
 
             {selectedNode.actualTime && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Clock size={14} style={{ color: '#10b981' }} />
+                <Clock size={14} style={{ color: 'var(--st-ok)' }} />
                 <div>
                   <div style={{ fontSize: '10.5px', color: 'var(--win-text-disabled)' }}>Thời gian thực tế (Actual Time)</div>
-                  <div style={{ fontSize: '12px', fontWeight: 600, color: '#10b981' }}>
+                  <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--st-ok)' }}>
                     {selectedNode.actualTime.total.toFixed(3)} ms
                   </div>
                 </div>

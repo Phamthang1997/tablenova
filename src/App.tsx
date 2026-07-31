@@ -1,16 +1,25 @@
 import React, { useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { TitleBar } from './components/TitleBar';
 import { ConnectionManager } from './components/ConnectionManager';
 import { Sidebar } from './components/Sidebar';
+import { DatabaseInfoModal } from './components/DatabaseInfoModal';
 import { TabManager } from './components/TabManager';
 import type { TabInfo } from './components/TabManager';
 import { DataGrid } from './components/DataGrid';
 import { SqlEditor } from './components/SqlEditor';
 import { AiAssistant } from './components/AiAssistant';
 import { TerminalPanel } from './components/TerminalPanel';
-import { Bot, Sun, Moon, Database, Lock, LockOpen } from 'lucide-react';
+import { SchemaMigration } from './components/SchemaMigration';
+import { RedisBrowser } from './components/RedisBrowser';
+import { Bot, Database, Lock, LockOpen, X } from 'lucide-react';
+import { getVersion } from '@tauri-apps/api/app';
+import { PostgresIcon, MySqlIcon, RedisIcon, SqliteIcon } from './components/DbIcons';
 import { dbHelper } from './utils/dbHelper';
 import type { DbConnectionConfig } from './utils/dbHelper';
+import { parseXlsx } from './utils/xlsxReader';
+import { exportSheetsToXlsx, exportTablesToJson, exportTablesToCsv } from './utils/exportHelper';
+import type { XlsxSheet } from './utils/xlsxWriter';
 import appIcon from './assets/icon.png';
 
 function parseCSV(text: string): string[][] {
@@ -67,7 +76,7 @@ function parseCSV(text: string): string[][] {
 export const App: React.FC = () => {
   const [connection, setConnection] = useState<{
     dbName: string;
-    dbType: 'sqlite' | 'postgres' | 'mysql';
+    dbType: 'sqlite' | 'postgres' | 'mysql' | 'redis';
   } | null>(null);
   // Cấu hình kết nối đang dùng (gồm cả SSH) để Terminal kế thừa -> mở shell vào đúng máy chủ/VM
   const [activeConnConfig, setActiveConnConfig] = useState<DbConnectionConfig | null>(null);
@@ -84,7 +93,7 @@ export const App: React.FC = () => {
   const [showGlobalExportModal, setShowGlobalExportModal] = useState(false);
   const [globalExportTables, setGlobalExportTables] = useState<string[]>([]);
   const [selectedExportTables, setSelectedExportTables] = useState<string[]>([]);
-  const [globalExportFormat, setGlobalExportFormat] = useState<'sql' | 'json' | 'csv'>('sql');
+  const [globalExportFormat, setGlobalExportFormat] = useState<'sql' | 'json' | 'csv' | 'xlsx'>('sql');
   const [globalExportLoading, setGlobalExportLoading] = useState(false);
 
   // Advanced SQL and Gzip options
@@ -104,11 +113,17 @@ export const App: React.FC = () => {
   const [globalImportSqlContent, setGlobalImportSqlContent] = useState('');
   const [globalImportLoading, setGlobalImportLoading] = useState(false);
   const [globalImportTargetTable, setGlobalImportTargetTable] = useState<string | null>(null);
-
-  // Backup & Restore States
   const [showBackupRestoreModal, setShowBackupRestoreModal] = useState(false);
+  const [showDbInfoModal, setShowDbInfoModal] = useState(false);
+  const [showSchemaMigration, setShowSchemaMigration] = useState(false);
   const [showSidebar, setShowSidebar] = useState(true);
   const [showAbout, setShowAbout] = useState(false);
+  // Lấy version thật từ tauri.conf.json thay vì hardcode trong JSX (dễ lệch khi
+  // bump phiên bản). Chạy bằng vite-dev thuần thì không có backend -> giữ mặc định.
+  const [appVersion, setAppVersion] = useState('0.1.0');
+  React.useEffect(() => {
+    getVersion().then(setAppVersion).catch(() => { });
+  }, []);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [backupRestoreTab, setBackupRestoreTab] = useState<'backup' | 'restore'>('backup');
   const [restoreLoading, setRestoreLoading] = useState(false);
@@ -195,6 +210,22 @@ export const App: React.FC = () => {
     const guessedTableName = file.name.split('.')[0].replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
     setGlobalImportTableName(guessedTableName);
 
+    // XLSX là nhị phân -> đọc ArrayBuffer + parse riêng, không đi qua FileReader.readAsText.
+    if (file.name.toLowerCase().endsWith('.xlsx')) {
+      try {
+        const buf = await file.arrayBuffer();
+        const rows = await parseXlsx(buf);
+        if (rows.length === 0) throw new Error('File XLSX không có dữ liệu.');
+        setGlobalImportFileType('json'); // dòng dạng object, đi chung nhánh ghi DB với CSV/JSON
+        setGlobalImportPendingRows(rows);
+        setShowGlobalImportModal(true);
+      } catch (err: any) {
+        alert('Lỗi đọc file: ' + err.message);
+      }
+      e.target.value = '';
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = async (event) => {
       try {
@@ -236,7 +267,7 @@ export const App: React.FC = () => {
           setGlobalImportSqlContent(text);
           setShowGlobalImportModal(true);
         } else {
-          throw new Error('Chỉ hỗ trợ import tệp .csv, .json, hoặc .sql');
+          throw new Error('Chỉ hỗ trợ import tệp .csv, .json, .sql hoặc .xlsx');
         }
       } catch (err: any) {
         alert('Lỗi đọc file: ' + err.message);
@@ -254,6 +285,31 @@ export const App: React.FC = () => {
 
     setGlobalExportLoading(true);
     try {
+      // Dữ liệu (XLSX/JSON/CSV): dựng file client-side, tải xuống — không đi qua backend (backend chỉ tạo SQL dump).
+      if (globalExportFormat !== 'sql') {
+        const sheets: XlsxSheet[] = [];
+        for (const table of selectedExportTables) {
+          const schema = await dbHelper.getTableSchema(table);
+          const data = await dbHelper.getTableData(table, 1, 100000);
+          const rows = data.rows || [];
+          const colNames = (schema.columns || []).map(c => c.name);
+          const finalCols = colNames.length ? colNames : (rows[0] ? Object.keys(rows[0]) : []);
+          sheets.push({ name: table, colNames: finalCols, rows });
+        }
+        if (globalExportFormat === 'xlsx') {
+          exportSheetsToXlsx(sheets, globalExportFilename);
+        } else if (globalExportFormat === 'json') {
+          exportTablesToJson(Object.fromEntries(sheets.map(s => [s.name, s.rows])), globalExportFilename);
+        } else {
+          exportTablesToCsv(sheets, globalExportFilename);
+        }
+        alert(`Đã xuất ${sheets.length} bảng (${globalExportFormat.toUpperCase()})!`);
+        setShowGlobalExportModal(false);
+        setShowBackupRestoreModal(false);
+        setGlobalExportLoading(false);
+        return;
+      }
+
       const res = await dbHelper.exportMultiTables({
         format: globalExportFormat,
         tables: selectedExportTables,
@@ -367,7 +423,7 @@ export const App: React.FC = () => {
         if (globalImportTargetTable) {
           const originalTable = extractTableNameFromSql(globalImportSqlContent);
           if (originalTable && originalTable !== globalImportTargetTable) {
-            const escapedOrig = originalTable.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+            const escapedOrig = originalTable.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
             const regex = new RegExp(`([\\s\`"'])${escapedOrig}([\\s\`"';(])`, 'gi');
             filteredSql = filteredSql.replace(regex, `$1${globalImportTargetTable}$2`);
           }
@@ -482,11 +538,19 @@ export const App: React.FC = () => {
     if (savedTheme) {
       setTheme(savedTheme);
       document.documentElement.setAttribute('data-theme', savedTheme);
+    } else {
+      document.documentElement.setAttribute('data-theme', 'dark');
     }
+
+    // macOS không tự bo góc cửa sổ khi decorations = false, nên phải tự bo bằng
+    // CSS cho khớp radius của lớp vibrancy (windowEffects.radius trong
+    // tauri.conf.json). Windows 11 tự bo nên không cần.
+    const isMac = /Mac|iPod|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+    document.documentElement.setAttribute('data-os', isMac ? 'macos' : 'other');
   }, []);
 
   const toggleTheme = () => {
-    const nextTheme = theme === 'dark' ? 'light' : 'dark';
+    const nextTheme: 'dark' | 'light' = theme === 'dark' ? 'light' : 'dark';
     setTheme(nextTheme);
     document.documentElement.setAttribute('data-theme', nextTheme);
     localStorage.setItem('tf_theme', nextTheme);
@@ -502,8 +566,26 @@ export const App: React.FC = () => {
     }
   }, [tabs, activeTabId, connection, queryCount]);
 
+  React.useEffect(() => {
+    const applyWindowSize = async () => {
+      try {
+        if (connection) {
+          // Đã kết nối CSDL: Bừng rộng cửa sổ ra 1280 x 800px
+          await invoke('set_app_window_size', { width: 1280, height: 800 });
+        } else {
+          // Trang Quản lý kết nối: Thu gọn về 1060 x 680px
+          await invoke('set_app_window_size', { width: 1060, height: 680 });
+        }
+      } catch (e) {
+        console.warn('Lỗi thay đổi kích thước cửa sổ qua Rust:', e);
+      }
+    };
+
+    applyWindowSize();
+  }, [connection]);
+
   // Handle successful database connection
-  const handleConnect = (dbName: string, dbType: 'sqlite' | 'postgres' | 'mysql', color?: string, config?: DbConnectionConfig) => {
+  const handleConnect = (dbName: string, dbType: 'sqlite' | 'postgres' | 'mysql' | 'redis', color?: string, config?: DbConnectionConfig) => {
     setConnection({ dbName, dbType });
     setActiveConnectionColor(color);
     setActiveConnConfig(config || null);
@@ -775,6 +857,14 @@ export const App: React.FC = () => {
 
       {!connection ? (
         <ConnectionManager onConnect={handleConnect} />
+      ) : connection.dbType === 'redis' ? (
+        <div className="workspace-container" style={{ borderTop: activeConnectionColor ? `3px solid ${activeConnectionColor}` : 'none' }}>
+          <RedisBrowser
+            dbName={connection.dbName}
+            initialDbIndex={activeConnConfig?.dbIndex ?? 0}
+            onDisconnect={handleDisconnect}
+          />
+        </div>
       ) : (
         <div className="workspace-container" style={{ borderTop: activeConnectionColor ? `3px solid ${activeConnectionColor}` : 'none' }}>
           {showSidebar && (
@@ -790,6 +880,8 @@ export const App: React.FC = () => {
               onImportToTable={handleImportToTableTrigger}
               onExportTable={handleExportTableTrigger}
               onBackupRestore={() => setShowBackupRestoreModal(true)}
+              onOpenDbInfo={() => setShowDbInfoModal(true)}
+              onSchemaMigration={() => setShowSchemaMigration(true)}
               onTableRenamed={handleTableRenamed}
               onTableDropped={handleTableDropped}
               onDatabaseChanged={handleDatabaseChanged}
@@ -797,8 +889,8 @@ export const App: React.FC = () => {
           )}
 
           <div className="main-workspace-area">
-            <div style={{ display: 'flex', alignItems: 'center', background: 'var(--win-bg-tab-bar)', paddingRight: '8px' }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', background: 'var(--win-bg-tab-bar)', paddingRight: '8px', borderBottom: '1px solid var(--win-border)', position: 'relative', zIndex: 100 }}>
+              <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
                 <TabManager
                   tabs={tabs}
                   activeTabId={activeTabId}
@@ -810,18 +902,8 @@ export const App: React.FC = () => {
                   onNewQueryTab={handleNewQueryTab}
                 />
               </div>
-              <button 
-                className="tab-new-btn" 
-                onClick={toggleTheme}
-                style={{ 
-                  color: 'var(--win-text-secondary)',
-                  display: 'flex', alignItems: 'center', gap: '4px', width: 'auto', padding: '0 8px', fontSize: '11px', marginRight: '6px'
-                }}
-                title={theme === 'dark' ? "Chuyển sang giao diện sáng" : "Chuyển sang giao diện tối"}
-              >
-                {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
-                <span>{theme === 'dark' ? 'Sáng' : 'Tối'}</span>
-              </button>
+              {/* Nút đổi sáng/tối đã bỏ khỏi thanh tab — vẫn dùng được ở
+                  menu Hiển thị > Đổi giao diện sáng/tối trên title bar. */}
               <button
                 className="tab-new-btn"
                 onClick={() => setReadOnly(r => !r)}
@@ -904,6 +986,8 @@ export const App: React.FC = () => {
                   active={activeTabId === t.id}
                   onToggleFloat={() => setTabs(prev => prev.map(x => x.id === t.id ? ({ ...x, floating: !(x as any).floating } as any) : x))}
                   onClose={() => handleCloseTab(t.id)}
+                  // Terminal ở đây là một tab -> đã có X trên tab, bỏ nút X trùng ở header
+                  closable={false}
                 />
               ))}
 
@@ -923,7 +1007,7 @@ export const App: React.FC = () => {
         type="file" 
         ref={globalFileInputRef} 
         onChange={handleGlobalFileImport} 
-        accept=".csv,.json,.sql,.dump" 
+        accept=".csv,.json,.sql,.dump,.xlsx"
         style={{ display: 'none' }} 
       />
 
@@ -990,7 +1074,7 @@ export const App: React.FC = () => {
                   Định dạng xuất:
                 </label>
                 <div style={{ display: 'flex', gap: '8px' }}>
-                  {(['sql', 'json', 'csv'] as const).map(fmt => (
+                  {(['sql', 'json', 'csv', 'xlsx'] as const).map(fmt => (
                     <button
                       key={fmt}
                       onClick={() => setGlobalExportFormat(fmt)}
@@ -1119,7 +1203,7 @@ export const App: React.FC = () => {
               <button
                 className="btn btn-secondary"
                 onClick={() => setShowGlobalExportModal(false)}
-                style={{ height: '26px', fontSize: '11px' }}
+                
               >
                 Hủy
               </button>
@@ -1127,7 +1211,7 @@ export const App: React.FC = () => {
                 className="btn btn-primary"
                 onClick={handleGlobalExportSubmit}
                 disabled={globalExportLoading || selectedExportTables.length === 0}
-                style={{ height: '26px', fontSize: '11px', background: 'var(--win-accent)', color: '#fff', border: 'none', fontWeight: 600, borderRadius: '4px' }}
+                style={{ background: 'var(--win-accent)', color: '#fff', border: 'none' }}
               >
                 {globalExportLoading ? 'Đang xuất...' : 'Bắt đầu Xuất'}
               </button>
@@ -1312,7 +1396,7 @@ export const App: React.FC = () => {
               <button
                 className="btn btn-secondary"
                 onClick={() => setShowGlobalImportModal(false)}
-                style={{ height: '26px', fontSize: '11px' }}
+                
               >
                 Hủy
               </button>
@@ -1320,13 +1404,29 @@ export const App: React.FC = () => {
                 className="btn btn-primary"
                 onClick={confirmGlobalImport}
                 disabled={globalImportLoading || (!globalImportTableName.trim() && globalImportFileType !== 'sql')}
-                style={{ height: '26px', fontSize: '11px', background: 'var(--win-accent)', color: '#fff', border: 'none', fontWeight: 600, borderRadius: '4px' }}
+                style={{ background: 'var(--win-accent)', color: '#fff', border: 'none' }}
               >
                 {globalImportLoading ? 'Đang xử lý...' : 'Xác nhận Tạo & Nhập'}
               </button>
             </div>
           </div>
         </div>
+      )}
+
+      {/* Database Info Modal */}
+      <DatabaseInfoModal
+        isOpen={showDbInfoModal}
+        onClose={() => setShowDbInfoModal(false)}
+        onSelectTable={(tableName) => handleSelectTable(tableName)}
+      />
+
+      {/* Diff Schema & Migration Modal */}
+      {showSchemaMigration && connection && (
+        <SchemaMigration
+          dbType={connection.dbType}
+          database={connection.dbName}
+          onClose={() => setShowSchemaMigration(false)}
+        />
       )}
 
       {/* Backup & Restore Modal */}
@@ -1527,7 +1627,7 @@ export const App: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => setRestoreFile(null)}
-                          style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#ef4444', fontSize: '11px' }}
+                          style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--st-danger)', fontSize: '11px' }}
                         >
                           Xóa
                         </button>
@@ -1600,69 +1700,41 @@ export const App: React.FC = () => {
 
       {/* About Modal */}
       {showAbout && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          width: '100%',
-          height: '100%',
-          background: 'rgba(0,0,0,0.6)',
-          zIndex: 9999,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          backdropFilter: 'blur(2px)'
-        }}>
-          <div style={{
-            width: '380px',
-            background: 'var(--win-bg-card)',
-            border: '1px solid var(--win-border-strong, var(--win-border))',
-            borderRadius: '6px',
-            boxShadow: '0 20px 40px rgba(0,0,0,0.4)',
-            display: 'flex',
-            flexDirection: 'column',
-            overflow: 'hidden',
-            padding: '24px',
-            alignItems: 'center',
-            position: 'relative'
-          }}>
-            <button 
-              onClick={() => setShowAbout(false)}
-              style={{ position: 'absolute', top: '12px', right: '16px', background: 'transparent', border: 'none', color: 'var(--win-text-secondary)', cursor: 'pointer', fontSize: '16px' }}
-            >
-              ×
+        /* Bấm ra ngoài để đóng — trước đây chỉ đóng được bằng nút. */
+        <div className="cm-modal-backdrop" onClick={() => setShowAbout(false)}>
+          <div className="about-dialog" onClick={(e) => e.stopPropagation()}>
+            <button className="about-close" onClick={() => setShowAbout(false)} title="Đóng" aria-label="Đóng">
+              <X size={15} />
             </button>
-            <img src={appIcon} alt="TableNova" style={{ width: 64, height: 64, borderRadius: '12px', marginBottom: '16px', objectFit: 'contain' }} />
-            <h3 style={{ margin: '0 0 4px 0', fontSize: '16px', fontWeight: 600, color: 'var(--win-text-primary)' }}>TableNova</h3>
-            <span style={{ fontSize: '11px', color: 'var(--win-text-secondary)', marginBottom: '16px' }}>Phiên bản 0.1.0(Build 2026)</span>
-            
-            <p style={{ margin: '0 0 8px 0', fontSize: '12px', color: 'var(--win-text-primary)', textAlign: 'center', lineHeight: '1.5' }}>
-              Công cụ quản lý cơ sở dữ liệu nhẹ, nhanh và trực quan.
-            </p>
-            <p style={{ margin: '0 0 16px 0', fontSize: '12px', color: 'var(--win-text-primary)', textAlign: 'center', lineHeight: '1.5' }}>
-              Kết nối, duyệt dữ liệu, chỉnh sửa cấu trúc và thực thi truy vấn trong một giao diện thống nhất.
+
+            <img className="about-logo" src={appIcon} alt="" />
+            <div className="about-name">TableNova</div>
+            <div className="about-version">Phiên bản {appVersion}</div>
+
+            <p className="about-desc">
+              Công cụ quản lý cơ sở dữ liệu nhẹ, nhanh và trực quan — kết nối, duyệt dữ liệu,
+              chỉnh sửa cấu trúc và chạy truy vấn trong cùng một giao diện.
             </p>
 
-            <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)', marginBottom: '12px', textAlign: 'center' }}>
-              Phát triển bởi <strong style={{ color: 'var(--win-text-primary)' }}>MeoMeo</strong>
-              <div style={{ marginTop: '4px' }}>
-                <a href="#" onClick={(e) => { e.preventDefault(); dbHelper.openUrl('mailto:pthang888@gmail.com'); }} style={{ color: '#0066cc', textDecoration: 'none', marginRight: '12px' }}>Email</a>
-                <a href="#" onClick={(e) => { e.preventDefault(); dbHelper.openUrl('https://www.linkedin.com/in/thangpx/'); }} style={{ color: '#0066cc', textDecoration: 'none' }}>LinkedIn</a>
-              </div>
+            <div className="about-engines">
+              <span className="about-engine" style={{ background: '#003B57' }}><SqliteIcon size={13} /> SQLite</span>
+              <span className="about-engine" style={{ background: '#336791' }}><PostgresIcon size={13} /> PostgreSQL</span>
+              <span className="about-engine" style={{ background: '#00758F' }}><MySqlIcon size={13} /> MySQL</span>
+              <span className="about-engine" style={{ background: '#DC382D' }}><RedisIcon size={13} /> Redis</span>
             </div>
 
-            <span style={{ fontSize: '10px', color: 'var(--win-text-secondary)', marginBottom: '16px' }}>
-              © 2026 MeoMeo · MIT License
-            </span>
-            
-            <div style={{ borderTop: '1px solid var(--win-border)', width: '100%', paddingTop: '12px', display: 'flex', justifyContent: 'center' }}>
-              <button 
-                className="btn" 
-                onClick={() => setShowAbout(false)}
-                style={{ padding: '6px 20px', fontSize: '11px', borderRadius: '4px', cursor: 'pointer', background: 'var(--win-bg-btn-secondary)', border: '1px solid var(--win-border-btn-secondary)', color: 'var(--win-text-btn-secondary)' }}
-              >
-                Đóng
-              </button>
+            <div className="about-author">
+              Phát triển bởi <strong>MeoMeo</strong>
+            </div>
+            <div className="about-links">
+              <button onClick={() => dbHelper.openUrl('mailto:pthang888@gmail.com')}>Email</button>
+              <span className="about-link-sep">·</span>
+              <button onClick={() => dbHelper.openUrl('https://www.linkedin.com/in/thangpx/')}>LinkedIn</button>
+            </div>
+
+            <div className="about-foot">
+              <span className="about-copy">© 2026 MeoMeo · MIT License</span>
+              <button className="cm-btn" onClick={() => setShowAbout(false)}>Đóng</button>
             </div>
           </div>
         </div>
