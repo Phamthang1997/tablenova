@@ -1,0 +1,17 @@
+# Chuẩn hoá xuống dòng: mọi file văn bản là LF cả trong repo lẫn trong thư mục làm việc.
+# Dự án phát triển trên Windows, không ép thì mỗi máy commit một kiểu tuỳ core.autocrlf.
+* text=auto eol=lf
+
+# Script batch: cmd.exe cần CRLF, để LF là chạy sai.
+*.bat text eol=crlf
+
+# Nhị phân — không chuyển đổi, không diff.
+*.png binary
+*.jpg binary
+*.ico binary
+*.icns binary
+*.woff2 binary
+*.db binary
+*.sqlite binary
+*.gz binary
+*.dump binary
