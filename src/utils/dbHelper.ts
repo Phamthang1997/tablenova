@@ -721,9 +721,19 @@ export const dbHelper = {
     }
   },
 
-  async restoreBackup(sqlContent: string, tables: string[]): Promise<{ success: boolean; statementsCount?: number; activeDatabase?: string; error?: string }> {
+  // onProgress: nhận {type:'start'|'progress'|'done', done, total} do backend gửi qua Channel
+  // sau mỗi ~20 câu lệnh, để UI vẽ thanh tiến độ thật thay vì thanh vô định.
+  async restoreBackup(
+    sqlContent: string,
+    tables: string[],
+    onProgress?: (msg: { type: string; done?: number; total?: number; statementsCount?: number }) => void
+  ): Promise<{ success: boolean; statementsCount?: number; activeDatabase?: string; error?: string }> {
     try {
-      const res: any = await invoke('restore_backup', { sqlContent, tables });
+      // Luôn tạo kênh: tham số onProgress ở Rust là Channel bắt buộc (Channel không impl
+      // Deserialize nên không dùng được Option<Channel>). Không có callback thì bỏ tin nhắn đi.
+      const channel = new Channel<any>();
+      if (onProgress) channel.onmessage = onProgress;
+      const res: any = await invoke('restore_backup', { sqlContent, tables, onProgress: channel });
       return { success: !!res.success, statementsCount: res.statementsCount, activeDatabase: res.activeDatabase, error: res.message };
     } catch (err: any) {
       return { success: false, error: err.toString() };
@@ -911,6 +921,17 @@ export const dbHelper = {
     } catch (err: any) {
       return { success: false, error: err.toString() };
     }
+  },
+
+  // deep = true: với Postgres sẽ mở kết nối tạm tới TỪNG database để đếm bảng/số dòng
+  // (chậm hơn nhiều), mặc định chỉ lấy dung lượng bằng một truy vấn duy nhất.
+  async getAllDatabasesStats(deep = false): Promise<{ success: boolean; stats?: AllDatabasesStats; error?: string }> {
+    try {
+      const res: any = await invoke('get_all_databases_stats', { deep });
+      return { success: true, stats: res };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
   }
 };
 
@@ -932,4 +953,32 @@ export interface DatabaseStats {
   total_tables: number;
   total_rows: number;
   tables: TableStatItem[];
+}
+
+export interface AllDatabasesStatsItem {
+  db_name: string;
+  /** Chỉ có với SQLite: tên schema (`main` / tên đã ATTACH). */
+  schema_name: string | null;
+  is_system: boolean;
+  is_current: boolean;
+  /** null = chưa có số liệu (Postgres khi chưa quét sâu, hoặc DB lỗi). */
+  total_tables: number | null;
+  total_rows: number | null;
+  data_size_bytes: number | null;
+  index_size_bytes: number | null;
+  total_size_bytes: number | null;
+  charset: string | null;
+  collation: string | null;
+  error: string | null;
+}
+
+export interface AllDatabasesStats {
+  db_type: string;
+  current_db: string;
+  /** Kết quả này đã có số bảng/số dòng cho mọi database hay chưa. */
+  deep: boolean;
+  /** Có nút "Quét sâu" hay không (chỉ Postgres cần). */
+  supports_deep_scan: boolean;
+  rows_are_exact: boolean;
+  databases: AllDatabasesStatsItem[];
 }

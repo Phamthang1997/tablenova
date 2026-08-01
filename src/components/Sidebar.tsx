@@ -1,10 +1,12 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import { clampMenu, type MenuRect } from '../utils/menuPosition';
 import { dbHelper } from '../utils/dbHelper';
 import type { TableItem } from '../utils/dbHelper';
-import { Search, Table, Terminal, TerminalSquare, LogOut, RefreshCw, Layers, Database, Plus, ChevronDown, ChevronRight, Trash2, Check, Pencil, Braces, Cog, X, Info } from 'lucide-react';
+import { Search, Table, Terminal, TerminalSquare, LogOut, RefreshCw, Layers, Plus, ChevronDown, ChevronRight, Trash2, Check, Pencil, Braces, Cog, X, Info, BarChart3 } from 'lucide-react';
 import { CreateTableModal } from './CreateTableModal';
+import { ConfirmDialog } from './ConfirmDialog';
 import { openTerminalWindow } from '../utils/terminalWindow';
-import { PanelBottom, ExternalLink, GitCompare } from 'lucide-react';
+import { PanelBottom, ExternalLink, GitCompare, HardDriveDownload, HardDriveUpload } from 'lucide-react';
 
 interface SidebarProps {
   dbName: string;
@@ -17,8 +19,12 @@ interface SidebarProps {
   activeTable: string | null;
   onImportToTable: (tableName: string) => void;
   onExportTable: (tableName: string) => void;
-  onBackupRestore: () => void;
+  onExportDatabase: () => void;
+  onImportDatabase: () => void;
+  /** Nhập tệp CSV/JSON/XLSX vào một bảng MỚI (khác onImportDatabase là phục hồi cả dump). */
+  onImportNewTable?: () => void;
   onOpenDbInfo?: () => void;
+  onOpenAllDbStats?: () => void;
   onSchemaMigration?: () => void;
   onTableRenamed?: (oldName: string, newName: string) => void;
   onTableDropped?: (tableName: string) => void;
@@ -36,8 +42,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   activeTable,
   onImportToTable,
   onExportTable,
-  onBackupRestore,
+  onExportDatabase,
+  onImportDatabase,
+  onImportNewTable,
   onOpenDbInfo,
+  onOpenAllDbStats,
   onSchemaMigration,
   onTableRenamed,
   onTableDropped,
@@ -49,7 +58,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [objDef, setObjDef] = useState<{ name: string; kind: 'view' | 'function' | 'procedure'; sql: string } | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [refreshing, setRefreshing] = useState(false);
-  const [collapsed, setCollapsed] = useState<{ tables: boolean; functions: boolean; procedures: boolean }>({ tables: false, functions: false, procedures: false });
+  // Hàm/thủ tục mặc định THU GỌN: phần lớn thời gian người dùng làm việc với danh sách bảng,
+  // hai nhóm này chỉ mở khi cần (đang gõ tìm kiếm thì vẫn tự mở, xem isOpen()).
+  const [collapsed, setCollapsed] = useState<{ tables: boolean; functions: boolean; procedures: boolean }>({ tables: false, functions: true, procedures: true });
   const inputRef = useRef<HTMLInputElement>(null);
 
   const [contextMenu, setContextMenu] = useState<{
@@ -58,9 +69,37 @@ export const Sidebar: React.FC<SidebarProps> = ({
     tableName: string;
   } | null>(null);
 
+  // Vị trí menu chuột phải sau khi đo kích thước thật (tránh tràn khỏi cửa sổ)
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [menuPos, setMenuPos] = useState<MenuRect | null>(null);
+
+  useLayoutEffect(() => {
+    if (!contextMenu) {
+      setMenuPos(null);
+      return;
+    }
+    const el = menuRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setMenuPos(clampMenu(contextMenu.x, contextMenu.y, r.width, r.height, window.innerWidth, window.innerHeight));
+  }, [contextMenu]);
+
   const [renameState, setRenameState] = useState<{ tableName: string; value: string } | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [showTermMenu, setShowTermMenu] = useState(false);
+  // Menu "+" ở tiêu đề Danh sách bảng và hộp thoại tạo view
+  const [showAddMenu, setShowAddMenu] = useState(false);
+  const [showCreateView, setShowCreateView] = useState(false);
+  const [newView, setNewView] = useState({ name: '', sql: '' });
+  const [creatingView, setCreatingView] = useState(false);
+  const [createViewError, setCreateViewError] = useState<string | null>(null);
+  // Hành động phá huỷ dữ liệu đang chờ xác nhận (drop bảng/view, truncate, drop database)
+  const [destructive, setDestructive] = useState<
+    | { kind: 'drop-table'; tableName: string; isView: boolean }
+    | { kind: 'truncate'; tableName: string }
+    | { kind: 'drop-db'; dbName: string }
+    | null
+  >(null);
 
   // Database switcher (PG/MySQL)
   const canManageDatabases = dbType !== 'sqlite';
@@ -95,13 +134,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  const handleDropDatabase = async (name: string, e: React.MouseEvent) => {
+  const handleDropDatabase = (name: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (name === dbName) {
       alert('Không thể xóa database đang kết nối. Hãy chuyển sang database khác trước.');
       return;
     }
-    if (!confirm(`Xóa vĩnh viễn database "${name}"? Toàn bộ dữ liệu sẽ mất và không thể hoàn tác.`)) return;
+    setShowDbMenu(false);
+    setDestructive({ kind: 'drop-db', dbName: name });
+  };
+
+  const runDropDatabase = async (name: string) => {
     const res = await dbHelper.dropDatabase(name);
     if (res.success) {
       const list = await dbHelper.listDatabases();
@@ -258,61 +301,77 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setIsCreateModalOpen(true);
   };
 
-  const handleDropTable = (tableName: string) => {
+  // Tạo view: ghép CREATE VIEW <tên> AS <câu SELECT> rồi chạy qua execute_query.
+  // Định danh trích dẫn theo dialect giống các chỗ khác trong file (MySQL backtick).
+  const handleCreateView = async () => {
+    const name = newView.name.trim();
+    const body = newView.sql.trim().replace(/;+\s*$/, '');
+    if (!name) { setCreateViewError('Vui lòng nhập tên view.'); return; }
+    if (!body) { setCreateViewError('Vui lòng nhập câu SELECT cho view.'); return; }
+
+    const q = dbType === 'mysql' ? '`' : '"';
+    const quoted = `${q}${name.replace(new RegExp(q, 'g'), q + q)}${q}`;
+
+    setCreatingView(true);
+    setCreateViewError(null);
+    const res = await dbHelper.executeQuery(`CREATE VIEW ${quoted} AS ${body}`);
+    setCreatingView(false);
+
+    if (res.success) {
+      setShowCreateView(false);
+      setNewView({ name: '', sql: '' });
+      await fetchTables();
+      onSelectTable(name);
+    } else {
+      setCreateViewError(res.error || 'Không tạo được view');
+    }
+  };
+
+  // Drop/Truncate đi qua ConfirmDialog trong app (thay window.confirm) — xem state `destructive`.
+  const runDropTable = async (tableName: string) => {
     const tableItem = tables.find(t => t.name === tableName);
     const isView = tableItem?.type === 'view';
     const label = isView ? 'khung nhìn' : 'bảng';
 
-    setTimeout(async () => {
-      if (!confirm(`Bạn có chắc chắn muốn xóa ${label} "${tableName}"? Hành động này sẽ xóa vĩnh viễn cấu trúc!`)) {
-        return;
+    try {
+      let success = false;
+      let error = '';
+      if (isView) {
+        const q = dbType === 'mysql' ? '`' : '"';
+        const res = await dbHelper.executeQuery(`DROP VIEW ${q}${tableName}${q}`);
+        success = !!res.success;
+        error = res.error || '';
+      } else {
+        const res = await dbHelper.dropTable(tableName);
+        success = !!res.success;
+        error = res.error || '';
       }
 
-      try {
-        let success = false;
-        let error = '';
-        if (isView) {
-          const q = dbType === 'mysql' ? '`' : '"';
-          const res = await dbHelper.executeQuery(`DROP VIEW ${q}${tableName}${q}`);
-          success = !!res.success;
-          error = res.error || '';
-        } else {
-          const res = await dbHelper.dropTable(tableName);
-          success = !!res.success;
-          error = res.error || '';
-        }
-
-        if (success) {
-          alert(`Đã xóa ${label} thành công!`);
-          if (onTableDropped) onTableDropped(tableName);
-          fetchTables();
-        } else {
-          alert(`Lỗi xóa ${label}: ` + error);
-        }
-      } catch (e: any) {
-        alert('Lỗi kết nối: ' + e.message);
+      if (success) {
+        alert(`Đã xóa ${label} thành công!`);
+        if (onTableDropped) onTableDropped(tableName);
+        fetchTables();
+      } else {
+        alert(`Lỗi xóa ${label}: ` + error);
       }
-    }, 50);
+    } catch (e: any) {
+      alert('Lỗi kết nối: ' + e.message);
+    }
   };
 
-  const handleTruncateTable = (tableName: string) => {
-    setTimeout(async () => {
-      if (!confirm(`Xóa sạch TOÀN BỘ dữ liệu trong bảng "${tableName}"? Cấu trúc bảng vẫn được giữ nguyên. Hành động này không thể hoàn tác.`)) {
-        return;
+  const runTruncateTable = async (tableName: string) => {
+    try {
+      const res = await dbHelper.truncateTable(tableName);
+      if (res.success) {
+        alert('Đã xóa sạch dữ liệu bảng!');
+        // Báo cho các panel đang mở bảng này refetch
+        window.dispatchEvent(new CustomEvent('database-restored'));
+      } else {
+        alert('Lỗi xóa dữ liệu: ' + res.error);
       }
-      try {
-        const res = await dbHelper.truncateTable(tableName);
-        if (res.success) {
-          alert('Đã xóa sạch dữ liệu bảng!');
-          // Báo cho các panel đang mở bảng này refetch
-          window.dispatchEvent(new CustomEvent('database-restored'));
-        } else {
-          alert('Lỗi xóa dữ liệu: ' + res.error);
-        }
-      } catch (e: any) {
-        alert('Lỗi kết nối: ' + e.message);
-      }
-    }, 50);
+    } catch (e: any) {
+      alert('Lỗi kết nối: ' + e.message);
+    }
   };
 
   const removeAccents = (str: string) => {
@@ -409,6 +468,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
               >
                 <Plus size={12} /> Tạo database mới...
               </div>
+              {onOpenAllDbStats && (
+                <div
+                  onClick={() => { setShowDbMenu(false); onOpenAllDbStats(); }}
+                  className="sidebar-context-item"
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 10px', fontSize: '11px', cursor: 'pointer', color: 'var(--win-text-primary)' }}
+                >
+                  <BarChart3 size={12} /> Thống kê tất cả database
+                </div>
+              )}
             </div>
           </>
         )}
@@ -447,22 +515,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <Terminal size={14} className="title-bar-logo" />
               <span>Trình viết SQL</span>
             </div>
-            <div className="sidebar-item" onClick={onBackupRestore}>
-              <Database size={14} className="title-bar-logo" />
-              <span>Sao lưu & Phục hồi</span>
-            </div>
-            {onOpenDbInfo && (
-              <div className="sidebar-item" onClick={onOpenDbInfo}>
-                <Info size={14} className="title-bar-logo" />
-                <span>Thông tin Database</span>
-              </div>
-            )}
-            {onSchemaMigration && (
-              <div className="sidebar-item" onClick={onSchemaMigration}>
-                <GitCompare size={14} className="title-bar-logo" />
-                <span>Diff Schema & Migration</span>
-              </div>
-            )}
+            {/* Terminal đi cùng nhóm "chạy lệnh" với Trình viết SQL */}
             <div style={{ position: 'relative' }}>
               <div className="sidebar-item" onClick={() => setShowTermMenu(v => !v)}>
                 <TerminalSquare size={14} className="title-bar-logo" />
@@ -483,6 +536,33 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </>
               )}
             </div>
+
+            {/* Nhóm 2: xem và so cấu trúc — chỉ đọc */}
+            {(onOpenDbInfo || onSchemaMigration) && <div className="sidebar-tools-sep" />}
+            {onOpenDbInfo && (
+              <div className="sidebar-item" onClick={onOpenDbInfo}>
+                <Info size={14} className="title-bar-logo" />
+                <span>Thông tin Database</span>
+              </div>
+            )}
+            {onSchemaMigration && (
+              <div className="sidebar-item" onClick={onSchemaMigration}>
+                <GitCompare size={14} className="title-bar-logo" />
+                <span>Diff Schema & Migration</span>
+              </div>
+            )}
+
+            {/* Nhóm 3: chuyển dữ liệu vào/ra — ít dùng nhất và Nhập thì có ghi dữ liệu,
+                nên để cuối; xuất (an toàn) đứng trước nhập (ghi đè được) */}
+            <div className="sidebar-tools-sep" />
+            <div className="sidebar-item" onClick={onExportDatabase}>
+              <HardDriveDownload size={14} className="title-bar-logo" />
+              <span>Xuất Database (Export)</span>
+            </div>
+            <div className="sidebar-item" onClick={onImportDatabase}>
+              <HardDriveUpload size={14} className="title-bar-logo" />
+              <span>Nhập Database (Import)</span>
+            </div>
           </div>
         </div>
 
@@ -499,17 +579,43 @@ export const Sidebar: React.FC<SidebarProps> = ({
               {isOpen('tables') ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
               Danh sách bảng ({filteredTables.length})
             </span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Plus
-                size={12}
-                style={{ cursor: 'pointer' }}
-                onClick={handleCreateTable}
-              />
-              <RefreshCw
-                size={11}
-                style={{ cursor: 'pointer', transform: refreshing ? 'rotate(180deg)' : 'none', transition: 'all 0.5s ease' }}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '2px', position: 'relative' }}>
+              <button
+                type="button"
+                className={`sidebar-section-btn accent ${showAddMenu ? 'is-active' : ''}`}
+                title="Tạo mới..."
+                aria-label="Tạo mới"
+                onClick={() => setShowAddMenu((v) => !v)}
+              >
+                <Plus size={13} />
+              </button>
+              <button
+                type="button"
+                className="sidebar-section-btn"
+                title="Tải lại danh sách bảng"
+                aria-label="Tải lại danh sách bảng"
+                disabled={refreshing}
                 onClick={fetchTables}
-              />
+              >
+                <RefreshCw size={12} className={refreshing ? 'loading-spinner' : undefined} />
+              </button>
+
+              {showAddMenu && (
+                <>
+                  <div style={{ position: 'fixed', inset: 0, zIndex: 998 }} onClick={() => setShowAddMenu(false)} />
+                  <div className="ws-menu" style={{ position: 'absolute', right: 0, top: 'calc(100% + 4px)', minWidth: '200px', zIndex: 999 }}>
+                    <button className="context-menu-item" onClick={() => { setShowAddMenu(false); handleCreateTable(); }}>
+                      <Table size={13} /> Tạo bảng mới...
+                    </button>
+                    <button className="context-menu-item" onClick={() => { setShowAddMenu(false); setNewView({ name: '', sql: '' }); setCreateViewError(null); setShowCreateView(true); }}>
+                      <Layers size={13} /> Tạo View mới...
+                    </button>
+                    <button className="context-menu-item" onClick={() => { setShowAddMenu(false); (onImportNewTable ?? onImportDatabase)(); }}>
+                      <HardDriveUpload size={13} /> Import bảng từ tệp...
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
           {isOpen('tables') && (
@@ -530,7 +636,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     if (e.key === 'Delete') {
                       e.preventDefault();
                       e.stopPropagation(); // tránh kích hoạt Delete-xóa-dòng của DataGrid
-                      handleDropTable(t.name);
+                      setDestructive({ kind: 'drop-table', tableName: t.name, isView: t.type === 'view' });
                     }
                   }}
                   title={`${t.name} (nhấn Delete để xóa bảng)`}
@@ -614,18 +720,35 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </button>
       </div>
 
-      {/* Floating Context Menu */}
+      {/* Floating Context Menu — vị trí được chỉnh lại theo kích thước thật để không tràn */}
       {contextMenu && (() => {
         const isView = tables.find(t => t.name === contextMenu.tableName)?.type === 'view';
         return (
-          <div className="ws-menu" style={{
+          <div ref={menuRef} className="ws-menu" style={{
             position: 'fixed',
-            top: contextMenu.y,
-            left: contextMenu.x,
+            top: menuPos ? menuPos.top : contextMenu.y,
+            left: menuPos ? menuPos.left : contextMenu.x,
+            // Chưa đo xong thì ẩn để không thấy menu nhảy chỗ
+            visibility: menuPos ? 'visible' : 'hidden',
             zIndex: 99999,
             minWidth: '170px'
           }}>
-            <div 
+            {/* Tiêu đề: cho biết menu đang tác động lên bảng nào */}
+            <div style={{
+              padding: '6px 12px',
+              fontSize: '10px',
+              fontWeight: 600,
+              color: 'var(--win-text-secondary)',
+              borderBottom: '1px solid var(--win-border)',
+              marginBottom: '4px',
+              maxWidth: '240px',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}>
+              {contextMenu.tableName}
+            </div>
+            <div
               onClick={(e) => {
                 e.stopPropagation();
                 setContextMenu(null);
@@ -689,7 +812,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 onClick={(e) => {
                   e.stopPropagation();
                   setContextMenu(null);
-                  handleTruncateTable(contextMenu.tableName);
+                  setDestructive({ kind: 'truncate', tableName: contextMenu.tableName });
                 }}
                 style={{ padding: '6px 12px', fontSize: '11px', color: 'var(--st-warn)', cursor: 'pointer' }}
                 className="sidebar-context-item"
@@ -701,7 +824,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               onClick={(e) => {
                 e.stopPropagation();
                 setContextMenu(null);
-                handleDropTable(contextMenu.tableName);
+                setDestructive({ kind: 'drop-table', tableName: contextMenu.tableName, isView });
               }}
               style={{ padding: '6px 12px', fontSize: '11px', color: 'var(--win-accent)', cursor: 'pointer' }}
               className="sidebar-context-item"
@@ -711,6 +834,43 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         );
       })()}
+
+      {/* Hỏi trước khi Truncate / Drop table / Drop database */}
+      <ConfirmDialog
+        open={!!destructive}
+        danger
+        title={
+          destructive?.kind === 'truncate'
+            ? 'Xóa sạch dữ liệu bảng (Truncate)'
+            : destructive?.kind === 'drop-db'
+              ? 'Xóa database (Drop Database)'
+              : destructive?.isView
+                ? 'Xóa khung nhìn (Drop View)'
+                : 'Xóa bảng (Drop Table)'
+        }
+        message={
+          destructive?.kind === 'truncate' ? (
+            <>Xóa <b>TOÀN BỘ dữ liệu</b> trong bảng <b style={{ fontFamily: 'monospace' }}>{destructive.tableName}</b>? Cấu trúc bảng vẫn được giữ nguyên.</>
+          ) : destructive?.kind === 'drop-db' ? (
+            <>Xóa vĩnh viễn database <b style={{ fontFamily: 'monospace' }}>{destructive.dbName}</b>? Toàn bộ bảng và dữ liệu bên trong sẽ mất.</>
+          ) : destructive?.kind === 'drop-table' ? (
+            <>Xóa vĩnh viễn {destructive.isView ? 'khung nhìn' : 'bảng'} <b style={{ fontFamily: 'monospace' }}>{destructive.tableName}</b>? Cả cấu trúc và dữ liệu đều bị xóa.</>
+          ) : null
+        }
+        note="Hành động này không thể hoàn tác."
+        confirmLabel={destructive?.kind === 'truncate' ? 'Xóa sạch dữ liệu' : 'Xóa'}
+        // Drop database nguy hiểm nhất -> buộc gõ lại tên để tránh bấm nhầm.
+        requireText={destructive?.kind === 'drop-db' ? destructive.dbName : undefined}
+        onCancel={() => setDestructive(null)}
+        onConfirm={() => {
+          const action = destructive;
+          setDestructive(null);
+          if (!action) return;
+          if (action.kind === 'truncate') runTruncateTable(action.tableName);
+          else if (action.kind === 'drop-table') runDropTable(action.tableName);
+          else runDropDatabase(action.dbName);
+        }}
+      />
 
       {renameState && (
         <div style={{
@@ -794,6 +954,64 @@ export const Sidebar: React.FC<SidebarProps> = ({
             onSelectTable(name, 'structure');
           }}
         />
+      )}
+
+      {showCreateView && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+          display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 999999
+        }}>
+          <div style={{
+            background: 'var(--win-bg-card)', border: '1px solid var(--win-border)', borderRadius: '6px',
+            padding: '16px', width: '520px', maxWidth: '90vw', boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+            display: 'flex', flexDirection: 'column', gap: '12px'
+          }}>
+            <h4 style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: 'var(--win-text-primary)' }}>Tạo View mới</h4>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <label style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>Tên view</label>
+              <input
+                type="text" autoFocus value={newView.name}
+                onChange={(e) => setNewView({ ...newView, name: e.target.value })}
+                onKeyDown={(e) => { if (e.key === 'Escape') setShowCreateView(false); }}
+                placeholder="ten_view"
+                style={{ fontSize: '11px', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--win-border)', background: 'var(--win-bg-input)', color: 'var(--win-text-primary)', outline: 'none' }}
+              />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <label style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>Câu lệnh SELECT</label>
+              <textarea
+                value={newView.sql}
+                onChange={(e) => setNewView({ ...newView, sql: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') setShowCreateView(false);
+                  // Ctrl/Cmd + Enter để tạo nhanh, Enter thường vẫn xuống dòng
+                  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) handleCreateView();
+                }}
+                placeholder="SELECT * FROM ..."
+                rows={7}
+                spellCheck={false}
+                style={{ fontSize: '11px', padding: '8px', borderRadius: '4px', border: '1px solid var(--win-border)', background: 'var(--win-bg-input)', color: 'var(--win-text-primary)', outline: 'none', fontFamily: 'var(--win-font-mono, monospace)', resize: 'vertical', lineHeight: 1.5 }}
+              />
+              <span style={{ fontSize: '10px', color: 'var(--win-text-disabled)' }}>
+                Hệ thống tự thêm <code>CREATE VIEW "{newView.name.trim() || 'ten_view'}" AS</code> phía trước — chỉ cần nhập phần SELECT.
+              </span>
+            </div>
+            {createViewError && (
+              <div style={{ fontSize: '11px', color: 'var(--st-danger, #ef4444)', wordBreak: 'break-word' }}>{createViewError}</div>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '4px' }}>
+              <button className="btn btn-secondary" onClick={() => setShowCreateView(false)} style={{ padding: '0 12px' }}>Hủy</button>
+              <button
+                className="btn btn-primary"
+                onClick={handleCreateView}
+                disabled={creatingView}
+                style={{ padding: '0 12px', background: 'var(--win-accent)', color: '#fff', border: 'none', opacity: creatingView ? 0.6 : 1 }}
+              >
+                {creatingView ? 'Đang tạo...' : 'Tạo View'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {showCreateDb && (

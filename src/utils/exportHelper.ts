@@ -91,27 +91,104 @@ export function buildPreview(
   return `<table style="border-collapse:collapse;font-size:11px;"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
 }
 
+/** Tệp đã dựng xong trong bộ nhớ, chờ ghi ra thư mục hoặc tải xuống. */
+export interface BuiltFile {
+  name: string;
+  data: Uint8Array | string;
+  mime: string;
+}
+
+const MIME: Record<ExportFormat, string> = {
+  csv: 'text/csv;charset=utf-8',
+  json: 'application/json',
+  sql: 'text/plain;charset=utf-8',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+};
+
+/**
+ * Dựng nội dung tệp xuất của MỘT bảng (không tải xuống) để phía gọi tự quyết định
+ * ghi vào thư mục người dùng chọn hay tải qua WebView.
+ */
+export function buildTableFile(
+  tableName: string,
+  colNames: string[],
+  rows: any[],
+  format: ExportFormat,
+  dbType: string,
+  fileName?: string
+): BuiltFile {
+  const base = stripExt((fileName || '').trim()) || tableName;
+  switch (format) {
+    case 'csv':
+      return { name: `${base}.csv`, data: buildCsv(colNames, rows), mime: MIME.csv };
+    case 'json':
+      return { name: `${base}.json`, data: buildJson(rows), mime: MIME.json };
+    case 'sql':
+      return { name: `${base}.sql`, data: buildSql(tableName, colNames, rows, dbType), mime: MIME.sql };
+    case 'xlsx':
+      return { name: `${base}.xlsx`, data: buildXlsx(tableName, colNames, rows), mime: MIME.xlsx };
+  }
+}
+
+/**
+ * Dựng nội dung tệp xuất NHIỀU bảng (không tải xuống): xlsx nhiều sheet, json theo bảng,
+ * csv một bảng -> .csv / nhiều bảng -> .zip.
+ */
+export function buildDatabaseFile(
+  sheets: XlsxSheet[],
+  format: 'json' | 'csv' | 'xlsx',
+  filename: string
+): BuiltFile {
+  const base = stripExt(filename) || 'export';
+  if (format === 'xlsx') {
+    return { name: `${base}.xlsx`, data: buildXlsxWorkbook(sheets), mime: MIME.xlsx };
+  }
+  if (format === 'json') {
+    const byTable = Object.fromEntries(sheets.map((s) => [s.name, s.rows]));
+    return { name: `${base}.json`, data: JSON.stringify(byTable, null, 2), mime: MIME.json };
+  }
+  if (sheets.length === 1) {
+    const s = sheets[0];
+    return { name: `${s.name || base}.csv`, data: buildCsv(s.colNames, s.rows), mime: MIME.csv };
+  }
+  const enc = new TextEncoder();
+  const usedNames = new Set<string>();
+  const entries: ZipEntry[] = sheets.map((s) => {
+    const n = (s.name || 'table').replace(/[\\/:*?"<>|]/g, '_');
+    let candidate = `${n}.csv`;
+    let k = 2;
+    while (usedNames.has(candidate.toLowerCase())) candidate = `${n}_${k++}.csv`;
+    usedNames.add(candidate.toLowerCase());
+    return { name: candidate, data: enc.encode(buildCsv(s.colNames, s.rows)) };
+  });
+  return { name: `${base}.zip`, data: buildZip(entries), mime: 'application/zip' };
+}
+
 // ---- Điểm vào: xuất & tải file đầy đủ ----
+// fileName: tên tệp tải xuống (không kèm đuôi). Bỏ trống -> dùng tên bảng.
+// tableName vẫn dùng cho nội dung (INSERT INTO / tên sheet) nên không thay bằng fileName.
 export function exportTableToFile(
   tableName: string,
   colNames: string[],
   rows: any[],
   format: ExportFormat,
-  dbType: string
+  dbType: string,
+  fileName?: string
 ): void {
+  const base = stripExt((fileName || '').trim()) || tableName;
   switch (format) {
     case 'csv':
-      downloadBlob(new Blob([buildCsv(colNames, rows)], { type: 'text/csv;charset=utf-8' }), `${tableName}.csv`);
+      downloadBlob(new Blob([buildCsv(colNames, rows)], { type: 'text/csv;charset=utf-8' }), `${base}.csv`);
       break;
     case 'json':
-      downloadBlob(new Blob([buildJson(rows)], { type: 'application/json' }), `${tableName}.json`);
+      downloadBlob(new Blob([buildJson(rows)], { type: 'application/json' }), `${base}.json`);
       break;
     case 'sql':
-      downloadBlob(new Blob([buildSql(tableName, colNames, rows, dbType)], { type: 'text/plain;charset=utf-8' }), `${tableName}.sql`);
+      downloadBlob(new Blob([buildSql(tableName, colNames, rows, dbType)], { type: 'text/plain;charset=utf-8' }), `${base}.sql`);
       break;
     case 'xlsx': {
       const bytes = buildXlsx(tableName, colNames, rows);
-      downloadBlob(xlsxBlob(bytes), `${tableName}.xlsx`);
+      downloadBlob(xlsxBlob(bytes), `${base}.xlsx`);
       break;
     }
   }

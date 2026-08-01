@@ -1,0 +1,74 @@
+# Kế hoạch & Đánh giá Tối ưu hóa Hiệu năng Vite (Vite Performance Audit Plan)
+
+Dựa trên tài liệu hướng dẫn chính thức [Vite Performance Guide](https://vite.dev/guide/performance), dưới đây là kết quả kiểm tra hiện trạng cấu hình Vite của dự án **TableNova** và kế hoạch đề xuất nâng cấp chi tiết.
+
+---
+
+## 1. Kết quả Đánh giá Hiện trạng (Audit Results)
+
+| Tiêu chí Tối ưu (Vite Guide) | Trạng thái Hiện tại | Đánh giá |
+| :--- | :--- | :--- |
+| **React Transform Plugin** | Đang dùng `@vitejs/plugin-react` (Babel-based) | ⚠️ **Chưa tối ưu**: Babel chậm hơn SWC. Hướng dẫn Vite khuyến nghị dùng SWC (`@vitejs/plugin-react-swc`) để tăng tốc HMR và build. |
+| **Code Splitting / Manual Chunks** | Chưa cấu hình `manualChunks` | ⚠️ **Chưa tối ưu**: Các thư viện nặng như `monaco-editor`, `@xterm/xterm`, `lucide-react` đang bị dồn chung vào 1 file bundle chính lớn. |
+| **Warmup Files (`server.warmup`)** | Chưa cấu hình | ⚠️ **Chưa tối ưu**: Dev server chưa được báo trước để pre-transform các file entrypoint chính (`src/main.tsx`, `src/App.tsx`). |
+| **Build Target** | Mặc định (`modules`) | ⚠️ **Chưa tối ưu**: App chạy trên Tauri (WebView2 / WebKit modern). Có thể đặt `build.target: 'esnext'` để loại bỏ polyfill/transpilation thừa. |
+| **Dependency Pre-bundling (`optimizeDeps`)** | Mặc định | ℹ️ Cần tinh chỉnh danh sách bao gồm/loại trừ để tránh re-bundling không cần thiết trong dev mode. |
+| **Watch Ignored Paths** | Đã cấu hình `*.db`, `*.sqlite`, `*.sql` | ✅ **Đã tối ưu**: Giúp dev server không bị restart thừa khi thao tác với file CSDL. |
+
+---
+
+## 2. Kế hoạch Nâng cấp Đề xuất (Proposed Implementation Plan)
+
+### Component: Package Dependencies
+#### [MODIFY] [package.json](file:///c:/workspace/table/package.json)
+- Thay thế `@vitejs/plugin-react` bằng `@vitejs/plugin-react-swc` trong `devDependencies`.
+- (Tùy chọn) Thêm `rollup-plugin-visualizer` làm devDependency để phân tích kích thước bundle khi build.
+
+---
+
+### Component: Vite Configuration
+#### [MODIFY] [vite.config.mts](file:///c:/workspace/table/vite.config.mts)
+1. **Chuyển sang SWC Plugin**:
+   ```ts
+   import react from '@vitejs/plugin-react-swc'
+   ```
+2. **Thêm Warmup Client Files**:
+   ```ts
+   server: {
+     warmup: {
+       clientFiles: ['./src/main.tsx', './src/App.tsx']
+     }
+   }
+   ```
+3. **Cấu hình Target & Code Splitting (Rollup Manual Chunks)**:
+   - Tách biệt `monaco-editor`, `xterm`, `react-vendor` và `lucide-react` ra các chunk độc lập để giảm kích thước bundle ban đầu và cải thiện caching.
+   ```ts
+   build: {
+     target: 'esnext',
+     cssCodeSplit: true,
+     rollupOptions: {
+       output: {
+         manualChunks: {
+           'react-vendor': ['react', 'react-dom'],
+           'monaco-editor': ['monaco-editor', '@monaco-editor/react', 'monaco-sql-languages'],
+           'xterm-vendor': ['@xterm/xterm', '@xterm/addon-fit'],
+           'icons': ['lucide-react']
+         }
+       }
+     }
+   }
+   ```
+4. **Tối ưu hóa `optimizeDeps`**:
+   - Đưa các dependency nặng vào `optimizeDeps.include` để Vite pre-bundle ngay khi khởi động dev server.
+
+---
+
+## 3. Kế hoạch Kiểm thử & Xác minh (Verification Plan)
+
+### Automated Checks
+- Chạy lệnh build frontend: `cmd /c "npm run build-frontend"` để kiểm tra xem các vendor chunks (`monaco-editor`, `xterm-vendor`, `react-vendor`) có được tách rời hợp lệ hay không.
+- Chạy `cmd /c "npx oxlint"` và `cmd /c "npx tsc --noEmit"` để bảo đảm không có lỗi type hoặc lint.
+
+### Manual Verification
+- Kiểm tra tốc độ khởi động dev server (`npm run vite-dev`).
+- Kiểm tra hoạt động của giao diện ứng dụng (Monaco SQL Editor, SSH Terminal, Connection Manager) xem có bị ảnh hưởng bởi việc tách chunk hay không.

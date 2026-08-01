@@ -153,7 +153,7 @@ fn url_encode_component(s: &str) -> String {
 }
 
 // Dựng chuỗi kết nối Postgres kèm cấu hình SSL (sslmode + sslrootcert nếu có)
-fn build_pg_url(config: &Value, db_override: Option<&str>) -> String {
+pub(crate) fn build_pg_url(config: &Value, db_override: Option<&str>) -> String {
     let host = config.get("host").and_then(|v| v.as_str()).unwrap_or("localhost");
     let port = config.get("port").and_then(|v| v.as_u64()).unwrap_or(5432);
     let user = config.get("user").and_then(|v| v.as_str()).unwrap_or("");
@@ -200,7 +200,7 @@ fn build_pg_url(config: &Value, db_override: Option<&str>) -> String {
 }
 
 // Dựng chuỗi kết nối MySQL kèm cấu hình SSL (ssl-mode + ssl-ca nếu có)
-fn build_mysql_url(config: &Value, db_override: Option<&str>) -> String {
+pub(crate) fn build_mysql_url(config: &Value, db_override: Option<&str>) -> String {
     let host = config.get("host").and_then(|v| v.as_str()).unwrap_or("localhost");
     let port = config.get("port").and_then(|v| v.as_u64()).unwrap_or(3306);
     let user = config.get("user").and_then(|v| v.as_str()).unwrap_or("");
@@ -1209,6 +1209,104 @@ fn matches_delimiter(chars: &[char], i: usize, delim: &[char]) -> bool {
 //   - lệnh DELIMITER của MySQL — đổi dấu kết thúc câu để viết được thân trigger/procedure
 // Nếu không xử lý 2 mục cuối, một file có function/trigger sẽ bị cắt giữa thân hàm và có thể
 // chạy nhầm một câu nằm bên trong nó.
+/// Bỏ khoảng trắng và comment ở ĐẦU câu lệnh, trả về phần bắt đầu bằng từ khoá SQL thật.
+///
+/// Splitter giữ nguyên comment trong text của câu lệnh, nên trong dump của mysqldump thì
+///     `-- Dumping data for table `store`` + newline + `LOCK TABLES `store` WRITE`
+/// là MỘT câu lệnh bắt đầu bằng "--". Phân loại theo text thô sẽ nhận sai hết:
+/// LOCK/UNLOCK TABLES không bị bỏ, `SET`/`USE` không được coi là lệnh cấp phiên.
+fn strip_leading_comments(stmt: &str) -> &str {
+    let b = stmt.as_bytes();
+    let mut i = 0usize;
+    loop {
+        while i < b.len() && b[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        // Comment dòng: -- ... hoặc # ...
+        if (i + 1 < b.len() && b[i] == b'-' && b[i + 1] == b'-') || (i < b.len() && b[i] == b'#') {
+            while i < b.len() && b[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        // Comment khối: /* ... */ (kể cả comment điều kiện /*!40101 ... */ của MySQL)
+        if i + 1 < b.len() && b[i] == b'/' && b[i + 1] == b'*' {
+            i += 2;
+            while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                i += 1;
+            }
+            i = (i + 2).min(b.len());
+            continue;
+        }
+        break;
+    }
+    // i luôn dừng sau '\n' / '*/' / khoảng trắng ASCII nên vẫn là biên ký tự UTF-8.
+    &stmt[i.min(stmt.len())..]
+}
+
+// Lệnh của dump mà restore KHÔNG được chạy lại:
+//   - LOCK/UNLOCK TABLES: mysqldump thêm vào cho nhanh. `LOCK TABLES x WRITE` có tên bảng nên
+//     lọt qua bộ lọc, còn `UNLOCK TABLES` thì không -> khoá treo lại và bảng kế tiếp bị lỗi
+//     1100 "was not locked with LOCK TABLES". Bỏ cả cặp là an toàn nhất, nhất là khi người
+//     dùng chỉ chọn một phần bảng.
+//   - BEGIN/START TRANSACTION/COMMIT/ROLLBACK: transaction do chính hàm này quản lý; chạy lại
+//     lệnh của dump (nhất là ROLLBACK) có thể huỷ phần đã nhập.
+fn is_skipped_stmt(stmt_upper: &str) -> bool {
+    stmt_upper.starts_with("LOCK TABLES")
+        || stmt_upper.starts_with("UNLOCK TABLES")
+        || stmt_upper.starts_with("START TRANSACTION")
+        || stmt_upper == "BEGIN"
+        || stmt_upper.starts_with("BEGIN;")
+        || stmt_upper.starts_with("BEGIN WORK")
+        || stmt_upper.starts_with("COMMIT")
+        || stmt_upper.starts_with("ROLLBACK")
+}
+
+// Lệnh cấp phiên/schema trong một tệp dump: luôn chạy dù người dùng chỉ chọn một phần bảng
+// (không nhắc tên bảng nào nên bộ lọc theo bảng sẽ bỏ sót), và lỗi của chúng KHÔNG huỷ cả
+// lần restore — dump của dialect khác thường có `SET NAMES`/`SET @@...` mà server hiện tại
+// không hiểu, còn `CREATE SCHEMA` thì lỗi nếu schema đã tồn tại.
+fn is_session_level_stmt(stmt_upper: &str) -> bool {
+    stmt_upper.starts_with("USE ")
+        || stmt_upper.starts_with("SET ")
+        || stmt_upper.starts_with("CREATE DATABASE")
+        || stmt_upper.starts_with("CREATE SCHEMA")
+}
+
+// Câu lệnh có nhắc tới một trong các bảng được chọn không (so khớp theo biên từ để
+// `film` không khớp `film_actor`).
+fn stmt_mentions_table(stmt_lower: &str, tables: &[String]) -> bool {
+    for t in tables {
+        let t_lower = t.to_lowercase();
+        let pattern = format!(r"\b{}\b", regex::escape(&t_lower));
+        match regex::Regex::new(&pattern) {
+            Ok(re) => {
+                if re.is_match(stmt_lower) {
+                    return true;
+                }
+            }
+            Err(_) => {
+                if stmt_lower.contains(&t_lower) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+// Tên database trong lệnh `USE <db>` (để reconnect sau khi restore xong).
+fn use_db_name(stmt: &str) -> Option<String> {
+    let parts: Vec<&str> = stmt.split_whitespace().collect();
+    if parts.len() < 2 {
+        return None;
+    }
+    let name = parts[1]
+        .trim_matches(|c| c == ';' || c == '`' || c == '"' || c == '\'')
+        .to_string();
+    if name.is_empty() { None } else { Some(name) }
+}
+
 fn split_sql_statements(sql: &str) -> Vec<String> {
     let chars: Vec<char> = sql.chars().collect();
     let n = chars.len();
@@ -1576,7 +1674,17 @@ async fn stream_one_statement(
             // Dò xem câu lệnh có trả về cột không. Nếu không -> execute + báo affected.
             let returns_rows = match (&mut *conn).prepare(sqlx::AssertSqlSafe(sql.to_string()).into_sql_str()).await {
                 Ok(st) => !st.columns().is_empty(),
-                Err(_) => true,
+                Err(_) => {
+                    // Không prepare được (CREATE/DROP TRIGGER|PROCEDURE|FUNCTION|EVENT -> lỗi 1295,
+                    // hoặc cú pháp lỗi). Chạy bằng text protocol: đúng cho DDL, còn cú pháp sai thì
+                    // lỗi thật của server được trả về ở đây.
+                    let r = sqlx::raw_sql(sqlx::AssertSqlSafe(sql.to_string()))
+                        .execute(&mut *conn)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    let _ = channel.send(json!({ "type": "affected", "stmtIndex": stmt_index, "query": sql, "affected": r.rows_affected() }));
+                    return Ok(());
+                }
             };
             if !returns_rows {
                 let r = bind_mysql_params(sqlx::query(sqlx::AssertSqlSafe(sql.to_string())), params)
@@ -1977,7 +2085,16 @@ pub async fn parse_backup_tables(file_path: String) -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub async fn restore_backup(state: tauri::State<'_, crate::AppState>, sql_content: String, tables: Vec<String>) -> Result<Value, String> {
+pub async fn restore_backup(
+    state: tauri::State<'_, crate::AppState>,
+    sql_content: String,
+    tables: Vec<String>,
+    // Kênh báo tiến độ về UI: {type:'start'|'progress'|'done', done, total}. Restore là một
+    // lần gọi dài nên không có kênh thì UI chỉ vẽ được thanh vô định.
+    // Bắt buộc (không dùng Option): Channel không impl Deserialize nên `Option<Channel<_>>`
+    // không thoả CommandArg — frontend luôn tạo kênh, có cần dùng hay không thì tuỳ nó.
+    on_progress: Channel<Value>,
+) -> Result<Value, String> {
     let conn_type = {
         let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
         match manager.connection.as_ref() {
@@ -1988,184 +2105,99 @@ pub async fn restore_backup(state: tauri::State<'_, crate::AppState>, sql_conten
         }
     };
 
-    // Phân tích cú pháp thô sơ và thực thi các câu lệnh cho các bảng được chọn
     let mut statements_count = 0;
-    
-    // Tách các câu lệnh theo dấu chấm phẩy ;
-    let mut current_query = String::new();
-    let mut in_single_quote = false;
-    let mut in_double_quote = false;
-    let mut in_backtick = false;
-
-    let mut in_line_comment = false;
-    let mut in_block_comment = false;
-    let mut chars_iter = sql_content.chars().peekable();
     let mut last_use_db: Option<String> = None;
+
+    // Dùng CHUNG splitter với SQL editor: nó hiểu lệnh DELIMITER của MySQL và khối $$ của
+    // Postgres, nên thân trigger/procedure/function không bị cắt ở dấu ';' bên trong.
+    let statements = split_sql_statements(&sql_content);
+
+    // Lọc TRƯỚC để biết tổng số câu lệnh sẽ chạy -> báo được phần trăm thật thay vì thanh vô định.
+    // bool đi kèm = lệnh cấp phiên/schema (lỗi của nó không huỷ cả lần restore).
+    let mut to_run: Vec<(String, bool)> = Vec::new();
+    for q in statements {
+        // Phân loại theo phần SAU comment đầu câu: dump của mysqldump luôn có
+        // `-- Dumping data for table x` dán liền trước LOCK TABLES / INSERT.
+        let body = strip_leading_comments(&q);
+        let head = body.to_uppercase();
+        if is_skipped_stmt(&head) {
+            continue;
+        }
+        if body.is_empty() {
+            // Câu chỉ còn comment. Comment ĐIỀU KIỆN của MySQL (`/*!40101 SET NAMES utf8mb4 */`)
+            // là lệnh thật và ảnh hưởng tới charset/timezone của dữ liệu nhập -> vẫn phải chạy
+            // (xếp vào cấp phiên để lỗi không huỷ cả lần restore). Comment thường thì bỏ.
+            if q.contains("/*!") {
+                to_run.push((q, true));
+            }
+            continue;
+        }
+        let session_level = is_session_level_stmt(&head);
+        if session_level {
+            if head.starts_with("USE ") {
+                if let Some(db) = use_db_name(body) {
+                    last_use_db = Some(db);
+                }
+            }
+        } else if !stmt_mentions_table(&q.to_lowercase(), &tables) {
+            continue;
+        }
+        to_run.push((q, session_level));
+    }
+
+    let total = to_run.len();
+    let _ = on_progress.send(json!({ "type": "start", "total": total }));
+    // Gửi mỗi PROGRESS_EVERY câu để không làm ngập IPC với dump hàng chục nghìn câu lệnh.
+    const PROGRESS_EVERY: usize = 20;
+    let send_progress = |done: usize| {
+        let _ = on_progress.send(json!({ "type": "progress", "done": done, "total": total }));
+    };
+
 
     match &conn_type {
         DbConnection::Mysql(pool) => {
             let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
-            
+
+            // 0. Dọn khoá còn treo trên connection này. LOCK TABLES là theo SESSION và pool thì
+            //    tái dùng session: một lần restore trước đó chạy `LOCK TABLES x WRITE` mà không
+            //    tới được `UNLOCK TABLES` sẽ để khoá lại, khiến lần sau ghi bảng khác báo lỗi
+            //    1100 "was not locked with LOCK TABLES". Phải đứng TRƯỚC START TRANSACTION vì
+            //    UNLOCK TABLES tự commit transaction đang mở.
+            let _ = sqlx::raw_sql("UNLOCK TABLES;").execute(&mut *conn).await;
+
             // 1. Tắt khóa ngoại
             let _ = sqlx::query("SET FOREIGN_KEY_CHECKS = 0;").execute(&mut *conn).await;
-
             // 2. Bắt đầu Transaction
             let _ = sqlx::query("START TRANSACTION;").execute(&mut *conn).await;
 
-            let mut escaped = false;
             // 3. Chạy các lệnh
-            while let Some(char_val) = chars_iter.next() {
-                if in_block_comment {
-                    if char_val == '*' && chars_iter.peek() == Some(&'/') {
-                        chars_iter.next();
-                        in_block_comment = false;
+            for (idx, (q, session_level)) in to_run.iter().enumerate() {
+                let session_level = *session_level;
+
+                // raw_sql = text protocol: MySQL KHÔNG cho CREATE/DROP TRIGGER|PROCEDURE|FUNCTION|
+                // EVENT chạy qua prepared statement (lỗi 1295), mà dump thường có đủ mấy loại này.
+                // Restore chỉ cần chạy, không đọc dòng nào, nên dùng text protocol cho tất cả.
+                if let Err(e) = sqlx::raw_sql(sqlx::AssertSqlSafe(q.clone())).execute(&mut *conn).await {
+                    // Lệnh cấp phiên/schema lỗi thì bỏ qua; lỗi thật thì Rollback rồi trả lỗi.
+                    if !session_level {
+                        let _ = sqlx::query("ROLLBACK;").execute(&mut *conn).await;
+                        // Trả connection về pool ở trạng thái sạch, không để khoá/FK-check treo lại.
+                        let _ = sqlx::raw_sql("UNLOCK TABLES;").execute(&mut *conn).await;
+                        let _ = sqlx::query("SET FOREIGN_KEY_CHECKS = 1;").execute(&mut *conn).await;
+                        return Err(format!("Lỗi khi chạy lệnh SQL: {}. Chi tiết: {}", q, e));
                     }
                     continue;
                 }
-                if in_line_comment {
-                    if char_val == '\n' || char_val == '\r' {
-                        in_line_comment = false;
-                    }
-                    continue;
+                statements_count += 1;
+                if idx % PROGRESS_EVERY == 0 || idx + 1 == total {
+                    send_progress(idx + 1);
                 }
 
-                if escaped {
-                    current_query.push(char_val);
-                    escaped = false;
-                    continue;
-                }
-
-                if char_val == '\\' && (in_single_quote || in_double_quote) {
-                    current_query.push(char_val);
-                    escaped = true;
-                    continue;
-                }
-
-                if char_val == '/' && chars_iter.peek() == Some(&'*') && !in_single_quote && !in_double_quote && !in_backtick {
-                    chars_iter.next();
-                    in_block_comment = true;
-                    continue;
-                }
-                if ((char_val == '-' && chars_iter.peek() == Some(&'-')) || char_val == '#') && !in_single_quote && !in_double_quote && !in_backtick {
-                    if char_val == '-' {
-                        chars_iter.next();
-                    }
-                    in_line_comment = true;
-                    continue;
-                }
-                if char_val == '\'' && !in_double_quote && !in_backtick && !in_line_comment && !in_block_comment {
-                    in_single_quote = !in_single_quote;
-                } else if char_val == '"' && !in_single_quote && !in_backtick && !in_line_comment && !in_block_comment {
-                    in_double_quote = !in_double_quote;
-                } else if char_val == '`' && !in_single_quote && !in_double_quote && !in_line_comment && !in_block_comment {
-                    in_backtick = !in_backtick;
-                }
-
-                if char_val == ';' && !in_single_quote && !in_double_quote && !in_backtick {
-                    let q = current_query.trim().to_string();
-                    if !q.is_empty() {
-                        let mut should_exec = false;
-                        let q_upper = q.to_uppercase();
-                        if q_upper.starts_with("CREATE DATABASE") || q_upper.starts_with("USE ") {
-                            should_exec = true;
-                            if q_upper.starts_with("USE ") {
-                                let parts: Vec<&str> = q.split_whitespace().collect();
-                                if parts.len() >= 2 {
-                                    let db_name = parts[1].trim_matches(|c| c == ';' || c == '`' || c == '"' || c == '\'').to_string();
-                                    if !db_name.is_empty() {
-                                        last_use_db = Some(db_name);
-                                    }
-                                }
-                            }
-                        } else {
-                            let q_lower = q.to_lowercase();
-                            for t in &tables {
-                                let t_lower = t.to_lowercase();
-                                let pattern = format!(r"\b{}\b", t_lower);
-                                if let Ok(re) = regex::Regex::new(&pattern) {
-                                    if re.is_match(&q_lower) {
-                                        should_exec = true;
-                                        break;
-                                    }
-                                } else if q_lower.contains(&t_lower) {
-                                    should_exec = true;
-                                    break;
-                                }
-                            }
-                        }
-
-                        if should_exec {
-                            let run_res = sqlx::query(sqlx::AssertSqlSafe(q.clone())).execute(&mut *conn).await;
-                            if let Err(e) = run_res {
-                                let is_ignorable = q_upper.starts_with("USE ") || q_upper.starts_with("CREATE DATABASE");
-                                if !is_ignorable {
-                                    // Gặp lỗi thì Rollback và bật lại khóa ngoại trước khi trả về lỗi
-                                    let _ = sqlx::query("ROLLBACK;").execute(&mut *conn).await;
-                                    let _ = sqlx::query("SET FOREIGN_KEY_CHECKS = 1;").execute(&mut *conn).await;
-                                    return Err(format!("Lỗi khi chạy lệnh SQL: {}. Chi tiết: {}", q, e));
-                                }
-                            }
-                            statements_count += 1;
-                        }
-                    }
-                    current_query.clear();
-                } else {
-                    current_query.push(char_val);
-                }
             }
 
-            // Chạy lệnh cuối
-            let q = current_query.trim().to_string();
-            if !q.is_empty() {
-                let q_upper = q.to_uppercase();
-                let mut should_exec = false;
-                if q_upper.starts_with("CREATE DATABASE") || q_upper.starts_with("USE ") {
-                    should_exec = true;
-                    if q_upper.starts_with("USE ") {
-                        let parts: Vec<&str> = q.split_whitespace().collect();
-                        if parts.len() >= 2 {
-                            let db_name = parts[1].trim_matches(|c| c == ';' || c == '`' || c == '"' || c == '\'').to_string();
-                            if !db_name.is_empty() {
-                                last_use_db = Some(db_name);
-                            }
-                        }
-                    }
-                } else {
-                    let q_lower = q.to_lowercase();
-                    for t in &tables {
-                        let t_lower = t.to_lowercase();
-                        let pattern = format!(r"\b{}\b", t_lower);
-                        if let Ok(re) = regex::Regex::new(&pattern) {
-                            if re.is_match(&q_lower) {
-                                should_exec = true;
-                                break;
-                            }
-                        } else if q_lower.contains(&t_lower) {
-                            should_exec = true;
-                            break;
-                        }
-                    }
-                }
-
-                if should_exec {
-                    let run_res = sqlx::query(sqlx::AssertSqlSafe(q.clone())).execute(&mut *conn).await;
-                    if let Err(e) = run_res {
-                        let is_ignorable = q_upper.starts_with("USE ") || q_upper.starts_with("CREATE DATABASE");
-                        if !is_ignorable {
-                            // Gặp lỗi thì Rollback và bật lại khóa ngoại trước khi trả về lỗi
-                            let _ = sqlx::query("ROLLBACK;").execute(&mut *conn).await;
-                            let _ = sqlx::query("SET FOREIGN_KEY_CHECKS = 1;").execute(&mut *conn).await;
-                            return Err(format!("Lỗi khi chạy lệnh SQL cuối: {}. Chi tiết: {}", q, e));
-                        }
-                    }
-                    statements_count += 1;
-                }
-            }
-
-            // Commit transaction
             let _ = sqlx::query("COMMIT;").execute(&mut *conn).await;
-
-            // 3. Bật lại khóa ngoại
+            // 4. Trả connection về pool sạch sẽ: bỏ khoá (nếu dump có LOCK lọt qua) + bật lại FK
+            let _ = sqlx::raw_sql("UNLOCK TABLES;").execute(&mut *conn).await;
             let _ = sqlx::query("SET FOREIGN_KEY_CHECKS = 1;").execute(&mut *conn).await;
         }
         _ => {
@@ -2184,181 +2216,37 @@ pub async fn restore_backup(state: tauri::State<'_, crate::AppState>, sql_conten
                 _ => {}
             }
 
-            let mut escaped = false;
-            while let Some(char_val) = chars_iter.next() {
-                if in_block_comment {
-                    if char_val == '*' && chars_iter.peek() == Some(&'/') {
-                        chars_iter.next();
-                        in_block_comment = false;
-                    }
-                    continue;
-                }
-                if in_line_comment {
-                    if char_val == '\n' || char_val == '\r' {
-                        in_line_comment = false;
-                    }
-                    continue;
-                }
+            for (idx, (q, session_level)) in to_run.iter().enumerate() {
+                let session_level = *session_level;
 
-                if escaped {
-                    current_query.push(char_val);
-                    escaped = false;
-                    continue;
-                }
-
-                if char_val == '\\' && (in_single_quote || in_double_quote) {
-                    current_query.push(char_val);
-                    escaped = true;
-                    continue;
-                }
-
-                if char_val == '/' && chars_iter.peek() == Some(&'*') && !in_single_quote && !in_double_quote && !in_backtick {
-                    chars_iter.next();
-                    in_block_comment = true;
-                    continue;
-                }
-                if ((char_val == '-' && chars_iter.peek() == Some(&'-')) || char_val == '#') && !in_single_quote && !in_double_quote && !in_backtick {
-                    if char_val == '-' {
-                        chars_iter.next();
-                    }
-                    in_line_comment = true;
-                    continue;
-                }
-                if char_val == '\'' && !in_double_quote && !in_backtick && !in_line_comment && !in_block_comment {
-                    in_single_quote = !in_single_quote;
-                } else if char_val == '"' && !in_single_quote && !in_backtick && !in_line_comment && !in_block_comment {
-                    in_double_quote = !in_double_quote;
-                } else if char_val == '`' && !in_single_quote && !in_double_quote && !in_line_comment && !in_block_comment {
-                    in_backtick = !in_backtick;
-                }
-
-                if char_val == ';' && !in_single_quote && !in_double_quote && !in_backtick {
-                    let q = current_query.trim().to_string();
-                    if !q.is_empty() {
-                        let mut should_exec = false;
-                        let q_upper = q.to_uppercase();
-                        if q_upper.starts_with("CREATE DATABASE") || q_upper.starts_with("USE ") {
-                            should_exec = true;
-                            if q_upper.starts_with("USE ") {
-                                let parts: Vec<&str> = q.split_whitespace().collect();
-                                if parts.len() >= 2 {
-                                    let db_name = parts[1].trim_matches(|c| c == ';' || c == '`' || c == '"' || c == '\'').to_string();
-                                    if !db_name.is_empty() {
-                                        last_use_db = Some(db_name);
-                                    }
+                let exec_sql = match &conn_type {
+                    DbConnection::Postgres(_) => q.replace("`", "\""),
+                    _ => q.clone(),
+                };
+                if let Err(e) = execute_raw_sql_generic(&conn_type, exec_sql).await {
+                    if !session_level {
+                        // Rollback nếu có lỗi
+                        match &conn_type {
+                            DbConnection::Postgres(_) => {
+                                let _ = execute_raw_sql_generic(&conn_type, "ROLLBACK;".to_string()).await;
+                            }
+                            DbConnection::Sqlite(conn_arc) => {
+                                if let Ok(conn) = conn_arc.lock() {
+                                    let _ = conn.execute("ROLLBACK;", []);
+                                    let _ = conn.execute("PRAGMA foreign_keys = ON;", []);
                                 }
                             }
-                        } else {
-                            let q_lower = q.to_lowercase();
-                            for t in &tables {
-                                let t_lower = t.to_lowercase();
-                                let pattern = format!(r"\b{}\b", t_lower);
-                                if let Ok(re) = regex::Regex::new(&pattern) {
-                                    if re.is_match(&q_lower) {
-                                        should_exec = true;
-                                        break;
-                                    }
-                                } else if q_lower.contains(&t_lower) {
-                                    should_exec = true;
-                                    break;
-                                }
-                            }
+                            _ => {}
                         }
-
-                        if should_exec {
-                            let exec_sql = match &conn_type {
-                                DbConnection::Postgres(_) => q.replace("`", "\""),
-                                _ => q.clone(),
-                            };
-                            let run_res = execute_raw_sql_generic(&conn_type, exec_sql.clone()).await;
-                            if let Err(e) = run_res {
-                                let is_ignorable = q_upper.starts_with("USE ") || q_upper.starts_with("CREATE DATABASE");
-                                if !is_ignorable {
-                                    // Rollback nếu có lỗi
-                                    match &conn_type {
-                                        DbConnection::Postgres(_) => {
-                                            let _ = execute_raw_sql_generic(&conn_type, "ROLLBACK;".to_string()).await;
-                                        }
-                                        DbConnection::Sqlite(conn_arc) => {
-                                            if let Ok(conn) = conn_arc.lock() {
-                                                let _ = conn.execute("ROLLBACK;", []);
-                                                let _ = conn.execute("PRAGMA foreign_keys = ON;", []);
-                                            }
-                                        }
-                                        _ => {}
-                                    }
-                                    return Err(format!("Lỗi khi chạy lệnh SQL: {}. Chi tiết: {}", q, e));
-                                }
-                            }
-                            statements_count += 1;
-                        }
+                        return Err(format!("Lỗi khi chạy lệnh SQL: {}. Chi tiết: {}", q, e));
                     }
-                    current_query.clear();
-                } else {
-                    current_query.push(char_val);
+                    continue;
                 }
-            }
-
-            // Chạy lệnh cuối
-            let q = current_query.trim().to_string();
-            if !q.is_empty() {
-                let q_upper = q.to_uppercase();
-                let mut should_exec = false;
-                if q_upper.starts_with("CREATE DATABASE") || q_upper.starts_with("USE ") {
-                    should_exec = true;
-                    if q_upper.starts_with("USE ") {
-                        let parts: Vec<&str> = q.split_whitespace().collect();
-                        if parts.len() >= 2 {
-                            let db_name = parts[1].trim_matches(|c| c == ';' || c == '`' || c == '"' || c == '\'').to_string();
-                            if !db_name.is_empty() {
-                                last_use_db = Some(db_name);
-                            }
-                        }
-                    }
-                } else {
-                    let q_lower = q.to_lowercase();
-                    for t in &tables {
-                        let t_lower = t.to_lowercase();
-                        let pattern = format!(r"\b{}\b", t_lower);
-                        if let Ok(re) = regex::Regex::new(&pattern) {
-                            if re.is_match(&q_lower) {
-                                should_exec = true;
-                                break;
-                            }
-                        } else if q_lower.contains(&t_lower) {
-                            should_exec = true;
-                            break;
-                        }
-                    }
+                statements_count += 1;
+                if idx % PROGRESS_EVERY == 0 || idx + 1 == total {
+                    send_progress(idx + 1);
                 }
 
-                if should_exec {
-                    let exec_sql = match &conn_type {
-                        DbConnection::Postgres(_) => q.replace("`", "\""),
-                        _ => q.clone(),
-                    };
-                    let run_res = execute_raw_sql_generic(&conn_type, exec_sql).await;
-                    if let Err(e) = run_res {
-                        let is_ignorable = q_upper.starts_with("USE ") || q_upper.starts_with("CREATE DATABASE");
-                        if !is_ignorable {
-                            // Rollback nếu có lỗi
-                            match &conn_type {
-                                DbConnection::Postgres(_) => {
-                                    let _ = execute_raw_sql_generic(&conn_type, "ROLLBACK;".to_string()).await;
-                                }
-                                DbConnection::Sqlite(conn_arc) => {
-                                    if let Ok(conn) = conn_arc.lock() {
-                                        let _ = conn.execute("ROLLBACK;", []);
-                                        let _ = conn.execute("PRAGMA foreign_keys = ON;", []);
-                                    }
-                                }
-                                _ => {}
-                            }
-                            return Err(format!("Lỗi khi chạy lệnh SQL cuối: {}. Chi tiết: {}", q, e));
-                        }
-                    }
-                    statements_count += 1;
-                }
             }
 
             // Commit transaction
@@ -2424,8 +2312,10 @@ pub async fn restore_backup(state: tauri::State<'_, crate::AppState>, sql_conten
         }
     }
 
-    Ok(json!({ 
-        "success": true, 
+    let _ = on_progress.send(json!({ "type": "done", "done": total, "total": total, "statementsCount": statements_count }));
+
+    Ok(json!({
+        "success": true,
         "statementsCount": statements_count,
         "activeDatabase": last_use_db
     }))
@@ -2821,6 +2711,13 @@ pub async fn import_table_data(state: tauri::State<'_, crate::AppState>, name: S
 }
 
 // Utility: executes raw SQL statements across all databases and maps to standard outputs
+// MySQL báo 1295 "This command is not supported in the prepared statement protocol yet" cho
+// CREATE/DROP TRIGGER, PROCEDURE, FUNCTION, EVENT... Những lệnh đó phải gửi bằng text protocol
+// (sqlx::raw_sql) thay vì sqlx::query.
+fn is_mysql_unprepared_error(err_text: &str) -> bool {
+    err_text.contains("1295") || err_text.contains("not supported in the prepared statement protocol")
+}
+
 async fn execute_raw_sql_generic(conn: &DbConnection, sql: String) -> Result<Vec<Value>, String> {
     let mut results = Vec::new();
     match conn {
@@ -2895,7 +2792,19 @@ async fn execute_raw_sql_generic(conn: &DbConnection, sql: String) -> Result<Vec
             if sql.to_uppercase().trim().starts_with("USE ") || sql.to_uppercase().trim().starts_with("CREATE DATABASE") {
                 sqlx::query(sqlx::AssertSqlSafe(sql.clone())).execute(&mut *conn).await.map_err(|e| e.to_string())?;
             } else {
-                let rows = sqlx::query(sqlx::AssertSqlSafe(sql.clone())).fetch_all(&mut *conn).await.map_err(|e| e.to_string())?;
+                let rows = match sqlx::query(sqlx::AssertSqlSafe(sql.clone())).fetch_all(&mut *conn).await {
+                    Ok(r) => r,
+                    Err(e) if is_mysql_unprepared_error(&e.to_string()) => {
+                        // MySQL từ chối prepare một số lệnh (CREATE/DROP TRIGGER, PROCEDURE,
+                        // FUNCTION, EVENT...) -> chạy lại bằng text protocol.
+                        sqlx::raw_sql(sqlx::AssertSqlSafe(sql.clone()))
+                            .execute(&mut *conn)
+                            .await
+                            .map_err(|e| e.to_string())?;
+                        Vec::new()
+                    }
+                    Err(e) => return Err(e.to_string()),
+                };
                 let mut rows_json = Vec::new();
                 let mut columns = Vec::new();
                 if !rows.is_empty() {
@@ -3470,8 +3379,10 @@ pub async fn get_db_charsets(state: tauri::State<'_, crate::AppState>) -> Result
 pub fn open_url(url: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
+        // Tham số rỗng đầu tiên là TIÊU ĐỀ cửa sổ của `start`: thiếu nó thì đường dẫn
+        // có dấu cách (đã được bọc nháy) bị hiểu thành tiêu đề và không mở gì cả.
         std::process::Command::new("cmd")
-            .args(["/C", "start", &url])
+            .args(["/C", "start", "", &url])
             .spawn()
             .map_err(|e| e.to_string())?;
     }

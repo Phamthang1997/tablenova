@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useLayoutEffect, useRef } from 'react';
+import { clampMenu, type MenuRect } from '../utils/menuPosition';
 import { dbHelper } from '../utils/dbHelper';
 import type { SchemaInfo, ColumnInfo, GridChange } from '../utils/dbHelper';
 import {
@@ -6,8 +7,14 @@ import {
   CheckCircle2, AlertTriangle, Minus, Copy
 } from 'lucide-react';
 import { StructureViewer } from './StructureViewer';
-import { exportTableToFile, buildPreview, type ExportFormat } from '../utils/exportHelper';
 import { parseXlsx } from '../utils/xlsxReader';
+import { collectColumns, inferColType } from '../utils/importPreview';
+import { ProgressBar, type ProgressState } from './ProgressBar';
+import { ImportFilePicker } from './ImportFilePicker';
+import { ExportTableDialog } from './ExportTableDialog';
+
+/** Số dòng mỗi lô khi nhập dữ liệu vào bảng (để báo được tiến độ). */
+const IMPORT_BATCH_SIZE = 500;
 
 // Ký hiệu phím điều khiển theo nền tảng, để chỉ hiện đúng một phím tắt.
 const modKey = /Mac|iPod|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? '⌘' : 'Ctrl+';
@@ -208,6 +215,21 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
     colName: string; cellValue: any;
   } | null>(null);
 
+  // Vị trí menu chuột phải sau khi đo kích thước thật (tránh tràn khỏi cửa sổ)
+  const cellMenuRef = useRef<HTMLDivElement>(null);
+  const [cellMenuPos, setCellMenuPos] = useState<MenuRect | null>(null);
+
+  useLayoutEffect(() => {
+    if (!contextMenu) {
+      setCellMenuPos(null);
+      return;
+    }
+    const el = cellMenuRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setCellMenuPos(clampMenu(contextMenu.x, contextMenu.y, r.width, r.height, window.innerWidth, window.innerHeight));
+  }, [contextMenu]);
+
   // Quick Look Modal State
   const [quickLookCell, setQuickLookCell] = useState<{ colName: string; value: any } | null>(null);
 
@@ -220,72 +242,37 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
   const [pendingVisibleColumns, setPendingVisibleColumns] = useState<string[]>([]);
   const [showColumnsPopover, setShowColumnsPopover] = useState(false);
 
-  // Import/Export State
-  const [showExportDropdown, setShowExportDropdown] = useState(false);
-  const [showExportModal, setShowExportModal] = useState(false);
-  const [exportFormat, setExportFormat] = useState<ExportFormat>('csv');
-  const [previewText, setPreviewText] = useState('');
-  const [previewLoading, setPreviewLoading] = useState(false);
-  const [exportRows, setExportRows] = useState<any[]>([]); // toàn bộ dòng đã fetch để xuất file
+  // Export State — toàn bộ tuỳ chọn/preview nằm trong ExportTableDialog
+  const [showExportDialog, setShowExportDialog] = useState(false);
 
   // Import Preview State
+  const [importTab, setImportTab] = useState<'structure' | 'data'>('structure');
+  const [importProgress, setImportProgress] = useState<ProgressState | null>(null);
+  const [showImportPicker, setShowImportPicker] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [importFileName, setImportFileName] = useState('');
   const [importFileType, setImportFileType] = useState<'csv' | 'json' | 'sql'>('csv');
   const [importPendingRows, setImportPendingRows] = useState<any[]>([]);
   const [importSqlContent, setImportSqlContent] = useState('');
 
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  // Cột có trong tệp (gộp key của mọi dòng: CSV/JSON có thể thiếu cột ở một số dòng)
+  const importFileCols = React.useMemo(() => collectColumns(importPendingRows), [importPendingRows]);
 
-  // Khi mở modal (hoặc đổi sort/filter): fetch TOÀN BỘ dòng của bảng (tôn trọng sort/filter hiện tại) để xuất file.
-  // Data không phụ thuộc format nên chỉ fetch lại khi các yếu tố này đổi, không fetch lại khi đổi format.
-  useEffect(() => {
-    if (!showExportModal) return;
-    let cancelled = false;
-    setPreviewLoading(true);
-    (async () => {
-      // Lấy hết dòng: limit = tổng số dòng đã biết (fallback lớn nếu chưa biết).
-      const limit = totalCount && totalCount > 0 ? totalCount : 100000;
-      const data = await dbHelper.getTableData(tableName, 1, limit, sortBy, sortDir, activeFilter);
-      if (cancelled) return;
-      setExportRows(data.rows || []);
-      setPreviewLoading(false);
-    })();
-    return () => { cancelled = true; };
-  }, [showExportModal, tableName, sortBy, sortDir, activeFilter, totalCount]);
-
-  // Dựng lại preview khi đổi format hoặc khi dữ liệu xuất thay đổi.
-  useEffect(() => {
-    if (!showExportModal || previewLoading) return;
-    const colNames = columns.map((c) => c.name);
-    setPreviewText(buildPreview(exportFormat, tableName, colNames, exportRows, dbType));
-  }, [showExportModal, previewLoading, exportFormat, exportRows, columns, tableName, dbType]);
-
-  const handleExport = (format: ExportFormat) => {
-    setShowExportDropdown(false);
-    setExportFormat(format);
-    setShowExportModal(true);
-  };
-
-  const triggerFullDownload = () => {
-    try {
-      const colNames = columns.map((c) => c.name);
-      exportTableToFile(tableName, colNames, exportRows, exportFormat, dbType);
-      setSuccessMsg(`Đã xuất bảng "${tableName}" (${exportRows.length} dòng) sang ${exportFormat.toUpperCase()}.`);
-      setShowExportModal(false);
-    } catch (err: any) {
-      setErrorMsg('Lỗi xuất dữ liệu: ' + (err?.message || err));
-    }
-  };
+  // Cột trong tệp mà bảng đích không có -> nhập sẽ lỗi, cảnh báo trước.
+  const importUnknownCols = React.useMemo(() => {
+    if (columns.length === 0) return [];
+    const target = columns.map(c => c.name.toLowerCase());
+    return importFileCols.filter(c => !target.includes(c.toLowerCase()));
+  }, [importFileCols, columns]);
 
   const handleImportClick = () => {
-    fileInputRef.current?.click();
+    setShowImportPicker(true);
   };
 
-  const handleFileImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
+  // Nhận tệp từ ImportFilePicker (đã kiểm tra phần mở rộng ở đó) rồi parse để xem trước.
+  const handleFileImport = async (file: File) => {
+    setShowImportPicker(false);
+    setImportTab('structure');
     setImportFileName(file.name);
     setErrorMsg(null);
     setSuccessMsg(null);
@@ -302,7 +289,6 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
       } catch (err: any) {
         setErrorMsg('Lỗi đọc file: ' + err.message);
       }
-      e.target.value = '';
       return;
     }
 
@@ -354,7 +340,6 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
       }
     };
     reader.readAsText(file);
-    e.target.value = '';
   };
 
   const confirmImport = async () => {
@@ -362,10 +347,16 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
     setLoading(true);
     setErrorMsg(null);
     setSuccessMsg(null);
+    setImportProgress({
+      label: importFileType === 'sql'
+        ? 'Đang chạy câu lệnh SQL...'
+        : `Đang ghi ${importPendingRows.length} dòng vào bảng ${tableName}...`,
+    });
 
     try {
       if (importFileType === 'sql') {
         const res = await dbHelper.executeQuery(importSqlContent);
+        setImportProgress(null);
         setLoading(false);
         if (res.success) {
           setSuccessMsg('Đã thực thi câu lệnh SQL import thành công!');
@@ -374,16 +365,37 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
           setErrorMsg('Lỗi thực thi SQL: ' + res.error);
         }
       } else {
-        const resData = await dbHelper.importTableData(tableName, importPendingRows);
-        setLoading(false);
-        if (resData.success) {
-          setSuccessMsg(`Nhập thành công dữ liệu từ file!`);
-          fetchData();
-        } else {
-          setErrorMsg(resData.error || 'Import thất bại.');
+        // Ghi theo lô để báo được tiến độ thật (backend chèn từng dòng trong mỗi lô).
+        const total = importPendingRows.length;
+        let done = 0;
+        for (let i = 0; i < total; i += IMPORT_BATCH_SIZE) {
+          const batch = importPendingRows.slice(i, i + IMPORT_BATCH_SIZE);
+          const resData = await dbHelper.importTableData(tableName, batch);
+          if (!resData.success) {
+            setImportProgress(null);
+            setLoading(false);
+            setErrorMsg(
+              (resData.error || 'Import thất bại.') +
+              (done > 0 ? ` (đã ghi ${done}/${total} dòng trước khi lỗi)` : '')
+            );
+            fetchData();
+            return;
+          }
+          done += batch.length;
+          setImportProgress({
+            label: `Đang ghi vào bảng ${tableName}...`,
+            current: done,
+            total,
+            detail: `${done.toLocaleString()}/${total.toLocaleString()} dòng`,
+          });
         }
+        setImportProgress(null);
+        setLoading(false);
+        setSuccessMsg(`Đã nhập ${done} dòng từ tệp vào bảng "${tableName}".`);
+        fetchData();
       }
     } catch (err: any) {
+      setImportProgress(null);
       setLoading(false);
       setErrorMsg('Lỗi kết nối: ' + err.message);
     }
@@ -393,6 +405,15 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // Thông báo thành công tự ẩn. Các đường tự hẹn giờ (sao chép ô, lưu thay đổi...) vẫn ẩn sớm
+  // hơn theo timer của chúng; hiệu ứng này lo những đường không hẹn giờ — Export/Import gọi
+  // onSuccess từ dialog nên trước đây dải xanh treo lại mãi.
+  useEffect(() => {
+    if (!successMsg) return;
+    const t = setTimeout(() => setSuccessMsg(null), 5000);
+    return () => clearTimeout(t);
+  }, [successMsg]);
 
   // Fetch Table Schema (Metadata)
   const fetchSchema = useCallback(async () => {
@@ -1115,12 +1136,21 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
         </div>
       )}      {/* Commit/Discard buttons removed from here to prevent squeezing */}
 
+      {/* Tiến độ nhập dữ liệu — modal xem trước đã đóng nên báo ở dải thông báo của grid */}
+      {importProgress && (
+        <div className="info-bar" style={{ background: 'rgba(59, 130, 246, 0.1)', borderLeftColor: 'var(--win-accent)' }}>
+          <ProgressBar progress={importProgress} />
+        </div>
+      )}
+
       {successMsg && (
         <div className="info-bar" style={{ background: 'rgba(16, 185, 129, 0.1)', borderLeftColor: 'var(--st-ok)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <CheckCircle2 size={16} style={{ color: 'var(--st-ok)' }} />
             <span>{successMsg}</span>
           </div>
+          {/* Đóng tay được, không phải đợi hết 5 giây */}
+          <button onClick={() => setSuccessMsg(null)} style={{ background: 'transparent', border: 'none', color: 'inherit', cursor: 'pointer' }}>×</button>
         </div>
       )}
 
@@ -1539,65 +1569,23 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
               )}
             </div>
 
-            {/* Hidden Input for Import */}
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handleFileImport}
-              accept=".csv,.json,.sql,.xlsx"
-              style={{ display: 'none' }}
-            />
-
             <button
               className="gp-btn"
               onClick={handleImportClick}
               disabled={loading}
-              title="Nhập dữ liệu từ CSV/JSON/SQL"
+              title="Nhập dữ liệu từ CSV/JSON/XLSX/SQL"
             >
               Import
             </button>
 
-            <div style={{ position: 'relative' }}>
-              <button
-                className={`gp-btn ${showExportDropdown ? 'on' : ''}`}
-                onClick={() => setShowExportDropdown(!showExportDropdown)}
-                title="Xuất dữ liệu ra CSV/JSON/SQL/XLSX"
-              >
-                Export
-              </button>
-              {showExportDropdown && (
-                <div className="ws-menu" style={{
-                  position: 'absolute',
-                  bottom: '32px',
-                  right: 0,
-                  zIndex: 1000,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  width: '130px'
-                }}>
-                  {['CSV', 'JSON', 'SQL', 'XLSX'].map(fmt => (
-                    <button
-                      key={fmt}
-                      onClick={() => handleExport(fmt.toLowerCase() as any)}
-                      style={{
-                        background: 'transparent',
-                        border: 'none',
-                        color: 'var(--win-text-primary)',
-                        padding: '6px 12px',
-                        fontSize: '11px',
-                        textAlign: 'left',
-                        cursor: 'pointer',
-                        width: '100%',
-                        display: 'block'
-                      }}
-                      className="export-dropdown-item"
-                    >
-                      {fmt}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
+            <button
+              className="gp-btn"
+              onClick={() => setShowExportDialog(true)}
+              disabled={loading}
+              title="Xuất dữ liệu ra CSV/JSON/SQL/XLSX"
+            >
+              Export
+            </button>
 
             <button
               className={`gp-btn ${showFilterBar ? 'on' : ''}`}
@@ -1648,157 +1636,31 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
         )}
       </div>
 
-      {showExportModal && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          width: '100%',
-          height: '100%',
-          background: 'rgba(0,0,0,0.6)',
-          zIndex: 9999,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          backdropFilter: 'blur(2px)'
-        }}>
-          <div style={{
-            width: '640px',
-            background: 'var(--win-bg-card)',
-            border: '1px solid var(--win-border-strong, var(--win-border))',
-            borderRadius: '6px',
-            boxShadow: '0 20px 40px rgba(0,0,0,0.4)',
-            display: 'flex',
-            flexDirection: 'column',
-            overflow: 'hidden'
-          }}>
-            <div style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              padding: '12px 16px',
-              borderBottom: '1px solid var(--win-border)',
-              background: 'var(--win-bg-tab-bar, rgba(0,0,0,0.15))'
-            }}>
-              <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--win-text-primary)' }}>
-                Xuất dữ liệu & Xem trước - Bảng: {tableName}
-              </span>
-              <button
-                onClick={() => setShowExportModal(false)}
-                style={{ background: 'transparent', border: 'none', color: 'var(--win-text-secondary)', cursor: 'pointer', fontSize: '16px' }}
-              >
-                ×
-              </button>
-            </div>
+      {/* Xuất bảng: popup tuỳ chọn + xem trước, dùng chung với menu chuột phải ở Sidebar */}
+      <ExportTableDialog
+        open={showExportDialog}
+        tableName={tableName}
+        dbType={dbType}
+        grid={{
+          columns: columns.map((c) => c.name),
+          visibleColumns,
+          sortBy,
+          sortDir,
+          filter: activeFilter,
+          totalCount,
+        }}
+        onClose={() => setShowExportDialog(false)}
+        onSuccess={setSuccessMsg}
+        onError={setErrorMsg}
+      />
 
-            <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {/* Tab Selector */}
-              <div style={{ display: 'flex', gap: '4px', borderBottom: '1px solid var(--win-border)', paddingBottom: '8px' }}>
-                {(['csv', 'json', 'sql', 'xlsx'] as const).map(fmt => (
-                  <button
-                    key={fmt}
-                    onClick={() => setExportFormat(fmt)}
-                    style={{
-                      padding: '4px 12px',
-                      fontSize: '11px',
-                      borderRadius: '4px',
-                      border: '1px solid transparent',
-                      cursor: 'pointer',
-                      background: exportFormat === fmt ? 'var(--win-accent)' : 'transparent',
-                      color: exportFormat === fmt ? '#fff' : 'var(--win-text-secondary)',
-                      fontWeight: exportFormat === fmt ? 600 : 500
-                    }}
-                  >
-                    {fmt.toUpperCase()}
-                  </button>
-                ))}
-              </div>
-
-              {/* Preview Area */}
-              <div style={{ position: 'relative' }}>
-                <div style={{ fontSize: '10px', color: 'var(--win-text-secondary)', marginBottom: '6px', fontWeight: 600 }}>
-                  Xem trước 10 bản ghi đầu tiên:
-                </div>
-                {previewLoading ? (
-                  <div style={{
-                    height: '240px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    background: 'var(--win-bg-window)',
-                    border: '1px solid var(--win-border)',
-                    borderRadius: '4px',
-                    fontSize: '11px',
-                    color: 'var(--win-text-secondary)'
-                  }}>
-                    Đang tải dữ liệu xem trước...
-                  </div>
-                ) : exportFormat === 'xlsx' ? (
-                  <div
-                    style={{
-                      height: '240px',
-                      overflow: 'auto',
-                      background: 'var(--win-bg-window)',
-                      border: '1px solid var(--win-border)',
-                      borderRadius: '4px',
-                      padding: '8px',
-                      fontSize: '11px'
-                    }}
-                    dangerouslySetInnerHTML={{ __html: previewText }}
-                  />
-                ) : (
-                  <textarea
-                    readOnly
-                    value={previewText}
-                    style={{
-                      width: '100%',
-                      height: '240px',
-                      background: 'var(--win-bg-window)',
-                      border: '1px solid var(--win-border)',
-                      color: 'var(--win-text-primary)',
-                      fontFamily: 'monospace',
-                      fontSize: '11px',
-                      padding: '10px',
-                      borderRadius: '4px',
-                      resize: 'none',
-                      outline: 'none'
-                    }}
-                  />
-                )}
-              </div>
-            </div>
-
-            <div style={{
-              display: 'flex',
-              justifyContent: 'flex-end',
-              gap: '8px',
-              padding: '12px 16px',
-              borderTop: '1px solid var(--win-border)',
-              background: 'var(--win-bg-tab-bar, rgba(0,0,0,0.15))'
-            }}>
-              <button
-                className="btn btn-secondary"
-                onClick={() => {
-                  navigator.clipboard.writeText(previewText);
-                  alert('Đã sao chép nội dung xem trước vào bộ nhớ tạm!');
-                }}
-                disabled={previewLoading || !previewText}
-                style={{ padding: '0 12px' }}
-              >
-                Sao chép Preview
-              </button>
-              <button
-                className="btn btn-primary"
-                onClick={triggerFullDownload}
-                disabled={previewLoading}
-                style={{ padding: '0 16px', background: 'var(--win-accent)', color: '#fff', border: 'none' }}
-              >
-                Tải xuống tệp đầy đủ
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Popup chọn tệp: báo định dạng cho phép trước khi mở hộp thoại của hệ điều hành */}
+      <ImportFilePicker
+        open={showImportPicker}
+        targetTable={tableName}
+        onCancel={() => setShowImportPicker(false)}
+        onConfirm={handleFileImport}
+      />
 
       {showImportModal && (
         <div style={{
@@ -1849,8 +1711,8 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
                   <span>Định dạng SQL Script: Câu lệnh bên dưới sẽ được chạy trực tiếp trên database.</span>
                 ) : (
                   <span>
-                    Định dạng {importFileType.toUpperCase()}: Phát hiện <b>{importPendingRows.length} bản ghi</b>.
-                    Dưới đây là xem trước 5 bản ghi đầu tiên:
+                    Định dạng {importFileType.toUpperCase()}: phát hiện <b>{importPendingRows.length} bản ghi</b>,
+                    {' '}<b>{importFileCols.length} cột</b> — sẽ nhập vào bảng <b style={{ fontFamily: 'monospace' }}>{tableName}</b>.
                   </span>
                 )}
               </div>
@@ -1874,40 +1736,109 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
                   }}
                 />
               ) : (
-                <div style={{
-                  height: '280px',
-                  overflow: 'auto',
-                  border: '1px solid var(--win-border)',
-                  borderRadius: '4px',
-                  background: 'var(--win-bg-window)'
-                }}>
-                  {importPendingRows.length > 0 ? (
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
-                      <thead>
-                        <tr style={{ background: 'var(--win-bg-hover)', borderBottom: '1px solid var(--win-border)' }}>
-                          {Object.keys(importPendingRows[0]).map(col => (
-                            <th key={col} style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 600, borderRight: '1px solid var(--win-border)' }}>
-                              {col}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {importPendingRows.slice(0, 5).map((row, rIdx) => (
-                          <tr key={rIdx} style={{ borderBottom: '1px solid var(--win-border)' }}>
-                            {Object.keys(importPendingRows[0]).map(col => (
-                              <td key={col} style={{ padding: '6px 8px', color: 'var(--win-text-primary)', borderRight: '1px solid var(--win-border)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '180px' }}>
-                                {row[col] === null ? <span style={{ color: 'var(--win-text-disabled)', fontStyle: 'italic' }}>NULL</span> : String(row[col])}
-                              </td>
+                <>
+                  {/* Tab: cấu trúc (cột trong tệp vs bảng đích) | dữ liệu (10 dòng đầu) */}
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    {([
+                      { id: 'structure', label: `Cấu trúc (${importFileCols.length} cột)` },
+                      { id: 'data', label: `Dữ liệu (${importPendingRows.length} dòng)` },
+                    ] as const).map(t => (
+                      <button
+                        key={t.id}
+                        onClick={() => setImportTab(t.id)}
+                        style={{
+                          padding: '4px 12px',
+                          fontSize: '11px',
+                          borderRadius: '4px',
+                          border: '1px solid var(--win-border)',
+                          cursor: 'pointer',
+                          background: importTab === t.id ? 'var(--win-accent)' : 'transparent',
+                          color: importTab === t.id ? '#fff' : 'var(--win-text-secondary)',
+                          fontWeight: 600
+                        }}
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {importUnknownCols.length > 0 && (
+                    <div style={{
+                      fontSize: '11px',
+                      color: 'var(--st-warn, #d98600)',
+                      background: 'rgba(255,170,0,0.08)',
+                      border: '1px solid rgba(255,170,0,0.35)',
+                      borderRadius: '4px',
+                      padding: '8px 10px',
+                      lineHeight: 1.5
+                    }}>
+                      {importUnknownCols.length} cột trong tệp không có trong bảng
+                      {' '}<b style={{ fontFamily: 'monospace' }}>{tableName}</b>: {importUnknownCols.join(', ')} — các cột này sẽ khiến câu lệnh nhập lỗi.
+                    </div>
+                  )}
+
+                  <div style={{
+                    height: '280px',
+                    overflow: 'auto',
+                    border: '1px solid var(--win-border)',
+                    borderRadius: '4px',
+                    background: 'var(--win-bg-window)'
+                  }}>
+                    {importPendingRows.length === 0 ? (
+                      <div style={{ padding: '20px', textAlign: 'center', color: 'var(--win-text-disabled)' }}>Không có bản ghi nào.</div>
+                    ) : importTab === 'structure' ? (
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
+                        <thead>
+                          <tr style={{ background: 'var(--win-bg-hover)', borderBottom: '1px solid var(--win-border)' }}>
+                            {['Cột trong tệp', 'Kiểu suy ra', 'Cột ở bảng đích', 'Kiểu ở bảng đích'].map(h => (
+                              <th key={h} style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 600, borderRight: '1px solid var(--win-border)' }}>{h}</th>
                             ))}
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  ) : (
-                    <div style={{ padding: '20px', textAlign: 'center', color: 'var(--win-text-disabled)' }}>Không có bản ghi nào.</div>
-                  )}
-                </div>
+                        </thead>
+                        <tbody>
+                          {importFileCols.map(col => {
+                            const target = columns.find(c => c.name.toLowerCase() === col.toLowerCase());
+                            return (
+                              <tr key={col} style={{ borderBottom: '1px solid var(--win-border)' }}>
+                                <td style={{ padding: '6px 8px', borderRight: '1px solid var(--win-border)', fontFamily: 'monospace', color: 'var(--win-text-primary)' }}>{col}</td>
+                                <td style={{ padding: '6px 8px', borderRight: '1px solid var(--win-border)', color: 'var(--win-text-secondary)' }}>{inferColType(importPendingRows, col)}</td>
+                                <td style={{ padding: '6px 8px', borderRight: '1px solid var(--win-border)', color: target ? 'var(--win-text-primary)' : 'var(--st-warn, #d98600)' }}>
+                                  {target ? target.name : 'không có'}
+                                </td>
+                                <td style={{ padding: '6px 8px', color: 'var(--win-text-secondary)', fontFamily: 'monospace' }}>{target?.type || '—'}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
+                        <thead>
+                          <tr style={{ background: 'var(--win-bg-hover)', borderBottom: '1px solid var(--win-border)' }}>
+                            {importFileCols.map(col => (
+                              <th key={col} style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 600, borderRight: '1px solid var(--win-border)' }}>
+                                {col}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {importPendingRows.slice(0, 10).map((row, rIdx) => (
+                            <tr key={rIdx} style={{ borderBottom: '1px solid var(--win-border)' }}>
+                              {importFileCols.map(col => (
+                                <td key={col} style={{ padding: '6px 8px', color: 'var(--win-text-primary)', borderRight: '1px solid var(--win-border)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '180px' }}>
+                                  {row[col] === null || row[col] === undefined
+                                    ? <span style={{ color: 'var(--win-text-disabled)', fontStyle: 'italic' }}>NULL</span>
+                                    : String(row[col])}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                </>
               )}
             </div>
 
@@ -1941,11 +1872,15 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
       {/* ─── Right-Click Context Menu ─── */}
       {contextMenu && (
         <div
+          ref={cellMenuRef}
           onClick={e => e.stopPropagation()}
           style={{
             position: 'fixed',
-            top: Math.min(contextMenu.y, window.innerHeight - 320),
-            left: Math.min(contextMenu.x, window.innerWidth - 230),
+            // Vị trí chỉnh theo kích thước thật của menu (trước đây ước lượng cứng 320/230
+            // nên menu dài vẫn bị cắt ở đáy cửa sổ).
+            top: cellMenuPos ? cellMenuPos.top : contextMenu.y,
+            left: cellMenuPos ? cellMenuPos.left : contextMenu.x,
+            visibility: cellMenuPos ? 'visible' : 'hidden',
             zIndex: 99999,
             background: 'var(--win-bg-card)',
             border: '1px solid var(--win-border)',

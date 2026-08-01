@@ -1,0 +1,87 @@
+# Kế hoạch Thiết kế & Phát triển: Thống kê Tất cả Database của Kết nối (Server Databases Overview)
+
+Tải toàn bộ thông số tổng quan của **TẤT CẢ Database** trên máy chủ (PostgreSQL / MySQL / MariaDB / SQLite) hiện tại thay vì chỉ thống kê 1 database đơn lẻ.
+
+---
+
+## 🎯 Mục tiêu Tính năng
+
+1. **Tổng quan Máy chủ (Server Summary Card)**:
+   - Tổng dung lượng lưu trữ đang dùng của toàn bộ CSDL trên server (đơn vị MB/GB).
+   - Tổng số Database trên server.
+   - Tổng số Bảng (Tables) & Số dòng dữ liệu (Estimated Rows) toàn máy chủ.
+   - Đánh dấu phân loại Database hệ thống (`information_schema`, `sys`, `mysql`, `postgres`) với Database người dùng.
+
+2. **Bảng so sánh & Phân tích chi tiết từng Database**:
+   - Danh sách dạng bảng hỗ trợ Tìm kiếm & Sắp xếp theo: **Dung lượng (Size)**, **Số bảng (Tables)**, **Số dòng (Rows)**.
+   - Thanh tỉ lệ phần trăm dung lượng visual (Dung lượng DB / Tổng dung lượng máy chủ).
+   - Nút hành động nhanh **"Chuyển đến CSDL"** trực tiếp từ bảng thống kê.
+
+3. **Nút truy cập thuận tiện**:
+   - Tích hợp thêm nút bấm **"📊 Thống kê tất cả Database"** ngay trong Menu danh sách Database ở Sidebar (như ảnh người dùng cung cấp).
+   - Tích hợp nút xem trong `DatabaseInfoModal` để chuyển đổi linh hoạt giữa "Database hiện tại" và "Tất cả Database".
+
+---
+
+## 🏗️ Thiết kế Kỹ thuật (Technical Design)
+
+### 1. Backend (Rust - `src-tauri/src/db_stats.rs`)
+#### [MODIFY] [db_stats.rs](file:///c:/workspace/table/src-tauri/src/db_stats.rs)
+- Thêm command mới `get_all_databases_stats` trả về danh sách chỉ số của toàn bộ CSDL trên server trong 1 truy vấn duy nhất:
+  - **MySQL / MariaDB**:
+    ```sql
+    SELECT 
+        TABLE_SCHEMA AS db_name,
+        COUNT(TABLE_NAME) AS total_tables,
+        COALESCE(SUM(TABLE_ROWS), 0) AS total_rows,
+        COALESCE(SUM(DATA_LENGTH), 0) AS data_size_bytes,
+        COALESCE(SUM(INDEX_LENGTH), 0) AS index_size_bytes,
+        COALESCE(SUM(DATA_LENGTH + INDEX_LENGTH), 0) AS total_size_bytes
+    FROM information_schema.TABLES
+    GROUP BY TABLE_SCHEMA
+    ORDER BY total_size_bytes DESC;
+    ```
+  - **PostgreSQL**:
+    ```sql
+    SELECT 
+        d.datname AS db_name,
+        pg_database_size(d.datname) AS total_size_bytes
+    FROM pg_database d
+    WHERE d.datistemplate = false
+    ORDER BY total_size_bytes DESC;
+    ```
+  - **SQLite**: Trả về thống kê của file `.db` cục bộ hiện tại.
+
+- Đăng ký command `get_all_databases_stats` trong `src-tauri/src/lib.rs`.
+
+---
+
+### 2. Frontend Bridge & Helper (`src/utils/dbHelper.ts`)
+#### [MODIFY] [dbHelper.ts](file:///c:/workspace/table/src/utils/dbHelper.ts)
+- Định nghĩa type `AllDatabasesStatsItem` & `AllDatabasesStatsResponse`.
+- Thêm hàm `getAllDatabasesStats()` gọi command Tauri IPC.
+
+---
+
+### 3. Frontend UI Component (`src/components/DatabaseInfoModal.tsx` & `Sidebar.tsx`)
+#### [MODIFY] [DatabaseInfoModal.tsx](file:///c:/workspace/table/src/components/DatabaseInfoModal.tsx)
+- Tích hợp thêm thanh chuyển Tab (Segemented Tab) ở trên cùng:
+  - Tab 1: **"Database hiện tại (`sakila`)"** (danh sách chi tiết các bảng).
+  - Tab 2: **"Tất cả Database (`7 CSDL`)"** (thống kê tổng quan và bảng so sánh dung lượng).
+- Hiển thị danh sách các DB với thanh tiến trình % dung lượng trực quan, kèm nút **"Chuyển CSDL"**.
+
+#### [MODIFY] [Sidebar.tsx](file:///c:/workspace/table/src/components/Sidebar.tsx)
+- Thêm lối tắt **"📊 Thống kê tất cả database"** vào cuối dropdown danh sách Databases ở Sidebar Header.
+
+---
+
+## 📋 Kế hoạch Kiểm thử (Verification Plan)
+
+### Automated Checks
+- Chạy `cmd /c "npx oxlint"` kiểm tra cú pháp và rule lint.
+- Chạy `cmd /c "npx tsc -b"` kiểm tra type TypeScript.
+
+### Manual Verification
+- Mở kết nối MySQL / PostgreSQL có nhiều database.
+- Bấm nút **"Thống kê tất cả database"** từ menu Sidebar.
+- Kiểm tra tính chính xác của dung lượng, số bảng, số dòng và thử chuyển đổi database từ bảng thống kê.

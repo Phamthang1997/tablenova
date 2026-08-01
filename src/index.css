@@ -832,6 +832,54 @@ select.form-input {
   padding-left: 6px;
 }
 
+/* Nút icon trong tiêu đề nhóm ở sidebar (tạo mới / tải lại).
+   Mặc định chìm hẳn vào nền để không làm rối vùng tiêu đề, hover mới nổi khối. */
+.sidebar-section-btn {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--win-text-secondary);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.sidebar-section-btn:hover {
+  background: var(--win-bg-hover);
+  border-color: var(--win-border);
+  color: var(--win-text-primary);
+}
+/* Nút hành động chính (tạo mới) nhấn thêm màu accent khi hover/đang mở menu */
+.sidebar-section-btn.accent:hover,
+.sidebar-section-btn.is-active {
+  background: var(--win-accent-glow);
+  border-color: var(--win-accent);
+  color: var(--win-accent);
+}
+.sidebar-section-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.sidebar-section-btn:disabled:hover {
+  background: transparent;
+  border-color: transparent;
+  color: var(--win-text-secondary);
+}
+
+/* Vạch chia các nhóm trong mục CÔNG CỤ (chạy lệnh / xem cấu trúc / chuyển dữ liệu).
+   Mảnh và thụt lề theo item để phân nhóm mà không thêm tiêu đề con gây rối. */
+.sidebar-tools-sep {
+  height: 1px;
+  background: var(--win-border);
+  opacity: 0.7;
+  margin: 5px 8px;
+}
+
 .sidebar-list {
   display: flex;
   flex-direction: column;
@@ -4526,10 +4574,6 @@ select.form-input {
 
 .tab-context-menu .tab-context-menu-item { border-radius: 7px; }
 
-/* Mục trong dropdown Export cũng bo góc cho khớp .ws-menu */
-.export-dropdown-item { border-radius: 7px; }
-.export-dropdown-item:hover { background: var(--win-bg-hover); }
-
 
 /* =====================================================================
    Thanh lọc dữ liệu (Filters) — chuyển sang liquid glass, đồng bộ chiều cao.
@@ -4989,3 +5033,49 @@ select.form-input {
 }
 .tp-banner-close:hover { opacity: 1; background: rgba(255, 255, 255, 0.14); }
 
+
+/* =====================================================================
+   Thanh tiến độ Import/Export (ProgressBar.tsx) — <progress> native, tạo hình
+   lại cho khớp theme (dự án không dùng UI library nào). Bỏ thuộc tính value
+   thì phần tử ở trạng thái :indeterminate -> chạy vô định, dùng cho bước mà
+   backend làm trong một lần gọi nên không biết phần trăm.
+   ===================================================================== */
+.tn-progress {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border: none;
+  border-radius: 2px;
+  background: var(--win-bg-hover);
+  overflow: hidden;
+}
+
+.tn-progress::-webkit-progress-bar {
+  background: var(--win-bg-hover);
+  border-radius: 2px;
+}
+
+.tn-progress::-webkit-progress-value {
+  background: var(--win-accent);
+  border-radius: 2px;
+  transition: width 120ms linear;
+}
+
+/* Vô định: tự vẽ vệt chạy bằng background của chính phần tử */
+.tn-progress:indeterminate {
+  background:
+    linear-gradient(90deg, transparent 0%, var(--win-accent) 50%, transparent 100%)
+    no-repeat;
+  background-size: 40% 100%;
+  animation: tn-progress-slide 1.1s ease-in-out infinite;
+}
+
+.tn-progress:indeterminate::-webkit-progress-bar {
+  background: transparent;
+}
+
+@keyframes tn-progress-slide {
+  0%   { background-position: -40% 0; }
+  100% { background-position: 140% 0; }
+}

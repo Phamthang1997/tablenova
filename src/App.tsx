@@ -12,16 +12,31 @@ import { AiAssistant } from './components/AiAssistant';
 import { TerminalPanel } from './components/TerminalPanel';
 import { SchemaMigration } from './components/SchemaMigration';
 import { RedisBrowser } from './components/RedisBrowser';
-import { Bot, Database, Lock, LockOpen, X } from 'lucide-react';
+import { ImportFilePicker } from './components/ImportFilePicker';
+import { ExportTableDialog } from './components/ExportTableDialog';
+import { ExportDatabaseDialog } from './components/ExportDatabaseDialog';
+import type { DatabaseExportOptions } from './components/ExportDatabaseDialog';
+import { ImportDatabaseDialog } from './components/ImportDatabaseDialog';
+import { Bot, Lock, LockOpen, X } from 'lucide-react';
 import { getVersion } from '@tauri-apps/api/app';
 import { PostgresIcon, MySqlIcon, RedisIcon, SqliteIcon } from './components/DbIcons';
 import { dbHelper } from './utils/dbHelper';
 import type { DbConnectionConfig } from './utils/dbHelper';
 import { invalidateCatalog } from './sql/catalog';
 import { parseXlsx } from './utils/xlsxReader';
-import { exportSheetsToXlsx, exportTablesToJson, exportTablesToCsv } from './utils/exportHelper';
+import { collectColumns, inferColType } from './utils/importPreview';
+import { addExistsHint } from './utils/dumpPreview';
+import { ProgressBar, type ProgressState } from './components/ProgressBar';
+import { buildDatabaseFile, buildSql } from './utils/exportHelper';
+import { gzipText, openInFileManager, saveExportFile } from './utils/fileSave';
+import { ConfirmDialog } from './components/ConfirmDialog';
 import type { XlsxSheet } from './utils/xlsxWriter';
 import appIcon from './assets/icon.png';
+
+/** Số dòng mỗi lô khi nhập dữ liệu vào bảng có sẵn (để báo được tiến độ). */
+const IMPORT_BATCH_SIZE = 500;
+/** Số dòng mỗi lần đọc khi xuất nhiều bảng (để báo tiến độ và không giới hạn tổng số dòng). */
+const EXPORT_PAGE_SIZE = 2000;
 
 function parseCSV(text: string): string[][] {
   const result: string[][] = [];
@@ -90,19 +105,11 @@ export const App: React.FC = () => {
   const [readOnly, setReadOnly] = useState(false); // Chế độ chỉ đọc: chặn mọi thao tác ghi
   const [dbReloadKey, setDbReloadKey] = useState(0);
 
-  // Global Import/Export States
-  const [showGlobalExportModal, setShowGlobalExportModal] = useState(false);
-  const [globalExportTables, setGlobalExportTables] = useState<string[]>([]);
-  const [selectedExportTables, setSelectedExportTables] = useState<string[]>([]);
-  const [globalExportFormat, setGlobalExportFormat] = useState<'sql' | 'json' | 'csv' | 'xlsx'>('sql');
-  const [globalExportLoading, setGlobalExportLoading] = useState(false);
-
-  // Advanced SQL and Gzip options
-  const [globalExportFilename, setGlobalExportFilename] = useState('database_dump');
-  const [globalExportDropTable, setGlobalExportDropTable] = useState(true);
-  const [globalExportIncludeStructure, setGlobalExportIncludeStructure] = useState(true);
-  const [globalExportIncludeContent, setGlobalExportIncludeContent] = useState(true);
-  const [globalExportCompressGzip, setGlobalExportCompressGzip] = useState(false);
+  // Xuất/Nhập cả database (popup riêng, mở từ mục Công cụ ở Sidebar hoặc menu tiêu đề)
+  const [showExportDbDialog, setShowExportDbDialog] = useState(false);
+  const [showImportDbDialog, setShowImportDbDialog] = useState(false);
+  // Xuất một bảng (mở từ menu chuột phải ở Sidebar) — cùng popup với nút Export dưới grid
+  const [exportTableTarget, setExportTableTarget] = useState<string | null>(null);
 
   const [globalImportSqlMode, setGlobalImportSqlMode] = useState<'both' | 'structure' | 'data'>('both');
 
@@ -114,8 +121,18 @@ export const App: React.FC = () => {
   const [globalImportSqlContent, setGlobalImportSqlContent] = useState('');
   const [globalImportLoading, setGlobalImportLoading] = useState(false);
   const [globalImportTargetTable, setGlobalImportTargetTable] = useState<string | null>(null);
-  const [showBackupRestoreModal, setShowBackupRestoreModal] = useState(false);
+  const [globalImportTab, setGlobalImportTab] = useState<'structure' | 'data'>('structure');
+  const [globalImportProgress, setGlobalImportProgress] = useState<ProgressState | null>(null);
+  // Kết quả xuất tệp: hiện hộp thoại có nút mở thư mục chứa tệp
+  const [exportDone, setExportDone] = useState<
+    { message: string; path?: string; dir?: string; viaDownload: boolean } | null
+  >(null);
+  // Cột có trong tệp (gộp key của mọi dòng vì CSV/JSON có thể thiếu cột ở một số dòng)
+  const globalImportCols = React.useMemo(() => collectColumns(globalImportPendingRows), [globalImportPendingRows]);
   const [showDbInfoModal, setShowDbInfoModal] = useState(false);
+  // Tab mở sẵn của DatabaseInfoModal: 'current' khi vào từ "Thông tin Database",
+  // 'all' khi vào từ "Thống kê tất cả database" trong menu Databases.
+  const [dbInfoTab, setDbInfoTab] = useState<'current' | 'all'>('current');
   const [showSchemaMigration, setShowSchemaMigration] = useState(false);
   const [showSidebar, setShowSidebar] = useState(true);
   const [showAbout, setShowAbout] = useState(false);
@@ -126,87 +143,24 @@ export const App: React.FC = () => {
     getVersion().then(setAppVersion).catch(() => { });
   }, []);
   const [showShortcuts, setShowShortcuts] = useState(false);
-  const [backupRestoreTab, setBackupRestoreTab] = useState<'backup' | 'restore'>('backup');
-  const [restoreLoading, setRestoreLoading] = useState(false);
   const [activeConnectionColor, setActiveConnectionColor] = useState<string | undefined>(undefined);
-  const [restoreFile, setRestoreFile] = useState<File | null>(null);
-  const [restoreSqlText, setRestoreSqlText] = useState<string>('');
-  const [restoreParsedTables, setRestoreParsedTables] = useState<string[]>([]);
-  const [restoreSelectedTables, setRestoreSelectedTables] = useState<string[]>([]);
-  const [restoreParsing, setRestoreParsing] = useState(false);
 
-  React.useEffect(() => {
-    const parseTables = async () => {
-      if (!restoreFile) {
-        setRestoreParsedTables([]);
-        setRestoreSelectedTables([]);
-        setRestoreSqlText('');
-        return;
-      }
-      setRestoreParsing(true);
-      try {
-        const reader = new FileReader();
-        reader.onload = async (event) => {
-          try {
-            const text = event.target?.result as string;
-            setRestoreSqlText(text);
-
-            // Tìm danh sách bảng trực tiếp bằng javascript hoặc gọi Rust
-            const tables: string[] = [];
-            const re = /(?:CREATE\s+TABLE|INSERT\s+INTO|DROP\s+TABLE\s+IF\s+EXISTS)\s+(?:IF\s+NOT\s+EXISTS\s+)?[`"']?([a-zA-Z0-9_]+)[`"']?/gi;
-            let match;
-            while ((match = re.exec(text)) !== null) {
-              const table = match[1];
-              if (!tables.includes(table)) {
-                tables.push(table);
-              }
-            }
-            setRestoreParsedTables(tables);
-            setRestoreSelectedTables(tables);
-          } catch (e) {
-            console.error(e);
-          } finally {
-            setRestoreParsing(false);
-          }
-        };
-        reader.readAsText(restoreFile);
-      } catch (err: any) {
-        console.error('Lỗi phân tích file phục hồi:', err);
-        setRestoreParsing(false);
-      }
-    };
-    parseTables();
-  }, [restoreFile]);
-
-  const globalFileInputRef = React.useRef<HTMLInputElement>(null);
-
-  React.useEffect(() => {
-    if (!showGlobalExportModal) return;
-    const loadTables = async () => {
-      const list = await dbHelper.getTables();
-      const names = list.map(t => t.name);
-      setGlobalExportTables(names);
-      setSelectedExportTables(names);
-    };
-    loadTables();
-  }, [showGlobalExportModal]);
-
-
+  const [showGlobalImportPicker, setShowGlobalImportPicker] = useState(false);
 
   const handleImportToTableTrigger = (tableName: string) => {
     setGlobalImportTargetTable(tableName);
-    globalFileInputRef.current?.click();
+    setShowGlobalImportPicker(true);
   };
 
+  // Chuột phải > Xuất dữ liệu: mở đúng popup xuất-một-bảng như nút Export dưới grid.
   const handleExportTableTrigger = (tableName: string) => {
-    setSelectedExportTables([tableName]);
-    setShowGlobalExportModal(true);
+    setExportTableTarget(tableName);
   };
 
-  const handleGlobalFileImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
+  // Nhận tệp từ ImportFilePicker (đã kiểm tra phần mở rộng ở đó) rồi parse để xem trước.
+  const handleGlobalFileImport = async (file: File) => {
+    setShowGlobalImportPicker(false);
+    setGlobalImportTab('structure');
     setGlobalImportFileName(file.name);
     const guessedTableName = file.name.split('.')[0].replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
     setGlobalImportTableName(guessedTableName);
@@ -223,7 +177,6 @@ export const App: React.FC = () => {
       } catch (err: any) {
         alert('Lỗi đọc file: ' + err.message);
       }
-      e.target.value = '';
       return;
     }
 
@@ -275,65 +228,142 @@ export const App: React.FC = () => {
       }
     };
     reader.readAsText(file);
-    e.target.value = '';
   };
 
-  const handleGlobalExportSubmit = async () => {
-    if (selectedExportTables.length === 0) {
-      alert('Vui lòng chọn ít nhất một bảng để xuất.');
-      return;
-    }
-
-    setGlobalExportLoading(true);
+  // Trả về true nếu xuất xong -> ExportDatabaseDialog tự đóng.
+  const handleExportDatabase = async (opts: DatabaseExportOptions): Promise<boolean> => {
+    const { onProgress } = opts;
     try {
-      // Dữ liệu (XLSX/JSON/CSV): dựng file client-side, tải xuống — không đi qua backend (backend chỉ tạo SQL dump).
-      if (globalExportFormat !== 'sql') {
+      const totalTables = opts.tables.length;
+
+      /**
+       * Đọc hết dòng của một bảng theo trang.
+       * Tiến độ: mức ngoài là số bảng đã xong (cộng phần trăm của bảng đang chạy),
+       * dòng phụ là % dòng trong bảng đó.
+       */
+      const readTableRows = async (table: string, tableIndex: number): Promise<any[]> => {
+        const rows: any[] = [];
+        let page = 1;
+        let totalRows = 0;
+        for (;;) {
+          const data = await dbHelper.getTableData(table, page, EXPORT_PAGE_SIZE);
+          const batch = data.rows || [];
+          rows.push(...batch);
+          if (!totalRows && data.totalCount) totalRows = data.totalCount;
+          const inner = totalRows ? Math.min(1, rows.length / totalRows) : 0;
+          onProgress({
+            label: `Bảng ${tableIndex + 1}/${totalTables}: ${table}`,
+            current: tableIndex + inner,
+            total: totalTables,
+            detail: totalRows
+              ? `${rows.length.toLocaleString()}/${totalRows.toLocaleString()} dòng (${Math.round(inner * 100)}%)`
+              : `${rows.length.toLocaleString()} dòng`,
+          });
+          if (batch.length < EXPORT_PAGE_SIZE) break;
+          if (totalRows && rows.length >= totalRows) break;
+          page++;
+        }
+        return rows;
+      };
+
+      // Dữ liệu (XLSX/JSON/CSV): dựng file client-side.
+      if (opts.format !== 'sql') {
         const sheets: XlsxSheet[] = [];
-        for (const table of selectedExportTables) {
+        for (let i = 0; i < opts.tables.length; i++) {
+          const table = opts.tables[i];
           const schema = await dbHelper.getTableSchema(table);
-          const data = await dbHelper.getTableData(table, 1, 100000);
-          const rows = data.rows || [];
+          // Đọc theo trang: trước đây giới hạn 100.000 dòng nên bảng lớn bị xuất thiếu mà không báo.
+          const rows = await readTableRows(table, i);
           const colNames = (schema.columns || []).map(c => c.name);
           const finalCols = colNames.length ? colNames : (rows[0] ? Object.keys(rows[0]) : []);
           sheets.push({ name: table, colNames: finalCols, rows });
         }
-        if (globalExportFormat === 'xlsx') {
-          exportSheetsToXlsx(sheets, globalExportFilename);
-        } else if (globalExportFormat === 'json') {
-          exportTablesToJson(Object.fromEntries(sheets.map(s => [s.name, s.rows])), globalExportFilename);
-        } else {
-          exportTablesToCsv(sheets, globalExportFilename);
+        onProgress({ label: `Đang dựng tệp ${opts.format.toUpperCase()}...` });
+        const file = buildDatabaseFile(sheets, opts.format, opts.filename);
+        onProgress({ label: 'Đang ghi tệp...' });
+        const saved = await saveExportFile(opts.dir, file.name, file.data, file.mime);
+        onProgress(null);
+        setExportDone({
+          message: `Đã xuất ${sheets.length} bảng (${opts.format.toUpperCase()}) ra tệp ${file.name}.`,
+          path: saved.path,
+          dir: saved.dir,
+          viaDownload: saved.savedTo === 'download',
+        });
+        return true;
+      }
+
+      // SQL: dựng dump ngay ở frontend (dùng get_table_definition + get_table_data) để báo
+      // được tiến độ từng bảng. Backend export_multi_tables làm tất cả trong một lần gọi
+      // nên không báo được % — và nó ghi theo đường dẫn tương đối vào CWD của tiến trình.
+      const q = connection?.dbType === 'mysql' ? '`' : '"';
+      const parts: string[] = [
+        '-- Database Backup generated by TableNova',
+        `-- Date: ${new Date().toISOString()}`,
+        '',
+      ];
+
+      for (let i = 0; i < opts.tables.length; i++) {
+        const table = opts.tables[i];
+        onProgress({
+          label: `Bảng ${i + 1}/${totalTables}: ${table}`,
+          current: i,
+          total: totalTables,
+          detail: 'đang đọc cấu trúc...',
+        });
+
+        if (opts.sqlOptions.dropTable) {
+          parts.push(`DROP TABLE IF EXISTS ${q}${table}${q};`);
         }
-        alert(`Đã xuất ${sheets.length} bảng (${globalExportFormat.toUpperCase()})!`);
-        setShowGlobalExportModal(false);
-        setShowBackupRestoreModal(false);
-        setGlobalExportLoading(false);
-        return;
+        if (opts.sqlOptions.includeStructure) {
+          const def = await dbHelper.getTableDefinition(table);
+          if (def.success && def.sql) {
+            parts.push(`-- Structure for table ${q}${table}${q}`);
+            parts.push(def.sql.trim().endsWith(';') ? def.sql.trim() : def.sql.trim() + ';');
+          } else {
+            parts.push(`-- Không lấy được cấu trúc bảng ${q}${table}${q}: ${def.error || 'không rõ nguyên nhân'}`);
+          }
+          parts.push('');
+        }
+        if (opts.sqlOptions.includeContent) {
+          const rows = await readTableRows(table, i);
+          if (rows.length > 0) {
+            const schema = await dbHelper.getTableSchema(table);
+            const colNames = (schema.columns || []).map(c => c.name);
+            const cols = colNames.length ? colNames : Object.keys(rows[0]);
+            parts.push(`-- Data for table ${q}${table}${q} (${rows.length} dòng)`);
+            parts.push(buildSql(table, cols, rows, connection?.dbType || 'sqlite'));
+            parts.push('');
+          }
+        }
+        onProgress({ label: `Bảng ${i + 1}/${totalTables}: ${table}`, current: i + 1, total: totalTables, detail: 'xong' });
       }
 
-      const res = await dbHelper.exportMultiTables({
-        format: globalExportFormat,
-        tables: selectedExportTables,
-        filename: globalExportFilename,
-        sqlOptions: {
-          dropTable: globalExportDropTable,
-          includeStructure: globalExportIncludeStructure,
-          includeContent: globalExportIncludeContent
-        },
-        compressGzip: globalExportCompressGzip
+      const sqlText = parts.join('\n');
+      const ext = opts.compressGzip ? '.sql.gz' : '.sql';
+      const base = opts.filename.replace(/\.(sql|sql\.gz|gz)$/i, '');
+      const fileName = base + ext;
+
+      onProgress({ label: opts.compressGzip ? 'Đang nén tệp (gzip)...' : 'Đang ghi tệp...' });
+      const payload = opts.compressGzip ? await gzipText(sqlText) : sqlText;
+      const saved = await saveExportFile(
+        opts.dir,
+        fileName,
+        payload,
+        opts.compressGzip ? 'application/gzip' : 'text/plain;charset=utf-8'
+      );
+      onProgress(null);
+
+      setExportDone({
+        message: `Đã xuất ${opts.tables.length} bảng ra tệp SQL ${fileName}.`,
+        path: saved.path,
+        dir: saved.dir,
+        viaDownload: saved.savedTo === 'download',
       });
-
-      if (res.success) {
-        alert('Sao lưu cơ sở dữ liệu thành công!');
-        setShowGlobalExportModal(false);
-        setShowBackupRestoreModal(false);
-      } else {
-        alert('Lỗi xuất dữ liệu: ' + res.error);
-      }
+      return true;
     } catch (err: any) {
+      onProgress(null);
       alert('Lỗi xuất dữ liệu: ' + err.message);
-    } finally {
-      setGlobalExportLoading(false);
+      return false;
     }
   };
 
@@ -416,6 +446,11 @@ export const App: React.FC = () => {
 
     setShowGlobalImportModal(false);
     setGlobalImportLoading(true);
+    setGlobalImportProgress({
+      label: globalImportFileType === 'sql'
+        ? 'Đang chạy câu lệnh SQL...'
+        : `Đang ghi ${globalImportPendingRows.length} dòng...`,
+    });
 
     try {
       if (globalImportFileType === 'sql') {
@@ -437,21 +472,38 @@ export const App: React.FC = () => {
         } else {
           alert('Lỗi thực thi SQL: ' + res.error);
         }
-      } else {
-        const isExisting = !!globalImportTargetTable;
-        let resData;
-        if (isExisting) {
-          resData = await dbHelper.importTableData(globalImportTargetTable, globalImportPendingRows);
-        } else {
-          resData = await dbHelper.importNewTable(globalImportTableName, globalImportPendingRows);
-        }
-
-        if (resData.success) {
-          if (isExisting) {
-            alert(`Đã nhập thành công bản ghi vào bảng "${globalImportTargetTable}"!`);
-          } else {
-            alert(`Đã tạo bảng "${globalImportTableName}" và nhập thành công bản ghi!`);
+      } else if (globalImportTargetTable) {
+        // Bảng có sẵn: ghi theo lô để báo được tiến độ thật.
+        const table = globalImportTargetTable;
+        const total = globalImportPendingRows.length;
+        let done = 0;
+        let failed: string | null = null;
+        for (let i = 0; i < total; i += IMPORT_BATCH_SIZE) {
+          const batch = globalImportPendingRows.slice(i, i + IMPORT_BATCH_SIZE);
+          const resData = await dbHelper.importTableData(table, batch);
+          if (!resData.success) {
+            failed = resData.error || 'Import thất bại.';
+            break;
           }
+          done += batch.length;
+          setGlobalImportProgress({
+            label: `Đang ghi vào bảng ${table}...`,
+            current: done,
+            total,
+            detail: `${done.toLocaleString()}/${total.toLocaleString()} dòng`,
+          });
+        }
+        if (failed) {
+          alert(`Import thất bại: ${failed}${done > 0 ? ` (đã ghi ${done}/${total} dòng)` : ''}`);
+        } else {
+          alert(`Đã nhập ${done} dòng vào bảng "${table}".`);
+        }
+        window.dispatchEvent(new CustomEvent('database-restored'));
+      } else {
+        // Bảng mới: backend tạo bảng + chèn trong một lần gọi -> tiến độ vô định.
+        const resData = await dbHelper.importNewTable(globalImportTableName, globalImportPendingRows);
+        if (resData.success) {
+          alert(`Đã tạo bảng "${globalImportTableName}" và nhập thành công bản ghi!`);
           window.dispatchEvent(new CustomEvent('database-restored'));
         } else {
           alert('Import thất bại: ' + resData.error);
@@ -460,32 +512,60 @@ export const App: React.FC = () => {
     } catch (err: any) {
       alert('Lỗi kết nối: ' + err.message);
     } finally {
+      setGlobalImportProgress(null);
       setGlobalImportLoading(false);
     }
   };
 
-  const handleRestoreBackup = async () => {
-    if (!restoreFile || !restoreSqlText) return;
-    setRestoreLoading(true);
+  // Trả về true nếu nhập xong -> ImportDatabaseDialog tự đóng.
+  // targetDb: database đích lấy từ tệp hoặc do người dùng nhập; chưa tồn tại thì tạo mới.
+  const handleImportDatabase = async (
+    sqlText: string,
+    tables: string[],
+    targetDb: string,
+    onProgress?: (msg: { type: string; done?: number; total?: number }) => void
+  ): Promise<boolean> => {
     try {
-      const resData = await dbHelper.restoreBackup(restoreSqlText, restoreSelectedTables);
+      const wantDb = targetDb.trim();
+      const canManageDb = !!connection && connection.dbType !== 'sqlite';
+
+      if (canManageDb && wantDb && wantDb !== connection?.dbName) {
+        const list = await dbHelper.listDatabases();
+        const exists = (list.databases || []).some(d => d.toLowerCase() === wantDb.toLowerCase());
+
+        if (!exists) {
+          const created = await dbHelper.createDatabase({ name: wantDb });
+          if (!created.success) {
+            alert(`Không tạo được database "${wantDb}": ${created.error}`);
+            return false;
+          }
+        }
+
+        const switched = await dbHelper.switchDatabase(wantDb);
+        if (!switched.success) {
+          alert(`Không chuyển được sang database "${wantDb}": ${switched.error}`);
+          return false;
+        }
+        setConnection(prev => prev ? { ...prev, dbName: switched.database || wantDb } : null);
+        invalidateCatalog();
+      }
+
+      const resData = await dbHelper.restoreBackup(sqlText, tables, onProgress);
       if (resData.success) {
-        alert(`Khôi phục cơ sở dữ liệu thành công! Đã chạy ${resData.statementsCount || 0} câu lệnh SQL.`);
+        alert(`Nhập cơ sở dữ liệu thành công! Đã chạy ${resData.statementsCount || 0} câu lệnh SQL.`);
         if (resData.activeDatabase) {
           const activeDb = resData.activeDatabase;
           setConnection(prev => prev ? { ...prev, dbName: activeDb } : null);
         }
-        setShowBackupRestoreModal(false);
-        setRestoreFile(null);
-        setRestoreSqlText('');
+        invalidateCatalog();
         window.dispatchEvent(new CustomEvent('database-restored'));
-      } else {
-        alert('Khôi phục thất bại: ' + resData.error);
+        return true;
       }
+      alert('Nhập thất bại: ' + addExistsHint(resData.error || '', false));
+      return false;
     } catch (e: any) {
-      alert('Lỗi khôi phục: ' + e.message);
-    } finally {
-      setRestoreLoading(false);
+      alert('Lỗi nhập dữ liệu: ' + e.message);
+      return false;
     }
   };
 
@@ -865,7 +945,8 @@ export const App: React.FC = () => {
         onNewConnection={handleDisconnect}
         onDisconnect={handleDisconnect}
         onNewQuery={handleNewQueryTab}
-        onBackupRestore={() => setShowBackupRestoreModal(true)}
+        onExportDatabase={() => setShowExportDbDialog(true)}
+        onImportDatabase={() => setShowImportDbDialog(true)}
         onToggleSidebar={() => setShowSidebar(prev => !prev)}
         onToggleTheme={toggleTheme}
         onShowShortcuts={() => setShowShortcuts(true)}
@@ -896,8 +977,11 @@ export const App: React.FC = () => {
               activeTable={activeTable}
               onImportToTable={handleImportToTableTrigger}
               onExportTable={handleExportTableTrigger}
-              onBackupRestore={() => setShowBackupRestoreModal(true)}
-              onOpenDbInfo={() => setShowDbInfoModal(true)}
+              onExportDatabase={() => setShowExportDbDialog(true)}
+              onImportDatabase={() => setShowImportDbDialog(true)}
+              onImportNewTable={() => { setGlobalImportTargetTable(null); setShowGlobalImportPicker(true); }}
+              onOpenDbInfo={() => { setDbInfoTab('current'); setShowDbInfoModal(true); }}
+              onOpenAllDbStats={() => { setDbInfoTab('all'); setShowDbInfoModal(true); }}
               onSchemaMigration={() => setShowSchemaMigration(true)}
               onTableRenamed={handleTableRenamed}
               onTableDropped={handleTableDropped}
@@ -1019,222 +1103,90 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {/* Hidden input for global table imports */}
-      <input 
-        type="file" 
-        ref={globalFileInputRef} 
-        onChange={handleGlobalFileImport} 
-        accept=".csv,.json,.sql,.dump,.xlsx"
-        style={{ display: 'none' }} 
+      {/* Popup chọn tệp: báo định dạng cho phép trước khi mở hộp thoại của hệ điều hành */}
+      <ImportFilePicker
+        open={showGlobalImportPicker}
+        targetTable={globalImportTargetTable}
+        onCancel={() => setShowGlobalImportPicker(false)}
+        onConfirm={handleGlobalFileImport}
       />
 
-      {/* Global Export Multi-Table Modal */}
-      {showGlobalExportModal && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          width: '100%',
-          height: '100%',
-          background: 'rgba(0,0,0,0.6)',
-          zIndex: 9999,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          backdropFilter: 'blur(2px)'
-        }}>
-          <div style={{
-            width: '500px',
-            background: 'var(--win-bg-card)',
-            border: '1px solid var(--win-border-strong, var(--win-border))',
-            borderRadius: '6px',
-            boxShadow: '0 20px 40px rgba(0,0,0,0.4)',
-            display: 'flex',
-            flexDirection: 'column',
-            overflow: 'hidden'
-          }}>
-            <div style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              padding: '12px 16px',
-              borderBottom: '1px solid var(--win-border)',
-              background: 'var(--win-bg-tab-bar, rgba(0,0,0,0.15))'
-            }}>
-              <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--win-text-primary)' }}>
-                Xuất Cơ sở dữ liệu (Export Database)
-              </span>
-              <button 
-                onClick={() => setShowGlobalExportModal(false)}
-                style={{ background: 'transparent', border: 'none', color: 'var(--win-text-secondary)', cursor: 'pointer', fontSize: '16px' }}
-              >
-                ×
-              </button>
-            </div>
-
-            <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              <div className="form-group">
-                <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)', display: 'block', marginBottom: '6px' }}>
-                  Tên tệp xuất (File name):
-                </label>
-                <input
-                  type="text"
-                  className="form-input"
-                  value={globalExportFilename}
-                  onChange={(e) => setGlobalExportFilename(e.target.value)}
-                  style={{ height: '30px', fontSize: '11px', width: '100%' }}
-                />
-              </div>
-
-              <div>
-                <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)', display: 'block', marginBottom: '6px' }}>
-                  Định dạng xuất:
-                </label>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  {(['sql', 'json', 'csv', 'xlsx'] as const).map(fmt => (
-                    <button
-                      key={fmt}
-                      onClick={() => setGlobalExportFormat(fmt)}
-                      style={{
-                        padding: '6px 16px',
-                        fontSize: '11px',
-                        borderRadius: '4px',
-                        border: '1px solid var(--win-border)',
-                        cursor: 'pointer',
-                        background: globalExportFormat === fmt ? 'var(--win-accent)' : 'transparent',
-                        color: globalExportFormat === fmt ? '#fff' : 'var(--win-text-secondary)',
-                        fontWeight: 600
-                      }}
-                    >
-                      {fmt.toUpperCase()} {fmt === 'csv' ? '(ZIP)' : ''}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {globalExportFormat === 'sql' && (
-                <div style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '8px',
-                  padding: '10px',
-                  background: 'var(--win-bg-window)',
-                  border: '1px solid var(--win-border)',
-                  borderRadius: '4px'
-                }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}>
-                    <input 
-                      type="checkbox"
-                      checked={globalExportDropTable}
-                      onChange={(e) => setGlobalExportDropTable(e.target.checked)}
-                    />
-                    <span>Drop table if exists</span>
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}>
-                    <input 
-                      type="checkbox"
-                      checked={globalExportIncludeStructure}
-                      onChange={(e) => setGlobalExportIncludeStructure(e.target.checked)}
-                    />
-                    <span>Include table structure</span>
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}>
-                    <input 
-                      type="checkbox"
-                      checked={globalExportIncludeContent}
-                      onChange={(e) => setGlobalExportIncludeContent(e.target.checked)}
-                    />
-                    <span>Include table content</span>
-                  </label>
+      {/* Kết quả xuất tệp — cho mở luôn thư mục chứa tệp */}
+      <ConfirmDialog
+        open={!!exportDone}
+        tone="success"
+        title="Xuất dữ liệu xong"
+        message={
+          exportDone ? (
+            <>
+              {exportDone.message}
+              {exportDone.path && (
+                <div style={{ marginTop: '6px', fontFamily: 'monospace', wordBreak: 'break-all', color: 'var(--win-text-secondary)' }}>
+                  {exportDone.path}
                 </div>
               )}
+            </>
+          ) : null
+        }
+        note={exportDone?.viaDownload ? 'Tệp được tải qua WebView nên nằm ở thư mục tải xuống của hệ thống.' : undefined}
+        confirmLabel={exportDone?.dir ? 'Mở thư mục' : 'Đóng'}
+        cancelLabel="Đóng"
+        onCancel={() => setExportDone(null)}
+        onConfirm={() => {
+          const dir = exportDone?.dir;
+          setExportDone(null);
+          if (dir) openInFileManager(dir);
+        }}
+      />
 
-              <div>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}>
-                  <input 
-                    type="checkbox"
-                    checked={globalExportCompressGzip}
-                    onChange={(e) => setGlobalExportCompressGzip(e.target.checked)}
-                  />
-                  <span>Compress the file using Gzip</span>
-                </label>
-              </div>
-
-              <div>
-                <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)', display: 'block', marginBottom: '6px' }}>
-                  Chọn các bảng cần xuất:
-                </label>
-                <div style={{
-                  maxHeight: '150px',
-                  overflowY: 'auto',
-                  border: '1px solid var(--win-border)',
-                  borderRadius: '4px',
-                  background: 'var(--win-bg-window)',
-                  padding: '8px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '6px'
-                }}>
-                  {globalExportTables.length === 0 ? (
-                    <div style={{ fontSize: '11px', color: 'var(--win-text-disabled)' }}>Không có bảng nào.</div>
-                  ) : (
-                    <>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', paddingBottom: '6px', borderBottom: '1px solid var(--win-border)', marginBottom: '4px' }}>
-                        <input 
-                          type="checkbox"
-                          checked={selectedExportTables.length === globalExportTables.length}
-                          onChange={(e) => {
-                            if (e.target.checked) setSelectedExportTables([...globalExportTables]);
-                            else setSelectedExportTables([]);
-                          }}
-                        />
-                        <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-primary)' }}>Chọn tất cả</span>
-                      </div>
-                      {globalExportTables.map(name => (
-                        <label key={name} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}>
-                          <input 
-                            type="checkbox"
-                            checked={selectedExportTables.includes(name)}
-                            onChange={(e) => {
-                              if (e.target.checked) setSelectedExportTables([...selectedExportTables, name]);
-                              else setSelectedExportTables(selectedExportTables.filter(t => t !== name));
-                            }}
-                          />
-                          <span>{name}</span>
-                        </label>
-                      ))}
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div style={{
-              display: 'flex',
-              justifyContent: 'flex-end',
-              gap: '8px',
-              padding: '12px 16px',
-              borderTop: '1px solid var(--win-border)',
-              background: 'var(--win-bg-tab-bar, rgba(0,0,0,0.15))'
-            }}>
-              <button
-                className="btn btn-secondary"
-                onClick={() => setShowGlobalExportModal(false)}
-                
-              >
-                Hủy
-              </button>
-              <button
-                className="btn btn-primary"
-                onClick={handleGlobalExportSubmit}
-                disabled={globalExportLoading || selectedExportTables.length === 0}
-                style={{ background: 'var(--win-accent)', color: '#fff', border: 'none' }}
-              >
-                {globalExportLoading ? 'Đang xuất...' : 'Bắt đầu Xuất'}
-              </button>
-            </div>
-          </div>
+      {/* Tiến độ nhập dữ liệu vào bảng (modal xem trước đã đóng) */}
+      {globalImportProgress && (
+        <div style={{
+          position: 'fixed',
+          bottom: '16px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          zIndex: 10002,
+          width: '420px',
+          maxWidth: '90vw',
+          display: 'flex',
+          background: 'var(--win-bg-card)',
+          border: '1px solid var(--win-border-strong, var(--win-border))',
+          borderRadius: '6px',
+          boxShadow: '0 12px 30px rgba(0,0,0,0.4)',
+          padding: '10px 12px'
+        }}>
+          <ProgressBar progress={globalImportProgress} />
         </div>
+      )}
+
+      {/* Xuất cả database (Export Database) */}
+      <ExportDatabaseDialog
+        open={showExportDbDialog}
+        onClose={() => setShowExportDbDialog(false)}
+        onSubmit={handleExportDatabase}
+      />
+
+      {/* Nhập cả database từ tệp dump (Import Database) */}
+      <ImportDatabaseDialog
+        open={showImportDbDialog}
+        onClose={() => setShowImportDbDialog(false)}
+        currentDb={connection?.dbName}
+        canManageDatabases={!!connection && connection.dbType !== 'sqlite'}
+        dbType={connection?.dbType}
+        onSubmit={handleImportDatabase}
+      />
+
+      {/* Xuất một bảng — mở từ menu chuột phải ở Sidebar, cùng popup với nút Export dưới grid */}
+      {exportTableTarget && connection && (
+        <ExportTableDialog
+          open
+          tableName={exportTableTarget}
+          dbType={connection.dbType}
+          onClose={() => setExportTableTarget(null)}
+          onSuccess={(msg) => alert(msg)}
+          onError={(msg) => alert(msg)}
+        />
       )}
 
       {/* Global Import Table Modal (Import New Table) */}
@@ -1342,12 +1294,39 @@ export const App: React.FC = () => {
                     <span>SQL Script: Câu lệnh SQL sẽ chạy trực tiếp.</span>
                   ) : (
                     <span>
-                      Định dạng {globalImportFileType.toUpperCase()}: Phát hiện <b>{globalImportPendingRows.length} dòng dữ liệu</b>.
-                      Các cột: <b>{Object.keys(globalImportPendingRows[0] || {}).join(', ')}</b>.
+                      Định dạng {globalImportFileType.toUpperCase()}: phát hiện <b>{globalImportPendingRows.length} dòng</b>,
+                      {' '}<b>{globalImportCols.length} cột</b>.
                     </span>
                   )}
                 </span>
               </div>
+
+              {/* Tab xem trước: cấu trúc (cột + kiểu suy ra) | dữ liệu (10 dòng đầu) */}
+              {globalImportFileType !== 'sql' && (
+                <div style={{ display: 'flex', gap: '4px' }}>
+                  {([
+                    { id: 'structure', label: `Cấu trúc (${globalImportCols.length} cột)` },
+                    { id: 'data', label: `Dữ liệu (${globalImportPendingRows.length} dòng)` },
+                  ] as const).map(t => (
+                    <button
+                      key={t.id}
+                      onClick={() => setGlobalImportTab(t.id)}
+                      style={{
+                        padding: '4px 12px',
+                        fontSize: '11px',
+                        borderRadius: '4px',
+                        border: '1px solid var(--win-border)',
+                        cursor: 'pointer',
+                        background: globalImportTab === t.id ? 'var(--win-accent)' : 'transparent',
+                        color: globalImportTab === t.id ? '#fff' : 'var(--win-text-secondary)',
+                        fontWeight: 600
+                      }}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              )}
 
               {globalImportFileType === 'sql' ? (
                 <textarea
@@ -1374,11 +1353,35 @@ export const App: React.FC = () => {
                   borderRadius: '4px',
                   background: 'var(--win-bg-window)'
                 }}>
-                  {globalImportPendingRows.length > 0 ? (
+                  {globalImportPendingRows.length === 0 ? null : globalImportTab === 'structure' ? (
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
                       <thead>
                         <tr style={{ background: 'var(--win-bg-hover)', borderBottom: '1px solid var(--win-border)' }}>
-                          {Object.keys(globalImportPendingRows[0]).map(col => (
+                          {['Cột trong tệp', 'Kiểu suy ra', 'Ví dụ giá trị'].map(h => (
+                            <th key={h} style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 600, borderRight: '1px solid var(--win-border)' }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {globalImportCols.map(col => {
+                          const sample = globalImportPendingRows.find(r => r?.[col] !== null && r?.[col] !== undefined && r?.[col] !== '');
+                          return (
+                            <tr key={col} style={{ borderBottom: '1px solid var(--win-border)' }}>
+                              <td style={{ padding: '6px 8px', borderRight: '1px solid var(--win-border)', fontFamily: 'monospace', color: 'var(--win-text-primary)' }}>{col}</td>
+                              <td style={{ padding: '6px 8px', borderRight: '1px solid var(--win-border)', color: 'var(--win-text-secondary)' }}>{inferColType(globalImportPendingRows, col)}</td>
+                              <td style={{ padding: '6px 8px', color: 'var(--win-text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '260px' }}>
+                                {sample ? String(sample[col]) : '—'}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
+                      <thead>
+                        <tr style={{ background: 'var(--win-bg-hover)', borderBottom: '1px solid var(--win-border)' }}>
+                          {globalImportCols.map(col => (
                             <th key={col} style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 600, borderRight: '1px solid var(--win-border)' }}>
                               {col}
                             </th>
@@ -1386,18 +1389,20 @@ export const App: React.FC = () => {
                         </tr>
                       </thead>
                       <tbody>
-                        {globalImportPendingRows.slice(0, 5).map((row, rIdx) => (
+                        {globalImportPendingRows.slice(0, 10).map((row, rIdx) => (
                           <tr key={rIdx} style={{ borderBottom: '1px solid var(--win-border)' }}>
-                            {Object.keys(globalImportPendingRows[0]).map(col => (
+                            {globalImportCols.map(col => (
                               <td key={col} style={{ padding: '6px 8px', color: 'var(--win-text-primary)', borderRight: '1px solid var(--win-border)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '160px' }}>
-                                {row[col] === null ? <span style={{ color: 'var(--win-text-disabled)', fontStyle: 'italic' }}>NULL</span> : String(row[col])}
+                                {row[col] === null || row[col] === undefined
+                                  ? <span style={{ color: 'var(--win-text-disabled)', fontStyle: 'italic' }}>NULL</span>
+                                  : String(row[col])}
                               </td>
                             ))}
                           </tr>
                         ))}
                       </tbody>
                     </table>
-                  ) : null}
+                  )}
                 </div>
               )}
             </div>
@@ -1435,6 +1440,8 @@ export const App: React.FC = () => {
         isOpen={showDbInfoModal}
         onClose={() => setShowDbInfoModal(false)}
         onSelectTable={(tableName) => handleSelectTable(tableName)}
+        initialTab={dbInfoTab}
+        onDatabaseChanged={handleDatabaseChanged}
       />
 
       {/* Diff Schema & Migration Modal */}
@@ -1444,275 +1451,6 @@ export const App: React.FC = () => {
           database={connection.dbName}
           onClose={() => setShowSchemaMigration(false)}
         />
-      )}
-
-      {/* Backup & Restore Modal */}
-      {showBackupRestoreModal && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          width: '100%',
-          height: '100%',
-          background: 'rgba(0,0,0,0.6)',
-          zIndex: 9999,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          backdropFilter: 'blur(2px)'
-        }}>
-          <div style={{
-            width: '500px',
-            background: 'var(--win-bg-card)',
-            border: '1px solid var(--win-border-strong, var(--win-border))',
-            borderRadius: '6px',
-            boxShadow: '0 20px 40px rgba(0,0,0,0.4)',
-            display: 'flex',
-            flexDirection: 'column',
-            overflow: 'hidden'
-          }}>
-            <div style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              padding: '12px 16px',
-              borderBottom: '1px solid var(--win-border)',
-              background: 'var(--win-bg-tab-bar, rgba(0,0,0,0.15))'
-            }}>
-              <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--win-text-primary)' }}>
-                Sao lưu & Phục hồi (Backup & Restore)
-              </span>
-              <button 
-                onClick={() => setShowBackupRestoreModal(false)}
-                style={{ background: 'transparent', border: 'none', color: 'var(--win-text-secondary)', cursor: 'pointer', fontSize: '16px' }}
-              >
-                ×
-              </button>
-            </div>
-
-            {/* Modal Tabs */}
-            <div style={{
-              display: 'flex',
-              background: 'var(--win-bg-tab-bar, rgba(0,0,0,0.05))',
-              borderBottom: '1px solid var(--win-border)'
-            }}>
-              <button
-                onClick={() => setBackupRestoreTab('backup')}
-                style={{
-                  flex: 1,
-                  padding: '10px',
-                  border: 'none',
-                  background: backupRestoreTab === 'backup' ? 'var(--win-bg-card)' : 'transparent',
-                  color: backupRestoreTab === 'backup' ? 'var(--win-accent)' : 'var(--win-text-secondary)',
-                  fontWeight: 600,
-                  fontSize: '11px',
-                  cursor: 'pointer'
-                }}
-              >
-                Tạo bản sao lưu (Backup)
-              </button>
-              <button
-                onClick={() => setBackupRestoreTab('restore')}
-                style={{
-                  flex: 1,
-                  padding: '10px',
-                  border: 'none',
-                  background: backupRestoreTab === 'restore' ? 'var(--win-bg-card)' : 'transparent',
-                  color: backupRestoreTab === 'restore' ? 'var(--win-accent)' : 'var(--win-text-secondary)',
-                  fontWeight: 600,
-                  fontSize: '11px',
-                  cursor: 'pointer'
-                }}
-              >
-                Khôi phục dữ liệu (Restore)
-              </button>
-            </div>
-
-            <div style={{ padding: '16px' }}>
-              {backupRestoreTab === 'backup' ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  <div className="form-group">
-                    <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)', display: 'block', marginBottom: '6px' }}>
-                      Tên tệp sao lưu (Backup Name):
-                    </label>
-                    <input
-                      type="text"
-                      className="form-input"
-                      value={globalExportFilename}
-                      onChange={(e) => setGlobalExportFilename(e.target.value)}
-                      style={{ height: '30px', fontSize: '11px', width: '100%' }}
-                    />
-                  </div>
-
-                  <div style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '8px',
-                    padding: '10px',
-                    background: 'var(--win-bg-window)',
-                    border: '1px solid var(--win-border)',
-                    borderRadius: '4px'
-                  }}>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}>
-                      <input 
-                        type="checkbox"
-                        checked={globalExportDropTable}
-                        onChange={(e) => setGlobalExportDropTable(e.target.checked)}
-                      />
-                      <span>Drop table if exists</span>
-                    </label>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}>
-                      <input 
-                        type="checkbox"
-                        checked={globalExportIncludeStructure}
-                        onChange={(e) => setGlobalExportIncludeStructure(e.target.checked)}
-                      />
-                      <span>Include table structure</span>
-                    </label>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}>
-                      <input 
-                        type="checkbox"
-                        checked={globalExportIncludeContent}
-                        onChange={(e) => setGlobalExportIncludeContent(e.target.checked)}
-                      />
-                      <span>Include table content</span>
-                    </label>
-                  </div>
-
-                  <div>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}>
-                      <input 
-                        type="checkbox"
-                        checked={globalExportCompressGzip}
-                        onChange={(e) => setGlobalExportCompressGzip(e.target.checked)}
-                      />
-                      <span>Nén tệp sao lưu bằng Gzip (.sql.gz)</span>
-                    </label>
-                  </div>
-
-                  <button
-                    className="btn btn-primary"
-                    disabled={globalExportLoading}
-                    onClick={async () => {
-                      const list = await dbHelper.getTables();
-                      setSelectedExportTables(list.map(t => t.name));
-                      setGlobalExportFormat('sql');
-                      handleGlobalExportSubmit();
-                    }}
-                    style={{ height: '32px', fontSize: '11px', background: 'var(--win-accent)', color: '#fff', border: 'none', fontWeight: 600, borderRadius: '4px', marginTop: '8px' }}
-                  >
-                    {globalExportLoading ? 'Đang tạo bản sao lưu...' : 'Tạo bản Sao lưu'}
-                  </button>
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  {!restoreFile ? (
-                    <div style={{
-                      border: '2px dashed var(--win-border)',
-                      borderRadius: '6px',
-                      padding: '24px',
-                      textAlign: 'center',
-                      background: 'var(--win-bg-window)'
-                    }}>
-                      <input 
-                        type="file" 
-                        accept=".sql,.dump,.gz" 
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) setRestoreFile(file);
-                        }} 
-                        style={{ display: 'none' }}
-                        id="backup-file-upload"
-                      />
-                      <label 
-                        htmlFor="backup-file-upload" 
-                        style={{ cursor: 'pointer', display: 'block' }}
-                      >
-                        <Database size={32} style={{ color: 'var(--win-accent)', marginBottom: '8px' }} />
-                        <span style={{ fontSize: '11px', color: 'var(--win-text-primary)', display: 'block' }}>
-                          Nhấp vào đây để chọn tệp .sql hoặc .sql.gz
-                        </span>
-                        <span style={{ fontSize: '10px', color: 'var(--win-text-secondary)', display: 'block', marginTop: '4px' }}>
-                          Hỗ trợ khôi phục tự động qua định dạng SQL nén
-                        </span>
-                      </label>
-                    </div>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--win-bg-window)', border: '1px solid var(--win-border)', borderRadius: '4px', padding: '8px 12px' }}>
-                        <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-primary)' }}>{restoreFile.name}</span>
-                        <button
-                          type="button"
-                          onClick={() => setRestoreFile(null)}
-                          style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--st-danger)', fontSize: '11px' }}
-                        >
-                          Xóa
-                        </button>
-                      </div>
-
-                      {restoreParsing && (
-                        <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>
-                          Đang đọc danh sách bảng từ file...
-                        </div>
-                      )}
-
-                      {restoreParsedTables.length > 0 && (
-                        <div style={{ border: '1px solid var(--win-border)', borderRadius: '4px', padding: '10px', background: 'rgba(0,0,0,0.1)' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', borderBottom: '1px solid var(--win-border)', paddingBottom: '4px' }}>
-                            <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-primary)' }}>Chọn bảng muốn import ({restoreSelectedTables.length}/{restoreParsedTables.length})</span>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (restoreSelectedTables.length === restoreParsedTables.length) {
-                                  setRestoreSelectedTables([]);
-                                } else {
-                                  setRestoreSelectedTables([...restoreParsedTables]);
-                                }
-                              }}
-                              style={{ padding: '2px 6px', fontSize: '9px', cursor: 'pointer', background: 'var(--win-bg-card)', border: '1px solid var(--win-border)', borderRadius: '3px', color: 'var(--win-text-primary)' }}
-                            >
-                              {restoreSelectedTables.length === restoreParsedTables.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
-                            </button>
-                          </div>
-                          <div style={{ maxHeight: '120px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                            {restoreParsedTables.map(t => {
-                              const isChecked = restoreSelectedTables.includes(t);
-                              return (
-                                <label key={t} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}>
-                                  <input
-                                    type="checkbox"
-                                    checked={isChecked}
-                                    onChange={() => {
-                                      if (isChecked) {
-                                        setRestoreSelectedTables(restoreSelectedTables.filter(x => x !== t));
-                                      } else {
-                                        setRestoreSelectedTables([...restoreSelectedTables, t]);
-                                      }
-                                    }}
-                                  />
-                                  <span>{t}</span>
-                                </label>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
-
-                      <button
-                        className="btn btn-primary"
-                        onClick={handleRestoreBackup}
-                        disabled={restoreLoading || (restoreParsedTables.length > 0 && restoreSelectedTables.length === 0)}
-                        style={{ height: '32px', fontSize: '11px', background: 'var(--win-accent)', color: '#fff', border: 'none', fontWeight: 600, borderRadius: '4px', marginTop: '6px' }}
-                      >
-                        {restoreLoading ? 'Đang khôi phục dữ liệu...' : 'Bắt đầu Khôi phục (Restore)'}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
       )}
 
       {/* About Modal */}
