@@ -1173,56 +1173,133 @@ pub async fn execute_query(state: tauri::State<'_, crate::AppState>, sql: String
     Ok(json!({ "success": true, "results": results }))
 }
 
-// Tách một chuỗi SQL nhiều câu lệnh thành từng câu (nhận biết chuỗi trích dẫn và comment để không cắt nhầm dấu ;)
+// Dòng này có phải lệnh `DELIMITER <token>` của client mysql? Trả về token mới.
+// Dùng `get(..9)` chứ không `[..9]`: cắt theo byte giữa một ký tự nhiều byte (tiếng Việt...)
+// sẽ panic, còn `get` trả None.
+fn delimiter_token_of_line(line: &str) -> Option<&str> {
+    let t = line.trim_start_matches([' ', '\t']);
+    if !t.get(..9)?.eq_ignore_ascii_case("DELIMITER") { return None; }
+    let rest = &t[9..];
+    if !rest.starts_with([' ', '\t']) { return None; }
+    let token = rest.trim(); // trim cắt luôn '\r' của file CRLF
+    if token.is_empty() || token.contains(char::is_whitespace) { return None; }
+    Some(token)
+}
+
+// Đọc lệnh DELIMITER tại đầu dòng `i` (chỉ mục ký tự trong `chars`).
+// Trả về (token mới, chỉ mục ngay sau dòng đó). Lệnh này KHÔNG phải SQL: gửi xuống server sẽ lỗi.
+fn read_delimiter_command(chars: &[char], i: usize) -> Option<(String, usize)> {
+    let line_end = chars[i..].iter().position(|&c| c == '\n').map(|p| i + p).unwrap_or(chars.len());
+    let line: String = chars[i..line_end].iter().collect();
+    let token = delimiter_token_of_line(&line)?.to_string();
+    let next = if line_end < chars.len() { line_end + 1 } else { chars.len() };
+    Some((token, next))
+}
+
+// `chars[i..]` có khớp đúng dấu kết thúc câu đang dùng?
+fn matches_delimiter(chars: &[char], i: usize, delim: &[char]) -> bool {
+    if i + delim.len() > chars.len() { return false; }
+    chars[i..i + delim.len()] == *delim
+}
+
+// Tách một chuỗi SQL nhiều câu lệnh thành từng câu. Nhận biết:
+//   - chuỗi trích dẫn ('..', "..", `..`) và escape bằng '\'
+//   - comment `-- ...`, `# ...`, `/* ... */`
+//   - khối dollar-quote của Postgres ($$ ... $$, $tag$ ... $tag$) — thân function chứa dấu ';'
+//   - lệnh DELIMITER của MySQL — đổi dấu kết thúc câu để viết được thân trigger/procedure
+// Nếu không xử lý 2 mục cuối, một file có function/trigger sẽ bị cắt giữa thân hàm và có thể
+// chạy nhầm một câu nằm bên trong nó.
 fn split_sql_statements(sql: &str) -> Vec<String> {
+    let chars: Vec<char> = sql.chars().collect();
+    let n = chars.len();
+    // `DELIMITER` chỉ có ở script MySQL; ở đó '$$' là dấu kết thúc câu chứ không phải dollar-quote.
+    let mysql_script = sql.lines().any(|l| delimiter_token_of_line(l).is_some());
+
     let mut out: Vec<String> = Vec::new();
-    let mut cur = String::new();
-    let (mut sq, mut dq, mut bt) = (false, false, false);
-    let (mut line_c, mut block_c) = (false, false);
-    let mut esc = false;
-    let mut it = sql.chars().peekable();
+    let mut delim: Vec<char> = vec![';'];
+    let mut start = 0usize; // đầu câu lệnh đang gom
+    let mut at_line_start = true;
+    let mut i = 0usize;
 
-    while let Some(c) = it.next() {
-        cur.push(c);
-        if line_c {
-            if c == '\n' { line_c = false; }
+    let push_stmt = |out: &mut Vec<String>, from: usize, to: usize| {
+        let s: String = chars[from..to].iter().collect();
+        let s = s.trim().to_string();
+        if !s.is_empty() { out.push(s); }
+    };
+
+    while i < n {
+        let c = chars[i];
+        let peek = if i + 1 < n { Some(chars[i + 1]) } else { None };
+
+        // Comment dòng: -- ... | # ...  ('#>' và '#-' là toán tử jsonb của Postgres, không phải comment)
+        if (c == '-' && peek == Some('-')) || (c == '#' && !matches!(peek, Some('>') | Some('-'))) {
+            while i < n && chars[i] != '\n' { i += 1; }
+            at_line_start = true;
+            i += 1; // bỏ qua '\n'
             continue;
         }
-        if block_c {
-            if c == '*' && it.peek() == Some(&'/') {
-                if let Some(n) = it.next() { cur.push(n); }
-                block_c = false;
+        // Comment khối: /* ... */
+        if c == '/' && peek == Some('*') {
+            i += 2;
+            while i + 1 < n && !(chars[i] == '*' && chars[i + 1] == '/') { i += 1; }
+            i = (i + 2).min(n);
+            at_line_start = false;
+            continue;
+        }
+        // Chuỗi / identifier có dấu: bỏ qua nguyên khối (kể cả escape \' và '' )
+        if c == '\'' || c == '"' || c == '`' {
+            let quote = c;
+            i += 1;
+            while i < n {
+                if chars[i] == '\\' && quote != '`' { i += 2; continue; }
+                if chars[i] == quote {
+                    if quote == '\'' && i + 1 < n && chars[i + 1] == '\'' { i += 2; continue; }
+                    i += 1;
+                    break;
+                }
+                i += 1;
             }
+            at_line_start = false;
             continue;
         }
-        if esc { esc = false; continue; }
-        if (sq || dq) && c == '\\' { esc = true; continue; }
-
-        if !sq && !dq && !bt {
-            if c == '-' && it.peek() == Some(&'-') { line_c = true; continue; }
-            if c == '#' { line_c = true; continue; }
-            if c == '/' && it.peek() == Some(&'*') {
-                if let Some(n) = it.next() { cur.push(n); }
-                block_c = true;
+        // Khối dollar-quote của Postgres: $$ ... $$ hoặc $tag$ ... $tag$ (không phải $1, ${x})
+        if !mysql_script && c == '$' {
+            let mut j = i + 1;
+            while j < n && (chars[j].is_ascii_alphanumeric() || chars[j] == '_') { j += 1; }
+            if j < n && chars[j] == '$' && (j == i + 1 || chars[i + 1].is_ascii_alphabetic() || chars[i + 1] == '_') {
+                let tag: Vec<char> = chars[i..=j].to_vec();
+                let mut k = j + 1;
+                while k < n && !matches_delimiter(&chars, k, &tag) { k += 1; }
+                i = if k < n { k + tag.len() } else { n };
+                at_line_start = false;
                 continue;
             }
         }
-
-        match c {
-            '\'' if !dq && !bt => sq = !sq,
-            '"' if !sq && !bt => dq = !dq,
-            '`' if !sq && !dq => bt = !bt,
-            ';' if !sq && !dq && !bt => {
-                cur.pop(); // bỏ dấu ';'
-                let s = cur.trim().to_string();
-                if !s.is_empty() { out.push(s); }
-                cur.clear();
+        // Lệnh DELIMITER (đầu dòng): đổi dấu kết thúc câu, bản thân dòng đó không phải câu lệnh
+        if at_line_start {
+            if let Some((token, next)) = read_delimiter_command(&chars, i) {
+                push_stmt(&mut out, start, i);
+                delim = token.chars().collect();
+                start = next;
+                i = next;
+                at_line_start = true;
+                continue;
             }
-            _ => {}
         }
+        // Dấu kết thúc câu đang hiệu lực
+        if matches_delimiter(&chars, i, &delim) {
+            push_stmt(&mut out, start, i);
+            i += delim.len();
+            start = i;
+            at_line_start = false;
+            continue;
+        }
+
+        at_line_start = c == '\n';
+        i += 1;
     }
-    let s = cur.trim().to_string();
-    if !s.is_empty() { out.push(s); }
+
+    push_stmt(&mut out, start, n);
     out
 }
 

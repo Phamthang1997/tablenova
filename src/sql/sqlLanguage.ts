@@ -3,7 +3,7 @@
 // thật (bảng/cột+kiểu, alias-scope) qua completionService.
 import * as monaco from 'monaco-editor';
 import { setupLanguageFeatures, LanguageIdEnum, EntityContextType } from 'monaco-sql-languages';
-import type { CompletionService, ICompletionItem } from 'monaco-sql-languages';
+import type { CompletionService, ICompletionItem, CompletionSnippet } from 'monaco-sql-languages';
 import 'monaco-sql-languages/esm/languages/mysql/mysql.contribution';
 import 'monaco-sql-languages/esm/languages/pgsql/pgsql.contribution';
 import 'monaco-sql-languages/esm/languages/generic/generic.contribution';
@@ -11,6 +11,15 @@ import * as catalog from './catalog';
 import { bumpUsage, rankSort } from './usageStats';
 
 const BUMP_CMD = 'tablenova.bumpUsage';
+
+// Từ khoá dùng thường xuyên nhất -> ưu tiên hiển thị trước các từ khoá lạ.
+const COMMON_KEYWORDS = new Set([
+  'SELECT', 'FROM', 'WHERE', 'JOIN', 'LEFT JOIN', 'INNER JOIN', 'RIGHT JOIN', 'ON',
+  'GROUP BY', 'ORDER BY', 'HAVING', 'LIMIT', 'OFFSET', 'INSERT', 'INSERT INTO',
+  'UPDATE', 'DELETE', 'SET', 'VALUES', 'AND', 'OR', 'NOT', 'IN', 'LIKE', 'AS',
+  'DISTINCT', 'COUNT', 'SUM', 'AVG', 'MIN', 'MAX', 'CASE', 'WHEN', 'THEN', 'ELSE',
+  'END', 'WITH', 'UNION', 'IS NULL', 'IS NOT NULL', 'ASC', 'DESC', 'BETWEEN', 'EXISTS',
+]);
 // Lệnh chạy sau khi chọn 1 item -> tăng tần suất dùng của tên đó
 const bumpCommand = (name: string) => ({ id: BUMP_CMD, title: '', arguments: [name] });
 
@@ -19,6 +28,9 @@ export function langIdForDbType(dbType: string): string {
   if (dbType === 'mysql') return LanguageIdEnum.MYSQL;
   return LanguageIdEnum.GENERIC; // sqlite: dùng grammar SQL chung (sát hơn MySQL-mode)
 }
+
+// Mọi language id mà editor SQL có thể dùng (để đăng ký hover/format cho đủ 3 dialect).
+export const LANG_IDS: string[] = [LanguageIdEnum.MYSQL, LanguageIdEnum.PG, LanguageIdEnum.GENERIC];
 
 // Dựng danh sách điều kiện JOIN "A.col = B.col" giữa bảng JOIN sau cùng và các bảng trước đó,
 // ưu tiên foreign key; nếu không có FK thì fallback theo cột trùng tên (id/number/code).
@@ -80,18 +92,42 @@ function genAlias(table: string, taken: Set<string>): string {
   return a;
 }
 
-const completionService: CompletionService = async (model, position, _ctx, suggestions, entities) => {
+const completionService: CompletionService = async (model, position, _ctx, suggestions, entities, snippets) => {
   const items: ICompletionItem[] = [];
   if (!suggestions) return items;
 
-  // 1) Từ khoá (đã đúng dialect do parser tính)
+  // 1) Từ khoá (đã đúng dialect do parser tính). Từ khoá hay dùng lên tier trước
+  // (nếu không, gõ 'S' sẽ ra SAVEPOINT/SECURITY trước cả SELECT), trong cùng tier
+  // thì cái nào dùng nhiều xếp trước.
+  const keywordSet = new Set<string>();
   for (const kw of suggestions.keywords) {
+    keywordSet.add(kw.toUpperCase());
     items.push({
       label: kw,
       kind: monaco.languages.CompletionItemKind.Keyword,
       detail: 'Từ khoá',
       insertText: kw,
-      sortText: '9_' + kw, // xếp sau bảng/cột
+      sortText: rankSort(COMMON_KEYWORDS.has(kw.toUpperCase()) ? '4' : '5', kw),
+      command: bumpCommand(kw),
+    });
+  }
+
+  // 2) Mẫu câu (snippet) theo dialect — do monaco-sql-languages cấp, ta phải tự trả về
+  // (nếu bỏ tham số `snippets` thì chúng bị mất hoàn toàn).
+  // Xếp CUỐI danh sách và bỏ snippet 1 từ trùng đúng một từ khoá (vd 'SELECT', 'UPDATE')
+  // để không hiện 2 dòng giống nhau và không chiếm mất lựa chọn mặc định của từ khoá.
+  for (const sn of (snippets || []) as CompletionSnippet[]) {
+    if (keywordSet.has(sn.prefix.toUpperCase())) continue;
+    const body = Array.isArray(sn.body) ? sn.body.join('\n') : sn.body;
+    items.push({
+      label: sn.prefix,
+      kind: monaco.languages.CompletionItemKind.Snippet,
+      detail: 'Mẫu câu',
+      documentation: { value: ['```sql', body.replace(/\$\{\d+:?([^}]*)\}/g, '$1').replace(/\$\d+/g, ''), '```'].join('\n') },
+      insertText: sn.insertText || body,
+      insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+      filterText: `${sn.prefix} ${sn.label}`,
+      sortText: 'z_' + sn.prefix,
     });
   }
 
@@ -130,6 +166,37 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
     }));
   }
 
+  // 2c) Ngay sau SELECT (chưa gõ gì) -> '*' là gợi ý ưu tiên số 1, rồi mới tới cột/bảng.
+  // Nếu đã biết bảng trong scope thì thêm luôn phương án liệt kê tường minh các cột.
+  if (/\bselect\s+(distinct\s+|all\s+)?$/i.test(textBefore)) {
+    items.push({
+      label: '*',
+      kind: monaco.languages.CompletionItemKind.Field,
+      detail: 'Tất cả các cột',
+      insertText: '*',
+      filterText: '*',
+      sortText: '00_star', // trên cả điều kiện JOIN ('0_...')
+      preselect: true,
+    });
+    for (const tbl of Array.from(new Set(scopeTables))) {
+      const schema = await catalog.getSchema(tbl);
+      const cols = schema?.columns || [];
+      if (!cols.length) continue;
+      const pfx = aliasByTable.get(tbl) || tbl;
+      const multi = new Set(scopeTables).size > 1;
+      const list = cols.map(c => (multi ? `${pfx}.${c.name}` : c.name)).join(', ');
+      items.push({
+        label: multi ? `${pfx}.* → liệt kê ${cols.length} cột` : `* → liệt kê ${cols.length} cột`,
+        kind: monaco.languages.CompletionItemKind.Snippet,
+        detail: `Tất cả cột của ${tbl}`,
+        documentation: { value: ['```sql', list, '```'].join('\n') },
+        insertText: list,
+        filterText: '*',
+        sortText: '00_starlist_' + pfx,
+      });
+    }
+  }
+
   // 3) Có tiền tố "alias." ngay trước caret không?
   const line = model.getValueInRange({
     startLineNumber: position.lineNumber,
@@ -154,20 +221,20 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
       const tables = await catalog.getTables();
       for (const tb of tables) {
         let insertText = tb.name;
-        let asSnippet = false;
+        let alias: string | null = null;
         if (wantAlias) {
-          const alias = genAlias(tb.name, new Set(taken)); // set riêng mỗi item để không "ăn" alias lẫn nhau
-          insertText = `${tb.name} \${1:${alias}}`;
-          asSnippet = true;
+          alias = genAlias(tb.name, new Set(taken)); // set riêng mỗi item để không "ăn" alias lẫn nhau
+          // Chèn alias như VĂN BẢN THƯỜNG, không dùng placeholder ${1:...}: placeholder giữ
+          // alias ở trạng thái đang-chọn nên ký tự gõ tiếp theo (vd ';') sẽ ghi đè mất alias.
+          insertText = `${tb.name} ${alias}`;
         }
         items.push({
           label: tb.name,
           kind: tb.type === 'view'
             ? monaco.languages.CompletionItemKind.Interface
             : monaco.languages.CompletionItemKind.Class,
-          detail: tb.type === 'view' ? 'View' : 'Bảng',
+          detail: alias ? `${tb.type === 'view' ? 'View' : 'Bảng'} · alias ${alias}` : (tb.type === 'view' ? 'View' : 'Bảng'),
           insertText,
-          insertTextRules: asSnippet ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
           sortText: rankSort('2', tb.name),
           command: bumpCommand(tb.name),
         });
@@ -175,20 +242,32 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
     } else if (type === EntityContextType.COLUMN) {
       // Xác định bảng cần lấy cột: theo alias trước dấu chấm > các bảng trong scope > tất cả
       let targetTables: string[];
+      // cacheOnly: nhánh "tất cả bảng" (câu lệnh chưa có FROM) chỉ đọc schema ĐÃ cache,
+      // không gọi backend từng bảng — nếu không, mỗi lần gõ/xoá một ký tự (Monaco gọi lại
+      // provider) có thể sinh hàng trăm lời gọi xuống Rust và làm editor giật.
+      let cacheOnly = false;
       if (prefixAlias && aliasMap.has(prefixAlias)) {
         targetTables = [aliasMap.get(prefixAlias)!];
       } else if (scopeTables.length) {
         targetTables = Array.from(new Set(scopeTables));
       } else {
         targetTables = (await catalog.getTables()).map(t => t.name);
+        cacheOnly = true;
       }
       const multi = targetTables.length > 1;
       // Nhiều bảng và chưa gõ "alias." -> tự gắn tiền tố bảng/alias vào cột (customers.customerName)
       const qualify = multi && !prefixAlias;
+      // Chặn trần số gợi ý cột: DB lớn (vài trăm bảng) sẽ tạo hàng chục nghìn item mỗi lần
+      // gõ, vừa tốn CPU dựng object vừa tốn CPU cho Monaco lọc/xếp hạng.
+      const MAX_COLUMN_ITEMS = 1500;
+      let columnCount = 0;
       for (const tb of targetTables) {
-        const schema = await catalog.getSchema(tb);
+        if (columnCount >= MAX_COLUMN_ITEMS) break;
+        const schema = cacheOnly ? catalog.getCachedSchema(tb) : await catalog.getSchema(tb);
         const prefix = aliasByTable.get(tb) || tb;
         for (const col of schema?.columns || []) {
+          if (columnCount >= MAX_COLUMN_ITEMS) break;
+          columnCount++;
           items.push({
             label: col.name,
             kind: col.isPrimaryKey

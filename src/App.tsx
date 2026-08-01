@@ -17,6 +17,7 @@ import { getVersion } from '@tauri-apps/api/app';
 import { PostgresIcon, MySqlIcon, RedisIcon, SqliteIcon } from './components/DbIcons';
 import { dbHelper } from './utils/dbHelper';
 import type { DbConnectionConfig } from './utils/dbHelper';
+import { invalidateCatalog } from './sql/catalog';
 import { parseXlsx } from './utils/xlsxReader';
 import { exportSheetsToXlsx, exportTablesToJson, exportTablesToCsv } from './utils/exportHelper';
 import type { XlsxSheet } from './utils/xlsxWriter';
@@ -590,6 +591,9 @@ export const App: React.FC = () => {
     setActiveConnectionColor(color);
     setActiveConnConfig(config || null);
 
+    // Đổi kết nối -> xoá cache bảng/cột để autocomplete & hover không còn dữ liệu của DB cũ
+    invalidateCatalog();
+
     // Try to restore tabs from localStorage
     const storageKey = `tn_tabs_${dbType}_${dbName}`;
     const saved = localStorage.getItem(storageKey);
@@ -701,6 +705,19 @@ export const App: React.FC = () => {
     }
     setActiveTabId(tabId);
   };
+
+  // Ctrl+Click / F12 trên tên bảng trong SQL Editor -> mở tab bảng.
+  // Dùng ref để listener (đăng ký 1 lần) luôn gọi bản handleSelectTable mới nhất.
+  const selectTableRef = React.useRef(handleSelectTable);
+  selectTableRef.current = handleSelectTable;
+  React.useEffect(() => {
+    const handleOpenTableTab = (e: any) => {
+      const table = e.detail?.table;
+      if (table) selectTableRef.current(table, e.detail?.viewMode || 'data');
+    };
+    window.addEventListener('open-table-tab', handleOpenTableTab);
+    return () => window.removeEventListener('open-table-tab', handleOpenTableTab);
+  }, []);
 
   // Create a new SQL Query tab
   const handleNewQueryTab = () => {

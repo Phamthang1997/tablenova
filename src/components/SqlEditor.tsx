@@ -12,7 +12,13 @@ import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker'
 import MySQLWorker from 'monaco-sql-languages/esm/languages/mysql/mysql.worker?worker';
 import PgSQLWorker from 'monaco-sql-languages/esm/languages/pgsql/pgsql.worker?worker';
 import GenericSQLWorker from 'monaco-sql-languages/esm/languages/generic/generic.worker?worker';
-import { setupSqlCompletion, langIdForDbType } from '../sql/sqlLanguage';
+import { setupSqlCompletion, langIdForDbType, LANG_IDS } from '../sql/sqlLanguage';
+import { setupSqlHover, findTable, openTableTab } from '../sql/intellisense';
+import { defineSqlThemes, sqlThemeName } from '../sql/theme';
+import { SQL_EDITOR_OPTIONS } from '../sql/editorOptions';
+import { formatSql, minifySql } from '../sql/format';
+import { statementAt, analyzeStatements, splitStatements, isSchemaChangingSql } from '../sql/statements';
+import * as catalog from '../sql/catalog';
 
 // Configure Monaco Environment for Vite native web workers
 (window as any).MonacoEnvironment = {
@@ -42,13 +48,20 @@ import { setupSqlCompletion, langIdForDbType } from '../sql/sqlLanguage';
   }
 };
 
-// Đăng ký smart completion (dùng chung, chỉ chạy 1 lần)
+// Đăng ký smart completion + hover + theme (dùng chung, chỉ chạy 1 lần)
 setupSqlCompletion();
+setupSqlHover();
+defineSqlThemes();
+
+// Monaco đo bề rộng ký tự lúc khởi tạo. Nếu JetBrains Mono nạp xong SAU đó thì con trỏ
+// sẽ lệch khỏi chữ -> đo lại khi mọi font đã sẵn sàng.
+if (typeof document !== 'undefined' && (document as any).fonts?.ready) {
+  (document as any).fonts.ready.then(() => monaco.editor.remeasureFonts()).catch(() => { /* bỏ qua */ });
+}
 
 // Pack monaco directly into the loader config
 loader.config({ monaco });
 import { dbHelper } from '../utils/dbHelper';
-import { maskCommentsAndStrings } from '../utils/queryParamHelper';
 
 const LoadingSpinner: React.FC<{ size?: number; style?: React.CSSProperties }> = ({ size = 16, style }) => (
   <svg
@@ -77,236 +90,30 @@ const LoadingSpinner: React.FC<{ size?: number; style?: React.CSSProperties }> =
   </svg>
 );
 
-// Cache metadata (bảng + cột) cho autocomplete. Làm mới ở chế độ NỀN để KHÔNG gọi backend mỗi lần gõ
-// (tránh lag khi DB ở host public/độ trễ cao như Render).
-let cachedTables: { name: string; type: string }[] = [];
-let columnsCache: Record<string, string[]> = {};
-let sqlMetaFetchedAt = 0;
-let sqlMetaFetching = false;
-
-async function refreshSqlMeta() {
-  if (sqlMetaFetching) return;
-  sqlMetaFetching = true;
-  try {
-    const tables = await dbHelper.getTables();
-    cachedTables = tables;
-    const names = new Set(tables.map(t => t.name));
-    // Bỏ cache cột của bảng không còn tồn tại
-    Object.keys(columnsCache).forEach(n => { if (!names.has(n)) delete columnsCache[n]; });
-    // Nạp cột cho những bảng chưa có trong cache (chạy nền)
-    await Promise.all(tables.map(async (t) => {
-      if (!columnsCache[t.name]) {
-        try {
-          const s = await dbHelper.getTableSchema(t.name);
-          columnsCache[t.name] = (s.columns || []).map(c => c.name);
-        } catch { /* bỏ qua bảng lỗi */ }
-      }
-    }));
-  } catch { /* ignore */ }
-  finally { sqlMetaFetchedAt = Date.now(); sqlMetaFetching = false; }
-}
-
-// Làm mới cache ngay khi cấu trúc thay đổi (đổi tên/khôi phục/đổi database)
-if (!(window as any).__sqlMetaListener) {
-  (window as any).__sqlMetaListener = true;
-  const invalidate = () => { sqlMetaFetchedAt = 0; };
-  window.addEventListener('table-renamed', invalidate);
-  window.addEventListener('database-restored', invalidate);
-}
-
-// Register completion item provider to suggest DB tables, columns, and SQL keywords.
-// Dispose of any previously registered provider (specifically for HMR during development)
-if ((window as any).sqlCompletionDisposable) {
-  try {
-    (window as any).sqlCompletionDisposable.dispose();
-  } catch (e) {
-    console.error('Error disposing autocomplete provider:', e);
+// Đăng ký format provider (Shift+Alt+F / Format Document) cho ĐỦ 3 dialect,
+// kể cả 'genericsql' mà SQLite đang dùng.
+// dbType hiện hành: provider đăng ký 1 lần nhưng phải format theo DB đang kết nối,
+// kể cả khi người dùng đổi sang kết nối loại khác mà không tải lại app.
+let formatterDbType = 'sqlite';
+function registerSqlFormatter(dbType: string) {
+  formatterDbType = dbType;
+  const w = window as any;
+  // Cờ/disposable phải nằm trên window: HMR nạp lại module sẽ reset biến module và
+  // đăng ký provider lần 2 -> Monaco có 2 formatter cho cùng language.
+  if (Array.isArray(w.__sqlFormatDisposables)) {
+    for (const d of w.__sqlFormatDisposables) {
+      try { d.dispose(); } catch { /* đã huỷ */ }
+    }
   }
-}
-
-(window as any).sqlCompletionDisposable = monaco.languages.registerCompletionItemProvider('sql', {
-    provideCompletionItems: (model, position) => {
-      const word = model.getWordUntilPosition(position);
-      const range = {
-        startLineNumber: position.lineNumber,
-        endLineNumber: position.lineNumber,
-        startColumn: word.startColumn,
-        endColumn: word.endColumn,
-      };
-
-      // Làm mới cache ở chế độ nền nếu quá cũ (>15s) — KHÔNG await, không chặn khi gõ
-      if (Date.now() - sqlMetaFetchedAt > 15000) { void refreshSqlMeta(); }
-      const tables = cachedTables;
-
-      try {
-
-        // Lấy toàn bộ văn bản từ đầu tệp đến vị trí con trỏ hiện tại
-        const textBeforeCursor = model.getValueInRange({
-          startLineNumber: 1,
-          startColumn: 1,
-          endLineNumber: position.lineNumber,
-          endColumn: position.column
-        });
-
-        // Phân tích các từ khóa yêu cầu chỉ định bảng
-        const tableOnlyKeywords = ['FROM', 'JOIN', 'INTO', 'UPDATE', 'TABLE'];
-        const tokens = textBeforeCursor.trimEnd().toUpperCase().split(/[\s,()]+/);
-        const lastToken = tokens[tokens.length - 1];
-        const secondLastToken = tokens.length > 1 ? tokens[tokens.length - 2] : null;
-
-        // Kiểm tra xem ký tự ngay trước con trỏ có phải là khoảng trắng/xuống dòng không
-        const hasTrailingSpace = /\s$/.test(textBeforeCursor);
-
-        let isTableOnlyContext = false;
-        if (hasTrailingSpace) {
-          isTableOnlyContext = tableOnlyKeywords.includes(lastToken);
-        } else {
-          isTableOnlyContext = secondLastToken ? tableOnlyKeywords.includes(secondLastToken) : false;
-        }
-
-        // Nếu ở trong ngữ cảnh chỉ được chọn Bảng (sau FROM, JOIN, etc.)
-        if (isTableOnlyContext) {
-          const tableSuggestions = tables.map((t) => ({
-            label: t.name,
-            kind: monaco.languages.CompletionItemKind.Class,
-            insertText: t.name,
-            detail: t.type === 'view' ? 'Khung nhìn (View)' : 'Bảng (Table)',
-            range: range,
-          }));
-          return { suggestions: tableSuggestions };
-        }
-
-        // Hiển thị tất cả bảng, cột và từ khóa trực tiếp nếu gõ bình thường
-        const suggestions: any[] = tables.map((t) => ({
-          label: t.name,
-          kind: monaco.languages.CompletionItemKind.Class,
-          insertText: t.name,
-          detail: t.type === 'view' ? 'Khung nhìn (View)' : 'Bảng (Table)',
-          range: range,
-        }));
-
-        // Bổ sung gợi ý tất cả cột trực tiếp
-        Object.entries(columnsCache).forEach(([tName, cols]) => {
-          cols.forEach((col) => {
-            suggestions.push({
-              label: col,
-              kind: monaco.languages.CompletionItemKind.Field,
-              insertText: col,
-              detail: `Cột của bảng ${tName}`,
-              range: range,
-            });
-          });
-        });
-
-        // Bổ sung từ khóa
-        const keywords = [
-          'SELECT', 'FROM', 'WHERE', 'INSERT', 'UPDATE', 'DELETE', 'JOIN', 
-          'INNER JOIN', 'LEFT JOIN', 'RIGHT JOIN', 'ON', 'GROUP BY', 
-          'ORDER BY', 'LIMIT', 'AND', 'OR', 'NOT', 'AS', 'IN', 'LIKE', 'IS NULL'
-        ];
-        
-        keywords.forEach((kw) => {
-          suggestions.push({
-            label: kw,
-            kind: monaco.languages.CompletionItemKind.Keyword,
-            insertText: kw,
-            detail: 'Từ khóa SQL',
-            range: range,
-          });
-        });
-
-        return { suggestions };
-      } catch {
-        return { suggestions: [] };
-      }
-    },
-  });
-
-function formatSql(sql: string): string {
-  const keywords = [
-    'SELECT', 'FROM', 'WHERE', 'JOIN', 'LEFT JOIN', 'RIGHT JOIN', 'INNER JOIN',
-    'OUTER JOIN', 'ON', 'AND', 'OR', 'ORDER BY', 'GROUP BY', 'LIMIT', 'OFFSET',
-    'INSERT INTO', 'VALUES', 'UPDATE', 'SET', 'DELETE', 'DELETE FROM', 'HAVING',
-    'UNION', 'AS', 'IN', 'IS', 'NULL', 'LIKE', 'NOT', 'CREATE TABLE', 'DROP TABLE'
-  ];
-
-  const parts = sql.split(/('[^']*'|"[^"]*"|`[^`]*`)/);
-  const formattedParts = parts.map((part, index) => {
-    if (index % 2 === 1) return part;
-    let temp = part;
-    keywords.forEach(kw => {
-      const regex = new RegExp('\\b' + kw + '\\b', 'gi');
-      temp = temp.replace(regex, kw);
-    });
-    return temp;
-  });
-
-  const uppercaseSql = formattedParts.join('');
-
-  const breakKeywords = [
-    'SELECT', 'FROM', 'WHERE', 'JOIN', 'LEFT JOIN', 'RIGHT JOIN', 'INNER JOIN',
-    'OUTER JOIN', 'ORDER BY', 'GROUP BY', 'LIMIT', 'VALUES', 'SET', 'UNION'
-  ];
-
-  const subParts = uppercaseSql.split(/('[^']*'|"[^"]*"|`[^`]*`)/);
-  const finalParts = subParts.map((part, index) => {
-    if (index % 2 === 1) return part;
-    let temp = part;
-    breakKeywords.forEach(kw => {
-      const regex = new RegExp('\\s*\\b' + kw + '\\b', 'g');
-      temp = temp.replace(regex, `\n${kw}`);
-    });
-    const andOrRegex = /\s*\b(AND|OR)\b/g;
-    temp = temp.replace(andOrRegex, '\n  $1');
-    return temp;
-  });
-
-  const result = finalParts.join('');
-  return result
-    .split('\n')
-    .map(line => line.trimEnd())
-    .filter((line, i, arr) => line.trim() !== '' || (i > 0 && arr[i-1].trim() !== ''))
-    .join('\n')
-    .trim();
-}
-
-function minifySql(sql: string): string {
-  if (!sql.trim()) return sql;
-  
-  // Strip single line comments (-- ...) and block comments (/* ... */)
-  let cleaned = sql
-    .replace(/--.*$/gm, '')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
-    
-  // Split by string literals ('...', "...", `...`)
-  const parts = cleaned.split(/('[^']*'|"[^"]*"|`[^`]*`)/);
-  const minified = parts.map((part, index) => {
-    if (index % 2 === 1) return part; // Keep string literals untouched
-    return part
-      .replace(/\s+/g, ' ')
-      .replace(/\s*([,;()=><+\-*/])\s*/g, '$1');
-  }).join('').trim();
-
-  // Ensure SQL keywords and word boundaries have clean single space padding
-  return minified
-    .replace(/\b(SELECT|FROM|WHERE|JOIN|LEFT|RIGHT|INNER|OUTER|ON|AND|OR|ORDER BY|GROUP BY|LIMIT|OFFSET|INSERT INTO|VALUES|UPDATE|SET|DELETE|HAVING|UNION|AS|IN|IS|NULL|LIKE|NOT)\b/gi, (match) => ` ${match} `)
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-let isFormatRegistered = false;
-if (!isFormatRegistered) {
-  isFormatRegistered = true;
   const formatProvider = {
     provideDocumentFormattingEdits(model: any) {
-      const formatted = formatSql(model.getValue());
+      const formatted = formatSql(model.getValue(), formatterDbType);
       return [{ range: model.getFullModelRange(), text: formatted }];
     },
   };
-  // Đăng ký cho cả 'sql' lẫn dialect của monaco-sql-languages ('mysql'/'pgsql')
-  ['sql', 'mysql', 'pgsql'].forEach((lang) => {
-    monaco.languages.registerDocumentFormattingEditProvider(lang, formatProvider);
-  });
+  w.__sqlFormatDisposables = ['sql', ...LANG_IDS].map((lang) =>
+    monaco.languages.registerDocumentFormattingEditProvider(lang, formatProvider)
+  );
 }
 import { Play, Clipboard, Trash2, CheckCircle2, AlertTriangle, ChevronLeft, ChevronRight, Copy, AlignLeft, ChevronsLeft, ChevronsRight, History, X, Bookmark, ChevronDown, MoreHorizontal, Star, Columns, Rows, Settings, Network, Zap, FileText, Square } from 'lucide-react';
 import { getQueryParamsConfig, saveQueryParamsConfig, extractQueryParams, buildParameterizedSql, type QueryParamsConfig } from '../utils/queryParamHelper';
@@ -331,11 +138,10 @@ interface SqlEditorProps {
 // Câu lệnh chỉ đọc được phép chạy trong chế độ Chỉ đọc
 const READ_ONLY_PREFIXES = ['SELECT', 'SHOW', 'EXPLAIN', 'DESCRIBE', 'DESC', 'PRAGMA', 'WITH'];
 function isReadOnlySql(text: string): boolean {
-  // Mask comment + chuỗi (giữ nguyên độ dài) rồi mới tách theo ';' -> dấu ';' nằm trong
-  // chuỗi/comment không làm vỡ câu lệnh. Từ khóa đầu (SELECT/SHOW...) nằm ngoài chuỗi nên vẫn còn.
-  const masked = maskCommentsAndStrings(text);
-  return masked.split(';').map(s => s.trim()).filter(Boolean).every(stmt => {
-    const first = stmt.split(/\s+/)[0].toUpperCase();
+  // Dùng chung splitter với editor: dấu ';' trong chuỗi/comment/khối $$ và dấu kết thúc câu
+  // do DELIMITER đổi đều được xử lý đúng (tự split(';') sẽ đánh giá sai các script đó).
+  return splitStatements(text).every(stmt => {
+    const first = stmt.text.split(/\s+/)[0].toUpperCase();
     return READ_ONLY_PREFIXES.includes(first);
   });
 }
@@ -585,6 +391,50 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   const editorRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  // Đồng bộ nội dung ra React state + component cha theo NHỊP (trailing debounce).
+  // Trước đây mỗi ký tự gõ/xoá gọi onSqlChange -> App.setTabs -> re-render CẢ app (mọi tab,
+  // kể cả DataGrid) nên giữ Backspace là thấy giật. Nội dung "thật" luôn đọc từ editor
+  // (getPaneSql/getCurrentStatement) nên trễ 150ms ở state không ảnh hưởng hành vi.
+  const SQL_SYNC_DELAY = 150;
+  const sqlSyncRef = useRef<{ timer: any; value: string | null }[]>([
+    { timer: null, value: null },
+    { timer: null, value: null },
+  ]);
+
+  const flushSqlSync = (paneId: 1 | 2) => {
+    const slot = sqlSyncRef.current[paneId - 1];
+    if (slot.timer) { clearTimeout(slot.timer); slot.timer = null; }
+    if (slot.value === null) return;
+    const val = slot.value;
+    slot.value = null;
+    if (paneId === 1) { setSql(val); onSqlChange?.(val); }
+    else { setSql2(val); onSql2Change?.(val); }
+  };
+
+  const queueSqlSync = (paneId: 1 | 2, val: string) => {
+    const slot = sqlSyncRef.current[paneId - 1];
+    slot.value = val;
+    if (slot.timer) clearTimeout(slot.timer);
+    slot.timer = setTimeout(() => flushSqlSync(paneId), SQL_SYNC_DELAY);
+  };
+
+  // Giữ callback của cha trong ref: cleanup lúc unmount phải gọi bản MỚI NHẤT, mà effect
+  // thì chỉ được chạy 1 lần (deps rỗng) nên không thể đọc trực tiếp từ closure.
+  const changeCallbacksRef = useRef({ onSqlChange, onSql2Change });
+  changeCallbacksRef.current = { onSqlChange, onSql2Change };
+
+  // Rời khỏi component: đẩy nốt nội dung còn treo (khỏi mất chữ vừa gõ khi đóng/đổi tab)
+  useEffect(() => () => {
+    [1, 2].forEach((p) => {
+      const slot = sqlSyncRef.current[p - 1];
+      if (slot.timer) clearTimeout(slot.timer);
+      if (slot.value === null) return;
+      const cb = changeCallbacksRef.current;
+      if (p === 1) cb.onSqlChange?.(slot.value);
+      else cb.onSql2Change?.(slot.value);
+    });
+  }, []);
+
   const handleSplitMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
     setIsDraggingSplit(true);
@@ -639,6 +489,11 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
 
     editor.onDidFocusEditorText(() => {
       setFocusedEditor(editorId);
+    });
+
+    // Rời khung -> đẩy ngay nội dung còn treo trong debounce ra state/cha
+    editor.onDidBlurEditorText(() => {
+      flushSqlSync(editorId);
     });
 
     // Format / Beautify / Minify actions cho Monaco context menu
@@ -743,11 +598,104 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       handleSaveQuery();
     });
 
-    void refreshSqlMeta();
+    // F12 / context menu: mở bảng đang ở dưới con trỏ trong tab mới
+    editor.addAction({
+      id: 'open-table-under-cursor',
+      label: 'Mở bảng dưới con trỏ (F12 / Ctrl+B)',
+      contextMenuGroupId: 'navigation',
+      contextMenuOrder: 1.1,
+      // Ctrl+B là phím "go to declaration" quen thuộc của JetBrains/DataGrip; F12 để dự phòng.
+      keybindings: [monaco.KeyCode.F12, monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyB],
+      run: () => {
+        const pos = editor.getPosition();
+        const word = pos ? editor.getModel()?.getWordAtPosition(pos) : null;
+        if (word) void openTableIfExists(word.word, editorId);
+      }
+    });
+
+    // Ctrl/Cmd + Click lên tên bảng -> mở tab bảng (giống go-to-definition)
+    editor.onMouseDown((e: any) => {
+      if (!(e.event?.ctrlKey || e.event?.metaKey)) return;
+      if (e.target?.type !== monaco.editor.MouseTargetType.CONTENT_TEXT || !e.target.position) return;
+      const word = editor.getModel()?.getWordAtPosition(e.target.position);
+      if (word) void openTableIfExists(word.word, editorId, false);
+    });
+
+    // Click mũi tên ở lề trái -> chạy câu lệnh bắt đầu tại dòng đó
+    editor.onMouseDown((e: any) => {
+      if (e.target?.type !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN || !e.target.position) return;
+      editor.setPosition(e.target.position);
+      const stmt = getCurrentStatement(editor);
+      if (stmt) executeSql(stmt, editorId);
+    });
+
+    // Tô sáng câu lệnh dưới con trỏ (chính là câu mà Ctrl+Enter sẽ chạy)
+    const decorations = editor.createDecorationsCollection([]);
+    let highlightTimer: any = null;
+    const refreshStatementHighlight = () => {
+      const model = editor.getModel();
+      const pos = editor.getPosition();
+      if (!model || !pos) return;
+      const text = model.getValue();
+      // Script rất lớn: bỏ qua để không tốn CPU mỗi lần gõ
+      if (text.length > 200000) { decorations.set([]); return; }
+      // Lấy cả danh sách câu lệnh lẫn câu dưới con trỏ trong 1 lần mask văn bản
+      const { statements: stmts, current: stmt } = analyzeStatements(text, model.getOffsetAt(pos));
+      if (!stmt) { decorations.set([]); return; }
+
+      const from = model.getPositionAt(stmt.start);
+      const to = model.getPositionAt(stmt.end);
+      const items: any[] = [{
+        // Mũi tên "chạy câu này" ở lề trái, đặt tại dòng đầu của câu lệnh
+        range: new monaco.Range(from.lineNumber, 1, from.lineNumber, 1),
+        options: {
+          glyphMarginClassName: 'sql-run-glyph',
+          glyphMarginHoverMessage: { value: 'Chạy câu lệnh này (Ctrl+Enter)' },
+        },
+      }];
+      // Chỉ tô nền/vạch khi có nhiều câu lệnh — 1 câu duy nhất thì tô cả trang là vô nghĩa
+      if (stmts.length > 1) {
+        items.push({
+          range: new monaco.Range(from.lineNumber, 1, to.lineNumber, model.getLineMaxColumn(to.lineNumber)),
+          options: {
+            isWholeLine: true,
+            className: 'sql-current-stmt',
+            linesDecorationsClassName: 'sql-current-stmt-strip',
+            overviewRuler: { color: 'rgba(96, 165, 250, 0.45)', position: monaco.editor.OverviewRulerLane.Left },
+          },
+        });
+      }
+      decorations.set(items);
+    };
+    const scheduleHighlight = () => {
+      if (highlightTimer) clearTimeout(highlightTimer);
+      highlightTimer = setTimeout(refreshStatementHighlight, 80);
+    };
+    editor.onDidChangeCursorPosition(scheduleHighlight);
+    editor.onDidChangeModelContent(scheduleHighlight);
+    editor.onDidDispose(() => { if (highlightTimer) clearTimeout(highlightTimer); });
+    refreshStatementHighlight();
+
+    registerSqlFormatter(dbType);
+    void catalog.getTables(); // nạp nền catalog cho autocomplete/hover
 
     setTimeout(() => {
       editor.layout();
     }, 100);
+  };
+
+  // Mở tab bảng nếu `name` đúng là một bảng/view trong DB hiện tại.
+  // `notify` = false cho Ctrl+Click (click nhầm vào từ khoá thì im lặng), = true cho F12.
+  const openTableIfExists = async (name: string, paneId: 1 | 2, notify = true) => {
+    const found = await findTable(name);
+    if (!found) {
+      if (!notify) return;
+      const setMsg = paneId === 1 ? setStatusMsg : setStatusMsg2;
+      setMsg(`Không tìm thấy bảng "${name}" trong database hiện tại.`);
+      setTimeout(() => setMsg(null), 3000);
+      return;
+    }
+    openTableTab(found.name);
   };
 
   const executeSql = async (queryText?: string, targetPane?: 1 | 2) => {
@@ -888,6 +836,10 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       setStat(`${head} — ${parts.join(', ')} (${timeInfo}).`);
       if (onRunSuccess) onRunSuccess();
     }
+
+    // Câu lệnh vừa chạy có đổi cấu trúc (DDL) hoặc đổi database (USE / search_path) -> xoá cache
+    // catalog để autocomplete/hover thấy ngay bảng/cột mới, khỏi phải chờ TTL.
+    if (isSchemaChangingSql(textToRun)) catalog.invalidateCatalog();
   };
 
   const handleExplain = async (paneId: 1 | 2 = focusedEditor, variant: 'explain' | 'analyze' | 'json' = 'explain') => {
@@ -952,29 +904,32 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     if (qid) dbHelper.cancelQuery(qid);
   };
 
+  // Câu lệnh dưới con trỏ. Dùng statementAt (bỏ qua ';' nằm trong chuỗi/comment)
+  // nên không còn cắt sai ở những câu như: WHERE note = 'a;b'
   const getCurrentStatement = (editor: any): string => {
     if (!editor) return '';
     const model = editor.getModel();
+    const pos = editor.getPosition();
+    if (!model || !pos) return '';
     const text = model.getValue();
-    const offset = model.getOffsetAt(editor.getPosition());
-    const before = text.lastIndexOf(';', offset - 1);
-    const after = text.indexOf(';', offset);
-    const start = before === -1 ? 0 : before + 1;
-    const end = after === -1 ? text.length : after;
-    return text.slice(start, end).trim();
+    return statementAt(text, model.getOffsetAt(pos))?.text || '';
   };
 
   const getPaneEditor = (paneId: 1 | 2 = focusedEditor) => {
     return paneId === 2 ? editorRef2.current : editorRef.current;
   };
 
+  // Luôn lấy nội dung từ chính editor (chính xác tuyệt đối), state chỉ là bản dự phòng
+  // vì nó được cập nhật theo nhịp debounce.
   const getPaneSql = (paneId: 1 | 2 = focusedEditor) => {
-    return paneId === 2 ? sql2 : sql;
+    const value = getPaneEditor(paneId)?.getValue?.();
+    return typeof value === 'string' ? value : (paneId === 2 ? sql2 : sql);
   };
 
   const handleRun = (paneId: 1 | 2 = focusedEditor) => {
     const editor = getPaneEditor(paneId);
     if (!editor) return;
+    flushSqlSync(paneId); // chạy -> chốt luôn nội dung ra state/cha
     const selection = editor.getSelection();
     const selectedText = selection ? editor.getModel().getValueInRange(selection) : '';
     const textToRun = selectedText.trim() ? selectedText : getCurrentStatement(editor);
@@ -1020,20 +975,33 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     const selection = editor.getSelection();
     if (selection && !selection.isEmpty()) {
       const selectedText = editor.getModel()?.getValueInRange(selection) || '';
-      const formatted = formatSql(selectedText);
+      const formatted = formatSql(selectedText, dbType);
+      editor.pushUndoStop();
       editor.executeEdits('format-beautify', [{
         range: selection,
         text: formatted,
         forceMoveMarkers: true
       }]);
-      setMsg("Đã làm đẹp (Beautify) đoạn SQL được chọn.");
+      editor.pushUndoStop();
+      setMsg(formatted === selectedText
+        ? "Không làm đẹp được đoạn đã chọn (có thể sai cú pháp)."
+        : "Đã làm đẹp (Beautify) đoạn SQL được chọn.");
     } else {
       const val = editor.getValue();
-      const formatted = formatSql(val);
-      editor.setValue(formatted);
+      const formatted = formatSql(val, dbType);
+      // Dùng executeEdits thay setValue để Ctrl+Z hoàn tác được lần làm đẹp này
+      editor.pushUndoStop();
+      editor.executeEdits('format-beautify', [{
+        range: editor.getModel().getFullModelRange(),
+        text: formatted,
+        forceMoveMarkers: true
+      }]);
+      editor.pushUndoStop();
       if (paneId === 1) { setSql(formatted); onSqlChange?.(formatted); }
       else { setSql2(formatted); onSql2Change?.(formatted); }
-      setMsg("Đã làm đẹp (Beautify) toàn bộ câu lệnh SQL.");
+      setMsg(formatted === val
+        ? "Không làm đẹp được: câu lệnh có lỗi cú pháp hoặc đã đúng định dạng."
+        : "Đã làm đẹp (Beautify) toàn bộ câu lệnh SQL.");
     }
     setTimeout(() => setMsg(null), 3000);
   };
@@ -1046,16 +1014,24 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     if (selection && !selection.isEmpty()) {
       const selectedText = editor.getModel()?.getValueInRange(selection) || '';
       const minified = minifySql(selectedText);
+      editor.pushUndoStop();
       editor.executeEdits('format-minify', [{
         range: selection,
         text: minified,
         forceMoveMarkers: true
       }]);
+      editor.pushUndoStop();
       setMsg("Đã nén (Minify/Uglify) đoạn SQL được chọn thành 1 dòng.");
     } else {
       const val = editor.getValue();
       const minified = minifySql(val);
-      editor.setValue(minified);
+      editor.pushUndoStop();
+      editor.executeEdits('format-minify', [{
+        range: editor.getModel().getFullModelRange(),
+        text: minified,
+        forceMoveMarkers: true
+      }]);
+      editor.pushUndoStop();
       if (paneId === 1) { setSql(minified); onSqlChange?.(minified); }
       else { setSql2(minified); onSql2Change?.(minified); }
       setMsg("Đã nén (Minify/Uglify) toàn bộ câu lệnh SQL thành 1 dòng.");
@@ -1968,29 +1944,16 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
             <Editor
               height="100%"
               language={langId}
-              theme={theme === 'light' ? 'vs' : 'vs-dark'}
+              theme={sqlThemeName(theme)}
               defaultValue={initialSql}
-              onChange={(val) => { setSql(val || ''); onSqlChange?.(val || ''); }}
+              onChange={(val) => queueSqlSync(1, val || '')}
               onMount={(editor) => handleEditorDidMount(editor, 1)}
               loading={
                 <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', color: 'var(--win-text-secondary)', fontSize: '13px' }}>
                   Đang tải trình viết SQL...
                 </div>
               }
-              options={{
-                minimap: { enabled: false },
-                fontSize: 13,
-                fontFamily: "Consolas, 'Courier New', monospace",
-                lineNumbers: 'on',
-                automaticLayout: true,
-                tabSize: 2,
-                wordBasedSuggestions: 'off',
-                renderLineHighlight: 'none',
-                scrollbar: {
-                  verticalScrollbarSize: 8,
-                  horizontalScrollbarSize: 8,
-                },
-              }}
+              options={SQL_EDITOR_OPTIONS}
             />
           </div>
 
@@ -2041,30 +2004,16 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
               <Editor
                 height="100%"
                 language={langId}
-                theme={theme === 'light' ? 'vs' : 'vs-dark'}
+                theme={sqlThemeName(theme)}
                 defaultValue={initialSql2}
-                onChange={(val) => { setSql2(val || ''); onSql2Change?.(val || ''); }}
+                onChange={(val) => queueSqlSync(2, val || '')}
                 onMount={(editor) => handleEditorDidMount(editor, 2)}
                 loading={
                   <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', color: 'var(--win-text-secondary)', fontSize: '13px' }}>
                     Đang tải trình viết SQL...
                   </div>
                 }
-                options={{
-                  minimap: { enabled: false },
-                  fontSize: 13,
-                  fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace",
-                  fontLigatures: true,
-                  lineNumbers: 'on',
-                  automaticLayout: true,
-                  tabSize: 2,
-                  wordBasedSuggestions: 'off',
-                  renderLineHighlight: 'none',
-                  scrollbar: {
-                    verticalScrollbarSize: 8,
-                    horizontalScrollbarSize: 8,
-                  },
-                }}
+                options={SQL_EDITOR_OPTIONS}
               />
             </div>
 

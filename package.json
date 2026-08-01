@@ -26,7 +26,8 @@
     "monaco-sql-languages": "^1.2.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "react-i18next": "^17.0.11"
+    "react-i18next": "^17.0.11",
+    "sql-formatter": "^15.8.2"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.4",

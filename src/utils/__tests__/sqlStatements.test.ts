@@ -1,0 +1,331 @@
+import { describe, expect, it } from 'vitest';
+import { splitStatements, statementAt, analyzeStatements, resolveAliases, isSchemaChangingSql } from '../../sql/statements';
+import { formatSql, minifySql } from '../../sql/format';
+
+describe('splitStatements', () => {
+  it('tách nhiều câu lệnh theo dấu ;', () => {
+    const sql = 'SELECT 1;\nSELECT 2;';
+    expect(splitStatements(sql).map(s => s.text)).toEqual(['SELECT 1', 'SELECT 2']);
+  });
+
+  it("bỏ qua dấu ; nằm trong chuỗi", () => {
+    const sql = "SELECT * FROM t WHERE note = 'a;b'";
+    expect(splitStatements(sql).map(s => s.text)).toEqual([sql]);
+  });
+
+  it('bỏ qua dấu ; trong comment dòng và comment khối', () => {
+    const sql = 'SELECT 1 -- chú thích; vẫn cùng câu\n/* khối ; */ + 2';
+    expect(splitStatements(sql)).toHaveLength(1);
+  });
+
+  it('bỏ đoạn trống và đoạn chỉ có comment', () => {
+    const sql = 'SELECT 1;;\n-- chỉ là comment\n;SELECT 2;';
+    expect(splitStatements(sql).map(s => s.text)).toEqual(['SELECT 1', 'SELECT 2']);
+  });
+
+  it('offset trả về trỏ đúng vào văn bản gốc', () => {
+    const sql = '  SELECT 1  ;  SELECT 2';
+    const [first, second] = splitStatements(sql);
+    expect(sql.slice(first.start, first.end)).toBe('SELECT 1');
+    expect(sql.slice(second.start, second.end)).toBe('SELECT 2');
+  });
+});
+
+describe('splitStatements — khối $$ của Postgres', () => {
+  const fn = [
+    'CREATE FUNCTION bump() RETURNS trigger AS $$',
+    'BEGIN',
+    "  UPDATE t SET n = n + 1 WHERE id = NEW.id;",
+    '  RETURN NEW;',
+    'END;',
+    '$$ LANGUAGE plpgsql;',
+    'SELECT 1;',
+  ].join('\n');
+
+  it("không cắt giữa thân function ($$ ... $$)", () => {
+    const stmts = splitStatements(fn);
+    expect(stmts).toHaveLength(2);
+    expect(stmts[0].text).toContain('CREATE FUNCTION');
+    expect(stmts[0].text).toContain('LANGUAGE plpgsql');
+    expect(stmts[1].text).toBe('SELECT 1');
+  });
+
+  it('con trỏ trong thân function trả về cả câu CREATE FUNCTION', () => {
+    const at = fn.indexOf('RETURN NEW');
+    expect(statementAt(fn, at)?.text).toContain('CREATE FUNCTION');
+  });
+
+  it('hỗ trợ dollar-quote có tag ($body$)', () => {
+    const sql = 'CREATE FUNCTION f() AS $body$ SELECT 1; SELECT 2; $body$ LANGUAGE sql; SELECT 3;';
+    const stmts = splitStatements(sql);
+    expect(stmts).toHaveLength(2);
+    expect(stmts[1].text).toBe('SELECT 3');
+  });
+
+  it('không nhầm $1 (bind param) hay ${x} (tham số truy vấn) là dollar-quote', () => {
+    expect(splitStatements('SELECT * FROM t WHERE id = $1; SELECT 2;')).toHaveLength(2);
+    expect(splitStatements('SELECT * FROM t WHERE id = ${uid}; SELECT 2;')).toHaveLength(2);
+  });
+
+  it("không nhầm '$$' nằm trong chuỗi là mở khối", () => {
+    expect(splitStatements("SELECT '$$'; SELECT 2;")).toHaveLength(2);
+  });
+});
+
+describe('splitStatements — lệnh DELIMITER của MySQL', () => {
+  const trigger = [
+    'SELECT 1;',
+    'DELIMITER //',
+    'CREATE TRIGGER after_order_insert AFTER INSERT ON orders',
+    'FOR EACH ROW',
+    'BEGIN',
+    '  UPDATE stats SET total = total + 1;',
+    "  INSERT INTO audit(msg) VALUES ('new order');",
+    'END//',
+    'DELIMITER ;',
+    'SELECT 2;',
+  ].join('\n');
+
+  it('giữ nguyên thân trigger, không cắt ở dấu ; bên trong', () => {
+    const stmts = splitStatements(trigger);
+    expect(stmts.map(s => s.text.split('\n')[0])).toEqual([
+      'SELECT 1',
+      'CREATE TRIGGER after_order_insert AFTER INSERT ON orders',
+      'SELECT 2',
+    ]);
+    const body = stmts[1].text;
+    expect(body).toContain('UPDATE stats');
+    expect(body).toContain('INSERT INTO audit');
+    expect(body.endsWith('END')).toBe(true); // '//' không bị gửi kèm
+  });
+
+  it('không bao giờ trả chính dòng DELIMITER thành câu lệnh', () => {
+    for (const s of splitStatements(trigger)) {
+      expect(s.text.toUpperCase()).not.toContain('DELIMITER');
+    }
+  });
+
+  it('con trỏ trong thân trigger trả về cả câu CREATE TRIGGER', () => {
+    const at = trigger.indexOf('INSERT INTO audit');
+    expect(statementAt(trigger, at)?.text).toContain('CREATE TRIGGER');
+  });
+
+  it("`DELIMITER ;` khôi phục lại dấu ';'", () => {
+    const stmts = splitStatements(trigger);
+    expect(stmts[stmts.length - 1].text).toBe('SELECT 2');
+  });
+
+  it('hỗ trợ DELIMITER ;; (kiểu mysqldump --routines)', () => {
+    const sql = [
+      'DELIMITER ;;',
+      'CREATE PROCEDURE p() BEGIN SELECT 1; SELECT 2; END ;;',
+      'DELIMITER ;',
+      'SELECT 3;',
+    ].join('\n');
+    const stmts = splitStatements(sql);
+    expect(stmts).toHaveLength(2);
+    expect(stmts[0].text).toContain('CREATE PROCEDURE');
+    expect(stmts[0].text).toContain('SELECT 2');
+    expect(stmts[1].text).toBe('SELECT 3');
+  });
+
+  it("DELIMITER $$ không bị hiểu thành khối dollar-quote của Postgres", () => {
+    const sql = [
+      'DELIMITER $$',
+      'CREATE PROCEDURE p() BEGIN UPDATE t SET a = 1; UPDATE t SET b = 2; END$$',
+      'DELIMITER ;',
+      'SELECT 9;',
+    ].join('\n');
+    const stmts = splitStatements(sql);
+    expect(stmts).toHaveLength(2);
+    expect(stmts[0].text).toContain('UPDATE t SET b = 2');
+    expect(stmts[1].text).toBe('SELECT 9');
+  });
+
+  it('DELIMITER nằm trong chuỗi/comment thì không phải lệnh', () => {
+    expect(splitStatements("SELECT 'x\nDELIMITER //\ny'; SELECT 2;")).toHaveLength(2);
+    expect(splitStatements('/*\nDELIMITER //\n*/ SELECT 1; SELECT 2;')).toHaveLength(2);
+  });
+
+  it('không nhận DELIMITER khi không ở đầu dòng', () => {
+    // 'SELECT 1 DELIMITER //' là SQL sai, nhưng tuyệt đối không được đổi dấu kết thúc câu
+    expect(splitStatements('SELECT 1 DELIMITER //; SELECT 2;')).toHaveLength(2);
+  });
+});
+
+describe('resolveAliases', () => {
+  it('lấy alias có/không có AS', () => {
+    const m = resolveAliases('SELECT * FROM orders o JOIN users AS u ON u.id = o.user_id');
+    expect(m.get('o')).toBe('orders');
+    expect(m.get('u')).toBe('users');
+    expect(m.get('orders')).toBe('orders');
+  });
+
+  it('bảng không alias vẫn tra được bằng chính tên nó', () => {
+    const m = resolveAliases('SELECT * FROM customers WHERE id = 1');
+    expect(m.get('customers')).toBe('customers');
+  });
+
+  it('không coi từ khoá đứng sau tên bảng là alias', () => {
+    const m = resolveAliases('SELECT * FROM orders WHERE x = 1');
+    expect(m.get('where')).toBeUndefined();
+    const m2 = resolveAliases('SELECT * FROM a JOIN b ON a.id = b.id');
+    expect(m2.get('on')).toBeUndefined();
+  });
+
+  it('bỏ dấu bao quanh và tiền tố schema', () => {
+    const m = resolveAliases('SELECT * FROM "public"."orders" o');
+    expect(m.get('o')).toBe('orders');
+  });
+});
+
+describe('statementAt', () => {
+  const sql = 'SELECT 1;\nSELECT 2;\nSELECT 3';
+
+  it('lấy câu lệnh chứa con trỏ', () => {
+    expect(statementAt(sql, 3)?.text).toBe('SELECT 1');
+    expect(statementAt(sql, 12)?.text).toBe('SELECT 2');
+    expect(statementAt(sql, sql.length)?.text).toBe('SELECT 3');
+  });
+
+  it('con trỏ ngay sau dấu ; thuộc câu lệnh kế tiếp', () => {
+    const at = sql.indexOf(';') + 1; // ngay sau ';' đầu tiên
+    expect(statementAt(sql, at)?.text).toBe('SELECT 2');
+  });
+
+  it('con trỏ ở đúng dấu ; vẫn thuộc câu lệnh trước đó', () => {
+    expect(statementAt(sql, sql.indexOf(';'))?.text).toBe('SELECT 1');
+  });
+
+  it("không cắt sai khi ; nằm trong chuỗi", () => {
+    const s = "SELECT * FROM t WHERE a = 'x;y' AND b = 1";
+    expect(statementAt(s, s.length)?.text).toBe(s);
+  });
+
+  it('trả null khi con trỏ ở vùng trống / chỉ có comment', () => {
+    expect(statementAt('   \n  ', 2)).toBeNull();
+    expect(statementAt('-- chỉ comment', 5)).toBeNull();
+  });
+});
+
+describe('analyzeStatements', () => {
+  // Đường tô sáng câu lệnh dùng analyzeStatements (mask 1 lần) thay cho splitStatements + statementAt
+  // -> phải cho cùng kết quả ở MỌI vị trí con trỏ.
+  const samples = [
+    'SELECT 1;\nSELECT 2;\nSELECT 3',
+    "SELECT * FROM t WHERE a = 'x;y'; SELECT 2;",
+    'SELECT 1;;\n-- chỉ comment\n;SELECT 2;   ',
+    'CREATE FUNCTION f() AS $$ SELECT 1; SELECT 2; $$ LANGUAGE sql; SELECT 3;',
+    'SELECT 1;\nDELIMITER //\nCREATE PROCEDURE p() BEGIN SELECT 1; END//\nDELIMITER ;\nSELECT 2;',
+    '   ',
+  ];
+
+  it('trùng khớp splitStatements + statementAt ở mọi offset', () => {
+    for (const sql of samples) {
+      const expectedList = splitStatements(sql).map(s => s.text);
+      for (let offset = 0; offset <= sql.length; offset++) {
+        const got = analyzeStatements(sql, offset);
+        expect(got.statements.map(s => s.text)).toEqual(expectedList);
+        expect(got.current?.text ?? null).toBe(statementAt(sql, offset)?.text ?? null);
+      }
+    }
+  });
+});
+
+describe('isSchemaChangingSql', () => {
+  it('nhận DDL', () => {
+    for (const sql of [
+      'CREATE TABLE t (id int)',
+      'alter table t add column x int',
+      'DROP VIEW v',
+      'TRUNCATE TABLE logs',
+      'ALTER TABLE a RENAME TO b',
+      "COMMENT ON COLUMN t.c IS 'x'",
+    ]) expect(isSchemaChangingSql(sql)).toBe(true);
+  });
+
+  it('nhận câu đổi database/schema đang dùng', () => {
+    expect(isSchemaChangingSql('USE other_db')).toBe(true);
+    expect(isSchemaChangingSql('SET search_path TO reporting')).toBe(true);
+  });
+
+  it('không nhận câu đọc/ghi dữ liệu thường', () => {
+    for (const sql of [
+      'SELECT * FROM t',
+      'INSERT INTO t (a) VALUES (1)',
+      'UPDATE t SET a = 1',
+      'DELETE FROM t WHERE id = 1',
+      'SET NAMES utf8mb4',
+    ]) expect(isSchemaChangingSql(sql)).toBe(false);
+  });
+
+  it('không nhận từ khoá nằm trong chuỗi hoặc comment', () => {
+    expect(isSchemaChangingSql("SELECT 'DROP TABLE t' AS s")).toBe(false);
+    expect(isSchemaChangingSql('SELECT 1 -- CREATE TABLE x')).toBe(false);
+    expect(isSchemaChangingSql('SELECT 1 /* ALTER TABLE y */')).toBe(false);
+  });
+});
+
+describe('formatSql', () => {
+  it('viết hoa từ khoá và xuống dòng theo dialect', () => {
+    const out = formatSql('select a,b from users where id=1', 'postgres');
+    expect(out).toContain('SELECT');
+    expect(out).toContain('FROM');
+    expect(out.split('\n').length).toBeGreaterThan(1);
+  });
+
+  it('giữ được CTE lồng nhau (chỗ formatter regex cũ bị vỡ)', () => {
+    const src = 'with recent as (select id from orders where total > 100) select * from recent join users u on u.id = recent.id';
+    const out = formatSql(src, 'postgres');
+    expect(out).toContain('WITH');
+    expect(out).toContain('JOIN');
+    // Không được mất mệnh đề nào
+    expect(out.toLowerCase()).toContain('recent');
+    expect(out.toLowerCase()).toContain('orders');
+  });
+
+  it('giữ nguyên placeholder tham số truy vấn', () => {
+    for (const src of ['select * from t where id = :user_id', 'select * from t where id = ?', 'select * from t where id = %uid%', 'select * from t where id = ${uid}']) {
+      const out = formatSql(src, 'mysql');
+      const token = src.slice(src.indexOf('= ') + 2);
+      expect(out).toContain(token);
+    }
+  });
+
+  it('trả nguyên văn khi đang gõ dở / parser lỗi (không làm hỏng nội dung)', () => {
+    // sql-formatter ném lỗi với ngoặc chưa đóng hoặc chuỗi chưa kết thúc
+    for (const broken of ['SELECT * FROM (', "SELECT 'chưa đóng nháy"]) {
+      expect(formatSql(broken, 'mysql')).toBe(broken);
+    }
+  });
+
+  it('không đổi chuỗi rỗng', () => {
+    expect(formatSql('   ')).toBe('   ');
+  });
+});
+
+describe('minifySql', () => {
+  it('nén về 1 dòng và bỏ comment', () => {
+    const src = 'SELECT a,\n  b -- ghi chú\nFROM t /* khối */\nWHERE a = 1';
+    expect(minifySql(src)).toBe('SELECT a, b FROM t WHERE a = 1');
+  });
+
+  it('giữ nguyên khoảng trắng bên trong chuỗi', () => {
+    const src = "SELECT   'a   b' ,  c   FROM t";
+    expect(minifySql(src)).toBe("SELECT 'a   b', c FROM t");
+  });
+
+  it('không phá chuỗi có -- hoặc /* bên trong', () => {
+    const src = "SELECT 'a -- b', '/* c */'   FROM t";
+    expect(minifySql(src)).toBe("SELECT 'a -- b', '/* c */' FROM t");
+  });
+
+  it("giữ escape nháy đơn ''", () => {
+    const src = "SELECT   'it''s   ok'  FROM t";
+    expect(minifySql(src)).toBe("SELECT 'it''s   ok' FROM t");
+  });
+
+  it('bỏ khoảng trắng thừa quanh dấu ngoặc và dấu phẩy', () => {
+    expect(minifySql('SELECT COUNT( a , b )   FROM t')).toBe('SELECT COUNT(a, b) FROM t');
+  });
+});
