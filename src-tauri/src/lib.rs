@@ -144,6 +144,7 @@ pub fn run() {
             secret_store::secret_set_many,
             secret_store::secret_delete_many,
             db_stats::get_database_stats,
+            db_stats::get_all_databases_stats,
             db_stats::get_exact_table_row_count,
             redis_db::redis_connect,
             redis_db::redis_disconnect,

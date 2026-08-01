@@ -1,9 +1,31 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { dbHelper } from '../utils/dbHelper';
 import type { DbConnectionConfig } from '../utils/dbHelper';
-import { Database, Server, CheckCircle2, AlertTriangle, Plus, Trash2, Save, Copy, Download, Upload, Lock, Key, TerminalSquare, Hash, FolderOpen, User, Link, Star, Eye, EyeOff, ShieldAlert, Search, X, ChevronDown, ChevronRight, RefreshCw, ShieldCheck, Network, ArrowLeft, Check, Cloud, HardDriveDownload } from 'lucide-react';
+import { Database, Server, CheckCircle2, AlertTriangle, Plus, Trash2, Save, Copy, Download, Upload, Lock, Key, TerminalSquare, Hash, FolderOpen, User, Link, Star, Eye, EyeOff, ShieldAlert, Search, X, ChevronDown, ChevronRight, RefreshCw, ShieldCheck, Network, ArrowLeft, Check, Cloud, HardDriveDownload, LogIn } from 'lucide-react';
 import { PostgresIcon, MySqlIcon, RedisIcon, SqliteIcon } from './DbIcons';
 import { encryptConnectionExport, decryptConnectionExport } from '../utils/cryptoHelper';
+import {
+  parseDumpObjects,
+  buildDropStatements,
+  addExistsHint,
+  isSkippedDumpStatement,
+  isCommentOnlyStatement,
+} from '../utils/dumpPreview';
+import { splitStatements } from '../sql/statements';
+import { ProgressBar, type ProgressState } from './ProgressBar';
+import { ConfirmDialog } from './ConfirmDialog';
+
+/** Giây -> "12 giây" / "2 phút 5 giây" cho ETA khi phục hồi. */
+function formatRestoreEta(totalSeconds: number): string {
+  const s = Math.max(1, Math.round(totalSeconds));
+  if (s < 60) return `${s} giây`;
+  const m = Math.floor(s / 60);
+  const rest = s % 60;
+  if (m < 60) return rest ? `${m} phút ${rest} giây` : `${m} phút`;
+  const h = Math.floor(m / 60);
+  const restM = m % 60;
+  return restM ? `${h} giờ ${restM} phút` : `${h} giờ`;
+}
 import {
   SECRET_FIELDS,
   hasInlineSecrets,
@@ -217,6 +239,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
   const [brIncludeStructure, setBrIncludeStructure] = useState(true);
   const [brIncludeContent, setBrIncludeContent] = useState(true);
   const [brFile, setBrFile] = useState<File | null>(null);
+  // Xoá đối tượng trùng tên trước khi chạy dump (nếu không sẽ lỗi "already exists")
+  const [brOverwrite, setBrOverwrite] = useState(false);
+  // Bản tóm tắt xác nhận + tiến độ thật của lần phục hồi
+  const [brConfirm, setBrConfirm] = useState(false);
+  const [brProgress, setBrProgress] = useState<ProgressState | null>(null);
   const [brLoading, setBrLoading] = useState(false);
   const [brParsedTables, setBrParsedTables] = useState<string[]>([]);
   const [brSelectedTables, setBrSelectedTables] = useState<string[]>([]);
@@ -1197,8 +1224,20 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     }
   };
 
-  const handleBrSubmit = async (e: React.FormEvent) => {
+  // Bấm "Bắt đầu phục hồi" -> hiện bản tóm tắt (database đích, số bảng, số câu lệnh, ước tính)
+  // rồi mới chạy; nhánh sao lưu thì chạy luôn.
+  const handleBrClick = (e: React.MouseEvent) => {
     e.preventDefault();
+    if (brAction === 'restore') {
+      setBrConfirm(true);
+      return;
+    }
+    handleBrSubmit();
+  };
+
+  const handleBrSubmit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    setBrConfirm(false);
     setBrLoading(true);
     setErrorMsg(null);
     setSuccessMsg(null);
@@ -1263,7 +1302,36 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
           throw new Error('Vui lòng chọn tệp sao lưu (.sql hoặc .sql.gz) để khôi phục.');
         }
 
-        const resData = await dbHelper.restoreBackup(brSqlText, brSelectedTables);
+        // Ghi đè: chèn DROP ... IF EXISTS lên đầu, và cho các tên đó qua bộ lọc theo bảng
+        // của backend (nó chỉ chạy câu lệnh có nhắc tên trong danh sách truyền vào).
+        const objs = brOverwrite ? parseDumpObjects(brSqlText) : null;
+        const drops = objs ? buildDropStatements(objs, brType) : [];
+        const sqlToRun = drops.length ? `${drops.join('\n')}\n${brSqlText}` : brSqlText;
+        const tablesToRun = objs
+          ? [...new Set([...brSelectedTables, ...objs.views, ...objs.triggers, ...objs.procedures, ...objs.functions])]
+          : brSelectedTables;
+
+        const startedAt = Date.now();
+        setBrProgress({ label: 'Đang chuẩn bị...' });
+        const resData = await dbHelper.restoreBackup(sqlToRun, tablesToRun, (msg) => {
+          const done = msg.done ?? 0;
+          const total = msg.total ?? 0;
+          if (msg.type === 'start') {
+            setBrProgress({ label: `Đang chạy ${total.toLocaleString()} câu lệnh...`, current: 0, total });
+            return;
+          }
+          // ETA từ tốc độ thật đang chạy
+          const elapsed = (Date.now() - startedAt) / 1000;
+          const rate = done > 0 ? done / elapsed : 0;
+          const remain = rate > 0 && total > done ? Math.round((total - done) / rate) : 0;
+          setBrProgress({
+            label: 'Đang phục hồi...',
+            current: done,
+            total,
+            detail: `${done.toLocaleString()}/${total.toLocaleString()} câu lệnh${remain > 0 ? ` · còn ~${formatRestoreEta(remain)}` : ''}`,
+          });
+        });
+        setBrProgress(null);
         if (resData.success) {
           setSuccessMsg(`Khôi phục thành công! Đã chạy ${resData.statementsCount || 0} câu lệnh SQL.`);
           if (resData.activeDatabase) {
@@ -1279,7 +1347,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
             }, 1200);
           }
         } else {
-          throw new Error(resData.error || 'Lỗi khôi phục cơ sở dữ liệu.');
+          throw new Error(addExistsHint(resData.error || 'Lỗi khôi phục cơ sở dữ liệu.', brOverwrite));
         }
       }
     } catch (err: any) {
@@ -1963,9 +2031,71 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     </div>
   );
 
+  // Số câu lệnh sẽ chạy khi phục hồi (cùng bộ lọc theo bảng với backend) để ước tính thời gian.
+  const brPlannedStatements = React.useMemo(() => {
+    if (!brSqlText) return 0;
+    const objs = brOverwrite ? parseDumpObjects(brSqlText) : null;
+    const extra = objs ? buildDropStatements(objs, brType).length : 0;
+    const lower = brSelectedTables.map(t => t.toLowerCase());
+    const tableOf = /(?:CREATE\s+TABLE|INSERT\s+INTO|DROP\s+TABLE\s+IF\s+EXISTS)\s+(?:IF\s+NOT\s+EXISTS\s+)?[`"']?([a-zA-Z0-9_]+)/i;
+    const keep = splitStatements(brSqlText).filter(({ text }) => {
+      // Cùng luật với backend: bỏ LOCK/UNLOCK TABLES + lệnh transaction của dump...
+      if (isSkippedDumpStatement(text)) return false;
+      const { commentOnly, willRun } = isCommentOnlyStatement(text);
+      if (commentOnly) return willRun;
+      if (brParsedTables.length === 0) return true;
+      const m = tableOf.exec(text);
+      // ...câu không nhắc bảng nào (SET/USE...) vẫn chạy; còn lại phải thuộc bảng đã chọn.
+      return !m || lower.includes(m[1].toLowerCase());
+    });
+    return keep.length + extra;
+  }, [brSqlText, brOverwrite, brType, brParsedTables.length, brSelectedTables]);
+
+  const brTargetDb = brType === 'postgres' ? brPgDatabase : brType === 'mysql' ? brMyDatabase : brSqlitePath;
+
   // ——— Chế độ Sao lưu & Phục hồi (không cần kết nối sẵn) ———
   const renderBackupRestore = () => (
     <>
+      {/* Tóm tắt trước khi phục hồi: vào database nào, bao nhiêu bảng/câu lệnh, ước tính bao lâu */}
+      <ConfirmDialog
+        open={brConfirm}
+        tone={brOverwrite ? 'danger' : 'info'}
+        title="Xác nhận phục hồi dữ liệu"
+        message={
+          <>
+            <div>
+              Phục hồi vào{' '}
+              <b style={{ fontFamily: 'monospace' }}>{brTargetDb || '(database mặc định của kết nối)'}</b>
+              {brType !== 'sqlite' && (
+                <> trên <b style={{ fontFamily: 'monospace' }}>{brType === 'mysql' ? brMyHost : brPgHost}</b></>
+              )}.
+              {!brTargetDb && brType !== 'sqlite' && (
+                <> Tệp dump có lệnh <code style={{ fontFamily: 'monospace' }}>USE</code> thì sẽ chuyển theo tệp.</>
+              )}
+            </div>
+            <div style={{ marginTop: '8px', display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '2px 10px' }}>
+              <span style={{ color: 'var(--win-text-secondary)' }}>Bảng:</span>
+              <b>{brParsedTables.length === 0 ? 'toàn bộ tệp' : `${brSelectedTables.length}/${brParsedTables.length} bảng`}</b>
+              <span style={{ color: 'var(--win-text-secondary)' }}>Câu lệnh sẽ chạy:</span>
+              <b>{brPlannedStatements.toLocaleString()}</b>
+              <span style={{ color: 'var(--win-text-secondary)' }}>Tệp:</span>
+              <b>{brFile ? `${brFile.name} (${(brFile.size / 1024 / 1024).toFixed(2)} MB)` : ''}</b>
+              <span style={{ color: 'var(--win-text-secondary)' }}>Ước tính:</span>
+              <b>~{formatRestoreEta(brPlannedStatements / 800)}</b>
+            </div>
+          </>
+        }
+        note={
+          brOverwrite
+            ? 'Các đối tượng trùng tên sẽ bị DROP rồi tạo lại — dữ liệu hiện có của chúng mất hẳn.'
+            : 'Ước tính chỉ là tương đối; khi chạy sẽ hiện tiến độ và thời gian còn lại thật.'
+        }
+        confirmLabel="Bắt đầu phục hồi"
+        cancelLabel="Quay lại"
+        onConfirm={() => handleBrSubmit()}
+        onCancel={() => setBrConfirm(false)}
+      />
+
       <div className="cm-section">
         <div className="cm-label-row">
           <div>
@@ -2178,6 +2308,24 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                     })}
                   </div>
                 </div>
+              )}
+
+              {/* Chạy lại dump lên database đã có bảng cùng tên -> MySQL báo 1050
+                  "Table already exists" và huỷ cả lần phục hồi. Tuỳ chọn này xoá trước. */}
+              {brFile && (
+                <label className="cm-check" style={{ alignItems: 'flex-start' }}>
+                  <input
+                    type="checkbox"
+                    checked={brOverwrite}
+                    onChange={(e) => setBrOverwrite(e.target.checked)}
+                  />
+                  <span>
+                    Ghi đè đối tượng trùng tên (DROP bảng/view/trigger/routine trước khi tạo lại)
+                    <span className="cm-hint" style={{ display: 'block' }}>
+                      Không bật thì gặp bảng đã tồn tại sẽ lỗi và huỷ toàn bộ lần phục hồi.
+                    </span>
+                  </span>
+                </label>
               )}
             </div>
           </>
@@ -2479,14 +2627,20 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
             <footer className="cm-foot">
               {isBrMode ? (
                 <>
-                  <span className="cm-foot-msg cm-hint">
-                    {brAction === 'restore' && brFile && brParsedTables.length > 0
-                      ? `${brSelectedTables.length}/${brParsedTables.length} bảng được chọn`
-                      : ''}
-                  </span>
+                  {brProgress ? (
+                    <span className="cm-foot-msg" style={{ flex: 1, minWidth: 0, display: 'flex' }}>
+                      <ProgressBar progress={brProgress} />
+                    </span>
+                  ) : (
+                    <span className="cm-foot-msg cm-hint">
+                      {brAction === 'restore' && brFile && brParsedTables.length > 0
+                        ? `${brSelectedTables.length}/${brParsedTables.length} bảng được chọn`
+                        : ''}
+                    </span>
+                  )}
                   <button
                     className="cm-btn primary"
-                    onClick={handleBrSubmit}
+                    onClick={handleBrClick}
                     disabled={brLoading || (brAction === 'restore' && (!brFile || (brParsedTables.length > 0 && brSelectedTables.length === 0)))}
                   >
                     {brLoading
@@ -2504,7 +2658,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                     {loading ? <LoadingSpinner size={13} /> : <CheckCircle2 size={13} />} Kiểm tra
                   </button>
                   <button className="cm-btn primary" onClick={() => handleConnect(false)} disabled={loading}>
-                    {loading ? <><LoadingSpinner size={13} /> Đang kết nối...</> : <><Server size={14} /> Kết nối</>}
+                    {loading ? <><LoadingSpinner size={13} /> Đang kết nối...</> : <><LogIn size={14} /> Kết nối</>}
                   </button>
                 </>
               ) : null}

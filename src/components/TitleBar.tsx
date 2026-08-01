@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Minus, Square, X, Plus, Unplug, FileCode, HardDriveDownload,
+  Minus, Square, X, Plus, Unplug, FileCode, HardDriveDownload, HardDriveUpload,
   PanelLeft, SunMoon, RotateCw, Info, Keyboard,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -12,7 +12,8 @@ interface TitleBarProps {
   onNewConnection?: () => void;
   onDisconnect?: () => void;
   onNewQuery?: () => void;
-  onBackupRestore?: () => void;
+  onExportDatabase?: () => void;
+  onImportDatabase?: () => void;
   onToggleSidebar?: () => void;
   onToggleTheme?: () => void;
   onShowShortcuts?: () => void;
@@ -24,7 +25,8 @@ export const TitleBar: React.FC<TitleBarProps> = ({
   onNewConnection,
   onDisconnect,
   onNewQuery,
-  onBackupRestore,
+  onExportDatabase,
+  onImportDatabase,
   onToggleSidebar,
   onToggleTheme,
   onShowShortcuts,
@@ -110,7 +112,8 @@ export const TitleBar: React.FC<TitleBarProps> = ({
       title: 'Cơ sở dữ liệu',
       items: [
         { label: 'Truy vấn SQL mới', Icon: FileCode, onClick: onNewQuery, shortcut: 'Ctrl+T', disabled: !hasConnection },
-        { label: 'Sao lưu & Phục hồi...', Icon: HardDriveDownload, onClick: onBackupRestore, shortcut: 'Ctrl+B', disabled: !hasConnection },
+        { label: 'Xuất Database...', Icon: HardDriveDownload, onClick: onExportDatabase, disabled: !hasConnection, separatorBefore: true },
+        { label: 'Nhập Database...', Icon: HardDriveUpload, onClick: onImportDatabase, disabled: !hasConnection },
       ],
     },
     {
