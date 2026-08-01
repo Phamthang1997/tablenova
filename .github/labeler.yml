@@ -1,0 +1,48 @@
+# GitHub Action Labeler Configuration for TABLENOVA
+# Automatically labels Pull Requests based on modified file paths
+
+'area: frontend':
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'src/**/*'
+          - 'index.html'
+          - 'package.json'
+          - 'vite.config.*'
+
+'area: backend':
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'src-tauri/**/*'
+
+'area: sql':
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'src/sql/**/*'
+          - 'src/components/SqlEditor.tsx'
+          - 'src/components/Explain*.tsx'
+          - 'src-tauri/src/database.rs'
+
+'area: redis':
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'src/components/RedisBrowser.tsx'
+          - 'src-tauri/src/redis_db.rs'
+
+'area: terminal':
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'src/components/TerminalPanel.tsx'
+          - 'src-tauri/src/ssh_*.rs'
+          - 'src-tauri/src/local_terminal.rs'
+
+'area: documentation':
+  - changed-files:
+      - any-glob-to-any-file:
+          - '*.md'
+          - 'docs/**/*'
+          - 'LICENSE'
+
+'area: ci':
+  - changed-files:
+      - any-glob-to-any-file:
+          - '.github/**/*'
