@@ -4,8 +4,8 @@ import {
   hasInlineSecrets,
   mergeSecrets,
   newProfileId,
-  splitSecrets,
-  stripSecrets,
+  pickSecrets,
+  publicConfig,
 } from '../secretFields';
 
 const fullConfig = {
@@ -27,35 +27,31 @@ const fullConfig = {
   awsAccessKeyId: 'AKIA...',
 };
 
-describe('splitSecrets', () => {
-  it('tách hết field bí mật ra khỏi phần lưu được', () => {
-    const { safe, secrets } = splitSecrets(fullConfig);
-    for (const f of SECRET_FIELDS) {
-      expect(safe).not.toHaveProperty(f);
-      expect(secrets[f]).toBe((fullConfig as any)[f]);
-    }
+describe('publicConfig', () => {
+  it('bỏ hết field bí mật', () => {
+    const safe = publicConfig(fullConfig);
+    for (const f of SECRET_FIELDS) expect(safe).not.toHaveProperty(f);
+  });
+
+  it('bỏ khoá bí mật kể cả khi giá trị rỗng', () => {
+    expect(publicConfig({ host: 'h', password: '', sshPassword: 'x' })).toEqual({ host: 'h' });
   });
 
   it('giữ nguyên field không nhạy cảm, kể cả sshKeyPath và awsAccessKeyId', () => {
-    const { safe } = splitSecrets(fullConfig);
+    const safe = publicConfig(fullConfig);
     expect(safe.host).toBe('db.example.com');
     expect(safe.port).toBe(5432);
     expect(safe.sshKeyPath).toBe('/home/ops/.ssh/id_ed25519');
     expect(safe.awsAccessKeyId).toBe('AKIA...');
   });
 
-  it('bỏ qua bí mật rỗng để không tạo mục thừa trong kho HĐH', () => {
-    const { secrets } = splitSecrets({ host: 'h', password: '', sshPassphrase: 'x' });
-    expect(secrets).toEqual({ sshPassphrase: 'x' });
-  });
-
   it('chịu được config null/undefined', () => {
-    expect(splitSecrets(null)).toEqual({ safe: null, secrets: {} });
-    expect(splitSecrets(undefined)).toEqual({ safe: undefined, secrets: {} });
+    expect(publicConfig(null)).toBeNull();
+    expect(publicConfig(undefined)).toBeUndefined();
   });
 
   it('không có bí mật nào lọt vào chuỗi JSON đem lưu', () => {
-    const json = JSON.stringify(splitSecrets(fullConfig).safe);
+    const json = JSON.stringify(publicConfig(fullConfig));
     expect(json).not.toContain('p@ss');
     expect(json).not.toContain('BEGIN OPENSSH PRIVATE KEY');
     expect(json).not.toContain('aws-secret');
@@ -63,10 +59,36 @@ describe('splitSecrets', () => {
   });
 });
 
+describe('pickSecrets', () => {
+  it('lấy đủ mọi field bí mật', () => {
+    const values = pickSecrets(fullConfig);
+    for (const f of SECRET_FIELDS) expect(values[f]).toBe((fullConfig as any)[f]);
+  });
+
+  it('không lấy field không nhạy cảm', () => {
+    expect(pickSecrets(fullConfig)).not.toHaveProperty('host');
+    expect(pickSecrets(fullConfig)).not.toHaveProperty('awsAccessKeyId');
+  });
+
+  it('bỏ qua bí mật rỗng để không tạo mục thừa trong kho HĐH', () => {
+    expect(pickSecrets({ host: 'h', password: '', sshPassphrase: 'x' })).toEqual({ sshPassphrase: 'x' });
+  });
+
+  it('chịu được config null/undefined', () => {
+    expect(pickSecrets(null)).toEqual({});
+    expect(pickSecrets(undefined)).toEqual({});
+  });
+});
+
+describe('publicConfig + pickSecrets', () => {
+  it('hai nửa cộng lại đúng bằng config ban đầu', () => {
+    expect({ ...publicConfig(fullConfig), ...pickSecrets(fullConfig) }).toEqual(fullConfig);
+  });
+});
+
 describe('mergeSecrets', () => {
   it('ghép bí mật trở lại config đã bóc', () => {
-    const { safe, secrets } = splitSecrets(fullConfig);
-    expect(mergeSecrets(safe, secrets)).toEqual(fullConfig);
+    expect(mergeSecrets(publicConfig(fullConfig), pickSecrets(fullConfig))).toEqual(fullConfig);
   });
 
   it('bí mật từ kho HĐH đè lên giá trị cũ còn sót trong config', () => {
@@ -86,15 +108,9 @@ describe('hasInlineSecrets', () => {
   });
 
   it('trả về false khi đã bóc sạch hoặc chỉ còn chuỗi rỗng', () => {
-    expect(hasInlineSecrets(splitSecrets(fullConfig).safe)).toBe(false);
+    expect(hasInlineSecrets(publicConfig(fullConfig))).toBe(false);
     expect(hasInlineSecrets({ host: 'h', password: '' })).toBe(false);
     expect(hasInlineSecrets(null)).toBe(false);
-  });
-});
-
-describe('stripSecrets', () => {
-  it('bỏ khoá bí mật kể cả khi giá trị rỗng', () => {
-    expect(stripSecrets({ host: 'h', password: '', sshPassword: 'x' })).toEqual({ host: 'h' });
   });
 });
 

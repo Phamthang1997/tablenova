@@ -1,5 +1,67 @@
-/* Google Fonts Integration */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+/* Font bundle sẵn trong public/fonts — KHÔNG tải từ Google Fonts nữa: app desktop phải
+   hiển thị đúng cả khi máy không có mạng, và không gửi request ra ngoài mỗi lần mở app.
+   Giấy phép OFL đi kèm: public/fonts/Inter-OFL.txt, public/fonts/JetBrainsMono-OFL.txt.
+   font-display: block vì file nằm ngay trong app, nạp gần như tức thì.
+
+   Inter dùng bản variable (1 file cho mọi weight 100–900) nên nhẹ hơn 4 file tĩnh. */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: block;
+  src: url('/fonts/InterVariable.woff2') format('woff2');
+}
+
+/* JetBrains Mono (dùng cho editor SQL, terminal, bảng dữ liệu) */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('/fonts/JetBrainsMono-Regular.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: italic;
+  font-weight: 400;
+  font-display: block;
+  src: url('/fonts/JetBrainsMono-Italic.woff2') format('woff2');
+}
+
+/* 500 và 600 có thật vì UI dùng font-weight 500/600 với mono (DatabaseInfoModal,
+   RedisBrowser, StructureViewer) — nếu thiếu thì browser sẽ nhảy sang 400/700. */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: block;
+  src: url('/fonts/JetBrainsMono-Medium.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 600;
+  font-display: block;
+  src: url('/fonts/JetBrainsMono-SemiBold.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 700;
+  font-display: block;
+  src: url('/fonts/JetBrainsMono-Bold.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: italic;
+  font-weight: 700;
+  font-display: block;
+  src: url('/fonts/JetBrainsMono-BoldItalic.woff2') format('woff2');
+}
 
 *, *::before, *::after {
   box-sizing: border-box;
@@ -2250,6 +2312,67 @@ select.form-input {
   position: relative;
   min-width: 120px;
   min-height: 80px;
+}
+
+/* ── Monaco: câu lệnh dưới con trỏ (câu mà Ctrl+Enter sẽ chạy) ───────────── */
+.monaco-editor .sql-current-stmt {
+  background: rgba(96, 165, 250, 0.07);
+}
+
+[data-theme='light'] .monaco-editor .sql-current-stmt {
+  background: rgba(37, 99, 235, 0.06);
+}
+
+.monaco-editor .sql-current-stmt-strip {
+  border-left: 2px solid var(--win-accent);
+  margin-left: 2px;
+  opacity: 0.75;
+}
+
+/* Mũi tên "chạy câu lệnh này" ở lề trái (glyph margin) */
+.monaco-editor .sql-run-glyph {
+  cursor: pointer;
+}
+
+.monaco-editor .sql-run-glyph::before {
+  content: '▶';
+  display: block;
+  font-size: 9px;
+  /* khớp lineHeight của editor (SQL_EDITOR_OPTIONS.lineHeight) để mũi tên căn giữa dòng */
+  line-height: 18px;
+  text-align: center;
+  color: var(--win-accent);
+  opacity: 0.5;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.monaco-editor .sql-run-glyph:hover::before {
+  opacity: 1;
+  transform: scale(1.2);
+}
+
+/* Tooltip / hover của Monaco: mặc định lấy cỡ chữ hệ thống nên to hơn phần còn lại của app.
+   KHÔNG ràng buộc ancestor .monaco-editor: với fixedOverflowWidgets, widget được render ở
+   container tràn riêng nên selector phụ thuộc ancestor có thể không khớp. */
+.monaco-hover,
+.monaco-hover .monaco-hover-content,
+.monaco-hover .markdown-docs,
+.monaco-hover .hover-contents {
+  font-family: var(--win-font-sans);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* Bảng cột trong hover (hover lên tên bảng) và code block giữ font mono, nhỏ gọn */
+.monaco-hover code,
+.monaco-hover pre,
+.monaco-hover table {
+  font-family: var(--win-font-mono);
+  font-size: 11.5px;
+}
+
+.monaco-hover table td {
+  padding: 1px 8px 1px 0;
 }
 
 .split-divider-h {

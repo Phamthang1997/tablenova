@@ -19,23 +19,35 @@ export type SecretMap = Record<string, string>;
 
 const SECRET_SET: ReadonlySet<string> = new Set(SECRET_FIELDS);
 
-/**
- * Tách config thành phần lưu được (`safe`) và phần bí mật (`secrets`).
- * Bí mật rỗng bị bỏ qua để không tạo mục thừa trong kho HĐH.
- */
-export function splitSecrets(config: any): { safe: any; secrets: SecretMap } {
-  const safe: any = {};
-  const secrets: SecretMap = {};
-  if (!config || typeof config !== 'object') return { safe: config, secrets };
+// Hai nửa của config được lấy bằng hai hàm ĐỘC LẬP, cố ý không dùng chung một hàm
+// trả về `{ safe, secrets }`. Gộp lại thì phân tích luồng dữ liệu (CodeQL) không tách
+// được hai nửa: nửa `safe` bị coi là nhạy cảm lây từ nửa kia, và mọi thứ chạm vào
+// profile sau đó — kể cả `profile.id` — bị báo là ghi bí mật ra localStorage.
 
+/** Phần config được phép ghi xuống localStorage: mọi khoá trừ khoá bí mật. */
+export function publicConfig(config: any): any {
+  if (!config || typeof config !== 'object') return config;
+
+  const safe: any = {};
   for (const [k, v] of Object.entries(config)) {
-    if (SECRET_SET.has(k)) {
-      if (typeof v === 'string' && v !== '') secrets[k] = v;
-    } else {
-      safe[k] = v;
-    }
+    if (!SECRET_SET.has(k)) safe[k] = v;
   }
-  return { safe, secrets };
+  return safe;
+}
+
+/**
+ * Phần bí mật của config, để đẩy sang kho bảo mật của HĐH.
+ * Bí mật rỗng bị bỏ qua để không tạo mục thừa trong kho.
+ */
+export function pickSecrets(config: any): SecretMap {
+  const secrets: SecretMap = {};
+  if (!config || typeof config !== 'object') return secrets;
+
+  for (const f of SECRET_FIELDS) {
+    const v = config[f];
+    if (typeof v === 'string' && v !== '') secrets[f] = v;
+  }
+  return secrets;
 }
 
 /** Ghép bí mật đọc từ kho HĐH trở lại config để đem đi kết nối / xuất file. */
@@ -47,11 +59,6 @@ export function mergeSecrets(safe: any, secrets: SecretMap): any {
 export function hasInlineSecrets(config: any): boolean {
   if (!config || typeof config !== 'object') return false;
   return SECRET_FIELDS.some((f) => typeof config[f] === 'string' && config[f] !== '');
-}
-
-/** Bỏ mọi khoá bí mật khỏi config (không quan tâm giá trị). */
-export function stripSecrets(config: any): any {
-  return splitSecrets(config).safe;
 }
 
 /** Id profile mới — dùng crypto.randomUUID() để không trùng và không đoán trước được. */

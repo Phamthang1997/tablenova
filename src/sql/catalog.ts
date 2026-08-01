@@ -62,6 +62,14 @@ export async function getSchema(table: string): Promise<SchemaInfo | null> {
   }
 }
 
+/**
+ * Chỉ đọc schema ĐÃ có trong cache, không gọi backend. Dùng cho các đường phải quét nhiều bảng
+ * (vd hover một cột khi câu lệnh chưa có FROM) để tránh N lời gọi xuống Rust.
+ */
+export function getCachedSchema(table: string): SchemaInfo | null {
+  return schemaCache.get(table) || null;
+}
+
 export function invalidateCatalog(): void {
   tablesFetchedAt = 0;
   primed = false;
