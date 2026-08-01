@@ -9,8 +9,8 @@ import {
   hasInlineSecrets,
   mergeSecrets,
   newProfileId,
-  splitSecrets,
-  stripSecrets,
+  pickSecrets,
+  publicConfig,
 } from '../utils/secretFields';
 import { TerminalPanel } from './TerminalPanel';
 
@@ -424,9 +424,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     const pending: Array<Promise<void>> = [];
 
     for (const p of list) {
-      const { safe, secrets } = splitSecrets(p.config);
-      stripped.push({ ...p, config: safe });
-      if (Object.keys(secrets).length > 0) pending.push(dbHelper.setSecrets(p.id, secrets));
+      const values = pickSecrets(p.config);
+      stripped.push({ ...p, config: publicConfig(p.config) });
+      if (Object.keys(values).length > 0) pending.push(dbHelper.setSecrets(p.id, values));
     }
 
     setProfiles(stripped);
@@ -450,6 +450,19 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     } catch (e: any) {
       setSecretError('Không đọc được mật khẩu từ kho bảo mật của hệ điều hành: ' + (e?.message || e));
       return profile.config;
+    }
+  };
+
+  // Nhân bản bí mật sang một id khác, đi thẳng kho HĐH -> kho HĐH. Cố ý KHÔNG đọc bí mật
+  // ra rồi gắn vào object profile: profile là thứ sẽ đi vào localStorage, cho bí mật chạy
+  // qua nó là mở một đường (dù tạm thời) từ kho bảo mật ra bộ nhớ ghi xuống đĩa.
+  const copySecretsBetweenProfiles = async (fromId: string, toId: string): Promise<void> => {
+    try {
+      const values = await dbHelper.getSecrets(fromId, SECRET_FIELD_LIST);
+      if (Object.keys(values).length > 0) await dbHelper.setSecrets(toId, values);
+      setSecretError(null);
+    } catch (e: any) {
+      setSecretError('Không sao chép được mật khẩu trong kho bảo mật của hệ điều hành: ' + (e?.message || e));
     }
   };
 
@@ -525,7 +538,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
       const processedProfiles = await Promise.all(
         targetProfiles.map(async p => {
           const cloned = JSON.parse(JSON.stringify(p));
-          cloned.config = exportIncludePasswords ? await configWithSecrets(p) : stripSecrets(cloned.config);
+          cloned.config = exportIncludePasswords ? await configWithSecrets(p) : publicConfig(cloned.config);
           return cloned;
         })
       );
@@ -968,15 +981,17 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
 
   const handleDuplicateProfile = async (profile: SavedProfile, e: React.MouseEvent) => {
     e.stopPropagation();
-    // Bản sao phải mang theo cả bí mật -> đọc từ kho HĐH của profile gốc rồi ghi lại
-    // dưới id mới (persistProfiles lo phần tách/ghi).
+    // Bản sao phải mang theo cả bí mật, nhưng bí mật được nhân bản riêng trong kho HĐH
+    // (xem copySecretsBetweenProfiles) chứ không đi kèm trong `duplicated.config`.
     const duplicated: SavedProfile = {
       ...profile,
       id: newProfileId(),
       name: `${profile.name} (Copy)`,
-      config: await configWithSecrets(profile)
+      config: publicConfig(profile.config)
     };
     await persistProfiles([...profiles, duplicated]);
+    // Phải xong trước selectProfile: hàm đó đọc bí mật theo id mới để điền form.
+    await copySecretsBetweenProfiles(profile.id, duplicated.id);
     selectProfile(duplicated);
   };
 
