@@ -45,7 +45,12 @@ export const SQL_EDITOR_OPTIONS: monaco.editor.IStandaloneEditorConstructionOpti
   quickSuggestions: { other: true, comments: false, strings: false },
   quickSuggestionsDelay: 60,
   suggestSelection: 'first',
-  snippetSuggestions: 'bottom',
+  // PHẢI là 'inline'. 'bottom'/'top' bắt Monaco nhóm mọi item `kind: Snippet` xuống đáy
+  // (hoặc lên đỉnh) và BỎ QUA sortText của chúng — trong khi thứ tự gợi ý của app hoàn
+  // toàn dựa vào sortText (xem sqlLanguage.ts: '00_' sao/liệt kê cột, '0_' điều kiện JOIN,
+  // '1_' cột, '2_' bảng, '4-5_' từ khoá, 'z_' mẫu câu). Đặt 'bottom' làm điều kiện JOIN
+  // và mục "liệt kê N cột" bị dìm xuống dưới hàng chục cột nên coi như mất hẳn.
+  snippetSuggestions: 'inline',
   wordBasedSuggestions: 'off', // chỉ gợi ý từ catalog DB + parser, không lấy từ trong văn bản
   // Panel gợi ý gọn lại (mặc định lấy theo fontSize của editor nên trông quá to)
   suggestFontSize: 12,

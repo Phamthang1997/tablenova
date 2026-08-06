@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { Trans, useTranslation } from 'react-i18next';
 import { AlertTriangle, CheckCircle2, Info } from 'lucide-react';
+import { Modal, ModalBody, ModalFooter } from './Modal';
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -30,14 +31,15 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   title,
   message,
   note,
-  confirmLabel = 'Xác nhận',
-  cancelLabel = 'Hủy',
+  confirmLabel,
+  cancelLabel,
   danger = false,
   tone,
   requireText,
   onConfirm,
   onCancel,
 }) => {
+  const { t } = useTranslation();
   const [typed, setTyped] = useState('');
 
   useEffect(() => {
@@ -46,16 +48,16 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
 
   const ready = !requireText || typed.trim() === requireText;
 
+  // Escape đã do Modal xử lý; ở đây chỉ cần Enter để xác nhận nhanh,
+  // và chỉ khi không phải nhập xác nhận bằng tay.
   useEffect(() => {
-    if (!open) return;
+    if (!open || requireText) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onCancel();
-      // Enter để xác nhận nhanh, nhưng chỉ khi không phải nhập xác nhận bằng tay.
-      if (e.key === 'Enter' && !requireText) onConfirm();
+      if (e.key === 'Enter') onConfirm();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, onCancel, onConfirm, requireText]);
+  }, [open, onConfirm, requireText]);
 
   if (!open) return null;
 
@@ -67,97 +69,59 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
       : 'var(--win-accent)';
   const Icon = kind === 'danger' ? AlertTriangle : kind === 'success' ? CheckCircle2 : Info;
 
-  // Portal ra body: hộp thoại này được render từ trong các panel có `backdrop-filter`
-  // (ConnectionManager, Sidebar...), mà backdrop-filter tạo containing block mới nên
-  // `position: fixed` chỉ phủ trong panel đó thay vì cả cửa sổ.
-  return createPortal(
-    <div
-      onMouseDown={(e) => { if (e.target === e.currentTarget) onCancel(); }}
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        width: '100%',
-        height: '100%',
-        background: 'rgba(0,0,0,0.6)',
-        zIndex: 10001,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        backdropFilter: 'blur(2px)'
-      }}
+  return (
+    <Modal
+      title={title}
+      icon={<Icon size={14} style={{ color: accent, flexShrink: 0 }} />}
+      onClose={onCancel}
+      showClose={false}
+      width="420px"
+      maxWidth="92vw"
+      zIndex={10001}
     >
-      <div style={{
-        width: '420px',
-        maxWidth: '92vw',
-        background: 'var(--win-bg-card)',
-        border: '1px solid var(--win-border-strong, var(--win-border))',
-        borderRadius: '6px',
-        boxShadow: '0 20px 40px rgba(0,0,0,0.4)',
-        display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden'
-      }}>
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          padding: '12px 16px',
-          borderBottom: '1px solid var(--win-border)',
-          background: 'var(--win-bg-tab-bar, rgba(0,0,0,0.15))'
-        }}>
-          <Icon size={14} style={{ color: accent, flexShrink: 0 }} />
-          <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--win-text-primary)' }}>{title}</span>
-        </div>
-
-        <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          <div style={{ fontSize: '11px', color: 'var(--win-text-primary)', lineHeight: 1.6 }}>{message}</div>
-          {note && (
-            <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)', lineHeight: 1.5 }}>{note}</div>
-          )}
-          {requireText && (
-            <div>
-              <label style={{ fontSize: '11px', color: 'var(--win-text-secondary)', display: 'block', marginBottom: '6px' }}>
-                Gõ <b style={{ color: 'var(--win-text-primary)', fontFamily: 'monospace' }}>{requireText}</b> để xác nhận:
-              </label>
-              <input
-                type="text"
-                className="form-input"
-                autoFocus
-                value={typed}
-                onChange={(e) => setTyped(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter' && ready) onConfirm(); }}
-                style={{ height: '30px', fontSize: '11px', width: '100%' }}
+      <ModalBody style={{ gap: '10px' }}>
+        <div style={{ fontSize: '11px', color: 'var(--win-text-primary)', lineHeight: 1.6 }}>{message}</div>
+        {note && (
+          <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)', lineHeight: 1.5 }}>{note}</div>
+        )}
+        {requireText && (
+          <div>
+            <label style={{ fontSize: '11px', color: 'var(--win-text-secondary)', display: 'block', marginBottom: '6px' }}>
+              <Trans
+                i18nKey="confirmDialog.typeToConfirm"
+                values={{ text: requireText }}
+                components={{ code: <b style={{ color: 'var(--win-text-primary)', fontFamily: 'monospace' }} /> }}
               />
-            </div>
-          )}
-        </div>
+            </label>
+            <input
+              type="text"
+              className="form-input"
+              autoFocus
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && ready) onConfirm(); }}
+              style={{ height: '30px', fontSize: '11px', width: '100%' }}
+            />
+          </div>
+        )}
+      </ModalBody>
 
-        <div style={{
-          display: 'flex',
-          justifyContent: 'flex-end',
-          gap: '8px',
-          padding: '12px 16px',
-          borderTop: '1px solid var(--win-border)',
-          background: 'var(--win-bg-tab-bar, rgba(0,0,0,0.15))'
-        }}>
-          <button className="btn btn-secondary" onClick={onCancel}>{cancelLabel}</button>
-          <button
-            className="btn btn-primary"
-            onClick={onConfirm}
-            disabled={!ready}
-            style={{
-              background: ready ? accent : 'var(--win-bg-hover)',
-              color: ready ? '#fff' : 'var(--win-text-disabled)',
-              border: 'none',
-              cursor: ready ? 'pointer' : 'not-allowed'
-            }}
-          >
-            {confirmLabel}
-          </button>
-        </div>
-      </div>
-    </div>,
-    document.body
+      <ModalFooter>
+        <button className="btn btn-secondary" onClick={onCancel}>{cancelLabel ?? t('common.cancel')}</button>
+        <button
+          className="btn btn-primary"
+          onClick={onConfirm}
+          disabled={!ready}
+          style={{
+            background: ready ? accent : 'var(--win-bg-hover)',
+            color: ready ? '#fff' : 'var(--win-text-disabled)',
+            border: 'none',
+            cursor: ready ? 'pointer' : 'not-allowed'
+          }}
+        >
+          {confirmLabel ?? t('common.confirm')}
+        </button>
+      </ModalFooter>
+    </Modal>
   );
 };

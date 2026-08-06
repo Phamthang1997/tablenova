@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { ExplainNode } from '../utils/explainHelper';
 import { ChevronDown, ChevronRight, Table } from 'lucide-react';
 
@@ -7,6 +8,7 @@ interface ExplainTreeViewProps {
 }
 
 export const ExplainTreeView: React.FC<ExplainTreeViewProps> = ({ rootNode }) => {
+  const { t } = useTranslation();
   return (
     <div style={{
       width: '100%',
@@ -28,11 +30,11 @@ export const ExplainTreeView: React.FC<ExplainTreeViewProps> = ({ rootNode }) =>
         color: 'var(--win-text-disabled)',
         textTransform: 'uppercase'
       }}>
-        <div>Thao tác (Operation)</div>
-        <div>Bảng (Table)</div>
-        <div>Chỉ mục (Index)</div>
-        <div>Chi phí (Cost)</div>
-        <div>Số dòng (Rows)</div>
+        <div>{t('explain.colOperation')}</div>
+        <div>{t('explain.colTable')}</div>
+        <div>{t('explain.colIndex')}</div>
+        <div>{t('explain.colCost')}</div>
+        <div>{t('explain.colRows')}</div>
       </div>
 
       {/* Tree Rows */}

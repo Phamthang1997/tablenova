@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { FolderOpen } from 'lucide-react';
 import { dbHelper } from '../utils/dbHelper';
 import { getLastExportDir, pickExportFolder } from '../utils/fileSave';
 import { ProgressBar, type ProgressState } from './ProgressBar';
+import { Modal, ModalFooter } from './Modal';
 
 export type DatabaseExportFormat = 'sql' | 'json' | 'csv' | 'xlsx';
 
@@ -32,12 +34,13 @@ const FORMAT_LABEL: Record<DatabaseExportFormat, string> = {
   xlsx: 'XLSX',
 };
 
-const FORMAT_HINT: Record<DatabaseExportFormat, string> = {
-  sql: 'Một tệp .sql chứa DDL/INSERT của các bảng đã chọn — dùng để phục hồi lại database.',
-  json: 'Một tệp .json dạng { "tên_bảng": [ ...dòng ] }.',
-  csv: 'Một bảng -> tệp .csv; nhiều bảng -> gói .zip, mỗi bảng một tệp .csv.',
-  xlsx: 'Một tệp .xlsx, mỗi bảng là một sheet.',
-};
+/** Translation keys for the per-format hint; resolved with `t()` in the component. */
+const FORMAT_HINT_KEY = {
+  sql: 'exportDialog.descSql',
+  json: 'exportDialog.descJson',
+  csv: 'exportDialog.descCsv',
+  xlsx: 'exportDialog.descXlsx',
+} as const satisfies Record<DatabaseExportFormat, string>;
 
 const labelStyle: React.CSSProperties = {
   fontSize: '11px',
@@ -57,6 +60,7 @@ const removeAccents = (s: string) =>
  * tuỳ chọn SQL), phải là danh sách bảng chiếm hết chiều cao nên không phải cuộn cả popup.
  */
 export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ open, onClose, onSubmit }) => {
+  const { t } = useTranslation();
   const [filename, setFilename] = useState('database_dump');
   const [format, setFormat] = useState<DatabaseExportFormat>('sql');
   const [dropTable, setDropTable] = useState(true);
@@ -114,7 +118,7 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ open
 
   const submit = async () => {
     if (selected.length === 0) {
-      setError('Chọn ít nhất một bảng để xuất.');
+      setError(t('exportDialog.errPickTable'));
       return;
     }
     setError(null);
@@ -142,56 +146,14 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ open
   };
 
   return (
-    <div
-      onMouseDown={(e) => { if (e.target === e.currentTarget && !submitting) onClose(); }}
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        width: '100%',
-        height: '100%',
-        background: 'rgba(0,0,0,0.6)',
-        zIndex: 9999,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        backdropFilter: 'blur(2px)'
-      }}
+    <Modal
+      title={t('exportDialog.dbTitle')}
+      onClose={onClose}
+      closeDisabled={submitting}
+      width="820px"
+      height="540px"
+      zIndex={9999}
     >
-      <div style={{
-        width: '820px',
-        maxWidth: '94vw',
-        height: '540px',
-        maxHeight: '90vh',
-        background: 'var(--win-bg-card)',
-        border: '1px solid var(--win-border-strong, var(--win-border))',
-        borderRadius: '6px',
-        boxShadow: '0 20px 40px rgba(0,0,0,0.4)',
-        display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden'
-      }}>
-        <div style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          padding: '12px 16px',
-          borderBottom: '1px solid var(--win-border)',
-          background: 'var(--win-bg-tab-bar, rgba(0,0,0,0.15))',
-          flexShrink: 0
-        }}>
-          <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--win-text-primary)' }}>
-            Xuất Cơ sở dữ liệu (Export Database)
-          </span>
-          <button
-            onClick={onClose}
-            disabled={submitting}
-            style={{ background: 'transparent', border: 'none', color: 'var(--win-text-secondary)', cursor: 'pointer', fontSize: '16px' }}
-          >
-            ×
-          </button>
-        </div>
-
         {/* Thân: 2 cột — cấu hình | danh sách bảng */}
         <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
           <div style={{
@@ -205,7 +167,7 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ open
             overflowY: 'auto'
           }}>
             <div className="form-group">
-              <label style={labelStyle}>Tên tệp xuất (File name):</label>
+              <label style={labelStyle}>{t('exportDialog.fileName')}</label>
               <input
                 type="text"
                 className="form-input"
@@ -217,16 +179,16 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ open
             </div>
 
             <div className="form-group">
-              <label style={labelStyle}>Thư mục lưu:</label>
+              <label style={labelStyle}>{t('exportDialog.saveFolder')}</label>
               <div style={{ display: 'flex', gap: '6px' }}>
                 <input
                   type="text"
                   className="form-input"
                   readOnly
                   value={dir}
-                  placeholder="Thư mục tải xuống của hệ thống"
+                  placeholder={t('exportDialog.folderPlaceholder')}
                   onClick={chooseFolder}
-                  title={dir || 'Bấm để chọn thư mục'}
+                  title={dir || t('exportDialog.pickFolderTitle')}
                   style={{ flex: 1, minWidth: 0, height: '30px', fontSize: '11px', cursor: 'pointer' }}
                 />
                 <button
@@ -236,18 +198,18 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ open
                   style={{ padding: '0 10px', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}
                 >
                   <FolderOpen size={13} />
-                  Chọn...
+                  {t('exportDialog.pick')}
                 </button>
                 {dir && (
                   <button className="btn btn-secondary" onClick={() => setDir('')} disabled={submitting} style={{ padding: '0 10px' }}>
-                    Bỏ
+                    {t('exportDialog.clear')}
                   </button>
                 )}
               </div>
             </div>
 
             <div>
-              <label style={labelStyle}>Định dạng xuất:</label>
+              <label style={labelStyle}>{t('exportDialog.formatLabel')}</label>
               <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                 {(['sql', 'json', 'csv', 'xlsx'] as const).map((fmt) => (
                   <button
@@ -269,13 +231,13 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ open
                 ))}
               </div>
               <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)', marginTop: '8px', lineHeight: 1.5 }}>
-                {FORMAT_HINT[format]}
+                {t(FORMAT_HINT_KEY[format])}
               </div>
             </div>
 
             {format === 'sql' && (
               <div>
-                <label style={labelStyle}>Tuỳ chọn SQL:</label>
+                <label style={labelStyle}>{t('exportDialog.sqlOptions')}</label>
                 <div style={{
                   display: 'flex',
                   flexDirection: 'column',
@@ -287,19 +249,19 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ open
                 }}>
                   <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}>
                     <input type="checkbox" checked={dropTable} onChange={(e) => setDropTable(e.target.checked)} />
-                    <span>DROP TABLE IF EXISTS trước mỗi bảng</span>
+                    <span>{t('exportDialog.optDropTable')}</span>
                   </label>
                   <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}>
                     <input type="checkbox" checked={includeStructure} onChange={(e) => setIncludeStructure(e.target.checked)} />
-                    <span>Kèm cấu trúc (CREATE TABLE)</span>
+                    <span>{t('exportDialog.optStructure')}</span>
                   </label>
                   <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}>
                     <input type="checkbox" checked={includeContent} onChange={(e) => setIncludeContent(e.target.checked)} />
-                    <span>Kèm dữ liệu (INSERT INTO)</span>
+                    <span>{t('exportDialog.optData')}</span>
                   </label>
                   <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}>
                     <input type="checkbox" checked={compressGzip} onChange={(e) => setCompressGzip(e.target.checked)} />
-                    <span>Nén tệp bằng Gzip (.sql.gz)</span>
+                    <span>{t('exportDialog.optGzip')}</span>
                   </label>
                 </div>
               </div>
@@ -309,7 +271,7 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ open
           <div style={{ flex: 1, minWidth: 0, padding: '16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
               <label style={{ ...labelStyle, marginBottom: 0 }}>
-                Bảng cần xuất ({selected.length}/{tables.length}):
+                {t('exportDialog.tablesToExport', { selected: selected.length, total: tables.length })}
               </label>
               <button
                 onClick={toggleAllShown}
@@ -325,7 +287,7 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ open
                   whiteSpace: 'nowrap'
                 }}
               >
-                {allShownSelected ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
+                {allShownSelected ? t('exportDialog.deselectAll') : t('exportDialog.selectAll')}
               </button>
             </div>
 
@@ -334,7 +296,7 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ open
               className="form-input"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Tìm bảng..."
+              placeholder={t('exportDialog.searchTables')}
               style={{ height: '28px', fontSize: '11px', width: '100%' }}
             />
 
@@ -351,10 +313,10 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ open
               gap: '6px'
             }}>
               {tablesLoading ? (
-                <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>Đang tải danh sách bảng...</div>
+                <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>{t('exportDialog.loadingTables')}</div>
               ) : shown.length === 0 ? (
                 <div style={{ fontSize: '11px', color: 'var(--win-text-disabled)' }}>
-                  {tables.length === 0 ? 'Không có bảng nào.' : 'Không có bảng khớp từ khoá.'}
+                  {tables.length === 0 ? t('exportDialog.noTables') : t('exportDialog.noTableMatch')}
                 </div>
               ) : (
                 shown.map((name) => (
@@ -368,16 +330,7 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ open
           </div>
         </div>
 
-        <div style={{
-          display: 'flex',
-          justifyContent: 'flex-end',
-          alignItems: 'center',
-          gap: '8px',
-          padding: '12px 16px',
-          borderTop: '1px solid var(--win-border)',
-          background: 'var(--win-bg-tab-bar, rgba(0,0,0,0.15))',
-          flexShrink: 0
-        }}>
+        <ModalFooter>
           {progress ? (
             <ProgressBar progress={progress} />
           ) : error ? (
@@ -385,17 +338,16 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ open
               {error}
             </span>
           ) : null}
-          <button className="btn btn-secondary" onClick={onClose} disabled={submitting} style={{ flexShrink: 0 }}>Hủy</button>
+          <button className="btn btn-secondary" onClick={onClose} disabled={submitting} style={{ flexShrink: 0 }}>{t('common.cancel')}</button>
           <button
             className="btn btn-primary"
             onClick={submit}
             disabled={submitting || tablesLoading || selected.length === 0}
             style={{ background: 'var(--win-accent)', color: '#fff', border: 'none', flexShrink: 0 }}
           >
-            {submitting ? 'Đang xuất...' : 'Bắt đầu Xuất'}
+            {submitting ? t('exportDialog.exporting') : t('exportDialog.startExport')}
           </button>
-        </div>
-      </div>
-    </div>
+        </ModalFooter>
+    </Modal>
   );
 };

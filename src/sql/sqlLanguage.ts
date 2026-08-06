@@ -8,6 +8,8 @@ import 'monaco-sql-languages/esm/languages/mysql/mysql.contribution';
 import 'monaco-sql-languages/esm/languages/pgsql/pgsql.contribution';
 import 'monaco-sql-languages/esm/languages/generic/generic.contribution';
 import * as catalog from './catalog';
+import { buildJoinConditions } from './joinConditions';
+import { collectTableRefs, statementAt } from './statements';
 import { bumpUsage, rankSort } from './usageStats';
 
 const BUMP_CMD = 'tablenova.bumpUsage';
@@ -32,50 +34,6 @@ export function langIdForDbType(dbType: string): string {
 // Mọi language id mà editor SQL có thể dùng (để đăng ký hover/format cho đủ 3 dialect).
 export const LANG_IDS: string[] = [LanguageIdEnum.MYSQL, LanguageIdEnum.PG, LanguageIdEnum.GENERIC];
 
-// Dựng danh sách điều kiện JOIN "A.col = B.col" giữa bảng JOIN sau cùng và các bảng trước đó,
-// ưu tiên foreign key; nếu không có FK thì fallback theo cột trùng tên (id/number/code).
-async function buildJoinConditions(
-  scopeTables: string[],
-  aliasByTable: Map<string, string>
-): Promise<string[]> {
-  const uniq = Array.from(new Set(scopeTables));
-  if (uniq.length < 2) return [];
-  const last = uniq[uniq.length - 1];
-  const others = uniq.slice(0, -1);
-  const pfx = (t: string) => aliasByTable.get(t) || t;
-  const out: string[] = [];
-  const seen = new Set<string>();
-  const add = (a: string, ac: string, b: string, bc: string) => {
-    const s = `${pfx(a)}.${ac} = ${pfx(b)}.${bc}`;
-    if (!seen.has(s)) { seen.add(s); out.push(s); }
-  };
-
-  const lastSchema = await catalog.getSchema(last);
-  for (const other of others) {
-    const otherSchema = await catalog.getSchema(other);
-    // FK: last -> other
-    for (const fk of lastSchema?.foreignKeys || []) {
-      if ((fk.refTable || '').toLowerCase() === other.toLowerCase()) add(last, fk.column, other, fk.refColumn);
-    }
-    // FK: other -> last
-    for (const fk of otherSchema?.foreignKeys || []) {
-      if ((fk.refTable || '').toLowerCase() === last.toLowerCase()) add(other, fk.column, last, fk.refColumn);
-    }
-    // Fallback: cột trùng tên trông giống khóa (id/number/code/_id)
-    if (out.length === 0) {
-      const lastCols = new Set((lastSchema?.columns || []).map(c => c.name.toLowerCase()));
-      for (const col of otherSchema?.columns || []) {
-        const n = col.name.toLowerCase();
-        if (lastCols.has(n) && /(^id$|_id$|id$|number$|code$)/i.test(n)) {
-          const realLast = (lastSchema?.columns || []).find(c => c.name.toLowerCase() === n)?.name || col.name;
-          add(other, col.name, last, realLast);
-        }
-      }
-    }
-  }
-  return out;
-}
-
 // Sinh alias ngắn cho bảng: snake_case -> initials (order_details -> od);
 // camelCase -> chữ đầu + các chữ hoa (orderDetails -> od); còn lại -> chữ cái đầu. Bảo đảm không trùng.
 function genAlias(table: string, taken: Set<string>): string {
@@ -94,13 +52,20 @@ function genAlias(table: string, taken: Set<string>): string {
 
 const completionService: CompletionService = async (model, position, _ctx, suggestions, entities, snippets) => {
   const items: ICompletionItem[] = [];
-  if (!suggestions) return items;
+
+  // `suggestions` là null khi parser ANTLR bỏ cuộc hẳn ("no viable alternative" —
+  // rất hay gặp giữa lúc gõ dở). Trước đây ta return luôn, tức KHÔNG gợi ý gì cả.
+  // Giờ chạy tiếp ở chế độ suy giảm: scope lấy từ văn bản nên vẫn gợi ý được cột của
+  // các bảng trong câu, tên bảng, và điều kiện JOIN.
+  const parserFailed = !suggestions;
+  const keywords = suggestions?.keywords ?? [];
+  const syntaxHints = suggestions?.syntax ?? [];
 
   // 1) Từ khoá (đã đúng dialect do parser tính). Từ khoá hay dùng lên tier trước
   // (nếu không, gõ 'S' sẽ ra SAVEPOINT/SECURITY trước cả SELECT), trong cùng tier
   // thì cái nào dùng nhiều xếp trước.
   const keywordSet = new Set<string>();
-  for (const kw of suggestions.keywords) {
+  for (const kw of keywords) {
     keywordSet.add(kw.toUpperCase());
     items.push({
       label: kw,
@@ -131,39 +96,82 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
     });
   }
 
-  // 2) alias -> bảng, và danh sách bảng trong scope (từ entities của câu chứa caret)
+  // 2) alias -> bảng, và danh sách bảng trong scope.
+  //
+  // Hai nguồn, cố ý KHÔNG chỉ dùng parser: `entities` của ANTLR chính xác khi câu lệnh
+  // hợp lệ, nhưng lúc đang gõ dở thì thiếu/rỗng và sai khác theo từng dialect — đo được:
+  // với `... JOIN address a on ` parser Postgres trả 2 entity (bỏ mất `address`), còn
+  // với `... on c.` parser MySQL trả 0 entity. Khi đó alias mất sạch nên gợi ý cột rơi
+  // về "mọi bảng" và gợi ý điều kiện JOIN không chạy. Quét văn bản (collectTableRefs)
+  // bù đúng những trạng thái đó; entities vẫn được ưu tiên khi có.
   const aliasMap = new Map<string, string>(); // alias|tên (lower) -> tên bảng
   const aliasByTable = new Map<string, string>(); // tên bảng -> alias (nếu có) để hiện prefix
   const scopeTables: string[] = [];
+  const addTableRef = (tbl: string, alias?: string) => {
+    if (!tbl) return;
+    if (!scopeTables.some(t => t.toLowerCase() === tbl.toLowerCase())) scopeTables.push(tbl);
+    aliasMap.set(tbl.toLowerCase(), tbl);
+    if (alias) {
+      aliasMap.set(alias.toLowerCase(), tbl);
+      if (!aliasByTable.has(tbl)) aliasByTable.set(tbl, alias);
+    }
+  };
+
   for (const e of entities || []) {
     if ((e as any).entityContextType === EntityContextType.TABLE) {
       const tbl = String((e as any).text || '').split('.').pop() || '';
-      if (!tbl) continue;
-      scopeTables.push(tbl);
-      aliasMap.set(tbl.toLowerCase(), tbl);
       const alias = (e as any)['_alias']?.text;
-      if (alias) {
-        aliasMap.set(String(alias).toLowerCase(), tbl);
-        aliasByTable.set(tbl, String(alias));
-      }
+      addTableRef(tbl, alias ? String(alias) : undefined);
     }
   }
 
-  // 2b) B3 — Gợi ý điều kiện JOIN ON theo FOREIGN KEY (hoặc cột trùng tên) khi caret nằm sau ON
+  const fullText = model.getValue();
   const textBefore = model.getValueInRange({
     startLineNumber: 1, startColumn: 1,
     endLineNumber: position.lineNumber, endColumn: position.column,
   });
+
+  // Bù từ văn bản của CÂU chứa caret (không phải cả tài liệu, để câu khác không lọt vào scope).
+  const currentStmt = statementAt(fullText, model.getOffsetAt(position));
+  for (const ref of collectTableRefs(currentStmt?.text ?? textBefore)) {
+    addTableRef(ref.table, ref.alias);
+  }
+
+  // 2b) B3 — Gợi ý điều kiện JOIN ON theo FOREIGN KEY (hoặc cột trùng tên) khi caret nằm sau ON
   const inOnClause = /\bON\s+[\w.`"]*$/i.test(textBefore);
+  let joinConds: string[] = [];
   if (inOnClause) {
-    const conds = await buildJoinConditions(scopeTables, aliasByTable);
-    conds.forEach((c, i) => items.push({
+    joinConds = await buildJoinConditions(scopeTables, aliasByTable, catalog.getSchema);
+    joinConds.forEach((c, i) => items.push({
       label: c,
       kind: monaco.languages.CompletionItemKind.Snippet,
       detail: 'Điều kiện JOIN (FK)',
       insertText: c,
       sortText: '0_' + i, // ưu tiên cao nhất
     }));
+  }
+
+  // Bật bằng `window.__sqlCompletionDebug = true` trong DevTools rồi gõ lại để xem vì sao
+  // một gợi ý không xuất hiện. Gợi ý phụ thuộc parser + metadata từ DB nên rất khó tái hiện
+  // ngoài app; đây là cách nhanh nhất để biết mắt xích nào hụt.
+  if ((globalThis as any).__sqlCompletionDebug) {
+    const entityTables = (entities || [])
+      .filter(e => (e as any).entityContextType === EntityContextType.TABLE)
+      .map(e => `${(e as any).text}${(e as any)['_alias']?.text ? ' ' + (e as any)['_alias'].text : ''}`);
+    // Logged as ONE flat string, not an object: DevTools collapses nested arrays/objects
+    // behind `Array(4)` / `…`, and copying the console then loses exactly the fields worth
+    // reading (joinConds above all). Keep every value inline so a paste carries it.
+    console.log(
+      '[sql-completion]' +
+        ` tail=${JSON.stringify(textBefore.slice(-40))}` +
+        ` inOnClause=${inOnClause}` +
+        ` parserFailed=${parserFailed}` +
+        ` syntax=[${syntaxHints.map(s => s.syntaxContextType).join(' ')}]` +
+        ` entityTables=[${entityTables.join(' | ')}]` +
+        ` scopeTables=[${scopeTables.join(' ')}]` +
+        ` aliasByTable={${[...aliasByTable].map(([tbl, a]) => `${tbl}:${a}`).join(' ')}}` +
+        ` joinConds=[${joinConds.join(' | ')}]`
+    );
   }
 
   // 2c) Ngay sau SELECT (chưa gõ gì) -> '*' là gợi ý ưu tiên số 1, rồi mới tới cột/bảng.
@@ -208,92 +216,104 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
   const prefixAlias = dot ? dot[1].toLowerCase() : null;
 
   // 4) Gợi ý ngữ nghĩa theo loại mà parser yêu cầu tại caret
-  for (const s of suggestions.syntax) {
-    const type = s.syntaxContextType;
+  const emitTables = async () => {
+    // Tự đặt alias khi chèn bảng trong FROM/JOIN (không áp cho INTO/UPDATE/DROP...)
+    const stripped = textBefore.replace(/[\w$."`]*$/, '').trimEnd();
+    const wantAlias = /\b(from|join)$/i.test(stripped) || (/,$/.test(stripped) && /\bfrom\b/i.test(textBefore));
+    const taken = new Set<string>();
+    aliasByTable.forEach(a => taken.add(a.toLowerCase()));
 
-    if (type === EntityContextType.TABLE || type === EntityContextType.VIEW) {
-      // Tự đặt alias khi chèn bảng trong FROM/JOIN (không áp cho INTO/UPDATE/DROP...)
-      const stripped = textBefore.replace(/[\w$."`]*$/, '').trimEnd();
-      const wantAlias = /\b(from|join)$/i.test(stripped) || (/,$/.test(stripped) && /\bfrom\b/i.test(textBefore));
-      const taken = new Set<string>();
-      aliasByTable.forEach(a => taken.add(a.toLowerCase()));
+    const tables = await catalog.getTables();
+    for (const tb of tables) {
+      let insertText = tb.name;
+      let alias: string | null = null;
+      if (wantAlias) {
+        alias = genAlias(tb.name, new Set(taken)); // set riêng mỗi item để không "ăn" alias lẫn nhau
+        // Chèn alias như VĂN BẢN THƯỜNG, không dùng placeholder ${1:...}: placeholder giữ
+        // alias ở trạng thái đang-chọn nên ký tự gõ tiếp theo (vd ';') sẽ ghi đè mất alias.
+        insertText = `${tb.name} ${alias}`;
+      }
+      items.push({
+        label: tb.name,
+        kind: tb.type === 'view'
+          ? monaco.languages.CompletionItemKind.Interface
+          : monaco.languages.CompletionItemKind.Class,
+        detail: alias ? `${tb.type === 'view' ? 'View' : 'Bảng'} · alias ${alias}` : (tb.type === 'view' ? 'View' : 'Bảng'),
+        insertText,
+        sortText: rankSort('2', tb.name),
+        command: bumpCommand(tb.name),
+      });
+    }
+  };
 
-      const tables = await catalog.getTables();
-      for (const tb of tables) {
-        let insertText = tb.name;
-        let alias: string | null = null;
-        if (wantAlias) {
-          alias = genAlias(tb.name, new Set(taken)); // set riêng mỗi item để không "ăn" alias lẫn nhau
-          // Chèn alias như VĂN BẢN THƯỜNG, không dùng placeholder ${1:...}: placeholder giữ
-          // alias ở trạng thái đang-chọn nên ký tự gõ tiếp theo (vd ';') sẽ ghi đè mất alias.
-          insertText = `${tb.name} ${alias}`;
-        }
+  const emitColumns = async () => {
+    // Xác định bảng cần lấy cột: theo alias trước dấu chấm > các bảng trong scope > tất cả
+    let targetTables: string[];
+    // cacheOnly: nhánh "tất cả bảng" (câu lệnh chưa có FROM) chỉ đọc schema ĐÃ cache,
+    // không gọi backend từng bảng — nếu không, mỗi lần gõ/xoá một ký tự (Monaco gọi lại
+    // provider) có thể sinh hàng trăm lời gọi xuống Rust và làm editor giật.
+    let cacheOnly = false;
+    if (prefixAlias && aliasMap.has(prefixAlias)) {
+      targetTables = [aliasMap.get(prefixAlias)!];
+    } else if (scopeTables.length) {
+      targetTables = Array.from(new Set(scopeTables));
+    } else {
+      targetTables = (await catalog.getTables()).map(t => t.name);
+      cacheOnly = true;
+    }
+    const multi = targetTables.length > 1;
+    // Nhiều bảng và chưa gõ "alias." -> tự gắn tiền tố bảng/alias vào cột (customers.customerName)
+    const qualify = multi && !prefixAlias;
+    // Chặn trần số gợi ý cột: DB lớn (vài trăm bảng) sẽ tạo hàng chục nghìn item mỗi lần
+    // gõ, vừa tốn CPU dựng object vừa tốn CPU cho Monaco lọc/xếp hạng.
+    const MAX_COLUMN_ITEMS = 1500;
+    let columnCount = 0;
+    for (const tb of targetTables) {
+      if (columnCount >= MAX_COLUMN_ITEMS) break;
+      const schema = cacheOnly ? catalog.getCachedSchema(tb) : await catalog.getSchema(tb);
+      const prefix = aliasByTable.get(tb) || tb;
+      for (const col of schema?.columns || []) {
+        if (columnCount >= MAX_COLUMN_ITEMS) break;
+        columnCount++;
         items.push({
-          label: tb.name,
-          kind: tb.type === 'view'
-            ? monaco.languages.CompletionItemKind.Interface
-            : monaco.languages.CompletionItemKind.Class,
-          detail: alias ? `${tb.type === 'view' ? 'View' : 'Bảng'} · alias ${alias}` : (tb.type === 'view' ? 'View' : 'Bảng'),
-          insertText,
-          sortText: rankSort('2', tb.name),
-          command: bumpCommand(tb.name),
+          label: col.name,
+          kind: col.isPrimaryKey
+            ? monaco.languages.CompletionItemKind.Constant
+            : monaco.languages.CompletionItemKind.Field,
+          detail: `${col.type}${multi ? ` · ${tb}` : ''}${col.isPrimaryKey ? ' · PK' : ''}`,
+          insertText: qualify ? `${prefix}.${col.name}` : col.name,
+          sortText: rankSort('1', col.name),
+          command: bumpCommand(col.name),
         });
       }
-    } else if (type === EntityContextType.COLUMN) {
-      // Xác định bảng cần lấy cột: theo alias trước dấu chấm > các bảng trong scope > tất cả
-      let targetTables: string[];
-      // cacheOnly: nhánh "tất cả bảng" (câu lệnh chưa có FROM) chỉ đọc schema ĐÃ cache,
-      // không gọi backend từng bảng — nếu không, mỗi lần gõ/xoá một ký tự (Monaco gọi lại
-      // provider) có thể sinh hàng trăm lời gọi xuống Rust và làm editor giật.
-      let cacheOnly = false;
-      if (prefixAlias && aliasMap.has(prefixAlias)) {
-        targetTables = [aliasMap.get(prefixAlias)!];
-      } else if (scopeTables.length) {
-        targetTables = Array.from(new Set(scopeTables));
-      } else {
-        targetTables = (await catalog.getTables()).map(t => t.name);
-        cacheOnly = true;
+    }
+    // Cũng gợi ý TÊN BẢNG trong scope (để gõ tiếp "bảng." lấy cột) khi chưa có tiền tố
+    if (!prefixAlias) {
+      for (const tb of Array.from(new Set(scopeTables))) {
+        const p = aliasByTable.get(tb) || tb;
+        items.push({
+          label: p,
+          kind: monaco.languages.CompletionItemKind.Class,
+          detail: `Bảng${aliasByTable.get(tb) ? ` (${tb})` : ''}`,
+          insertText: p,
+          sortText: rankSort('3', p),
+          command: bumpCommand(tb),
+        });
       }
-      const multi = targetTables.length > 1;
-      // Nhiều bảng và chưa gõ "alias." -> tự gắn tiền tố bảng/alias vào cột (customers.customerName)
-      const qualify = multi && !prefixAlias;
-      // Chặn trần số gợi ý cột: DB lớn (vài trăm bảng) sẽ tạo hàng chục nghìn item mỗi lần
-      // gõ, vừa tốn CPU dựng object vừa tốn CPU cho Monaco lọc/xếp hạng.
-      const MAX_COLUMN_ITEMS = 1500;
-      let columnCount = 0;
-      for (const tb of targetTables) {
-        if (columnCount >= MAX_COLUMN_ITEMS) break;
-        const schema = cacheOnly ? catalog.getCachedSchema(tb) : await catalog.getSchema(tb);
-        const prefix = aliasByTable.get(tb) || tb;
-        for (const col of schema?.columns || []) {
-          if (columnCount >= MAX_COLUMN_ITEMS) break;
-          columnCount++;
-          items.push({
-            label: col.name,
-            kind: col.isPrimaryKey
-              ? monaco.languages.CompletionItemKind.Constant
-              : monaco.languages.CompletionItemKind.Field,
-            detail: `${col.type}${multi ? ` · ${tb}` : ''}${col.isPrimaryKey ? ' · PK' : ''}`,
-            insertText: qualify ? `${prefix}.${col.name}` : col.name,
-            sortText: rankSort('1', col.name),
-            command: bumpCommand(col.name),
-          });
-        }
-      }
-      // Cũng gợi ý TÊN BẢNG trong scope (để gõ tiếp "bảng." lấy cột) khi chưa có tiền tố
-      if (!prefixAlias) {
-        for (const tb of Array.from(new Set(scopeTables))) {
-          const p = aliasByTable.get(tb) || tb;
-          items.push({
-            label: p,
-            kind: monaco.languages.CompletionItemKind.Class,
-            detail: `Bảng${aliasByTable.get(tb) ? ` (${tb})` : ''}`,
-            insertText: p,
-            sortText: rankSort('3', p),
-            command: bumpCommand(tb),
-          });
-        }
-      }
+    }
+  };
+
+  if (parserFailed) {
+    // Không biết caret đang cần gì -> suy ra từ văn bản. Sau "FROM|JOIN" thì cần bảng,
+    // còn lại (kể cả sau "ON", sau "alias.") thì cần cột.
+    const wantsTable = /\b(from|join)\s+[\w$."`]*$/i.test(textBefore);
+    if (wantsTable) await emitTables();
+    else await emitColumns();
+  } else {
+    for (const s of syntaxHints) {
+      const type = s.syntaxContextType;
+      if (type === EntityContextType.TABLE || type === EntityContextType.VIEW) await emitTables();
+      else if (type === EntityContextType.COLUMN) await emitColumns();
     }
   }
 

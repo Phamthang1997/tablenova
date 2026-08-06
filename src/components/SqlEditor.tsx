@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { Trans, useTranslation } from 'react-i18next';
 import * as monaco from 'monaco-editor';
 import Editor, { loader } from '@monaco-editor/react';
 
@@ -17,7 +18,10 @@ import { setupSqlHover, findTable, openTableTab } from '../sql/intellisense';
 import { defineSqlThemes, sqlThemeName } from '../sql/theme';
 import { SQL_EDITOR_OPTIONS } from '../sql/editorOptions';
 import { formatSql, minifySql } from '../sql/format';
-import { statementAt, analyzeStatements, splitStatements, isSchemaChangingSql } from '../sql/statements';
+import {
+  statementAt, analyzeStatements, splitStatements, isSchemaChangingSql,
+  findUnsafeStatements, type UnsafeStatement, type UnsafeStatementKind,
+} from '../sql/statements';
 import * as catalog from '../sql/catalog';
 
 // Configure Monaco Environment for Vite native web workers
@@ -117,13 +121,35 @@ function registerSqlFormatter(dbType: string) {
 }
 import { Play, Clipboard, Trash2, CheckCircle2, AlertTriangle, ChevronLeft, ChevronRight, Copy, AlignLeft, ChevronsLeft, ChevronsRight, History, X, Bookmark, ChevronDown, MoreHorizontal, Star, Columns, Rows, Settings, Network, Zap, FileText, Square } from 'lucide-react';
 import { getQueryParamsConfig, saveQueryParamsConfig, extractQueryParams, buildParameterizedSql, type QueryParamsConfig } from '../utils/queryParamHelper';
-import { buildExplainQuery, parseExplainOutput, type ExplainResult } from '../utils/explainHelper';
+import { buildExplainQuery, explainJsonLabel, parseExplainOutput, supportsJsonExplain, type ExplainResult } from '../utils/explainHelper';
+import {
+  HISTORY_CHANGED_EVENT,
+  addHistoryEntry,
+  addSavedQuery,
+  clearHistory,
+  deleteHistoryEntry,
+  deleteSavedQuery,
+  loadHistory,
+  loadSavedQueries,
+  matchesScope,
+  parseHistoryScope,
+  recordHistoryResult,
+  type HistoryEntry,
+  type HistoryScope,
+  type SavedQueryEntry,
+} from '../utils/queryHistory';
 import { QueryParamsConfigModal } from './QueryParamsConfigModal';
 import { QueryParamsModal } from './QueryParamsModal';
+import { ConfirmDialog } from './ConfirmDialog';
 import { ExplainViewer } from './ExplainViewer';
+import { Modal, ModalBody, ModalFooter } from './Modal';
 
 interface SqlEditorProps {
   dbType?: string;
+  /** Định danh máy chủ đang kết nối (utils/connKey) — dùng để gắn nhãn & lọc lịch sử. */
+  connKey?: string;
+  /** Tên database đang dùng, hiện trên từng dòng lịch sử khi xem "tất cả kết nối". */
+  dbName?: string;
   initialSql?: string;
   initialSql2?: string;
   initialSplitMode?: 'none' | 'vertical' | 'horizontal';
@@ -134,6 +160,14 @@ interface SqlEditorProps {
   onSql2Change?: (sql2: string) => void;
   onSplitModeChange?: (mode: 'none' | 'vertical' | 'horizontal') => void;
 }
+
+// Bộ lọc phạm vi của ngăn lịch sử. Bảng hằng ở mức module nên giữ KEY dịch,
+// hàm t() gọi trong component (i18next phải kiểm được từng key).
+const SCOPE_OPTIONS = [
+  { scope: 'db', labelKey: 'sqlEditor.scopeDb', titleKey: 'sqlEditor.scopeDbTitle' },
+  { scope: 'conn', labelKey: 'sqlEditor.scopeConn', titleKey: 'sqlEditor.scopeConnTitle' },
+  { scope: 'all', labelKey: 'sqlEditor.scopeAll', titleKey: 'sqlEditor.scopeAllTitle' },
+] as const;
 
 // Câu lệnh chỉ đọc được phép chạy trong chế độ Chỉ đọc
 const READ_ONLY_PREFIXES = ['SELECT', 'SHOW', 'EXPLAIN', 'DESCRIBE', 'DESC', 'PRAGMA', 'WITH'];
@@ -148,6 +182,8 @@ function isReadOnlySql(text: string): boolean {
 
 export const SqlEditor: React.FC<SqlEditorProps> = ({
   dbType = 'sqlite',
+  connKey = '',
+  dbName = '',
   initialSql = '',
   initialSql2 = '',
   initialSplitMode = 'none',
@@ -158,6 +194,14 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   onSql2Change,
   onSplitModeChange,
 }) => {
+  const { t, i18n } = useTranslation();
+  // Dates and thousands separators follow the active UI language.
+  const locale = i18n.language;
+  // Monaco actions and the run-glyph are registered once per editor mount, so
+  // their labels are read through a ref that always holds the latest `t`.
+  const tRef = useRef(t);
+  tRef.current = t;
+
   const langId = langIdForDbType(dbType); // 'mysql' | 'pgsql' cho smart completion
   const [sql, setSql] = useState(initialSql);
   const [sql2, setSql2] = useState(initialSql2);
@@ -199,11 +243,26 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   const [paneEditorHeight, setPaneEditorHeight] = useState<number>(220);
   const [isDraggingResizer, setIsDraggingResizer] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
-  const [historyList, setHistoryList] = useState<any[]>([]);
+  const [historyList, setHistoryList] = useState<HistoryEntry[]>([]);
   const [historySearch, setHistorySearch] = useState('');
-  
-  const [savedQueries, setSavedQueries] = useState<any[]>([]);
+
+  const [savedQueries, setSavedQueries] = useState<SavedQueryEntry[]>([]);
   const [historyTab, setHistoryTab] = useState<'history' | 'saved'>('history');
+  // Xem lịch sử của database đang dùng, của cả máy chủ, hay của mọi kết nối. Nhớ
+  // lựa chọn qua các lần mở app (quy ước tf_*): đây là thói quen làm việc, không
+  // phải trạng thái tạm.
+  const [historyScope, setHistoryScope] = useState<HistoryScope>(
+    () => parseHistoryScope(localStorage.getItem('tf_history_scope'))
+  );
+
+  const changeHistoryScope = (scope: HistoryScope) => {
+    setHistoryScope(scope);
+    localStorage.setItem('tf_history_scope', scope);
+  };
+
+  /** Không biết đang ở kết nối nào (chạy vite-dev thuần) thì không lọc được gì. */
+  const effectiveScope: HistoryScope = connKey ? historyScope : 'all';
+  const inScope = (entry: HistoryEntry) => matchesScope(entry, connKey, dbName, effectiveScope);
 
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [newQueryName, setNewQueryName] = useState('');
@@ -228,27 +287,41 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   const [showQueryParamsConfigModal, setShowQueryParamsConfigModal] = useState(false);
   const [paramPromptData, setParamPromptData] = useState<{ pane: 1 | 2; originalSql: string; params: string[]; action: 'run' | 'explain'; variant?: 'explain' | 'analyze' | 'json' } | null>(null);
 
+  // Hỏi lại trước khi chạy câu lệnh xoá sạch dữ liệu (DELETE thiếu WHERE / DROP TABLE).
+  // Chỉ là cảnh báo — muốn chặn hẳn thì bật chế độ Chỉ đọc.
+  const [unsafePrompt, setUnsafePrompt] = useState<{
+    pane: 1 | 2;
+    sql: string;
+    items: UnsafeStatement[];
+    /** Bấm "Vẫn chạy" thì chạy tiếp bằng đường nào (nút Run hay EXPLAIN ANALYZE). */
+    resume: 'run' | 'analyze';
+  } | null>(null);
+
+  // switch trả về key literal, KHÔNG nội suy key động (i18next phải kiểm được từng key).
+  const unsafeKindLabel = (kind: UnsafeStatementKind): string => {
+    switch (kind) {
+      case 'deleteNoWhere': return t('sqlEditor.unsafeKindDeleteNoWhere');
+      case 'dropTable': return t('sqlEditor.unsafeKindDropTable');
+    }
+  };
+
   // EXPLAIN State
   const [explainResult1, setExplainResult1] = useState<ExplainResult | null>(null);
   const [explainResult2, setExplainResult2] = useState<ExplainResult | null>(null);
   const [activeTabType1, setActiveTabType1] = useState<'data' | 'explain'>('data');
   const [activeTabType2, setActiveTabType2] = useState<'data' | 'explain'>('data');
 
-  // Load history & saved queries on mount
+  // Load history & saved queries on mount, then follow the shared store: mỗi tab
+  // truy vấn là một SqlEditor riêng với bản copy riêng, nên phải nạp lại khi tab
+  // khác thêm/xoá (utils/queryHistory phát HISTORY_CHANGED_EVENT sau mỗi lần ghi).
   useEffect(() => {
-    const historyStr = localStorage.getItem('sql_query_history') || '[]';
-    try {
-      setHistoryList(JSON.parse(historyStr));
-    } catch {
-      setHistoryList([]);
-    }
-
-    const savedStr = localStorage.getItem('sql_saved_queries') || '[]';
-    try {
-      setSavedQueries(JSON.parse(savedStr));
-    } catch {
-      setSavedQueries([]);
-    }
+    const reload = () => {
+      setHistoryList(loadHistory());
+      setSavedQueries(loadSavedQueries());
+    };
+    reload();
+    window.addEventListener(HISTORY_CHANGED_EVENT, reload);
+    return () => window.removeEventListener(HISTORY_CHANGED_EVENT, reload);
   }, []);
 
   // Recalculate Monaco editor layout when history drawer, split mode, or height changes
@@ -260,36 +333,31 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     return () => clearTimeout(timer);
   }, [showHistory, splitMode, paneEditorHeight]);
 
-  const addToHistory = (queryText: string) => {
-    if (!queryText.trim()) return;
-    const historyStr = localStorage.getItem('sql_query_history') || '[]';
-    let history = [];
-    try {
-      history = JSON.parse(historyStr);
-    } catch {
-      history = [];
-    }
-    
-    // Avoid double logging the exact same query in a row
-    if (history.length > 0 && history[0].sql.trim() === queryText.trim()) {
-      return;
-    }
+  /** Trả về id dòng lịch sử để `runRawSql` ghi kết quả lên đó khi chạy xong. */
+  const addToHistory = (queryText: string): string => {
+    const { list, id } = addHistoryEntry(queryText, connKey, dbName, Date.now().toString());
+    setHistoryList(list);
+    return id;
+  };
 
-    const newEntry = {
-      id: Date.now().toString(),
-      sql: queryText,
-      timestamp: new Date().toISOString()
-    };
-
-    const updated = [newEntry, ...history].slice(0, 500);
-    localStorage.setItem('sql_query_history', JSON.stringify(updated));
-    setHistoryList(updated);
+  // Xoá đúng phạm vi đang xem, không nhiều hơn.
+  // switch trả về key literal, KHÔNG nội suy key động (i18next phải kiểm được từng key).
+  const clearHistoryLabel = (): string => {
+    switch (effectiveScope) {
+      case 'db': return t('sqlEditor.clearDbHistory');
+      case 'conn': return t('sqlEditor.clearConnHistory');
+      case 'all': return t('sqlEditor.clearAllHistory');
+    }
   };
 
   const handleClearHistory = () => {
-    if (confirm("Bạn có chắc muốn xóa sạch lịch sử truy vấn?")) {
-      localStorage.setItem('sql_query_history', '[]');
-      setHistoryList([]);
+    const message = effectiveScope === 'db'
+      ? t('sqlEditor.confirmClearDbHistory')
+      : effectiveScope === 'conn'
+        ? t('sqlEditor.confirmClearConnHistory')
+        : t('sqlEditor.confirmClearHistory');
+    if (confirm(message)) {
+      setHistoryList(clearHistory(effectiveScope, connKey, dbName));
     }
   };
 
@@ -297,11 +365,11 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     if (editorRef.current) {
       const val = editorRef.current.getValue();
       if (!val.trim()) {
-        setStatusMsg("Vui lòng nhập câu lệnh trước khi lưu.");
+        setStatusMsg(t('sqlEditor.errNoSqlToSave'));
         setTimeout(() => setStatusMsg(null), 3000);
         return;
       }
-      setNewQueryName(`Truy vấn ngày ${new Date().toLocaleDateString('vi-VN')}`);
+      setNewQueryName(t('sqlEditor.defaultQueryName', { date: new Date().toLocaleDateString(locale) }));
       setShowSaveModal(true);
     }
   };
@@ -309,34 +377,20 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   const handleConfirmSaveQuery = () => {
     if (editorRef.current) {
       const val = editorRef.current.getValue();
-      const name = newQueryName.trim() || `Truy vấn ngày ${new Date().toLocaleDateString('vi-VN')}`;
-      
-      const savedStr = localStorage.getItem('sql_saved_queries') || '[]';
-      let saved = [];
-      try { saved = JSON.parse(savedStr); } catch { saved = []; }
-      
-      const newEntry = {
-        id: Date.now().toString(),
-        name: name,
-        sql: val,
-        timestamp: new Date().toISOString()
-      };
-      const updated = [newEntry, ...saved];
-      localStorage.setItem('sql_saved_queries', JSON.stringify(updated));
-      setSavedQueries(updated);
+      const name = newQueryName.trim() || t('sqlEditor.defaultQueryName', { date: new Date().toLocaleDateString(locale) });
+
+      setSavedQueries(addSavedQuery(name, val, connKey, dbName, Date.now().toString()));
       setShowSaveModal(false);
       setNewQueryName('');
-      setStatusMsg(`Đã lưu câu lệnh "${name}".`);
+      setStatusMsg(t('sqlEditor.savedQuery', { name }));
       setTimeout(() => setStatusMsg(null), 3000);
     }
   };
 
   const handleDeleteSaved = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (confirm("Bạn có chắc muốn xóa câu lệnh đã lưu này?")) {
-      const updated = savedQueries.filter(q => q.id !== id);
-      setSavedQueries(updated);
-      localStorage.setItem('sql_saved_queries', JSON.stringify(updated));
+    if (confirm(t('sqlEditor.confirmDeleteSaved'))) {
+      setSavedQueries(deleteSavedQuery(id));
     }
   };
 
@@ -344,7 +398,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     if (editorRef.current) {
       editorRef.current.setValue(sqlText);
       setSql(sqlText);
-      setStatusMsg("Đã nạp câu lệnh SQL.");
+      setStatusMsg(t('sqlEditor.loadedQuery'));
       setTimeout(() => setStatusMsg(null), 3000);
     }
   };
@@ -356,20 +410,29 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     yesterday.setDate(today.getDate() - 1);
     
     if (date.toDateString() === today.toDateString()) {
-      return 'Hôm nay';
+      return t('sqlEditor.today');
     } else if (date.toDateString() === yesterday.toDateString()) {
-      return 'Hôm qua';
+      return t('sqlEditor.yesterday');
     } else {
-      return date.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+      return date.toLocaleDateString(locale, { day: '2-digit', month: '2-digit', year: 'numeric' });
     }
   };
 
+  /** "37 ms · 200 dòng" — bỏ qua phần không có (dòng cũ chưa ghi kết quả, câu DDL không trả dòng). */
+  const historyMetrics = (item: HistoryEntry): string => {
+    const parts: string[] = [];
+    if (item.ms !== undefined) parts.push(t('sqlEditor.historyMs', { n: item.ms.toLocaleString(locale) }));
+    if (item.rows) parts.push(t('sqlEditor.historyRows', { n: item.rows.toLocaleString(locale) }));
+    if (item.affected) parts.push(t('sqlEditor.historyAffected', { n: item.affected.toLocaleString(locale) }));
+    return parts.join(' · ');
+  };
+
   const getFilteredHistory = () => {
-    const filtered = historyList.filter(item => 
-      item.sql.toLowerCase().includes(historySearch.toLowerCase())
+    const filtered = historyList.filter(item =>
+      inScope(item) && item.sql.toLowerCase().includes(historySearch.toLowerCase())
     );
-    
-    const groups: { [key: string]: any[] } = {};
+
+    const groups: { [key: string]: HistoryEntry[] } = {};
     filtered.forEach(item => {
       const dateKey = new Date(item.timestamp).toDateString();
       if (!groups[dateKey]) {
@@ -382,11 +445,17 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   };
 
   const getFilteredSaved = () => {
-    return savedQueries.filter(item => 
-      item.name.toLowerCase().includes(historySearch.toLowerCase()) ||
-      item.sql.toLowerCase().includes(historySearch.toLowerCase())
+    return savedQueries.filter(item =>
+      inScope(item) && (
+        item.name.toLowerCase().includes(historySearch.toLowerCase()) ||
+        item.sql.toLowerCase().includes(historySearch.toLowerCase())
+      )
     );
   };
+
+  // Số dòng hiện trên tiêu đề tab phải khớp danh sách đang hiện (đã lọc theo kết nối).
+  const historyCount = historyList.filter(inScope).length;
+  const savedCount = savedQueries.filter(inScope).length;
 
   const editorRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -499,7 +568,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     // Format / Beautify / Minify actions cho Monaco context menu
     editor.addAction({
       id: 'format-beautify-sql',
-      label: 'Làm đẹp SQL (Beautify)',
+      label: tRef.current('sqlEditor.actionBeautify'),
       contextMenuGroupId: '1_modification',
       contextMenuOrder: 1.1,
       run: () => {
@@ -509,7 +578,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
 
     editor.addAction({
       id: 'format-minify-sql',
-      label: 'Nén SQL 1 dòng (Minify / Uglify)',
+      label: tRef.current('sqlEditor.actionMinify'),
       contextMenuGroupId: '1_modification',
       contextMenuOrder: 1.2,
       run: () => {
@@ -529,7 +598,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     // Monaco context menu actions cho Split Panes
     editor.addAction({
       id: 'split-pane-vertical',
-      label: 'Chia khung dọc (Left / Right)',
+      label: tRef.current('sqlEditor.actionSplitVertical'),
       contextMenuGroupId: '1_modification',
       contextMenuOrder: 1.5,
       run: () => {
@@ -551,7 +620,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
 
     editor.addAction({
       id: 'close-split-pane',
-      label: 'Tắt chia khung (Single Pane)',
+      label: tRef.current('sqlEditor.actionSinglePane'),
       contextMenuGroupId: '1_modification',
       contextMenuOrder: 1.7,
       run: () => {
@@ -562,7 +631,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
 
     editor.addAction({
       id: 'explain-query-plan',
-      label: 'Phân tích kế hoạch (EXPLAIN Plan)',
+      label: tRef.current('sqlEditor.actionExplain'),
       contextMenuGroupId: '1_modification',
       contextMenuOrder: 1.8,
       run: () => {
@@ -585,9 +654,11 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     });
 
     // Phím tắt (đọc trực tiếp từ editor nên không lo stale state)
+    // getTextToRun, not getCurrentStatement: the Run button and the menu item labelled
+    // "Ctrl+Enter" both honour the selection, so the key itself must too — otherwise the
+    // same advertised shortcut runs something different from the button next to it.
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
-      const textToRun = getCurrentStatement(editor);
-      executeSql(textToRun, editorId);
+      executeSql(getTextToRun(editorId), editorId);
     });
     
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Enter, () => {
@@ -601,7 +672,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     // F12 / context menu: mở bảng đang ở dưới con trỏ trong tab mới
     editor.addAction({
       id: 'open-table-under-cursor',
-      label: 'Mở bảng dưới con trỏ (F12 / Ctrl+B)',
+      label: tRef.current('sqlEditor.actionOpenTable'),
       contextMenuGroupId: 'navigation',
       contextMenuOrder: 1.1,
       // Ctrl+B là phím "go to declaration" quen thuộc của JetBrains/DataGrip; F12 để dự phòng.
@@ -629,7 +700,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       if (stmt) executeSql(stmt, editorId);
     });
 
-    // Tô sáng câu lệnh dưới con trỏ (chính là câu mà Ctrl+Enter sẽ chạy)
+    // Tô sáng câu lệnh dưới con trỏ — câu mà Ctrl+Enter sẽ chạy KHI KHÔNG bôi đen.
+    // Có vùng bôi thì vùng đó thắng (xem getTextToRun) và chính Monaco đã tự tô nó.
     const decorations = editor.createDecorationsCollection([]);
     let highlightTimer: any = null;
     const refreshStatementHighlight = () => {
@@ -650,7 +722,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
         range: new monaco.Range(from.lineNumber, 1, from.lineNumber, 1),
         options: {
           glyphMarginClassName: 'sql-run-glyph',
-          glyphMarginHoverMessage: { value: 'Chạy câu lệnh này (Ctrl+Enter)' },
+          glyphMarginHoverMessage: { value: tRef.current('sqlEditor.runThisStatement') },
         },
       }];
       // Chỉ tô nền/vạch khi có nhiều câu lệnh — 1 câu duy nhất thì tô cả trang là vô nghĩa
@@ -691,24 +763,35 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     if (!found) {
       if (!notify) return;
       const setMsg = paneId === 1 ? setStatusMsg : setStatusMsg2;
-      setMsg(`Không tìm thấy bảng "${name}" trong database hiện tại.`);
+      setMsg(t('sqlEditor.errTableNotFound', { name }));
       setTimeout(() => setMsg(null), 3000);
       return;
     }
     openTableTab(found.name);
   };
 
-  const executeSql = async (queryText?: string, targetPane?: 1 | 2) => {
+  const executeSql = async (queryText?: string, targetPane?: 1 | 2, skipUnsafeCheck = false) => {
     const pane = targetPane || focusedEditor;
     const textToRun = queryText || (pane === 2 ? sql2 : sql);
     if (!textToRun.trim()) return;
 
     // Chế độ Chỉ đọc: chỉ cho phép câu lệnh đọc (SELECT/SHOW/...)
     if (readOnly && !isReadOnlySql(textToRun)) {
-      const msg = 'Đang ở chế độ Chỉ đọc: chỉ cho phép SELECT/SHOW/EXPLAIN/PRAGMA. Tắt "Chỉ đọc" để chạy câu lệnh ghi.';
+      const msg = t('sqlEditor.errReadOnlyRun');
       if (pane === 1) setErrorMsg(msg);
       else setErrorMsg2(msg);
       return;
+    }
+
+    // Cảnh báo trước khi xoá sạch dữ liệu. Không cần kiểm tra `readOnly` ở đây: khi bật Chỉ đọc,
+    // mọi DELETE/DROP đã bị chặn ở nhánh trên nên đoạn này chỉ chạy khi đang cho phép ghi.
+    // Đặt TRƯỚC bước hỏi tham số truy vấn để cả đường đi qua QueryParamsModal cũng được hỏi.
+    if (!skipUnsafeCheck) {
+      const items = findUnsafeStatements(textToRun);
+      if (items.length > 0) {
+        setUnsafePrompt({ pane, sql: textToRun, items, resume: 'run' });
+        return;
+      }
     }
 
     // Process Query Parameters if enabled
@@ -729,7 +812,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   };
 
   const runRawSql = async (textToRun: string, pane: 1 | 2, params?: any[]) => {
-    addToHistory(textToRun); // Log query history immediately
+    const historyId = addToHistory(textToRun); // Log query history immediately
 
     const isPane1 = pane === 1;
     const queryId = `q_${crypto.randomUUID()}`;
@@ -798,13 +881,13 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
           acc[i] = { query: msg.query || '', columns: [], data: [], affected: msg.affected ?? 0 };
           flush();
         } else if (msg.type === 'error') {
-          errText = msg.message || 'Lỗi không rõ khi thực thi SQL.';
+          errText = msg.message || t('sqlEditor.errUnknownExec');
         } else if (msg.type === 'done') {
           cancelled = !!msg.cancelled;
         }
       }, params);
     } catch (e: any) {
-      errText = `Lỗi truy vấn: ${e}`;
+      errText = t('sqlEditor.errQuery', { message: String(e) });
     }
 
     flush(); // phản chiếu lần cuối (đảm bảo batch cuối cùng đã vào state)
@@ -813,7 +896,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     const affectedTotal = acc.reduce((s, r) => s + (r.affected || 0), 0);
     const elapsed = performance.now() - t0;
     const execMs = tFirst > 0 ? tFirst - t0 : elapsed;
-    const timeInfo = `thực thi ${execMs.toFixed(0)}ms, tải ${elapsed.toFixed(0)}ms`;
+    const timeInfo = t('sqlEditor.timeInfo', { exec: execMs.toFixed(0), load: elapsed.toFixed(0) });
     const n = acc.length;
 
     const setLoad = isPane1 ? setLoading : setLoading2;
@@ -824,15 +907,27 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     setLoad(false);
     setRunId(null);
 
+    // Kết quả lần chạy về đúng dòng lịch sử đã tạo lúc bắt đầu: chấm trạng thái,
+    // thời gian và số dòng hiện ngay trong ngăn lịch sử.
+    setHistoryList(recordHistoryResult(historyId, {
+      // Bấm Dừng thì không phải thành công cũng không phải lỗi -> để trống, khỏi
+      // gắn dấu tích xanh cho một lần chạy dở dang.
+      ok: errText ? false : (cancelled ? undefined : true),
+      ms: Math.round(execMs),
+      rows: totalRows,
+      affected: affectedTotal,
+      error: errText || undefined,
+    }));
+
     if (errText) {
       setErr(errText);
       if (acc.length > 0 && onRunSuccess) onRunSuccess();
     } else {
       const head = cancelled
-        ? `Đã dừng truy vấn`
-        : (n > 1 ? `Thực thi thành công ${n} câu lệnh` : 'Thực thi thành công');
-      const parts: string[] = [`${totalRows.toLocaleString('vi-VN')} dòng`];
-      if (affectedTotal > 0) parts.push(`${affectedTotal.toLocaleString('vi-VN')} dòng bị ảnh hưởng`);
+        ? t('sqlEditor.stopped')
+        : (n > 1 ? t('sqlEditor.execOkMulti', { n }) : t('sqlEditor.execOk'));
+      const parts: string[] = [t('sqlEditor.rowsPart', { n: totalRows.toLocaleString(locale) })];
+      if (affectedTotal > 0) parts.push(t('sqlEditor.affectedPart', { n: affectedTotal.toLocaleString(locale) }));
       setStat(`${head} — ${parts.join(', ')} (${timeInfo}).`);
       if (onRunSuccess) onRunSuccess();
     }
@@ -842,10 +937,29 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     if (isSchemaChangingSql(textToRun)) catalog.invalidateCatalog();
   };
 
-  const handleExplain = async (paneId: 1 | 2 = focusedEditor, variant: 'explain' | 'analyze' | 'json' = 'explain') => {
-    const editorInstance = paneId === 1 ? editorRef.current : editorRef2.current;
-    const textToRun = editorInstance ? getCurrentStatement(editorInstance) : (paneId === 1 ? sql : sql2);
+  const handleExplain = async (paneId: 1 | 2 = focusedEditor, variant: 'explain' | 'analyze' | 'json' = 'explain', skipUnsafeCheck = false) => {
+    // Same resolution as the Run button, selection included.
+    const textToRun = getTextToRun(paneId);
     if (!textToRun.trim()) return;
+
+    // EXPLAIN ANALYZE THỰC SỰ thực thi câu lệnh (Postgres: `EXPLAIN (… ANALYZE …)`, MySQL:
+    // `EXPLAIN ANALYZE`) — `EXPLAIN ANALYZE DELETE FROM t` xoá dữ liệu thật. Nên nó phải đi qua
+    // đúng hai chốt của nút Run. Các variant còn lại chỉ lấy kế hoạch nên không cần.
+    if (variant === 'analyze') {
+      if (readOnly && !isReadOnlySql(textToRun)) {
+        const msg = t('sqlEditor.errReadOnlyRun');
+        if (paneId === 1) setErrorMsg(msg);
+        else setErrorMsg2(msg);
+        return;
+      }
+      if (!skipUnsafeCheck) {
+        const items = findUnsafeStatements(textToRun);
+        if (items.length > 0) {
+          setUnsafePrompt({ pane: paneId, sql: textToRun, items, resume: 'analyze' });
+          return;
+        }
+      }
+    }
 
     // Nếu bật Tham số Truy vấn và câu lệnh có placeholder -> prompt giá trị rồi EXPLAIN bản parameterized.
     if (queryParamsConfig.enabled) {
@@ -885,12 +999,12 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
           setHasRun2(true);
         }
       } else {
-        const err = res.error || 'Không thể lấy kế hoạch EXPLAIN';
+        const err = res.error || t('sqlEditor.errExplainFailed');
         if (isPane1) setErrorMsg(err);
         else setErrorMsg2(err);
       }
     } catch (e: any) {
-      const err = `Lỗi EXPLAIN: ${e.message || e}`;
+      const err = t('sqlEditor.errExplain', { message: e.message || e });
       if (isPane1) setErrorMsg(err);
       else setErrorMsg2(err);
     } finally {
@@ -926,14 +1040,23 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     return typeof value === 'string' ? value : (paneId === 2 ? sql2 : sql);
   };
 
+  // The SQL the user means to act on: the selection when there is one, otherwise the
+  // statement under the caret. Shared by Run and EXPLAIN — EXPLAIN used to read only the
+  // statement under the caret, so selecting a sub-query and explaining it analysed the
+  // whole statement instead, silently disagreeing with what the Run button would execute.
+  const getTextToRun = (paneId: 1 | 2 = focusedEditor): string => {
+    const editor = getPaneEditor(paneId);
+    if (!editor) return paneId === 2 ? sql2 : sql;
+    const selection = editor.getSelection();
+    const selectedText = selection ? editor.getModel().getValueInRange(selection) : '';
+    return selectedText.trim() ? selectedText : getCurrentStatement(editor);
+  };
+
   const handleRun = (paneId: 1 | 2 = focusedEditor) => {
     const editor = getPaneEditor(paneId);
     if (!editor) return;
     flushSqlSync(paneId); // chạy -> chốt luôn nội dung ra state/cha
-    const selection = editor.getSelection();
-    const selectedText = selection ? editor.getModel().getValueInRange(selection) : '';
-    const textToRun = selectedText.trim() ? selectedText : getCurrentStatement(editor);
-    executeSql(textToRun, paneId);
+    executeSql(getTextToRun(paneId), paneId);
   };
 
   const runAll = (paneId: 1 | 2 = focusedEditor) => {
@@ -952,19 +1075,13 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     const val = getPaneSql(paneId);
     const setMsg = paneId === 1 ? setStatusMsg : setStatusMsg2;
     if (!val.trim()) {
-      setMsg('Không có câu lệnh để lưu.');
+      setMsg(t('sqlEditor.errNoSqlToFavorite'));
       setTimeout(() => setMsg(null), 3000);
       return;
     }
-    const name = `Yêu thích ${new Date().toLocaleString('vi-VN')}`;
-    const savedStr = localStorage.getItem('sql_saved_queries') || '[]';
-    let saved: any[] = [];
-    try { saved = JSON.parse(savedStr); } catch { saved = []; }
-    const entry = { id: Date.now().toString(), name, sql: val, timestamp: new Date().toISOString() };
-    const updated = [entry, ...saved];
-    localStorage.setItem('sql_saved_queries', JSON.stringify(updated));
-    setSavedQueries(updated);
-    setMsg(`Đã thêm vào Yêu thích: "${name}".`);
+    const name = t('sqlEditor.favoriteName', { date: new Date().toLocaleString(locale) });
+    setSavedQueries(addSavedQuery(name, val, connKey, dbName, Date.now().toString()));
+    setMsg(t('sqlEditor.addedFavorite', { name }));
     setTimeout(() => setMsg(null), 3000);
   };
 
@@ -984,8 +1101,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       }]);
       editor.pushUndoStop();
       setMsg(formatted === selectedText
-        ? "Không làm đẹp được đoạn đã chọn (có thể sai cú pháp)."
-        : "Đã làm đẹp (Beautify) đoạn SQL được chọn.");
+        ? t('sqlEditor.errBeautifySelection')
+        : t('sqlEditor.beautifiedSelection'));
     } else {
       const val = editor.getValue();
       const formatted = formatSql(val, dbType);
@@ -1000,8 +1117,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       if (paneId === 1) { setSql(formatted); onSqlChange?.(formatted); }
       else { setSql2(formatted); onSql2Change?.(formatted); }
       setMsg(formatted === val
-        ? "Không làm đẹp được: câu lệnh có lỗi cú pháp hoặc đã đúng định dạng."
-        : "Đã làm đẹp (Beautify) toàn bộ câu lệnh SQL.");
+        ? t('sqlEditor.errBeautifyAll')
+        : t('sqlEditor.beautifiedAll'));
     }
     setTimeout(() => setMsg(null), 3000);
   };
@@ -1021,7 +1138,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
         forceMoveMarkers: true
       }]);
       editor.pushUndoStop();
-      setMsg("Đã nén (Minify/Uglify) đoạn SQL được chọn thành 1 dòng.");
+      setMsg(t('sqlEditor.minifiedSelection'));
     } else {
       const val = editor.getValue();
       const minified = minifySql(val);
@@ -1034,7 +1151,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       editor.pushUndoStop();
       if (paneId === 1) { setSql(minified); onSqlChange?.(minified); }
       else { setSql2(minified); onSql2Change?.(minified); }
-      setMsg("Đã nén (Minify/Uglify) toàn bộ câu lệnh SQL thành 1 dòng.");
+      setMsg(t('sqlEditor.minifiedAll'));
     }
     setTimeout(() => setMsg(null), 3000);
   };
@@ -1044,7 +1161,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     const setMsg = paneId === 1 ? setStatusMsg : setStatusMsg2;
     if (val) {
       navigator.clipboard.writeText(val);
-      setMsg("Đã sao chép câu lệnh SQL vào bộ nhớ tạm.");
+      setMsg(t('sqlEditor.copiedSql'));
       setTimeout(() => setMsg(null), 3000);
     }
   };
@@ -1063,11 +1180,11 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
           setSql2(text);
           onSql2Change?.(text);
         }
-        setMsg("Đã dán câu lệnh SQL từ bộ nhớ tạm.");
+        setMsg(t('sqlEditor.pastedSql'));
         setTimeout(() => setMsg(null), 3000);
       }
     } catch {
-      setMsg("Không thể đọc bộ nhớ tạm. Hãy dùng Ctrl+V.");
+      setMsg(t('sqlEditor.errClipboardRead'));
       setTimeout(() => setMsg(null), 3000);
     }
   };
@@ -1104,7 +1221,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
             flexShrink: 0,
             transition: 'background 0.15s ease'
           }}
-          title="Kéo rê lên/xuống để chỉnh độ cao Editor"
+          title={t('sqlEditor.resizeEditorTitle')}
         >
           <div style={{ width: '40px', height: '3px', borderRadius: '2px', background: isDraggingResizer ? 'var(--win-accent)' : 'var(--win-text-disabled)', opacity: isDraggingResizer ? 1 : 0.6 }} />
         </div>
@@ -1128,7 +1245,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
             <div 
               onMouseDown={handleInnerResizerMouseDown}
               style={{ cursor: 'row-resize', display: 'flex', alignItems: 'center', color: 'var(--win-text-disabled)', padding: '2px 4px' }}
-              title="Kéo rê để chỉnh độ cao Editor"
+              title={t('sqlEditor.resizeEditorTitle')}
             >
               <MoreHorizontal size={14} style={{ transform: 'rotate(90deg)' }} />
             </div>
@@ -1142,10 +1259,14 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                 onClick={() => handleRun(paneId)}
                 disabled={paneId === 1 ? loading : loading2}
                 style={{ display: 'flex', alignItems: 'center', padding: '0 10px' }}
-                title="Chạy câu hiện tại (Ctrl+Enter)"
+                title={t('sqlEditor.runCurrentTitle')}
               >
-                <Play size={11} fill="#fff" />
-                <span>Chạy</span>
+                {/* currentColor, not a hardcoded #fff: `.btn:disabled` repaints the button
+                    with a light background in the light theme, and a white triangle on it
+                    is invisible. Following the text colour keeps the icon readable in
+                    every state. */}
+                <Play size={11} fill="currentColor" />
+                <span>{t('sqlEditor.run')}</span>
               </button>
               <button
                 className="btn btn-primary btn-join-r"
@@ -1156,8 +1277,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                   toggleDropdown('run', paneId, e, setRunMenuPane);
                 }}
                 disabled={paneId === 1 ? loading : loading2}
-                style={{ padding: '0 5px', display: 'flex', alignItems: 'center', borderLeft: '1px solid rgba(255,255,255,0.3)' }}
-                title="Tùy chọn chạy"
+                style={{ padding: '0 5px', display: 'flex', alignItems: 'center' }}
+                title={t('sqlEditor.runOptions')}
               >
                 <ChevronDown size={12} />
               </button>
@@ -1181,18 +1302,18 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                   }}>
                     <button className="context-menu-item" onClick={() => { setRunMenuPane(null); runCurrent(paneId); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}>
                       <Play size={13} style={{ flexShrink: 0 }} />
-                      <span>Chạy câu hiện tại</span>
+                      <span>{t('sqlEditor.runCurrent')}</span>
                       <kbd style={{ marginLeft: 'auto', paddingLeft: '12px', fontSize: '10.5px', color: 'var(--win-text-disabled)', fontFamily: 'inherit' }}>Ctrl+Enter</kbd>
                     </button>
                     <button className="context-menu-item" onClick={() => { setRunMenuPane(null); runAll(paneId); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}>
                       <Zap size={13} style={{ flexShrink: 0, color: 'var(--st-warn)' }} />
-                      <span>Chạy tất cả câu lệnh</span>
+                      <span>{t('sqlEditor.runAll')}</span>
                       <kbd style={{ marginLeft: 'auto', paddingLeft: '12px', fontSize: '10.5px', color: 'var(--win-text-disabled)', fontFamily: 'inherit' }}>Ctrl+Shift+Enter</kbd>
                     </button>
 
                     <div style={{ borderTop: '1px solid var(--win-border)', margin: '4px 0' }} />
                     <div style={{ padding: '4px 12px 2px 12px', fontSize: '10px', fontWeight: 700, color: 'var(--win-text-disabled)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                      Phân tích Kế hoạch (EXPLAIN)
+                      {t('sqlEditor.explainHeading')}
                     </div>
 
                     <button
@@ -1201,7 +1322,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                       style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}
                     >
                       <Network size={13} style={{ flexShrink: 0, color: 'var(--win-accent)' }} />
-                      <span>EXPLAIN (Ước tính)</span>
+                      <span>{t('sqlEditor.explainEstimate')}</span>
                       <kbd style={{ marginLeft: 'auto', paddingLeft: '12px', fontSize: '10.5px', color: 'var(--win-text-disabled)', fontFamily: 'inherit' }}>Ctrl+Alt+E</kbd>
                     </button>
                     <button
@@ -1210,25 +1331,28 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                       style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}
                     >
                       <Zap size={13} style={{ flexShrink: 0, color: 'var(--st-ok)' }} />
-                      <span>EXPLAIN ANALYZE (Thực tế)</span>
+                      <span>{t('sqlEditor.explainAnalyze')}</span>
                     </button>
-                    <button
-                      className="context-menu-item"
-                      onClick={() => { setRunMenuPane(null); handleExplain(paneId, 'json'); }}
-                      style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}
-                    >
-                      <FileText size={13} style={{ flexShrink: 0 }} />
-                      <span>EXPLAIN FORMAT=JSON</span>
-                    </button>
+                    {supportsJsonExplain(dbType) && (
+                      <button
+                        className="context-menu-item"
+                        onClick={() => { setRunMenuPane(null); handleExplain(paneId, 'json'); }}
+                        style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}
+                      >
+                        <FileText size={13} style={{ flexShrink: 0 }} />
+                        {/* The statement itself, not prose — no translation key. */}
+                        <span>{explainJsonLabel(dbType)}</span>
+                      </button>
+                    )}
 
                     <div style={{ borderTop: '1px solid var(--win-border)', margin: '4px 0' }} />
                     <button className="context-menu-item" onClick={() => { setRunMenuPane(null); handleQuickFavorite(paneId); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}>
                       <Star size={13} style={{ flexShrink: 0 }} />
-                      <span>Thêm vào Yêu thích</span>
+                      <span>{t('sqlEditor.addFavorite')}</span>
                     </button>
                     <button className="context-menu-item" onClick={() => { setRunMenuPane(null); handleSaveQuery(); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}>
                       <Bookmark size={13} style={{ flexShrink: 0 }} />
-                      <span>Lưu câu lệnh...</span>
+                      <span>{t('sqlEditor.saveQuery')}</span>
                       <kbd style={{ marginLeft: 'auto', paddingLeft: '12px', fontSize: '10.5px', color: 'var(--win-text-disabled)', fontFamily: 'inherit' }}>Ctrl+S</kbd>
                     </button>
                   </div>
@@ -1241,10 +1365,10 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                 className="btn btn-secondary"
                 onClick={() => stopQuery(paneId)}
                 style={{ padding: '2px 8px', fontSize: '11px', height: '22px', display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--st-danger)', borderColor: 'var(--st-danger)' }}
-                title="Dừng truy vấn đang chạy"
+                title={t('sqlEditor.stopTitle')}
               >
                 <X size={12} />
-                <span>Dừng</span>
+                <span>{t('sqlEditor.stop')}</span>
               </button>
             )}
 
@@ -1259,10 +1383,10 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                   toggleDropdown('format', paneId, e, setFormatMenuPane);
                 }}
                 style={{ padding: '2px 6px', display: 'flex', alignItems: 'center', gap: '4px' }}
-                title="Tùy chọn Định dạng / Làm đẹp / Nén 1 dòng SQL"
+                title={t('sqlEditor.formatTitle')}
               >
                 <AlignLeft size={11} />
-                <span>Định dạng</span>
+                <span>{t('sqlEditor.format')}</span>
                 <span style={{ fontSize: '7px', opacity: 0.7 }}>▼</span>
               </button>
               {formatMenuPane === paneId && (
@@ -1289,7 +1413,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                       style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}
                     >
                       <AlignLeft size={13} style={{ flexShrink: 0 }} />
-                      <span>Làm đẹp (Beautify SQL)</span>
+                      <span>{t('sqlEditor.beautify')}</span>
                       <kbd style={{ marginLeft: 'auto', paddingLeft: '16px', flexShrink: 0, fontSize: '10.5px', color: 'var(--win-text-disabled)', fontFamily: 'inherit' }}>Ctrl+Shift+F</kbd>
                     </button>
                     <button
@@ -1298,7 +1422,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                       style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}
                     >
                       <Rows size={13} style={{ flexShrink: 0 }} />
-                      <span>Nén 1 dòng (Minify / Uglify)</span>
+                      <span>{t('sqlEditor.minify')}</span>
                       <kbd style={{ marginLeft: 'auto', paddingLeft: '16px', flexShrink: 0, fontSize: '10.5px', color: 'var(--win-text-disabled)', fontFamily: 'inherit' }}>Ctrl+Shift+M</kbd>
                     </button>
                   </div>
@@ -1317,7 +1441,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                   toggleDropdown('more', paneId, e, setMoreMenuPane);
                 }}
                 style={{ padding: '2px 6px', fontSize: '11px', height: '22px', display: 'flex', alignItems: 'center' }}
-                title="Thao tác khác"
+                title={t('sqlEditor.moreActions')}
               >
                 <MoreHorizontal size={13} />
               </button>
@@ -1337,11 +1461,11 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                     zIndex: 9999,
                     padding: '4px 0'
                   }}>
-                    <button className="context-menu-item" onClick={() => { setMoreMenuPane(null); handleCopySql(paneId); }}><Copy size={12} /> Sao chép SQL</button>
-                    <button className="context-menu-item" onClick={() => { setMoreMenuPane(null); handlePasteSql(paneId); }}><Clipboard size={12} /> Dán SQL</button>
-                    <button className="context-menu-item" onClick={() => { setMoreMenuPane(null); handleClear(paneId); }}><Trash2 size={12} /> Xóa sạch</button>
+                    <button className="context-menu-item" onClick={() => { setMoreMenuPane(null); handleCopySql(paneId); }}><Copy size={12} /> {t('sqlEditor.copySql')}</button>
+                    <button className="context-menu-item" onClick={() => { setMoreMenuPane(null); handlePasteSql(paneId); }}><Clipboard size={12} /> {t('sqlEditor.pasteSql')}</button>
+                    <button className="context-menu-item" onClick={() => { setMoreMenuPane(null); handleClear(paneId); }}><Trash2 size={12} /> {t('sqlEditor.clearAll')}</button>
                     <div style={{ borderTop: '1px solid var(--win-border)', margin: '4px 0' }} />
-                    <button className="context-menu-item" onClick={() => { setMoreMenuPane(null); setShowQueryParamsConfigModal(true); }}><Settings size={12} /> Tùy chọn Param...</button>
+                    <button className="context-menu-item" onClick={() => { setMoreMenuPane(null); setShowQueryParamsConfigModal(true); }}><Settings size={12} /> {t('sqlEditor.paramOptions')}</button>
                   </div>
                 </>
               )}
@@ -1361,7 +1485,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                 color: queryParamsConfig.enabled ? 'var(--win-accent)' : undefined,
                 borderColor: queryParamsConfig.enabled ? 'var(--win-accent)' : undefined
               }}
-              title={queryParamsConfig.enabled ? 'Tham số truy vấn: Đang Bật' : 'Cấu hình Tham số Truy vấn (Query Params Options)'}
+              title={queryParamsConfig.enabled ? t('sqlEditor.paramsOn') : t('sqlEditor.paramsConfigure')}
             >
               <Settings size={11} style={{ color: queryParamsConfig.enabled ? 'var(--win-accent)' : undefined }} />
               <span>Param</span>
@@ -1410,7 +1534,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                       style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 14px', whiteSpace: 'nowrap' }}
                     >
                       <Square size={13} style={{ flexShrink: 0 }} />
-                      <span>Không chia (Đơn)</span>
+                      <span>{t('sqlEditor.singlePane')}</span>
                     </button>
                     <button 
                       className={`context-menu-item ${splitMode === 'vertical' ? 'active' : ''}`}
@@ -1418,7 +1542,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                       style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 14px', whiteSpace: 'nowrap' }}
                     >
                       <Columns size={13} style={{ flexShrink: 0 }} />
-                      <span>Chia dọc (Left / Right)</span>
+                      <span>{t('sqlEditor.splitVertical')}</span>
                     </button>
                     <button 
                       className={`context-menu-item ${splitMode === 'horizontal' ? 'active' : ''}`}
@@ -1437,10 +1561,10 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
               className="btn btn-secondary" 
               onClick={() => setShowHistory(!showHistory)} 
               style={{ padding: '2px 6px', display: 'flex', alignItems: 'center', gap: '4px' }} 
-              title="Lịch sử & câu lệnh đã lưu"
+              title={t('sqlEditor.historyTitle')}
             >
               <History size={11} />
-              <span>Lịch sử</span>
+              <span>{t('sqlEditor.history')}</span>
             </button>
           </div>
         </div>
@@ -1514,10 +1638,10 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
         }).join('\t')
       ).join('\n');
       textToCopy = `${headers}\n${rows}`;
-      successMsg = "Đã sao chép kết quả dạng bảng (TSV).";
+      successMsg = t('sqlEditor.copiedTable');
     } else if (format === 'object') {
       textToCopy = JSON.stringify(curResults, null, 2);
-      successMsg = "Đã sao chép kết quả dạng JSON Object.";
+      successMsg = t('sqlEditor.copiedJsonObject');
     } else if (format === 'array') {
       let arrayData;
       if (curColumns.length === 1) {
@@ -1527,7 +1651,9 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
         arrayData = curResults.map(row => curColumns.map(col => row[col]));
       }
       textToCopy = JSON.stringify(arrayData, null, 2);
-      successMsg = `Đã sao chép kết quả dạng JSON Array (${curColumns.length === 1 ? 'mảng 1 chiều' : 'mảng 2 chiều'}).`;
+      successMsg = t('sqlEditor.copiedJsonArray', {
+        shape: curColumns.length === 1 ? t('sqlEditor.arrayShape1d') : t('sqlEditor.arrayShape2d'),
+      });
     }
     
     navigator.clipboard.writeText(textToCopy);
@@ -1563,10 +1689,10 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     link.click();
     document.body.removeChild(link);
     if (paneId === 1) {
-      setStatusMsg("Đã tải xuống file CSV kết quả Khung 1.");
+      setStatusMsg(t('sqlEditor.downloadedCsv', { pane: 1 }));
       setTimeout(() => setStatusMsg(null), 3000);
     } else {
-      setStatusMsg2("Đã tải xuống file CSV kết quả Khung 2.");
+      setStatusMsg2(t('sqlEditor.downloadedCsv', { pane: 2 }));
       setTimeout(() => setStatusMsg2(null), 3000);
     }
   };
@@ -1585,10 +1711,10 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     link.click();
     document.body.removeChild(link);
     if (paneId === 1) {
-      setStatusMsg("Đã tải xuống file JSON kết quả Khung 1.");
+      setStatusMsg(t('sqlEditor.downloadedJson', { pane: 1 }));
       setTimeout(() => setStatusMsg(null), 3000);
     } else {
-      setStatusMsg2("Đã tải xuống file JSON kết quả Khung 2.");
+      setStatusMsg2(t('sqlEditor.downloadedJson', { pane: 2 }));
       setTimeout(() => setStatusMsg2(null), 3000);
     }
   };
@@ -1651,7 +1777,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                 const firstWord = resItem.query.trim().split(/\s+/)[0].toUpperCase();
                 // Hậu tố đếm: câu ghi hiện "✓N" (dòng ảnh hưởng), câu đọc hiện "(N)" (số dòng trả về).
                 const countSuffix = resItem.affected !== undefined && resItem.affected !== null
-                  ? ` ✓${Number(resItem.affected).toLocaleString('vi-VN')}`
+                  ? ` ✓${Number(resItem.affected).toLocaleString(locale)}`
                   : ` (${(resItem.data?.length || 0).toLocaleString('vi-VN')})`;
                 const label = `${idx + 1}: ${firstWord || 'SQL'}${countSuffix}`;
                 const isActive = pActiveTabType === 'data' && pActiveTabIndex === idx;
@@ -1684,7 +1810,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                 onClick={() => pSetActiveTabType('data')}
                 style={{ fontSize: '11px', padding: '4px 12px', cursor: 'pointer' }}
               >
-                Kết quả
+                {t('sqlEditor.results')}
               </div>
             )}
 
@@ -1713,15 +1839,15 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
 
           {pResults.length > 0 && (
             <div style={{ display: 'flex', gap: '4px', alignItems: 'center', padding: '2px 0' }}>
-              <span style={{ fontSize: '10px', color: 'var(--win-text-disabled)', marginRight: '2px' }}>Xuất:</span>
+              <span style={{ fontSize: '10px', color: 'var(--win-text-disabled)', marginRight: '2px' }}>{t('sqlEditor.exportLabel')}</span>
               <div style={{ position: 'relative', display: 'inline-block', zIndex: 1000 }}>
                 <button 
                   className="btn btn-secondary" 
                   onClick={() => pSetShowCopyDropdown(!pShowCopyDropdown)}
                   style={{ padding: '2px 6px', display: 'flex', alignItems: 'center', gap: '3px' }}
-                  title="Sao chép kết quả dưới nhiều định dạng"
+                  title={t('sqlEditor.copyResultsTitle')}
                 >
-                  <span>Sao chép</span>
+                  <span>{t('sqlEditor.copy')}</span>
                   <span style={{ fontSize: '7px', opacity: 0.7 }}>▼</span>
                 </button>
                 {pShowCopyDropdown && (
@@ -1744,9 +1870,9 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                       flexDirection: 'column',
                       padding: '4px 0',
                     }}>
-                      <button className="copy-dropdown-item" onClick={() => { handleCopyAs('table', paneId); pSetShowCopyDropdown(false); }}>Sao chép dạng Bảng (TSV)</button>
-                      <button className="copy-dropdown-item" onClick={() => { handleCopyAs('object', paneId); pSetShowCopyDropdown(false); }}>Sao chép dạng JSON Object</button>
-                      <button className="copy-dropdown-item" onClick={() => { handleCopyAs('array', paneId); pSetShowCopyDropdown(false); }}>Sao chép dạng JSON Array</button>
+                      <button className="copy-dropdown-item" onClick={() => { handleCopyAs('table', paneId); pSetShowCopyDropdown(false); }}>{t('sqlEditor.copyAsTable')}</button>
+                      <button className="copy-dropdown-item" onClick={() => { handleCopyAs('object', paneId); pSetShowCopyDropdown(false); }}>{t('sqlEditor.copyAsJsonObject')}</button>
+                      <button className="copy-dropdown-item" onClick={() => { handleCopyAs('array', paneId); pSetShowCopyDropdown(false); }}>{t('sqlEditor.copyAsJsonArray')}</button>
                     </div>
                   </>
                 )}
@@ -1759,14 +1885,21 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
 
         <div className="sql-results-content" style={{ flex: 1, overflow: 'auto', position: 'relative' }}>
           {pActiveTabType === 'explain' && pExplainResult ? (
-            <ExplainViewer explainResult={pExplainResult} />
+            <ExplainViewer
+              explainResult={pExplainResult}
+              // Only MySQL has a cost-less EXPLAIN variant worth re-running as JSON; Postgres
+              // already returns JSON for every variant and SQLite never reports cost.
+              onRequestJsonPlan={
+                /mysql|maria/i.test(dbType) ? () => handleExplain(paneId, 'json') : undefined
+              }
+            />
           ) : (
             <>
               {pErrorMsg && (
                 <div style={{ padding: '16px', color: 'var(--st-danger)', fontFamily: 'var(--win-font-mono)', fontSize: '12px', whiteSpace: 'pre-wrap' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', fontWeight: 600 }}>
                     <AlertTriangle size={16} />
-                    <span>LỖI TRUY VẤN SQL</span>
+                    <span>{t('sqlEditor.sqlError')}</span>
                   </div>
                   {pErrorMsg}
                 </div>
@@ -1777,14 +1910,14 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                   {pLoading ? (
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', color: 'var(--win-text-secondary)' }}>
                       <LoadingSpinner size={14} />
-                      <span>Đang chạy truy vấn...</span>
+                      <span>{t('sqlEditor.running')}</span>
                     </div>
                   ) : pHasRun ? (
                     activeResult && activeResult.affected !== undefined && activeResult.affected !== null
-                      ? `Thực thi thành công — ${Number(activeResult.affected).toLocaleString('vi-VN')} dòng bị ảnh hưởng.`
-                      : 'Truy vấn đã thực thi thành công nhưng không trả về dữ liệu (0 dòng).'
+                      ? t('sqlEditor.execOkAffected', { n: Number(activeResult.affected).toLocaleString(locale) })
+                      : t('sqlEditor.execOkNoRows')
                   ) : (
-                    'Nhấn nút "Chạy" để xem kết quả truy vấn tại đây.'
+                    t('sqlEditor.pressRunHint')
                   )}
                 </div>
               )}
@@ -1795,8 +1928,11 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                     <thead>
                       <tr>
                         <th style={{ width: '36px', textAlign: 'center' }}>#</th>
-                        {pColumns.map(col => (
-                          <th key={col}>{col}</th>
+                        {/* key theo VỊ TRÍ, không theo tên: `SELECT *` qua nhiều JOIN trả về
+                            trùng tên cột (film_id có ở film/film_actor/inventory) nên tên cột
+                            không phải khoá duy nhất — React sẽ cảnh báo và có thể nhân đôi/bỏ ô. */}
+                        {pColumns.map((col, ci) => (
+                          <th key={ci}>{col}</th>
                         ))}
                       </tr>
                     </thead>
@@ -1806,10 +1942,10 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                           <td style={{ textAlign: 'center', color: 'var(--win-text-secondary)', background: 'rgba(0,0,0,0.1)' }}>
                             {(pPage - 1) * pPageSize + index + 1}
                           </td>
-                          {pColumns.map(col => {
+                          {pColumns.map((col, ci) => {
                             const cellVal = row[col];
                             return (
-                              <td key={col}>
+                              <td key={ci}>
                                 {cellVal === null ? (
                                   <span style={{ color: 'var(--win-text-disabled)', fontStyle: 'italic' }}>NULL</span>
                                 ) : (
@@ -1831,11 +1967,19 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
         {!pErrorMsg && pResults.length > 0 && (
           <div className="grid-pagination" style={{ borderTop: '1px solid var(--win-border)', background: 'var(--win-bg-window)', flexShrink: 0, padding: '2px 8px', fontSize: '11px' }}>
             <div>
-              Hiển thị <b>{(pPage - 1) * pPageSize + 1}</b> - <b>{Math.min(pPage * pPageSize, pResults.length)}</b> trên <b>{pResults.length}</b> dòng
+              <Trans
+                i18nKey="sqlEditor.rowsRange"
+                values={{
+                  from: (pPage - 1) * pPageSize + 1,
+                  to: Math.min(pPage * pPageSize, pResults.length),
+                  total: pResults.length,
+                }}
+                components={{ strong: <b /> }}
+              />
             </div>
             <div className="pagination-controls">
               <span style={{ marginRight: '6px' }}>
-                Dòng:{' '}
+                {t('sqlEditor.rowsLabel')}{' '}
                 <select
                   value={pPageSize}
                   onChange={(e) => {
@@ -1850,10 +1994,10 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                 </select>
               </span>
 
-              <button className="pagination-btn" onClick={() => pSetPage(1)} disabled={pPage === 1} title="Trang đầu">
+              <button className="pagination-btn" onClick={() => pSetPage(1)} disabled={pPage === 1} title={t('sqlEditor.firstPage')}>
                 <ChevronsLeft size={14} />
               </button>
-              <button className="pagination-btn" onClick={() => pSetPage(p => Math.max(p - 1, 1))} disabled={pPage === 1} title="Trang trước">
+              <button className="pagination-btn" onClick={() => pSetPage(p => Math.max(p - 1, 1))} disabled={pPage === 1} title={t('sqlEditor.prevPage')}>
                 <ChevronLeft size={14} />
               </button>
               
@@ -1881,10 +2025,10 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                 / <b>{totalPagesNum}</b>
               </span>
 
-              <button className="pagination-btn" onClick={() => pSetPage(p => Math.min(p + 1, totalPagesNum))} disabled={pPage >= totalPagesNum} title="Trang sau">
+              <button className="pagination-btn" onClick={() => pSetPage(p => Math.min(p + 1, totalPagesNum))} disabled={pPage >= totalPagesNum} title={t('sqlEditor.nextPage')}>
                 <ChevronRight size={14} />
               </button>
-              <button className="pagination-btn" onClick={() => pSetPage(totalPagesNum)} disabled={pPage >= totalPagesNum} title="Trang cuối">
+              <button className="pagination-btn" onClick={() => pSetPage(totalPagesNum)} disabled={pPage >= totalPagesNum} title={t('sqlEditor.lastPage')}>
                 <ChevronsRight size={14} />
               </button>
             </div>
@@ -1900,13 +2044,15 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                   {pStatusMsg}
                   {activeResult && activeResult.query && (
                     <span style={{ fontSize: '10.5px', color: 'var(--win-text-secondary)', marginLeft: '6px' }}>
-                      | Khung {paneId}: {activeResult.affectedRows > 0 ? `Ảnh hưởng ${activeResult.affectedRows} dòng` : `Lấy ${activeResult.data?.length || 0} dòng`}
+                      {activeResult.affectedRows > 0
+                        ? t('sqlEditor.paneAffected', { pane: paneId, n: activeResult.affectedRows })
+                        : t('sqlEditor.paneFetched', { pane: paneId, n: activeResult.data?.length || 0 })}
                     </span>
                   )}
                 </span>
               </>
             ) : (
-              <span>Khung {paneId} - Sẵn sàng.</span>
+              <span>{t('sqlEditor.paneReady', { pane: paneId })}</span>
             )}
           </div>
           <div></div>
@@ -1950,7 +2096,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
               onMount={(editor) => handleEditorDidMount(editor, 1)}
               loading={
                 <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', color: 'var(--win-text-secondary)', fontSize: '13px' }}>
-                  Đang tải trình viết SQL...
+                  {t('sqlEditor.loadingEditor')}
                 </div>
               }
               options={SQL_EDITOR_OPTIONS}
@@ -1969,7 +2115,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
           <div 
             className={`${splitMode === 'vertical' ? 'split-divider-h' : 'split-divider-v'} ${isDraggingSplit ? 'dragging' : ''}`}
             onMouseDown={handleSplitMouseDown}
-            title="Kéo rê để thay đổi kích thước 2 khung"
+            title={t('sqlEditor.resizePanes')}
           />
         )}
 
@@ -1997,7 +2143,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                   onSplitModeChange?.('none');
                 }}
                 style={{ position: 'absolute', top: '4px', right: '8px', zIndex: 10, background: 'rgba(0,0,0,0.5)', border: 'none', color: '#fff', borderRadius: '3px', padding: '2px 4px', cursor: 'pointer' }}
-                title="Đóng khung 2 (Single Pane)"
+                title={t('sqlEditor.closePane2')}
               >
                 <X size={12} />
               </button>
@@ -2010,7 +2156,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                 onMount={(editor) => handleEditorDidMount(editor, 2)}
                 loading={
                   <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', color: 'var(--win-text-secondary)', fontSize: '13px' }}>
-                    Đang tải trình viết SQL...
+                    {t('sqlEditor.loadingEditor')}
                   </div>
                 }
                 options={SQL_EDITOR_OPTIONS}
@@ -2032,7 +2178,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', borderBottom: '1px solid var(--win-border)', width: '100%', boxSizing: 'border-box' }}>
               <div className="sql-history-title">
                 <History size={13} />
-                <span>Bảng truy vấn</span>
+                <span>{t('sqlEditor.queryTable')}</span>
               </div>
               <button 
                 className="btn btn-secondary" 
@@ -2057,7 +2203,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                 }}
                 onClick={() => setHistoryTab('history')}
               >
-                Lịch sử ({historyList.length})
+                {t('sqlEditor.historyTab', { n: historyCount })}
               </button>
               <button
                 style={{
@@ -2073,24 +2219,54 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                 }}
                 onClick={() => setHistoryTab('saved')}
               >
-                Đã lưu ({savedQueries.length})
+                {t('sqlEditor.savedTab', { n: savedCount })}
               </button>
             </div>
           </div>
           <div className="sql-history-search">
-            <input 
-              type="text" 
-              className="sql-history-search-input" 
-              placeholder={historyTab === 'history' ? "Tìm lịch sử..." : "Tìm câu lệnh đã lưu..."}
+            <input
+              type="text"
+              className="sql-history-search-input"
+              placeholder={historyTab === 'history' ? t('sqlEditor.searchHistory') : t('sqlEditor.searchSaved')}
               value={historySearch}
               onChange={(e) => setHistorySearch(e.target.value)}
             />
+            {/* Phạm vi: database đang dùng (mặc định), cả máy chủ, hay mọi kết nối.
+                Câu viết trên DB dev thường cần chạy lại trên prod, nên phải xem được
+                cả của kết nối khác — chỉ là không trộn sẵn vào mặc định. */}
+            {!!connKey && (
+              <div style={{ display: 'flex', gap: '4px', marginTop: '6px' }}>
+                {SCOPE_OPTIONS.map(({ scope, labelKey, titleKey }) => (
+                  <button
+                    key={scope}
+                    onClick={() => changeHistoryScope(scope)}
+                    title={t(titleKey)}
+                    style={{
+                      flex: 1,
+                      padding: '3px 6px',
+                      fontSize: '10px',
+                      cursor: 'pointer',
+                      borderRadius: '3px',
+                      border: '1px solid var(--win-border)',
+                      background: historyScope === scope ? 'var(--win-accent)' : 'transparent',
+                      color: historyScope === scope ? '#fff' : 'var(--win-text-secondary)',
+                      fontWeight: historyScope === scope ? 600 : 'normal',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}
+                  >
+                    {t(labelKey)}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <div className="sql-history-list">
             {historyTab === 'history' ? (
               Object.keys(getFilteredHistory()).length === 0 ? (
                 <div className="sql-history-empty">
-                  Không tìm thấy lịch sử truy vấn nào.
+                  {t('sqlEditor.noHistory')}
                 </div>
               ) : (
                 Object.keys(getFilteredHistory()).map(dateKey => {
@@ -2101,42 +2277,54 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                         {getGroupTitle(dateKey)}
                       </div>
                       {groupItems.map(item => {
-                        const timeStr = new Date(item.timestamp).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+                        const timeStr = new Date(item.timestamp).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
                         return (
-                          <div 
-                            key={item.id} 
+                          <div
+                            key={item.id}
                             className="sql-history-item"
                             onClick={() => handleSelectHistoryItem(item.sql)}
-                            title="Click để nạp câu lệnh này vào trình soạn thảo"
+                            title={item.error || t('sqlEditor.loadIntoEditor')}
                           >
                             <div className="sql-history-item-meta">
-                              <span>{timeStr}</span>
+                              <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                {/* Kết quả lần chạy. Dòng cũ (và dòng đang chạy dở) không có
+                                    item.ok -> không hiện gì, không giả vờ là thành công. */}
+                                {item.ok === true && <CheckCircle2 size={11} style={{ color: 'var(--st-ok)', flexShrink: 0 }} />}
+                                {item.ok === false && <AlertTriangle size={11} style={{ color: 'var(--st-danger)', flexShrink: 0 }} />}
+                                {timeStr}
+                                {/* Chạy trên DB nào: chỉ cần khi đang xem nhiều kết nối.
+                                    Dòng ghi trước khi có tính năng này thì không có item.db. */}
+                                {effectiveScope !== 'db' && item.db && (
+                                  <span style={{ opacity: 0.7 }}>· {item.db}</span>
+                                )}
+                                {historyMetrics(item) && (
+                                  <span style={{ opacity: 0.7 }}>· {historyMetrics(item)}</span>
+                                )}
+                              </span>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                 <span 
                                   style={{ cursor: 'pointer', color: 'var(--win-accent)', display: 'flex', alignItems: 'center', gap: '2px' }}
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     navigator.clipboard.writeText(item.sql);
-                                    setStatusMsg("Đã sao chép câu lệnh SQL!");
+                                    setStatusMsg(t('sqlEditor.copiedSqlShort'));
                                     setTimeout(() => setStatusMsg(null), 2500);
                                   }}
-                                  title="Sao chép câu lệnh SQL vào bộ nhớ tạm"
+                                  title={t('sqlEditor.copySqlTitle')}
                                 >
-                                  <Copy size={11} /> Sao chép
+                                  <Copy size={11} /> {t('sqlEditor.copy')}
                                 </span>
                                 <span 
                                   style={{ cursor: 'pointer', color: 'var(--st-danger)', display: 'flex', alignItems: 'center', gap: '2px' }}
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    if (confirm("Xóa câu lệnh này khỏi lịch sử?")) {
-                                      const updated = historyList.filter(h => h.id !== item.id);
-                                      setHistoryList(updated);
-                                      localStorage.setItem('sql_query_history', JSON.stringify(updated));
+                                    if (confirm(t('sqlEditor.confirmDeleteHistoryItem'))) {
+                                      setHistoryList(deleteHistoryEntry(item.id));
                                     }
                                   }}
-                                  title="Xóa bản ghi lịch sử này"
+                                  title={t('sqlEditor.deleteHistoryItemTitle')}
                                 >
-                                  Xóa
+                                  {t('sqlEditor.delete')}
                                 </span>
                               </div>
                             </div>
@@ -2153,41 +2341,42 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
             ) : (
               getFilteredSaved().length === 0 ? (
                 <div className="sql-history-empty">
-                  Chưa có câu lệnh nào được lưu.
+                  {t('sqlEditor.noSaved')}
                 </div>
               ) : (
                 getFilteredSaved().map(item => {
-                  const dateStr = new Date(item.timestamp).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' });
+                  const dateStr = new Date(item.timestamp).toLocaleDateString(locale, { day: '2-digit', month: '2-digit' });
                   return (
                     <div 
                       key={item.id} 
                       className="sql-history-item"
                       onClick={() => handleSelectHistoryItem(item.sql)}
                       style={{ borderLeft: '3px solid var(--win-accent)', paddingLeft: '8px' }}
-                      title="Click để nạp câu lệnh này"
+                      title={t('sqlEditor.loadThisQuery')}
                     >
                       <div className="sql-history-item-meta">
                         <span style={{ fontWeight: 600, color: 'var(--win-text-primary)' }}>{item.name}</span>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          {effectiveScope !== 'db' && item.db && <span style={{ opacity: 0.7 }}>{item.db}</span>}
                           <span>{dateStr}</span>
                           <span 
                             style={{ cursor: 'pointer', color: 'var(--win-accent)', display: 'flex', alignItems: 'center', gap: '2px' }}
                             onClick={(e) => {
                               e.stopPropagation();
                               navigator.clipboard.writeText(item.sql);
-                              setStatusMsg("Đã sao chép câu lệnh SQL!");
+                              setStatusMsg(t('sqlEditor.copiedSqlShort'));
                               setTimeout(() => setStatusMsg(null), 2500);
                             }}
-                            title="Sao chép câu lệnh SQL"
+                            title={t('sqlEditor.copySqlTitle')}
                           >
-                            <Copy size={11} /> Sao chép
+                            <Copy size={11} /> {t('sqlEditor.copy')}
                           </span>
-                          <span 
+                          <span
                             style={{ cursor: 'pointer', color: 'var(--st-danger)' }}
                             onClick={(e) => handleDeleteSaved(item.id, e)}
-                            title="Xóa câu lệnh đã lưu này"
+                            title={t('sqlEditor.deleteSavedTitle')}
                           >
-                            Xóa
+                            {t('sqlEditor.delete')}
                           </span>
                         </div>
                       </div>
@@ -2200,14 +2389,14 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
               )
             )}
           </div>
-          {historyTab === 'history' && historyList.length > 0 && (
+          {historyTab === 'history' && historyCount > 0 && (
             <div style={{ padding: '8px', borderTop: '1px solid var(--win-border)', display: 'flex', justifyContent: 'flex-end', background: 'rgba(0, 0, 0, 0.02)' }}>
               <button 
                 className="btn btn-secondary" 
                 onClick={handleClearHistory}
                 style={{ width: '100%' }}
               >
-                Xóa tất cả lịch sử
+                {clearHistoryLabel()}
               </button>
             </div>
           )}
@@ -2215,41 +2404,23 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       )}
 
       {showSaveModal && (
-        <div style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: 'rgba(0,0,0,0.6)',
-          zIndex: 9999,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          backdropFilter: 'blur(3px)'
-        }}>
-          <div style={{
-            background: 'var(--win-bg-window)',
-            border: '1px solid var(--win-border)',
-            borderRadius: '6px',
-            padding: '16px',
-            width: '320px',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '12px'
-          }}>
-            <h3 style={{ fontSize: '13px', margin: 0, fontWeight: 600, color: 'var(--win-text-primary)' }}>LƯU CÂU LỆNH SQL</h3>
+        <Modal
+          title={t('sqlEditor.saveModalTitle')}
+          onClose={() => { setShowSaveModal(false); setNewQueryName(''); }}
+          width="360px"
+          zIndex={9999}
+        >
+          <ModalBody style={{ gap: '12px' }}>
             <div>
               <label style={{ fontSize: '11px', display: 'block', marginBottom: '6px', color: 'var(--win-text-secondary)' }}>
-                Tên gợi nhớ của câu lệnh:
+                {t('sqlEditor.saveModalLabel')}
               </label>
               <input 
                 type="text" 
                 className="form-input" 
                 value={newQueryName}
                 onChange={(e) => setNewQueryName(e.target.value)}
-                placeholder="Nhập tên câu lệnh..."
+                placeholder={t('sqlEditor.saveModalPlaceholder')}
                 autoFocus
                 style={{ width: '100%', boxSizing: 'border-box', background: 'var(--win-bg-window)', border: '1px solid var(--win-border)', color: 'var(--win-text-primary)', borderRadius: '4px', padding: '6px', fontSize: '12px' }}
                 onKeyDown={(e) => {
@@ -2261,27 +2432,27 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                 }}
               />
             </div>
-            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '4px' }}>
-              <button 
-                className="btn btn-secondary" 
-                onClick={() => {
-                  setShowSaveModal(false);
-                  setNewQueryName('');
-                }}
-                style={{ padding: '4px 12px' }}
-              >
-                Hủy
-              </button>
-              <button 
-                className="btn btn-primary" 
-                onClick={handleConfirmSaveQuery}
-                style={{ padding: '4px 12px' }}
-              >
-                Lưu lại
-              </button>
-            </div>
-          </div>
-        </div>
+          </ModalBody>
+          <ModalFooter>
+            <button
+              className="btn btn-secondary"
+              onClick={() => {
+                setShowSaveModal(false);
+                setNewQueryName('');
+              }}
+              style={{ padding: '0 12px' }}
+            >
+              {t('common.cancel')}
+            </button>
+            <button
+              className="btn btn-primary"
+              onClick={handleConfirmSaveQuery}
+              style={{ padding: '0 12px' }}
+            >
+              {t('sqlEditor.saveModalConfirm')}
+            </button>
+          </ModalFooter>
+        </Modal>
       )}
 
       {/* Query Params Config Modal */}
@@ -2323,6 +2494,42 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
             }
           }}
           onClose={() => setParamPromptData(null)}
+        />
+      )}
+
+      {/* Cảnh báo DELETE thiếu WHERE / DROP TABLE. Liệt kê nguyên văn câu vi phạm — hữu ích hơn
+          tên bảng đã tách, vì script nhiều câu lệnh thì người dùng cần biết CHÍNH XÁC câu nào. */}
+      {unsafePrompt && (
+        <ConfirmDialog
+          open
+          danger
+          title={t('sqlEditor.unsafeTitle')}
+          message={
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <span>{t('sqlEditor.unsafeIntro', { n: unsafePrompt.items.length })}</span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '180px', overflowY: 'auto' }}>
+                {unsafePrompt.items.map((item, i) => (
+                  <div key={i} style={{ border: '1px solid var(--win-border)', borderRadius: '4px', padding: '6px 8px', background: 'var(--win-bg-window)' }}>
+                    <div style={{ fontSize: '10px', color: 'var(--st-danger)', fontWeight: 600, marginBottom: '2px' }}>
+                      {unsafeKindLabel(item.kind)}
+                    </div>
+                    <code style={{ fontFamily: 'var(--win-font-mono)', fontSize: '11px', wordBreak: 'break-all', color: 'var(--win-text-primary)' }}>
+                      {item.text.length > 160 ? `${item.text.slice(0, 160)}…` : item.text}
+                    </code>
+                  </div>
+                ))}
+              </div>
+            </div>
+          }
+          note={t('sqlEditor.unsafeNote')}
+          confirmLabel={t('sqlEditor.unsafeConfirm')}
+          onConfirm={() => {
+            const p = unsafePrompt;
+            setUnsafePrompt(null);
+            if (p.resume === 'analyze') handleExplain(p.pane, 'analyze', true);
+            else executeSql(p.sql, p.pane, true);
+          }}
+          onCancel={() => setUnsafePrompt(null)}
         />
       )}
     </div>

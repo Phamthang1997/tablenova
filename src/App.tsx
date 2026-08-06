@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Trans, useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { TitleBar } from './components/TitleBar';
 import { ConnectionManager } from './components/ConnectionManager';
@@ -11,18 +12,22 @@ import { SqlEditor } from './components/SqlEditor';
 import { AiAssistant } from './components/AiAssistant';
 import { TerminalPanel } from './components/TerminalPanel';
 import { SchemaMigration } from './components/SchemaMigration';
+import { DbCompareDialog } from './components/DbCompareDialog';
+import { DataGeneratorDialog } from './components/DataGeneratorDialog';
 import { RedisBrowser } from './components/RedisBrowser';
 import { ImportFilePicker } from './components/ImportFilePicker';
 import { ExportTableDialog } from './components/ExportTableDialog';
 import { ExportDatabaseDialog } from './components/ExportDatabaseDialog';
 import type { DatabaseExportOptions } from './components/ExportDatabaseDialog';
 import { ImportDatabaseDialog } from './components/ImportDatabaseDialog';
+import { DbConnectionStatusPill } from './components/DbConnectionStatusPill';
 import { Bot, Lock, LockOpen, X } from 'lucide-react';
 import { getVersion } from '@tauri-apps/api/app';
 import { PostgresIcon, MySqlIcon, RedisIcon, SqliteIcon } from './components/DbIcons';
 import { dbHelper } from './utils/dbHelper';
 import type { DbConnectionConfig } from './utils/dbHelper';
 import { invalidateCatalog } from './sql/catalog';
+import { connKey, legacyTabsStorageKey, tabsStorageKey } from './utils/connKey';
 import { parseXlsx } from './utils/xlsxReader';
 import { collectColumns, inferColType } from './utils/importPreview';
 import { addExistsHint } from './utils/dumpPreview';
@@ -30,6 +35,7 @@ import { ProgressBar, type ProgressState } from './components/ProgressBar';
 import { buildDatabaseFile, buildSql } from './utils/exportHelper';
 import { gzipText, openInFileManager, saveExportFile } from './utils/fileSave';
 import { ConfirmDialog } from './components/ConfirmDialog';
+import { Modal, ModalBody, ModalFooter } from './components/Modal';
 import type { XlsxSheet } from './utils/xlsxWriter';
 import appIcon from './assets/icon.png';
 
@@ -90,6 +96,10 @@ function parseCSV(text: string): string[][] {
 }
 
 export const App: React.FC = () => {
+  const { t, i18n } = useTranslation();
+  const locale = i18n.language;
+  const fmtNum = (n: number) => n.toLocaleString(locale);
+
   const [connection, setConnection] = useState<{
     dbName: string;
     dbType: 'sqlite' | 'postgres' | 'mysql' | 'redis';
@@ -102,7 +112,9 @@ export const App: React.FC = () => {
   const [queryCount, setQueryCount] = useState(1);
   const [showAi, setShowAi] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
-  const [readOnly, setReadOnly] = useState(false); // Chế độ chỉ đọc: chặn mọi thao tác ghi
+  // Chế độ chỉ đọc: chặn mọi thao tác ghi. Nhớ qua các lần mở app (quy ước tf_*) — một công tắc
+  // an toàn mà reset về "cho phép ghi" mỗi lần khởi động thì gần như vô dụng.
+  const [readOnly, setReadOnly] = useState(() => localStorage.getItem('tf_readonly') === '1');
   const [dbReloadKey, setDbReloadKey] = useState(0);
 
   // Xuất/Nhập cả database (popup riêng, mở từ mục Công cụ ở Sidebar hoặc menu tiêu đề)
@@ -134,6 +146,10 @@ export const App: React.FC = () => {
   // 'all' khi vào từ "Thống kê tất cả database" trong menu Databases.
   const [dbInfoTab, setDbInfoTab] = useState<'current' | 'all'>('current');
   const [showSchemaMigration, setShowSchemaMigration] = useState(false);
+  const [showDbCompare, setShowDbCompare] = useState(false);
+  // Data Generator: bảng mở sẵn khi vào từ menu ngữ cảnh của một bảng.
+  const [showDataGen, setShowDataGen] = useState(false);
+  const [dataGenTable, setDataGenTable] = useState<string | null>(null);
   const [showSidebar, setShowSidebar] = useState(true);
   const [showAbout, setShowAbout] = useState(false);
   // Lấy version thật từ tauri.conf.json thay vì hardcode trong JSX (dễ lệch khi
@@ -170,12 +186,12 @@ export const App: React.FC = () => {
       try {
         const buf = await file.arrayBuffer();
         const rows = await parseXlsx(buf);
-        if (rows.length === 0) throw new Error('File XLSX không có dữ liệu.');
+        if (rows.length === 0) throw new Error(t('dataGrid.errXlsxEmpty'));
         setGlobalImportFileType('json'); // dòng dạng object, đi chung nhánh ghi DB với CSV/JSON
         setGlobalImportPendingRows(rows);
         setShowGlobalImportModal(true);
       } catch (err: any) {
-        alert('Lỗi đọc file: ' + err.message);
+        alert(t('dataGrid.errReadFile', { message: err.message }));
       }
       return;
     }
@@ -188,7 +204,7 @@ export const App: React.FC = () => {
         if (file.name.endsWith('.json')) {
           const parsedJson = JSON.parse(text);
           if (!Array.isArray(parsedJson)) {
-            throw new Error('Định dạng JSON phải là một mảng các đối tượng.');
+            throw new Error(t('dataGrid.errJsonArray'));
           }
           setGlobalImportFileType('json');
           setGlobalImportPendingRows(parsedJson);
@@ -200,7 +216,7 @@ export const App: React.FC = () => {
           }
           const parsedCsv = parseCSV(cleanText);
           if (parsedCsv.length < 2) {
-            throw new Error('File CSV không có dữ liệu.');
+            throw new Error(t('dataGrid.errCsvEmpty'));
           }
           const headers = parsedCsv[0];
           const rowsToImport: any[] = [];
@@ -221,10 +237,10 @@ export const App: React.FC = () => {
           setGlobalImportSqlContent(text);
           setShowGlobalImportModal(true);
         } else {
-          throw new Error('Chỉ hỗ trợ import tệp .csv, .json, .sql hoặc .xlsx');
+          throw new Error(t('dataGrid.errUnsupportedFile'));
         }
       } catch (err: any) {
-        alert('Lỗi đọc file: ' + err.message);
+        alert(t('dataGrid.errReadFile', { message: err.message }));
       }
     };
     reader.readAsText(file);
@@ -252,12 +268,12 @@ export const App: React.FC = () => {
           if (!totalRows && data.totalCount) totalRows = data.totalCount;
           const inner = totalRows ? Math.min(1, rows.length / totalRows) : 0;
           onProgress({
-            label: `Bảng ${tableIndex + 1}/${totalTables}: ${table}`,
+            label: t('app.exportTableProgress', { i: tableIndex + 1, total: totalTables, table }),
             current: tableIndex + inner,
             total: totalTables,
             detail: totalRows
-              ? `${rows.length.toLocaleString()}/${totalRows.toLocaleString()} dòng (${Math.round(inner * 100)}%)`
-              : `${rows.length.toLocaleString()} dòng`,
+              ? t('app.exportRowsPct', { rows: fmtNum(rows.length), total: fmtNum(totalRows), pct: Math.round(inner * 100) })
+              : t('app.exportRows', { rows: fmtNum(rows.length) }),
           });
           if (batch.length < EXPORT_PAGE_SIZE) break;
           if (totalRows && rows.length >= totalRows) break;
@@ -278,13 +294,13 @@ export const App: React.FC = () => {
           const finalCols = colNames.length ? colNames : (rows[0] ? Object.keys(rows[0]) : []);
           sheets.push({ name: table, colNames: finalCols, rows });
         }
-        onProgress({ label: `Đang dựng tệp ${opts.format.toUpperCase()}...` });
+        onProgress({ label: t('app.exportBuilding', { format: opts.format.toUpperCase() }) });
         const file = buildDatabaseFile(sheets, opts.format, opts.filename);
-        onProgress({ label: 'Đang ghi tệp...' });
+        onProgress({ label: t('app.exportWriting') });
         const saved = await saveExportFile(opts.dir, file.name, file.data, file.mime);
         onProgress(null);
         setExportDone({
-          message: `Đã xuất ${sheets.length} bảng (${opts.format.toUpperCase()}) ra tệp ${file.name}.`,
+          message: t('app.exportedSheets', { n: sheets.length, format: opts.format.toUpperCase(), file: file.name }),
           path: saved.path,
           dir: saved.dir,
           viaDownload: saved.savedTo === 'download',
@@ -305,10 +321,10 @@ export const App: React.FC = () => {
       for (let i = 0; i < opts.tables.length; i++) {
         const table = opts.tables[i];
         onProgress({
-          label: `Bảng ${i + 1}/${totalTables}: ${table}`,
+          label: t('app.exportTableProgress', { i: i + 1, total: totalTables, table }),
           current: i,
           total: totalTables,
-          detail: 'đang đọc cấu trúc...',
+          detail: t('app.exportReadingSchema'),
         });
 
         if (opts.sqlOptions.dropTable) {
@@ -320,7 +336,10 @@ export const App: React.FC = () => {
             parts.push(`-- Structure for table ${q}${table}${q}`);
             parts.push(def.sql.trim().endsWith(';') ? def.sql.trim() : def.sql.trim() + ';');
           } else {
-            parts.push(`-- Không lấy được cấu trúc bảng ${q}${table}${q}: ${def.error || 'không rõ nguyên nhân'}`);
+            parts.push(t('app.exportSchemaFailed', {
+              table: `${q}${table}${q}`,
+              message: def.error || t('app.exportUnknownReason'),
+            }));
           }
           parts.push('');
         }
@@ -330,12 +349,17 @@ export const App: React.FC = () => {
             const schema = await dbHelper.getTableSchema(table);
             const colNames = (schema.columns || []).map(c => c.name);
             const cols = colNames.length ? colNames : Object.keys(rows[0]);
-            parts.push(`-- Data for table ${q}${table}${q} (${rows.length} dòng)`);
+            parts.push(t('app.exportDataComment', { table: `${q}${table}${q}`, rows: rows.length }));
             parts.push(buildSql(table, cols, rows, connection?.dbType || 'sqlite'));
             parts.push('');
           }
         }
-        onProgress({ label: `Bảng ${i + 1}/${totalTables}: ${table}`, current: i + 1, total: totalTables, detail: 'xong' });
+        onProgress({
+          label: t('app.exportTableProgress', { i: i + 1, total: totalTables, table }),
+          current: i + 1,
+          total: totalTables,
+          detail: t('app.exportTableDone'),
+        });
       }
 
       const sqlText = parts.join('\n');
@@ -343,7 +367,7 @@ export const App: React.FC = () => {
       const base = opts.filename.replace(/\.(sql|sql\.gz|gz)$/i, '');
       const fileName = base + ext;
 
-      onProgress({ label: opts.compressGzip ? 'Đang nén tệp (gzip)...' : 'Đang ghi tệp...' });
+      onProgress({ label: opts.compressGzip ? t('app.exportCompressing') : t('app.exportWriting') });
       const payload = opts.compressGzip ? await gzipText(sqlText) : sqlText;
       const saved = await saveExportFile(
         opts.dir,
@@ -354,7 +378,7 @@ export const App: React.FC = () => {
       onProgress(null);
 
       setExportDone({
-        message: `Đã xuất ${opts.tables.length} bảng ra tệp SQL ${fileName}.`,
+        message: t('app.exportedSql', { n: opts.tables.length, file: fileName }),
         path: saved.path,
         dir: saved.dir,
         viaDownload: saved.savedTo === 'download',
@@ -362,7 +386,7 @@ export const App: React.FC = () => {
       return true;
     } catch (err: any) {
       onProgress(null);
-      alert('Lỗi xuất dữ liệu: ' + err.message);
+      alert(t('app.errExport', { message: err.message }));
       return false;
     }
   };
@@ -440,7 +464,7 @@ export const App: React.FC = () => {
 
   const confirmGlobalImport = async () => {
     if (!globalImportTargetTable && !globalImportTableName.trim()) {
-      alert('Vui lòng nhập tên bảng.');
+      alert(t('app.errNoTableName'));
       return;
     }
 
@@ -448,8 +472,8 @@ export const App: React.FC = () => {
     setGlobalImportLoading(true);
     setGlobalImportProgress({
       label: globalImportFileType === 'sql'
-        ? 'Đang chạy câu lệnh SQL...'
-        : `Đang ghi ${globalImportPendingRows.length} dòng...`,
+        ? t('app.importRunningSql')
+        : t('app.importWritingRows', { n: globalImportPendingRows.length }),
     });
 
     try {
@@ -467,10 +491,10 @@ export const App: React.FC = () => {
 
         const res = await dbHelper.executeQuery(filteredSql);
         if (res.success) {
-          alert('Đã thực thi câu lệnh SQL import thành công!');
+          alert(t('app.importSqlSuccess'));
           window.dispatchEvent(new CustomEvent('database-restored'));
         } else {
-          alert('Lỗi thực thi SQL: ' + res.error);
+          alert(t('app.errImportSql', { message: res.error }));
         }
       } else if (globalImportTargetTable) {
         // Bảng có sẵn: ghi theo lô để báo được tiến độ thật.
@@ -482,35 +506,37 @@ export const App: React.FC = () => {
           const batch = globalImportPendingRows.slice(i, i + IMPORT_BATCH_SIZE);
           const resData = await dbHelper.importTableData(table, batch);
           if (!resData.success) {
-            failed = resData.error || 'Import thất bại.';
+            failed = resData.error || t('app.errImportFailed');
             break;
           }
           done += batch.length;
           setGlobalImportProgress({
-            label: `Đang ghi vào bảng ${table}...`,
+            label: t('app.importWritingTable', { table }),
             current: done,
             total,
-            detail: `${done.toLocaleString()}/${total.toLocaleString()} dòng`,
+            detail: t('app.importRowsDetail', { done: fmtNum(done), total: fmtNum(total) }),
           });
         }
         if (failed) {
-          alert(`Import thất bại: ${failed}${done > 0 ? ` (đã ghi ${done}/${total} dòng)` : ''}`);
+          alert(done > 0
+            ? t('app.errImportWithProgress', { message: failed, done, total })
+            : t('app.errImport', { message: failed }));
         } else {
-          alert(`Đã nhập ${done} dòng vào bảng "${table}".`);
+          alert(t('app.importedRows', { n: done, table }));
         }
         window.dispatchEvent(new CustomEvent('database-restored'));
       } else {
         // Bảng mới: backend tạo bảng + chèn trong một lần gọi -> tiến độ vô định.
         const resData = await dbHelper.importNewTable(globalImportTableName, globalImportPendingRows);
         if (resData.success) {
-          alert(`Đã tạo bảng "${globalImportTableName}" và nhập thành công bản ghi!`);
+          alert(t('app.createdAndImported', { table: globalImportTableName }));
           window.dispatchEvent(new CustomEvent('database-restored'));
         } else {
-          alert('Import thất bại: ' + resData.error);
+          alert(t('app.errImport', { message: resData.error }));
         }
       }
     } catch (err: any) {
-      alert('Lỗi kết nối: ' + err.message);
+      alert(t('common.connectionError', { message: err.message }));
     } finally {
       setGlobalImportProgress(null);
       setGlobalImportLoading(false);
@@ -536,14 +562,14 @@ export const App: React.FC = () => {
         if (!exists) {
           const created = await dbHelper.createDatabase({ name: wantDb });
           if (!created.success) {
-            alert(`Không tạo được database "${wantDb}": ${created.error}`);
+            alert(t('app.errCreateDatabase', { name: wantDb, message: created.error }));
             return false;
           }
         }
 
         const switched = await dbHelper.switchDatabase(wantDb);
         if (!switched.success) {
-          alert(`Không chuyển được sang database "${wantDb}": ${switched.error}`);
+          alert(t('app.errSwitchDatabase', { name: wantDb, message: switched.error }));
           return false;
         }
         setConnection(prev => prev ? { ...prev, dbName: switched.database || wantDb } : null);
@@ -552,7 +578,7 @@ export const App: React.FC = () => {
 
       const resData = await dbHelper.restoreBackup(sqlText, tables, onProgress);
       if (resData.success) {
-        alert(`Nhập cơ sở dữ liệu thành công! Đã chạy ${resData.statementsCount || 0} câu lệnh SQL.`);
+        alert(t('app.importDbSuccess', { n: resData.statementsCount || 0 }));
         if (resData.activeDatabase) {
           const activeDb = resData.activeDatabase;
           setConnection(prev => prev ? { ...prev, dbName: activeDb } : null);
@@ -561,10 +587,10 @@ export const App: React.FC = () => {
         window.dispatchEvent(new CustomEvent('database-restored'));
         return true;
       }
-      alert('Nhập thất bại: ' + addExistsHint(resData.error || '', false));
+      alert(t('app.errImport', { message: addExistsHint(resData.error || '', false) }));
       return false;
     } catch (e: any) {
-      alert('Lỗi nhập dữ liệu: ' + e.message);
+      alert(t('app.errImport', { message: e.message }));
       return false;
     }
   };
@@ -589,7 +615,7 @@ export const App: React.FC = () => {
             id: 'query_1',
             type: 'query',
             name: 'SQL Query',
-            label: 'Truy vấn 1',
+            label: t('app.queryTabLabel', { n: 1 }),
           },
         ];
       }
@@ -637,15 +663,36 @@ export const App: React.FC = () => {
     localStorage.setItem('tf_theme', nextTheme);
   };
 
+  const toggleReadOnly = () => {
+    const next = !readOnly;
+    setReadOnly(next);
+    localStorage.setItem('tf_readonly', next ? '1' : '0');
+  };
+
   React.useEffect(() => {
     if (connection) {
-      const storageKey = `tn_tabs_${connection.dbType}_${connection.dbName}`;
+      const storageKey = tabsStorageKey(activeConnConfig, connection.dbType, connection.dbName);
       // Không lưu tab terminal: phiên PTY không tồn tại sau khi reload
       const persistTabs = tabs.filter(t => t.type !== 'terminal');
       const persistActive = persistTabs.some(t => t.id === activeTabId) ? activeTabId : (persistTabs[0]?.id ?? null);
-      localStorage.setItem(storageKey, JSON.stringify({ tabs: persistTabs, activeTabId: persistActive, queryCount }));
+      const payload = { tabs: persistTabs, activeTabId: persistActive, queryCount };
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(payload));
+      } catch {
+        // Hết quota (SQL nháp dài x nhiều tab x nhiều DB dùng chung ~5MB với lịch sử,
+        // profile, snapshot). Bỏ nội dung nháp của các tab không hoạt động để vẫn giữ
+        // được danh sách tab và nháp của tab đang mở, thay vì mất sạch lần lưu này.
+        const trimmed = persistTabs.map(tab =>
+          tab.id === persistActive ? tab : ({ ...tab, sql: undefined, sql2: undefined } as TabInfo)
+        );
+        try {
+          localStorage.setItem(storageKey, JSON.stringify({ ...payload, tabs: trimmed }));
+        } catch (e) {
+          console.warn('Không lưu được danh sách tab (localStorage đã đầy):', e);
+        }
+      }
     }
-  }, [tabs, activeTabId, connection, queryCount]);
+  }, [tabs, activeTabId, connection, activeConnConfig, queryCount]);
 
   React.useEffect(() => {
     const applyWindowSize = async () => {
@@ -665,6 +712,33 @@ export const App: React.FC = () => {
     applyWindowSize();
   }, [connection]);
 
+  // Khôi phục tab (kèm SQL nháp trong tab) của một database. Khoá mới gồm cả
+  // host:port nên không lẫn giữa hai máy chủ có database cùng tên; khoá cũ chỉ
+  // được ĐỌC, một lần, khi khoá mới còn trống — để không ai mất tab đang mở.
+  const restoreTabs = (
+    config: DbConnectionConfig | null | undefined,
+    dbType: string,
+    dbName: string,
+  ): boolean => {
+    const storageKey = tabsStorageKey(config, dbType, dbName);
+    const legacyKey = legacyTabsStorageKey(dbType, dbName);
+    const saved = localStorage.getItem(storageKey)
+      ?? (storageKey === legacyKey ? null : localStorage.getItem(legacyKey));
+    if (!saved) return false;
+    try {
+      const { tabs: savedTabs, activeTabId: savedActiveId, queryCount: savedQueryCount } = JSON.parse(saved);
+      if (Array.isArray(savedTabs) && savedTabs.length > 0) {
+        setTabs(savedTabs);
+        setActiveTabId(savedActiveId || savedTabs[0].id);
+        setQueryCount(savedQueryCount || (savedTabs.length + 1));
+        return true;
+      }
+    } catch (e) {
+      console.error('Lỗi phục hồi tab history:', e);
+    }
+    return false;
+  };
+
   // Handle successful database connection
   const handleConnect = (dbName: string, dbType: 'sqlite' | 'postgres' | 'mysql' | 'redis', color?: string, config?: DbConnectionConfig) => {
     setConnection({ dbName, dbType });
@@ -675,21 +749,7 @@ export const App: React.FC = () => {
     invalidateCatalog();
 
     // Try to restore tabs from localStorage
-    const storageKey = `tn_tabs_${dbType}_${dbName}`;
-    const saved = localStorage.getItem(storageKey);
-    if (saved) {
-      try {
-        const { tabs: savedTabs, activeTabId: savedActiveId, queryCount: savedQueryCount } = JSON.parse(saved);
-        if (Array.isArray(savedTabs) && savedTabs.length > 0) {
-          setTabs(savedTabs);
-          setActiveTabId(savedActiveId || savedTabs[0].id);
-          setQueryCount(savedQueryCount || (savedTabs.length + 1));
-          return;
-        }
-      } catch (e) {
-        console.error('Lỗi phục hồi tab history:', e);
-      }
-    }
+    if (restoreTabs(config, dbType, dbName)) return;
 
     // Open an initial SQL Query tab on connect
     const initialTabId = 'query_1';
@@ -698,7 +758,7 @@ export const App: React.FC = () => {
         id: initialTabId,
         type: 'query',
         name: 'SQL Query',
-        label: 'Truy vấn 1',
+        label: t('app.queryTabLabel', { n: 1 }),
       },
     ]);
     setActiveTabId(initialTabId);
@@ -708,7 +768,7 @@ export const App: React.FC = () => {
   // Disconnect from database
   // Hỏi xác nhận nếu bảng đang mở còn thay đổi chưa lưu (cờ do DataGrid đặt: window.__gridDirty)
   const guardDirty = () =>
-    !(window as any).__gridDirty || window.confirm('Bảng hiện tại còn thay đổi CHƯA LƯU. Bỏ các thay đổi đó và tiếp tục?');
+    !(window as any).__gridDirty || window.confirm(t('app.confirmDiscardGridChanges'));
 
   const handleSelectTab = (id: string) => {
     if (id !== activeTabId && !guardDirty()) return;
@@ -731,23 +791,7 @@ export const App: React.FC = () => {
     setConnection(nextConn);
     setDbReloadKey((k) => k + 1);
 
-    if (nextConn) {
-      const storageKey = `tn_tabs_${nextConn.dbType}_${newName}`;
-      const saved = localStorage.getItem(storageKey);
-      if (saved) {
-        try {
-          const { tabs: savedTabs, activeTabId: savedActiveId, queryCount: savedQueryCount } = JSON.parse(saved);
-          if (Array.isArray(savedTabs) && savedTabs.length > 0) {
-            setTabs(savedTabs);
-            setActiveTabId(savedActiveId || savedTabs[0].id);
-            setQueryCount(savedQueryCount || (savedTabs.length + 1));
-            return;
-          }
-        } catch (e) {
-          console.error('Lỗi phục hồi tab history khi đổi db:', e);
-        }
-      }
-    }
+    if (nextConn && restoreTabs(activeConnConfig, nextConn.dbType, newName)) return;
 
     // Fallback
     const initialTabId = 'query_1';
@@ -756,7 +800,7 @@ export const App: React.FC = () => {
         id: initialTabId,
         type: 'query',
         name: 'SQL Query',
-        label: 'Truy vấn 1',
+        label: t('app.queryTabLabel', { n: 1 }),
       },
     ]);
     setActiveTabId(initialTabId);
@@ -806,8 +850,25 @@ export const App: React.FC = () => {
       id: tabId,
       type: 'query',
       name: 'SQL Query',
-      label: `Truy vấn ${queryCount}`,
+      label: t('app.queryTabLabel', { n: queryCount }),
     };
+    setTabs([...tabs, newTab]);
+    setActiveTabId(tabId);
+    setQueryCount(queryCount + 1);
+  };
+
+  // Mở tab SQL với nội dung có sẵn (script đồng bộ từ hộp thoại So sánh 2 database).
+  // Không gộp vào handleNewQueryTab vì hàm đó được truyền thẳng làm onClick -> tham số
+  // đầu tiên sẽ là MouseEvent.
+  const openQueryTabWithSql = (sql: string) => {
+    const tabId = `query_${Date.now()}`;
+    const newTab = {
+      id: tabId,
+      type: 'query',
+      name: 'SQL Query',
+      label: t('app.queryTabLabel', { n: queryCount }),
+      sql,
+    } as TabInfo;
     setTabs([...tabs, newTab]);
     setActiveTabId(tabId);
     setQueryCount(queryCount + 1);
@@ -884,7 +945,7 @@ export const App: React.FC = () => {
         id: tabId,
         type: 'query',
         name: 'SQL Query',
-        label: `Truy vấn ${queryCount}`,
+        label: t('app.queryTabLabel', { n: queryCount }),
       };
       // Pre-populate sql property
       (newTab as any).sql = sql;
@@ -961,6 +1022,7 @@ export const App: React.FC = () => {
             dbName={connection.dbName}
             initialDbIndex={activeConnConfig?.dbIndex ?? 0}
             onDisconnect={handleDisconnect}
+            readOnly={readOnly}
           />
         </div>
       ) : (
@@ -969,6 +1031,7 @@ export const App: React.FC = () => {
             <Sidebar
               dbName={connection.dbName}
               dbType={connection.dbType}
+              readOnly={readOnly}
               onSelectTable={handleSelectTable}
               onNewQuery={handleNewQueryTab}
               onOpenTerminal={handleOpenTerminal}
@@ -983,6 +1046,11 @@ export const App: React.FC = () => {
               onOpenDbInfo={() => { setDbInfoTab('current'); setShowDbInfoModal(true); }}
               onOpenAllDbStats={() => { setDbInfoTab('all'); setShowDbInfoModal(true); }}
               onSchemaMigration={() => setShowSchemaMigration(true)}
+              onCompareDatabases={() => setShowDbCompare(true)}
+              onGenerateData={(tableName) => {
+                setDataGenTable(tableName ?? null);
+                setShowDataGen(true);
+              }}
               onTableRenamed={handleTableRenamed}
               onTableDropped={handleTableDropped}
               onDatabaseChanged={handleDatabaseChanged}
@@ -1007,15 +1075,15 @@ export const App: React.FC = () => {
                   menu Hiển thị > Đổi giao diện sáng/tối trên title bar. */}
               <button
                 className="tab-new-btn"
-                onClick={() => setReadOnly(r => !r)}
+                onClick={toggleReadOnly}
                 style={{
                   color: readOnly ? '#f59e0b' : 'var(--win-text-secondary)',
                   display: 'flex', alignItems: 'center', gap: '4px', width: 'auto', padding: '0 8px', fontSize: '11px', marginRight: '6px'
                 }}
-                title={readOnly ? 'Chế độ Chỉ đọc đang BẬT — nhấn để tắt' : 'Bật chế độ Chỉ đọc (chặn mọi thao tác ghi)'}
+                title={readOnly ? t('app.readOnlyOnTitle') : t('app.readOnlyOffTitle')}
               >
                 {readOnly ? <Lock size={14} /> : <LockOpen size={14} />}
-                <span>{readOnly ? 'Chỉ đọc' : 'Ghi'}</span>
+                <span>{readOnly ? t('app.readOnlyOn') : t('app.readOnlyOff')}</span>
               </button>
               <button
                 className="tab-new-btn"
@@ -1024,7 +1092,7 @@ export const App: React.FC = () => {
                   color: showAi ? 'var(--win-accent)' : 'var(--win-text-secondary)',
                   display: 'flex', alignItems: 'center', justifyContent: 'center', width: '28px', height: '24px', padding: 0 
                 }}
-                title="Bật/Tắt AI Copilot"
+                title={t('app.toggleAiCopilot')}
               >
                 <Bot size={14} />
               </button>
@@ -1033,12 +1101,12 @@ export const App: React.FC = () => {
             <div className="active-panel-container" style={{ position: 'relative' }}>
               {!activeTab ? (
                 <div style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', color: 'var(--win-text-secondary)', fontSize: '13px' }}>
-                  Chọn một bảng từ Sidebar hoặc tạo Truy vấn SQL để bắt đầu làm việc.
+                  {t('app.emptyWorkspace')}
                 </div>
               ) : activeTab.type === 'terminal' ? (
                 (activeTab as any).floating ? (
                   <div style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', color: 'var(--win-text-secondary)', fontSize: '13px' }}>
-                    Terminal đang ở chế độ cửa sổ nổi — bấm nút ghim trên cửa sổ để đưa về tab.
+                    {t('app.terminalFloating')}
                   </div>
                 ) : null
               ) : (
@@ -1055,6 +1123,8 @@ export const App: React.FC = () => {
                     <SqlEditor
                       key={activeTab.id}
                       dbType={connection?.dbType}
+                      connKey={connKey(activeConnConfig)}
+                      dbName={connection.dbName}
                       initialSql={(activeTab as any).sql || ''}
                       initialSql2={(activeTab as any).sql2 || ''}
                       initialSplitMode={(activeTab as any).splitMode || 'none'}
@@ -1115,7 +1185,7 @@ export const App: React.FC = () => {
       <ConfirmDialog
         open={!!exportDone}
         tone="success"
-        title="Xuất dữ liệu xong"
+        title={t('app.exportDoneTitle')}
         message={
           exportDone ? (
             <>
@@ -1128,9 +1198,9 @@ export const App: React.FC = () => {
             </>
           ) : null
         }
-        note={exportDone?.viaDownload ? 'Tệp được tải qua WebView nên nằm ở thư mục tải xuống của hệ thống.' : undefined}
-        confirmLabel={exportDone?.dir ? 'Mở thư mục' : 'Đóng'}
-        cancelLabel="Đóng"
+        note={exportDone?.viaDownload ? t('app.exportDoneNoteWebView') : undefined}
+        confirmLabel={exportDone?.dir ? t('app.openFolder') : t('common.close')}
+        cancelLabel={t('common.close')}
         onCancel={() => setExportDone(null)}
         onConfirm={() => {
           const dir = exportDone?.dir;
@@ -1191,54 +1261,18 @@ export const App: React.FC = () => {
 
       {/* Global Import Table Modal (Import New Table) */}
       {showGlobalImportModal && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          width: '100%',
-          height: '100%',
-          background: 'rgba(0,0,0,0.6)',
-          zIndex: 9999,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          backdropFilter: 'blur(2px)'
-        }}>
-          <div style={{
-            width: '640px',
-            background: 'var(--win-bg-card)',
-            border: '1px solid var(--win-border-strong, var(--win-border))',
-            borderRadius: '6px',
-            boxShadow: '0 20px 40px rgba(0,0,0,0.4)',
-            display: 'flex',
-            flexDirection: 'column',
-            overflow: 'hidden'
-          }}>
-            <div style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              padding: '12px 16px',
-              borderBottom: '1px solid var(--win-border)',
-              background: 'var(--win-bg-tab-bar, rgba(0,0,0,0.15))'
-            }}>
-              <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--win-text-primary)' }}>
-                {globalImportTargetTable 
-                  ? `Nhập Dữ Liệu vào Bảng: ${globalImportTargetTable} - Tệp: ${globalImportFileName}`
-                  : `Tạo Bảng Mới & Nhập Dữ Liệu - Tệp: ${globalImportFileName}`}
-              </span>
-              <button 
-                onClick={() => setShowGlobalImportModal(false)}
-                style={{ background: 'transparent', border: 'none', color: 'var(--win-text-secondary)', cursor: 'pointer', fontSize: '16px' }}
-              >
-                ×
-              </button>
-            </div>
-
-            <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+        <Modal
+          title={globalImportTargetTable
+            ? t('app.importModalTitleExisting', { table: globalImportTargetTable, file: globalImportFileName })
+            : t('app.importModalTitleNew', { file: globalImportFileName })}
+          onClose={() => setShowGlobalImportModal(false)}
+          width="640px"
+          zIndex={9999}
+        >
+            <ModalBody>
               <div className="form-group">
                 <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)' }}>
-                  {globalImportTargetTable ? 'Bảng đích (Nhập vào bảng hiện có)' : 'Tên bảng mới sẽ tạo'}
+                  {globalImportTargetTable ? t('app.importTargetExisting') : t('app.importTargetNew')}
                 </label>
                 <input 
                   type="text" 
@@ -1246,7 +1280,7 @@ export const App: React.FC = () => {
                   value={globalImportTargetTable || globalImportTableName} 
                   onChange={(e) => !globalImportTargetTable && setGlobalImportTableName(e.target.value)}
                   disabled={!!globalImportTargetTable}
-                  placeholder="nhap_ten_bang"
+                  placeholder={t('createTable.tableNamePlaceholder')}
                   style={{ height: '30px', fontSize: '11px', background: globalImportTargetTable ? 'var(--win-bg-hover)' : undefined }}
                 />
               </div>
@@ -1254,7 +1288,7 @@ export const App: React.FC = () => {
               {globalImportFileType === 'sql' && (
                 <div className="form-group">
                   <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)', marginBottom: '6px', display: 'block' }}>
-                    Chọn nội dung thực thi từ tệp SQL
+                    {t('app.importSqlPick')}
                   </label>
                   <div style={{ display: 'flex', gap: '16px' }}>
                     <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}>
@@ -1264,7 +1298,7 @@ export const App: React.FC = () => {
                         checked={globalImportSqlMode === 'both'} 
                         onChange={() => setGlobalImportSqlMode('both')} 
                       />
-                      <span>Cấu trúc & Dữ liệu</span>
+                      <span>{t('app.importSqlBoth')}</span>
                     </label>
                     <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}>
                       <input 
@@ -1273,7 +1307,7 @@ export const App: React.FC = () => {
                         checked={globalImportSqlMode === 'structure'} 
                         onChange={() => setGlobalImportSqlMode('structure')} 
                       />
-                      <span>Chỉ cấu trúc (Structure)</span>
+                      <span>{t('app.importSqlStructure')}</span>
                     </label>
                     <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}>
                       <input 
@@ -1282,7 +1316,7 @@ export const App: React.FC = () => {
                         checked={globalImportSqlMode === 'data'} 
                         onChange={() => setGlobalImportSqlMode('data')} 
                       />
-                      <span>Chỉ dữ liệu (Data)</span>
+                      <span>{t('app.importSqlData')}</span>
                     </label>
                   </div>
                 </div>
@@ -1291,11 +1325,18 @@ export const App: React.FC = () => {
               <div>
                 <span style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>
                   {globalImportFileType === 'sql' ? (
-                    <span>SQL Script: Câu lệnh SQL sẽ chạy trực tiếp.</span>
+                    <span>{t('app.importSqlNote')}</span>
                   ) : (
                     <span>
-                      Định dạng {globalImportFileType.toUpperCase()}: phát hiện <b>{globalImportPendingRows.length} dòng</b>,
-                      {' '}<b>{globalImportCols.length} cột</b>.
+                      <Trans
+                        i18nKey="app.importSummary"
+                        values={{
+                          format: globalImportFileType.toUpperCase(),
+                          rows: globalImportPendingRows.length,
+                          cols: globalImportCols.length,
+                        }}
+                        components={{ strong: <b /> }}
+                      />
                     </span>
                   )}
                 </span>
@@ -1305,8 +1346,8 @@ export const App: React.FC = () => {
               {globalImportFileType !== 'sql' && (
                 <div style={{ display: 'flex', gap: '4px' }}>
                   {([
-                    { id: 'structure', label: `Cấu trúc (${globalImportCols.length} cột)` },
-                    { id: 'data', label: `Dữ liệu (${globalImportPendingRows.length} dòng)` },
+                    { id: 'structure', label: t('app.importTabStructure', { n: globalImportCols.length }) },
+                    { id: 'data', label: t('app.importTabData', { n: globalImportPendingRows.length }) },
                   ] as const).map(t => (
                     <button
                       key={t.id}
@@ -1357,7 +1398,7 @@ export const App: React.FC = () => {
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
                       <thead>
                         <tr style={{ background: 'var(--win-bg-hover)', borderBottom: '1px solid var(--win-border)' }}>
-                          {['Cột trong tệp', 'Kiểu suy ra', 'Ví dụ giá trị'].map(h => (
+                          {[t('app.colInFile'), t('app.colInferredType'), t('app.colSampleValue')].map(h => (
                             <th key={h} style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 600, borderRight: '1px solid var(--win-border)' }}>{h}</th>
                           ))}
                         </tr>
@@ -1405,22 +1446,14 @@ export const App: React.FC = () => {
                   )}
                 </div>
               )}
-            </div>
+            </ModalBody>
 
-            <div style={{
-              display: 'flex',
-              justifyContent: 'flex-end',
-              gap: '8px',
-              padding: '12px 16px',
-              borderTop: '1px solid var(--win-border)',
-              background: 'var(--win-bg-tab-bar, rgba(0,0,0,0.15))'
-            }}>
+            <ModalFooter>
               <button
                 className="btn btn-secondary"
                 onClick={() => setShowGlobalImportModal(false)}
-                
               >
-                Hủy
+                {t('common.cancel')}
               </button>
               <button
                 className="btn btn-primary"
@@ -1428,11 +1461,10 @@ export const App: React.FC = () => {
                 disabled={globalImportLoading || (!globalImportTableName.trim() && globalImportFileType !== 'sql')}
                 style={{ background: 'var(--win-accent)', color: '#fff', border: 'none' }}
               >
-                {globalImportLoading ? 'Đang xử lý...' : 'Xác nhận Tạo & Nhập'}
+                {globalImportLoading ? t('app.importProcessing') : t('app.importConfirm')}
               </button>
-            </div>
-          </div>
-        </div>
+            </ModalFooter>
+        </Modal>
       )}
 
       {/* Database Info Modal */}
@@ -1453,23 +1485,45 @@ export const App: React.FC = () => {
         />
       )}
 
+      {/* So sánh 2 database (cấu trúc + dữ liệu) */}
+      {showDbCompare && connection && (
+        <DbCompareDialog
+          dbType={connection.dbType}
+          currentDb={connection.dbName}
+          onClose={() => setShowDbCompare(false)}
+          onOpenInSqlEditor={openQueryTabWithSql}
+        />
+      )}
+
+      {/* Sinh dữ liệu test hàng loạt */}
+      {showDataGen && connection && (
+        <DataGeneratorDialog
+          dbName={connection.dbName}
+          initialTable={dataGenTable}
+          onClose={() => {
+            setShowDataGen(false);
+            setDataGenTable(null);
+            // Số dòng của các bảng đã đổi -> Sidebar/DataGrid nạp lại. Dùng lại event sẵn có
+            // thay vì thêm event mới (schema không đổi nên KHÔNG cần invalidateCatalog).
+            window.dispatchEvent(new CustomEvent('database-restored'));
+          }}
+        />
+      )}
+
       {/* About Modal */}
       {showAbout && (
         /* Bấm ra ngoài để đóng — trước đây chỉ đóng được bằng nút. */
         <div className="cm-modal-backdrop" onClick={() => setShowAbout(false)}>
           <div className="about-dialog" onClick={(e) => e.stopPropagation()}>
-            <button className="about-close" onClick={() => setShowAbout(false)} title="Đóng" aria-label="Đóng">
+            <button className="about-close" onClick={() => setShowAbout(false)} title={t('common.close')} aria-label={t('common.close')}>
               <X size={15} />
             </button>
 
             <img className="about-logo" src={appIcon} alt="" />
             <div className="about-name">TableNova</div>
-            <div className="about-version">Phiên bản {appVersion}</div>
+            <div className="about-version">{t('app.aboutVersion', { version: appVersion })}</div>
 
-            <p className="about-desc">
-              Công cụ quản lý cơ sở dữ liệu nhẹ, nhanh và trực quan — kết nối, duyệt dữ liệu,
-              chỉnh sửa cấu trúc và chạy truy vấn trong cùng một giao diện.
-            </p>
+            <p className="about-desc">{t('app.aboutDesc')}</p>
 
             <div className="about-engines">
               <span className="about-engine" style={{ background: '#003B57' }}><SqliteIcon size={13} /> SQLite</span>
@@ -1479,7 +1533,7 @@ export const App: React.FC = () => {
             </div>
 
             <div className="about-author">
-              Phát triển bởi <strong>MeoMeo</strong>
+              <Trans i18nKey="app.aboutAuthor" components={{ strong: <strong /> }} />
             </div>
             <div className="about-links">
               <button onClick={() => dbHelper.openUrl('mailto:pthang888@gmail.com')}>Email</button>
@@ -1489,113 +1543,91 @@ export const App: React.FC = () => {
 
             <div className="about-foot">
               <span className="about-copy">© 2026 MeoMeo · MIT License</span>
-              <button className="cm-btn" onClick={() => setShowAbout(false)}>Đóng</button>
+              <button className="cm-btn" onClick={() => setShowAbout(false)}>{t('common.close')}</button>
             </div>
           </div>
         </div>
       )}
 
+      {/* Floating DB Connection Speed & Status Pill (TablePlus style) */}
+      {connection && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: '6px',
+            right: '12px',
+            zIndex: 900,
+            pointerEvents: 'auto',
+          }}
+        >
+          <DbConnectionStatusPill hasConnection={!!connection} />
+        </div>
+      )}
+
       {/* Shortcuts Modal */}
       {showShortcuts && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          width: '100%',
-          height: '100%',
-          background: 'rgba(0,0,0,0.6)',
-          zIndex: 9999,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          backdropFilter: 'blur(2px)'
-        }}>
-          <div style={{
-            width: '450px',
-            background: 'var(--win-bg-card)',
-            border: '1px solid var(--win-border-strong, var(--win-border))',
-            borderRadius: '6px',
-            boxShadow: '0 20px 40px rgba(0,0,0,0.4)',
-            display: 'flex',
-            flexDirection: 'column',
-            overflow: 'hidden'
-          }}>
-            <div style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              padding: '12px 16px',
-              borderBottom: '1px solid var(--win-border)',
-              background: 'var(--win-bg-tab-bar, rgba(0,0,0,0.15))'
-            }}>
-              <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--win-text-primary)' }}>
-                Phím tắt bàn phím (Keyboard Shortcuts)
-              </span>
-              <button 
-                onClick={() => setShowShortcuts(false)}
-                style={{ background: 'transparent', border: 'none', color: 'var(--win-text-secondary)', cursor: 'pointer', fontSize: '16px' }}
-              >
-                ×
-              </button>
-            </div>
-            
-            <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '380px', overflowY: 'auto' }}>
+        <Modal
+          title={t('app.shortcutsTitle')}
+          onClose={() => setShowShortcuts(false)}
+          width="450px"
+          zIndex={9999}
+        >
+            <ModalBody style={{ gap: '12px', maxHeight: '380px' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-accent)', borderBottom: '1px solid var(--win-border)', paddingBottom: '3px' }}>Chung</span>
+                <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-accent)', borderBottom: '1px solid var(--win-border)', paddingBottom: '3px' }}>{t('app.shortcutsGeneral')}</span>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', alignItems: 'center' }}>
-                  <span style={{ color: 'var(--win-text-primary)' }}>Tìm kiếm bảng/View</span>
+                  <span style={{ color: 'var(--win-text-primary)' }}>{t('app.shortcutSearchTables')}</span>
                   <kbd style={{ fontSize: '10px', background: 'var(--win-bg-tab-bar)', padding: '2px 6px', borderRadius: '3px', border: '1px solid var(--win-border-strong)', color: 'var(--win-text-primary)' }}>Ctrl + P / Ctrl + K</kbd>
                 </div>
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-accent)', borderBottom: '1px solid var(--win-border)', paddingBottom: '3px' }}>Bảng Dữ liệu (Grid)</span>
+                <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-accent)', borderBottom: '1px solid var(--win-border)', paddingBottom: '3px' }}>{t('app.shortcutsGrid')}</span>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', alignItems: 'center' }}>
-                  <span style={{ color: 'var(--win-text-primary)' }}>Mở bộ lọc dữ liệu (Filter)</span>
+                  <span style={{ color: 'var(--win-text-primary)' }}>{t('app.shortcutOpenFilter')}</span>
                   <kbd style={{ fontSize: '10px', background: 'var(--win-bg-tab-bar)', padding: '2px 6px', borderRadius: '3px', border: '1px solid var(--win-border-strong)', color: 'var(--win-text-primary)' }}>Ctrl + F</kbd>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', alignItems: 'center' }}>
-                  <span style={{ color: 'var(--win-text-primary)' }}>Thêm dòng mới</span>
+                  <span style={{ color: 'var(--win-text-primary)' }}>{t('app.shortcutAddRow')}</span>
                   <kbd style={{ fontSize: '10px', background: 'var(--win-bg-tab-bar)', padding: '2px 6px', borderRadius: '3px', border: '1px solid var(--win-border-strong)', color: 'var(--win-text-primary)' }}>Ctrl + I</kbd>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', alignItems: 'center' }}>
-                  <span style={{ color: 'var(--win-text-primary)' }}>Lưu thay đổi xuống DB</span>
+                  <span style={{ color: 'var(--win-text-primary)' }}>{t('app.shortcutSaveToDb')}</span>
                   <kbd style={{ fontSize: '10px', background: 'var(--win-bg-tab-bar)', padding: '2px 6px', borderRadius: '3px', border: '1px solid var(--win-border-strong)', color: 'var(--win-text-primary)' }}>Ctrl + S</kbd>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', alignItems: 'center' }}>
-                  <span style={{ color: 'var(--win-text-primary)' }}>Xóa dòng đã chọn</span>
+                  <span style={{ color: 'var(--win-text-primary)' }}>{t('app.shortcutDeleteRow')}</span>
                   <kbd style={{ fontSize: '10px', background: 'var(--win-bg-tab-bar)', padding: '2px 6px', borderRadius: '3px', border: '1px solid var(--win-border-strong)', color: 'var(--win-text-primary)' }}>Delete / Backspace</kbd>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', alignItems: 'center' }}>
-                  <span style={{ color: 'var(--win-text-primary)' }}>Trang tiếp theo</span>
+                  <span style={{ color: 'var(--win-text-primary)' }}>{t('app.shortcutNextPage')}</span>
                   <kbd style={{ fontSize: '10px', background: 'var(--win-bg-tab-bar)', padding: '2px 6px', borderRadius: '3px', border: '1px solid var(--win-border-strong)', color: 'var(--win-text-primary)' }}>Ctrl + ]</kbd>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', alignItems: 'center' }}>
-                  <span style={{ color: 'var(--win-text-primary)' }}>Trang trước đó</span>
+                  <span style={{ color: 'var(--win-text-primary)' }}>{t('app.shortcutPrevPage')}</span>
                   <kbd style={{ fontSize: '10px', background: 'var(--win-bg-tab-bar)', padding: '2px 6px', borderRadius: '3px', border: '1px solid var(--win-border-strong)', color: 'var(--win-text-primary)' }}>Ctrl + [</kbd>
                 </div>
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-accent)', borderBottom: '1px solid var(--win-border)', paddingBottom: '3px' }}>Trình soạn thảo SQL</span>
+                <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-accent)', borderBottom: '1px solid var(--win-border)', paddingBottom: '3px' }}>{t('app.shortcutsSqlEditor')}</span>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', alignItems: 'center' }}>
-                  <span style={{ color: 'var(--win-text-primary)' }}>Chạy truy vấn SQL</span>
+                  <span style={{ color: 'var(--win-text-primary)' }}>{t('app.shortcutRunQuery')}</span>
                   <kbd style={{ fontSize: '10px', background: 'var(--win-bg-tab-bar)', padding: '2px 6px', borderRadius: '3px', border: '1px solid var(--win-border-strong)', color: 'var(--win-text-primary)' }}>Ctrl + Enter / F5</kbd>
                 </div>
               </div>
-            </div>
-            
-            <div style={{ borderTop: '1px solid var(--win-border)', padding: '12px 16px', display: 'flex', justifyContent: 'flex-end', background: 'var(--win-bg-tab-bar, rgba(0,0,0,0.05))' }}>
-              <button 
-                className="btn btn-secondary" 
+            </ModalBody>
+
+            <ModalFooter>
+              <button
+                className="btn btn-secondary"
                 onClick={() => setShowShortcuts(false)}
                 style={{ padding: '6px 20px', fontSize: '11px', borderRadius: '4px', cursor: 'pointer' }}
               >
-                Đóng
+                {t('common.close')}
               </button>
-            </div>
-          </div>
-        </div>
+            </ModalFooter>
+        </Modal>
       )}
     </>
   );

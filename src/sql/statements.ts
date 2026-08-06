@@ -67,22 +67,63 @@ function trimRange(text: string, mask: string, from: number, to: number): Statem
   return { start: s, end: e, text: text.slice(s, e) };
 }
 
+/** Một bảng được tham chiếu trong FROM/JOIN/UPDATE/INTO. */
+export interface TableRef {
+  table: string;
+  alias?: string;
+}
+
+// Từ có thể đứng ngay sau tên bảng nhưng KHÔNG phải alias.
+const ALIAS_STOP_WORDS = [
+  'on', 'where', 'inner', 'left', 'right', 'full', 'outer', 'cross', 'join', 'group',
+  'order', 'limit', 'set', 'using', 'values', 'select', 'having', 'union', 'and', 'or',
+];
+
 /**
- * Bản đồ alias -> tên bảng trong một câu lệnh, dò bằng regex. Đủ dùng cho hover;
- * completion đã có bản chính xác hơn nhờ parser ANTLR (xem sqlLanguage.ts).
- * Để ở đây (module không phụ thuộc monaco) nên test được độc lập.
+ * `FROM|JOIN|UPDATE|INTO <bảng> [AS] [alias]`.
+ *
+ * Từ khoá bị loại bằng LOOKAHEAD, không phải kiểm tra sau khi khớp: nếu để nhóm alias
+ * khớp rồi mới bỏ, con trỏ regex đã trượt qua từ khoá đó — `FROM a JOIN b` nuốt mất
+ * `JOIN` và bảng `b` không bao giờ được nhìn thấy (bug này có từ trước, xem test).
  */
-export function resolveAliases(statement: string): Map<string, string> {
-  const map = new Map<string, string>();
-  const re = /\b(?:from|join|update|into)\s+([`"[\]\w.]+)(?:\s+(?:as\s+)?([a-zA-Z_]\w*))?/gi;
-  const stop = new Set(['on', 'where', 'inner', 'left', 'right', 'full', 'outer', 'cross', 'join', 'group', 'order', 'limit', 'set', 'using', 'values', 'select', 'having', 'union', 'and', 'or']);
+const TABLE_REF_SOURCE =
+  '\\b(?:from|join|update|into)\\s+([`"\\[\\]\\w.]+)' +
+  `(?:\\s+(?:as\\s+)?(?!(?:${ALIAS_STOP_WORDS.join('|')})\\b)([a-zA-Z_]\\w*))?`;
+
+/**
+ * Các bảng được tham chiếu trong một câu lệnh, **theo đúng thứ tự xuất hiện**.
+ *
+ * Đây là nguồn dự phòng cho cả hover và completion. Lý do cần nó dù đã có parser ANTLR:
+ * khi câu lệnh còn gõ dở, `getAllEntities()` không đáng tin và sai theo từng dialect —
+ * đo được: với `... JOIN address a on ` parser Postgres bỏ mất chính bảng `address`
+ * (2 entity thay vì 3), còn với `... on c.` parser MySQL trả về 0 entity. Regex trên
+ * văn bản không hiểu SQL sâu nhưng lại ổn định đúng ở những trạng thái dở dang đó.
+ *
+ * Thứ tự được giữ vì gợi ý điều kiện JOIN cần biết bảng nào vừa được JOIN sau cùng.
+ */
+export function collectTableRefs(statement: string): TableRef[] {
+  const out: TableRef[] = [];
+  // RegExp mới mỗi lần gọi: cờ /g mang lastIndex, dùng chung một instance sẽ lẫn state.
+  const re = new RegExp(TABLE_REF_SOURCE, 'gi');
   let m: RegExpExecArray | null;
   while ((m = re.exec(statement)) !== null) {
     const table = (m[1] || '').replace(/[`"[\]]/g, '').split('.').pop() || '';
     if (!table) continue;
+    out.push({ table, alias: m[2] || undefined });
+  }
+  return out;
+}
+
+/**
+ * Bản đồ alias -> tên bảng trong một câu lệnh. Cùng một bộ dò với `collectTableRefs`
+ * để hover và completion không bao giờ hiểu alias khác nhau.
+ * Để ở đây (module không phụ thuộc monaco) nên test được độc lập.
+ */
+export function resolveAliases(statement: string): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const { table, alias } of collectTableRefs(statement)) {
     map.set(table.toLowerCase(), table);
-    const alias = m[2];
-    if (alias && !stop.has(alias.toLowerCase())) map.set(alias.toLowerCase(), table);
+    if (alias) map.set(alias.toLowerCase(), table);
   }
   return map;
 }
@@ -197,6 +238,43 @@ export function splitStatements(text: string): StatementRange[] {
   for (const [from, to] of segments) {
     const r = trimRange(text, mask, from, to);
     if (r) out.push(r);
+  }
+  return out;
+}
+
+/** Loại câu lệnh bị cảnh báo trước khi chạy. */
+export type UnsafeStatementKind = 'deleteNoWhere' | 'dropTable';
+
+export interface UnsafeStatement {
+  kind: UnsafeStatementKind;
+  /** Câu lệnh nguyên văn (đã trim) để hiện trong hộp cảnh báo. */
+  text: string;
+}
+
+/**
+ * Tìm các câu lệnh có thể xoá sạch dữ liệu do gõ thiếu điều kiện:
+ *   - `DELETE FROM ...` không có `WHERE` -> xoá mọi dòng của bảng
+ *   - `DROP TABLE ...`                   -> xoá luôn cả bảng
+ *
+ * Chỉ để CẢNH BÁO, không phải để chặn: `DELETE FROM tmp_import` không WHERE là hoàn toàn hợp
+ * lệ, nên quyết định cuối cùng thuộc người dùng (muốn chặn hẳn thì bật chế độ Chỉ đọc).
+ *
+ * Dò trên bản đã mask (`maskForSplit`) nên từ khoá nằm trong chuỗi/comment/tên có dấu nháy
+ * đều không tính. Hai hệ quả đáng chú ý, cả hai đều là hướng an toàn:
+ *   - `DELETE FROM t -- WHERE id=1` VẪN bị cảnh báo (WHERE nằm trong comment, không chạy).
+ *   - `DELETE FROM t WHERE note='drop table x'` KHÔNG bị cảnh báo (chuỗi đã bị mask).
+ */
+export function findUnsafeStatements(text: string): UnsafeStatement[] {
+  if (!text) return [];
+  const out: UnsafeStatement[] = [];
+  for (const stmt of splitStatements(text)) {
+    const masked = maskForSplit(stmt.text);
+    // Bao cả dạng nhiều bảng của MySQL (`DELETE t1 FROM t1 JOIN t2 ...`) vì vẫn mở đầu bằng DELETE.
+    if (/^\s*DELETE\b/i.test(masked)) {
+      if (!/\bWHERE\b/i.test(masked)) out.push({ kind: 'deleteNoWhere', text: stmt.text });
+    } else if (/^\s*DROP\s+(TEMPORARY\s+)?TABLE\b/i.test(masked)) {
+      out.push({ kind: 'dropTable', text: stmt.text });
+    }
   }
   return out;
 }

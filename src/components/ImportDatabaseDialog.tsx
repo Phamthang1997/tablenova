@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { Trans, useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { ChevronDown } from 'lucide-react';
 import {
   parseCreateTable,
@@ -14,6 +16,7 @@ import {
 import { splitStatements } from '../sql/statements';
 import { ProgressBar, type ProgressState } from './ProgressBar';
 import { ConfirmDialog } from './ConfirmDialog';
+import { Modal, ModalFooter } from './Modal';
 
 const ACCEPT = '.sql,.gz,.dump';
 
@@ -95,25 +98,28 @@ function clip(stmt: string, max = 600): string {
 }
 
 /** Giải nén .sql.gz bằng DecompressionStream của WebView (Chromium) -> text SQL. */
-async function gunzipToText(file: File): Promise<string> {
+async function gunzipToText(t: TFunction, file: File): Promise<string> {
   const DS = (globalThis as any).DecompressionStream;
-  if (!DS) throw new Error('WebView không hỗ trợ giải nén gzip, hãy giải nén tệp trước.');
+  if (!DS) throw new Error(t('importDialog.errNoGzip'));
   const stream = file.stream().pipeThrough(new DS('gzip'));
   return await new Response(stream).text();
 }
 
-/** Giây -> "12 giây" / "2 phút 5 giây" / "1 giờ 3 phút" cho phần ước tính và ETA. */
-function formatDuration(totalSeconds: number): string {
+/**
+ * Seconds -> "12 seconds" / "2 min 5 sec" / "1 h 3 min" for the estimate and ETA.
+ * Takes `t` because it is module-level and cannot call the hook itself.
+ */
+function formatDuration(t: TFunction, totalSeconds: number): string {
   const s = Math.max(1, Math.round(totalSeconds));
-  if (s < 60) return `${s} giây`;
+  if (s < 60) return t('importDialog.etaSeconds', { s });
   const m = Math.floor(s / 60);
   if (m < 60) {
     const rest = s % 60;
-    return rest ? `${m} phút ${rest} giây` : `${m} phút`;
+    return rest ? t('importDialog.etaMinutesSeconds', { m, s: rest }) : t('importDialog.etaMinutes', { m });
   }
   const h = Math.floor(m / 60);
   const restM = m % 60;
-  return restM ? `${h} giờ ${restM} phút` : `${h} giờ`;
+  return restM ? t('importDialog.etaHoursMinutes', { h, m: restM }) : t('importDialog.etaHours', { h });
 }
 
 function formatSize(bytes: number): string {
@@ -156,6 +162,9 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
   dbType = 'mysql',
   onSubmit,
 }) => {
+  const { t, i18n } = useTranslation();
+  const fmtNum = (n: number) => n.toLocaleString(i18n.language);
+
   const inputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [sqlText, setSqlText] = useState('');
@@ -275,7 +284,7 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
 
     const lower = picked.name.toLowerCase();
     if (!['.sql', '.gz', '.dump'].some((ext) => lower.endsWith(ext))) {
-      setError('Chỉ nhận tệp dump .sql, .sql.gz hoặc .dump.');
+      setError(t('importDialog.errFileType'));
       return;
     }
 
@@ -288,10 +297,10 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
 
     try {
       // restore_backup chỉ nhận SQL dạng text -> .gz phải giải nén ngay ở đây.
-      setProgress({ label: lower.endsWith('.gz') ? 'Đang giải nén tệp...' : 'Đang đọc tệp...' });
-      const text = lower.endsWith('.gz') ? await gunzipToText(picked) : await picked.text();
+      setProgress({ label: lower.endsWith('.gz') ? t('importDialog.decompressing') : t('importDialog.reading') });
+      const text = lower.endsWith('.gz') ? await gunzipToText(t, picked) : await picked.text();
       setSqlText(text);
-      setProgress({ label: 'Đang phân tích câu lệnh trong tệp...' });
+      setProgress({ label: t('importDialog.parsing') });
       const found = parseTableNames(text);
       setTables(found);
       setSelected(found);
@@ -302,7 +311,7 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
       setTargetDb(dbInFile || '');
     } catch (err: any) {
       setSqlText('');
-      setError('Không đọc được tệp: ' + (err?.message || err));
+      setError(t('importDialog.errReadFile', { message: err?.message || err }));
     } finally {
       setProgress(null);
       setParsing(false);
@@ -345,7 +354,7 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
     if (!file || !sqlText) return;
     // Không có tên database (tệp không nói, người dùng cũng chưa nhập) -> nhắc nhập.
     if (canManageDatabases && !targetDb.trim() && !currentDb) {
-      setError('Nhập tên database đích trước khi nhập dữ liệu.');
+      setError(t('importDialog.errNoTargetDb'));
       return;
     }
     setError(null);
@@ -357,7 +366,7 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
     setConfirming(false);
     setError(null);
     setSubmitting(true);
-    setProgress({ label: 'Đang chuẩn bị...' });
+    setProgress({ label: t('importDialog.preparing') });
     const startedAt = Date.now();
     try {
       // Ghi đè: chèn DROP ... IF EXISTS lên đầu và cho các tên đó qua bộ lọc theo bảng
@@ -373,18 +382,21 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
         const done = msg.done ?? 0;
         const total = msg.total ?? 0;
         if (msg.type === 'start') {
-          setProgress({ label: `Đang chạy ${total.toLocaleString()} câu lệnh...`, current: 0, total });
+          setProgress({ label: t('importDialog.runningStatements', { n: fmtNum(total) }), current: 0, total });
           return;
         }
         // ETA tính từ tốc độ thật đang chạy, chính xác hơn ước lượng trước khi bấm.
         const elapsed = (Date.now() - startedAt) / 1000;
         const rate = done > 0 ? done / elapsed : 0;
         const remain = rate > 0 && total > done ? Math.round((total - done) / rate) : 0;
+        const counts = { done: fmtNum(done), total: fmtNum(total) };
         setProgress({
-          label: `Đang chạy câu lệnh trên ${targetDb.trim() || currentDb || 'database'}...`,
+          label: t('importDialog.runningOn', { db: targetDb.trim() || currentDb || 'database' }),
           current: done,
           total,
-          detail: `${done.toLocaleString()}/${total.toLocaleString()} câu lệnh${remain > 0 ? ` · còn ~${formatDuration(remain)}` : ''}`,
+          detail: remain > 0
+            ? t('importDialog.statementDetailEta', { ...counts, eta: formatDuration(t, remain) })
+            : t('importDialog.statementDetail', counts),
         });
       });
       if (ok) onClose();
@@ -406,89 +418,48 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
       <ConfirmDialog
         open={confirming}
         tone={overwrite ? 'danger' : 'info'}
-        title="Xác nhận khôi phục dữ liệu"
+        title={t('importDialog.confirmTitle')}
         message={
           <>
             <div>
-              Khôi phục vào database{' '}
-              <b style={{ fontFamily: 'monospace' }}>{targetDb.trim() || currentDb || '(đang kết nối)'}</b>
-              {canManageDatabases && targetDb.trim() && targetDb.trim() !== currentDb && (
-                <> — chưa tồn tại thì sẽ được tạo mới.</>
-              )}
+              <Trans
+                i18nKey="importDialog.restoreInto"
+                values={{ db: targetDb.trim() || currentDb || t('importDialog.restoreIntoConnected') }}
+                components={{ code: <b style={{ fontFamily: 'monospace' }} /> }}
+              />
+              {canManageDatabases && targetDb.trim() && targetDb.trim() !== currentDb
+                ? t('importDialog.willBeCreated')
+                : '.'}
             </div>
             <div style={{ marginTop: '8px', display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '2px 10px' }}>
-              <span style={{ color: 'var(--win-text-secondary)' }}>Bảng:</span>
-              <b>{tables.length === 0 ? 'toàn bộ tệp' : `${selected.length}/${tables.length} bảng`}</b>
-              <span style={{ color: 'var(--win-text-secondary)' }}>Câu lệnh sẽ chạy:</span>
-              <b>{plannedStatements.toLocaleString()}</b>
-              <span style={{ color: 'var(--win-text-secondary)' }}>Tệp:</span>
+              <span style={{ color: 'var(--win-text-secondary)' }}>{t('importDialog.rowTables')}</span>
+              <b>{tables.length === 0
+                ? t('importDialog.allFile')
+                : t('importDialog.tablesCount', { selected: selected.length, total: tables.length })}</b>
+              <span style={{ color: 'var(--win-text-secondary)' }}>{t('importDialog.rowStatements')}</span>
+              <b>{fmtNum(plannedStatements)}</b>
+              <span style={{ color: 'var(--win-text-secondary)' }}>{t('importDialog.rowFile')}</span>
               <b>{file ? `${file.name} (${formatSize(file.size)})` : ''}</b>
-              <span style={{ color: 'var(--win-text-secondary)' }}>Ước tính:</span>
-              <b>~{formatDuration(estimatedSeconds)}</b>
+              <span style={{ color: 'var(--win-text-secondary)' }}>{t('importDialog.rowEta')}</span>
+              <b>~{formatDuration(t, estimatedSeconds)}</b>
             </div>
           </>
         }
-        note={
-          overwrite
-            ? 'Các đối tượng trùng tên sẽ bị DROP rồi tạo lại — dữ liệu hiện có của chúng mất hẳn.'
-            : 'Ước tính chỉ là tương đối; khi chạy sẽ hiện tiến độ và thời gian còn lại thật.'
-        }
-        confirmLabel="Bắt đầu khôi phục"
-        cancelLabel="Quay lại"
+        note={overwrite ? t('importDialog.noteOverwrite') : t('importDialog.noteEstimate')}
+        confirmLabel={t('importDialog.startRestore')}
+        cancelLabel={t('importDialog.back')}
         onConfirm={runImport}
         onCancel={() => setConfirming(false)}
       />
 
-    <div
-      onMouseDown={(e) => { if (e.target === e.currentTarget && !submitting) onClose(); }}
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        width: '100%',
-        height: '100%',
-        background: 'rgba(0,0,0,0.6)',
-        zIndex: 9999,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        backdropFilter: 'blur(2px)'
-      }}
+    <Modal
+      title={t('importDialog.title')}
+      onClose={onClose}
+      closeDisabled={submitting}
+      width="820px"
+      height="540px"
+      zIndex={9999}
     >
-      <div style={{
-        width: '820px',
-        maxWidth: '94vw',
-        height: '540px',
-        maxHeight: '90vh',
-        background: 'var(--win-bg-card)',
-        border: '1px solid var(--win-border-strong, var(--win-border))',
-        borderRadius: '6px',
-        boxShadow: '0 20px 40px rgba(0,0,0,0.4)',
-        display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden'
-      }}>
-        <div style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          padding: '12px 16px',
-          borderBottom: '1px solid var(--win-border)',
-          background: 'var(--win-bg-tab-bar, rgba(0,0,0,0.15))',
-          flexShrink: 0
-        }}>
-          <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--win-text-primary)' }}>
-            Nhập Cơ sở dữ liệu (Import Database)
-          </span>
-          <button
-            onClick={onClose}
-            disabled={submitting}
-            style={{ background: 'transparent', border: 'none', color: 'var(--win-text-secondary)', cursor: 'pointer', fontSize: '16px' }}
-          >
-            ×
-          </button>
-        </div>
-
         {/* Thân: 2 cột — tệp dump | danh sách bảng trong tệp */}
         <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
           <div style={{
@@ -502,16 +473,16 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
             overflowY: 'auto'
           }}>
             <div className="form-group">
-              <label style={labelStyle}>Tệp dump (Source file):</label>
+              <label style={labelStyle}>{t('importDialog.sourceFile')}</label>
               <input
                 type="text"
                 className="form-input"
                 readOnly
                 value={file ? file.name : ''}
-                placeholder="Chưa chọn tệp..."
+                placeholder={t('importDialog.noFileSelected')}
                 onClick={browse}
                 style={{ height: '30px', fontSize: '11px', width: '100%', cursor: 'pointer' }}
-                title="Bấm để chọn tệp"
+                title={t('importDialog.pickFileTitle')}
               />
               <button
                 className="btn btn-secondary"
@@ -519,7 +490,7 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
                 disabled={submitting}
                 style={{ marginTop: '6px', width: '100%' }}
               >
-                Chọn tệp...
+                {t('importDialog.pickFile')}
               </button>
               <input
                 type="file"
@@ -533,25 +504,25 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
             {/* Database đích: tệp có `USE`/`CREATE DATABASE` thì lấy sẵn, không thì phải nhập */}
             {canManageDatabases && !!file && !parsing && !!sqlText && (
               <div className="form-group">
-                <label style={labelStyle}>Database đích:</label>
+                <label style={labelStyle}>{t('importDialog.targetDb')}</label>
                 <input
                   type="text"
                   className="form-input"
                   value={targetDb}
                   onChange={(e) => { setTargetDb(e.target.value); setError(null); }}
-                  placeholder={currentDb ? `Nhập tên database (đang kết nối: ${currentDb})` : 'Nhập tên database'}
+                  placeholder={currentDb ? t('importDialog.targetDbPlaceholderConnected', { db: currentDb }) : t('importDialog.targetDbPlaceholder')}
                   disabled={submitting}
                   style={{ height: '30px', fontSize: '11px', width: '100%' }}
                 />
                 <div style={{ fontSize: '10px', color: 'var(--win-text-secondary)', marginTop: '5px', lineHeight: 1.5 }}>
                   {dbFromFile ? (
-                    <>Lấy từ tệp (<code style={{ fontFamily: 'monospace' }}>USE {dbFromFile}</code>) — sửa được nếu muốn nhập sang database khác.</>
+                    <Trans i18nKey="importDialog.targetFromFile" values={{ db: dbFromFile }} components={{ code: <code style={{ fontFamily: 'monospace' }} /> }} />
                   ) : (
-                    <>Tệp không nói database nào. Nhập tên database để nhập vào; <b>chưa có thì sẽ được tạo mới</b>.</>
+                    <Trans i18nKey="importDialog.targetNotInFile" components={{ strong: <b /> }} />
                   )}
                   {targetDb && currentDb && targetDb !== currentDb && (
                     <div style={{ color: 'var(--st-warn, #d98600)' }}>
-                      Sẽ chuyển kết nối sang <b style={{ fontFamily: 'monospace' }}>{targetDb}</b> trước khi nhập.
+                      <Trans i18nKey="importDialog.willSwitchTo" values={{ db: targetDb }} components={{ code: <b style={{ fontFamily: 'monospace' }} /> }} />
                     </div>
                   )}
                 </div>
@@ -559,7 +530,7 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
             )}
 
             <div>
-              <label style={labelStyle}>Định dạng cho phép:</label>
+              <label style={labelStyle}>{t('importDialog.allowedFormats')}</label>
               <div style={{
                 padding: '10px',
                 background: 'var(--win-bg-window)',
@@ -569,17 +540,17 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
                 color: 'var(--win-text-secondary)',
                 lineHeight: 1.6
               }}>
-                <div><code style={{ fontFamily: 'monospace', color: 'var(--win-text-primary)' }}>.sql</code> / <code style={{ fontFamily: 'monospace', color: 'var(--win-text-primary)' }}>.dump</code> — dump SQL dạng text.</div>
-                <div><code style={{ fontFamily: 'monospace', color: 'var(--win-text-primary)' }}>.sql.gz</code> — tự giải nén trước khi chạy.</div>
+                <div><Trans i18nKey="importDialog.formatSqlDump" components={{ code: <code style={{ fontFamily: 'monospace', color: 'var(--win-text-primary)' }} /> }} /></div>
+                <div><Trans i18nKey="importDialog.formatGz" components={{ code: <code style={{ fontFamily: 'monospace', color: 'var(--win-text-primary)' }} /> }} /></div>
               </div>
             </div>
 
             {file && (
               <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)', lineHeight: 1.6 }}>
-                Kích thước: <b style={{ color: 'var(--win-text-primary)' }}>{formatSize(file.size)}</b>
-                {parsing && <div>Đang đọc danh sách bảng...</div>}
+                {t('importDialog.fileSize')} <b style={{ color: 'var(--win-text-primary)' }}>{formatSize(file.size)}</b>
+                {parsing && <div>{t('importDialog.readingTables')}</div>}
                 {!parsing && sqlText && (
-                  <div>Nội dung: <b style={{ color: 'var(--win-text-primary)' }}>{sqlText.length.toLocaleString()}</b> ký tự SQL</div>
+                  <div><Trans i18nKey="importDialog.contentChars" values={{ n: fmtNum(sqlText.length) }} components={{ strong: <b style={{ color: 'var(--win-text-primary)' }} /> }} /></div>
                 )}
               </div>
             )}
@@ -587,7 +558,7 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
             {/* Chạy lại một dump lên database đã có bảng cùng tên -> MySQL báo 1050
                 "Table already exists" và cả lần nhập bị rollback. Tuỳ chọn này xoá trước. */}
             <div className="form-group">
-              <label style={labelStyle}>Khi đối tượng đã tồn tại:</label>
+              <label style={labelStyle}>{t('importDialog.onExisting')}</label>
               <label style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}>
                 <input
                   type="checkbox"
@@ -597,9 +568,9 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
                   style={{ marginTop: '2px' }}
                 />
                 <span>
-                  Ghi đè: xoá bảng/view/trigger/routine trùng tên trước khi tạo lại
+                  {t('importDialog.overwriteLabel')}
                   <span style={{ display: 'block', color: 'var(--win-text-secondary)', marginTop: '2px' }}>
-                    Không bật thì gặp bảng đã tồn tại sẽ lỗi và huỷ toàn bộ lần nhập.
+                    {t('importDialog.overwriteHint')}
                   </span>
                 </span>
               </label>
@@ -614,21 +585,15 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
               color: 'var(--win-text-secondary)',
               lineHeight: 1.5
             }}>
-              {overwrite ? (
-                <>
-                  Sẽ chạy <code style={{ fontFamily: 'monospace', color: 'var(--win-text-primary)' }}>DROP … IF EXISTS</code>{' '}
-                  cho các đối tượng có trong tệp, <b>xoá sạch dữ liệu hiện có của chúng</b>, rồi mới tạo lại.
-                </>
-              ) : (
-                <>
-                  Câu lệnh trong tệp chạy trực tiếp trên database đích.
-                  Nếu dump có <code style={{ fontFamily: 'monospace', color: 'var(--win-text-primary)' }}>DROP TABLE</code> thì
-                  dữ liệu hiện có của các bảng đó sẽ bị ghi đè.
-                </>
-              )}
+              <Trans
+                i18nKey={overwrite ? 'importDialog.overwriteWarn' : 'importDialog.noOverwriteWarn'}
+                components={{
+                  code: <code style={{ fontFamily: 'monospace', color: 'var(--win-text-primary)' }} />,
+                  strong: <b />,
+                }}
+              />
               <div style={{ marginTop: '4px' }}>
-                Có transaction, nhưng MySQL <b>tự commit ngầm</b> ở mỗi lệnh DDL — lỗi giữa đường vẫn
-                có thể để lại một phần cấu trúc đã tạo.
+                <Trans i18nKey="importDialog.mysqlCommitWarn" components={{ strong: <b /> }} />
               </div>
             </div>
           </div>
@@ -638,9 +603,9 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <div style={{ display: 'flex', gap: '4px', flex: 1, minWidth: 0 }}>
                 {([
-                  { id: 'tables', label: `Bảng (${selected.length}/${tables.length})` },
-                  { id: 'structure', label: `Cấu trúc (${structureShown.length})` },
-                  { id: 'data', label: `Dữ liệu (${dataShown.length})` },
+                  { id: 'tables', label: t('importDialog.tabTables', { selected: selected.length, total: tables.length }) },
+                  { id: 'structure', label: t('importDialog.tabStructure', { n: structureShown.length }) },
+                  { id: 'data', label: t('importDialog.tabData', { n: dataShown.length }) },
                 ] as const).map((t) => (
                   <button
                     key={t.id}
@@ -676,7 +641,7 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
                     whiteSpace: 'nowrap'
                   }}
                 >
-                  {allShownSelected ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
+                  {allShownSelected ? t('importDialog.deselectAll') : t('importDialog.selectAll')}
                 </button>
               )}
             </div>
@@ -688,7 +653,7 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
                   className="form-input"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Tìm bảng..."
+                  placeholder={t('importDialog.searchTables')}
                   disabled={tables.length === 0}
                   style={{ height: '28px', fontSize: '11px', width: '100%' }}
                 />
@@ -707,16 +672,16 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
                 }}>
                   {!file ? (
                     <div style={{ fontSize: '11px', color: 'var(--win-text-disabled)' }}>
-                      Chọn tệp dump ở cột bên trái để xem các bảng có trong tệp.
+                      {t('importDialog.pickFileHint')}
                     </div>
                   ) : parsing ? (
-                    <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>Đang đọc tệp...</div>
+                    <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>{t('importDialog.readingFile')}</div>
                   ) : tables.length === 0 ? (
                     <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)', lineHeight: 1.5 }}>
-                      Không dò được tên bảng nào trong tệp — toàn bộ câu lệnh trong tệp sẽ được chạy.
+                      {t('importDialog.noTablesDetected')}
                     </div>
                   ) : shown.length === 0 ? (
-                    <div style={{ fontSize: '11px', color: 'var(--win-text-disabled)' }}>Không có bảng khớp từ khoá.</div>
+                    <div style={{ fontSize: '11px', color: 'var(--win-text-disabled)' }}>{t('importDialog.noTableMatch')}</div>
                   ) : (
                     shown.map((name) => (
                       <label key={name} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}>
@@ -735,9 +700,9 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
               <>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)', flex: 1, minWidth: 0 }}>
-                    {tab === 'structure' ? 'Cấu trúc trong tệp' : 'Dữ liệu trong tệp'}
-                    {viewMode === 'sql' && previewClipped && <> — {PREVIEW_LIMIT} câu lệnh đầu</>}
-                    {viewMode === 'visual' && tab === 'data' && <> — {PREVIEW_ROWS} dòng đầu mỗi bảng</>}:
+                    {tab === 'structure' ? t('importDialog.previewStructure') : t('importDialog.previewData')}
+                    {viewMode === 'sql' && previewClipped && t('importDialog.previewClipped', { n: PREVIEW_LIMIT })}
+                    {viewMode === 'visual' && tab === 'data' && t('importDialog.previewRowsNote', { n: PREVIEW_ROWS })}:
                   </div>
 
                   {/* Chọn bảng để xem (nhiều bảng) — dropdown cho gọn một dòng */}
@@ -760,7 +725,7 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
                           whiteSpace: 'nowrap'
                         }}
                       >
-                        Bảng: {previewTables.length}/{tables.length}
+                        {t('importDialog.previewTablesCount', { shown: previewTables.length, total: tables.length })}
                         <ChevronDown size={11} style={{ opacity: 0.7 }} />
                       </button>
 
@@ -793,7 +758,7 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
                                 cursor: 'pointer'
                               }}
                             >
-                              {previewTables.length === tables.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
+                              {previewTables.length === tables.length ? t('importDialog.deselectAll') : t('importDialog.selectAll')}
                             </button>
                             {tables.map((name) => (
                               <label
@@ -818,7 +783,7 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
                   {/* Đổi giữa xem trực quan và xem SQL thô */}
                   <div style={{ display: 'flex', gap: '2px', flexShrink: 0 }}>
                     {([
-                      { id: 'visual', label: 'Trực quan' },
+                      { id: 'visual', label: t('importDialog.viewVisual') },
                       { id: 'sql', label: 'SQL' },
                     ] as const).map((v) => (
                       <button
@@ -850,8 +815,8 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
                         .map((s) => clip(s) + ';')
                         .join('\n\n') ||
                       (file
-                        ? (parsing ? 'Đang đọc tệp...' : 'Không có câu lệnh nào khớp lựa chọn hiện tại.')
-                        : 'Chọn tệp dump ở cột bên trái để xem trước.')
+                        ? (parsing ? t('importDialog.readingFile') : t('importDialog.previewEmptyMatch'))
+                        : t('importDialog.previewPickFile'))
                     }
                     style={{
                       flex: 1,
@@ -883,39 +848,44 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
                   }}>
                     {!file ? (
                       <div style={{ fontSize: '11px', color: 'var(--win-text-disabled)' }}>
-                        Chọn tệp dump ở cột bên trái để xem trước.
+                        {t('importDialog.previewPickFile')}
                       </div>
                     ) : parsing ? (
-                      <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>Đang đọc tệp...</div>
+                      <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>{t('importDialog.readingFile')}</div>
                     ) : tab === 'structure' ? (
                       visualTables.length === 0 ? (
                         <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)', lineHeight: 1.5 }}>
-                          Tệp không có câu lệnh CREATE TABLE nào cho các bảng đang chọn
-                          {structureShown.length > 0 && <> — xem tab <b>SQL</b> để đọc {structureShown.length} câu lệnh cấu trúc khác (ALTER/DROP/CREATE INDEX)</>}.
+                          {t('importDialog.noCreateTable')}
+                          {structureShown.length > 0 && (
+                            <Trans i18nKey="importDialog.noCreateTableMore" values={{ n: structureShown.length }} components={{ strong: <b /> }} />
+                          )}.
                         </div>
                       ) : (
-                        visualTables.map((t) => (
-                          <div key={t.name} style={{ minWidth: 0 }}>
+                        // Not named `t` — that is the translation function.
+                        visualTables.map((vt) => (
+                          <div key={vt.name} style={{ minWidth: 0 }}>
                             <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-primary)', marginBottom: '4px', fontFamily: 'monospace' }}>
-                              {t.name} <span style={{ fontWeight: 400, color: 'var(--win-text-secondary)', fontFamily: 'inherit' }}>({t.columns.length} cột)</span>
+                              {vt.name} <span style={{ fontWeight: 400, color: 'var(--win-text-secondary)', fontFamily: 'inherit' }}>{t('importDialog.columnsCount', { n: vt.columns.length })}</span>
                             </div>
                             <div style={{ overflowX: 'auto', minWidth: 0 }}>
                             <table style={{ minWidth: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
                               <thead>
                                 <tr style={{ background: 'var(--win-bg-hover)', borderBottom: '1px solid var(--win-border)' }}>
-                                  {['Cột', 'Kiểu', 'NULL', 'Khoá', 'Mặc định'].map((h) => (
+                                  {[t('importDialog.colColumn'), t('importDialog.colType'), t('importDialog.colNull'), t('importDialog.colKey'), t('importDialog.colDefault')].map((h) => (
                                     <th key={h} style={{ padding: '4px 8px', textAlign: 'left', fontWeight: 600, borderRight: '1px solid var(--win-border)', whiteSpace: 'nowrap' }}>{h}</th>
                                   ))}
                                 </tr>
                               </thead>
                               <tbody>
-                                {t.columns.map((c) => (
+                                {vt.columns.map((c) => (
                                   <tr key={c.name} style={{ borderBottom: '1px solid var(--win-border)' }}>
                                     <td style={{ padding: '4px 8px', borderRight: '1px solid var(--win-border)', fontFamily: 'monospace', color: 'var(--win-text-primary)', whiteSpace: 'nowrap' }}>{c.name}</td>
                                     <td style={{ padding: '4px 8px', borderRight: '1px solid var(--win-border)', color: 'var(--win-text-secondary)', fontFamily: 'monospace' }}>{c.type}</td>
                                     <td style={{ padding: '4px 8px', borderRight: '1px solid var(--win-border)', color: 'var(--win-text-secondary)', whiteSpace: 'nowrap' }}>{c.notNull ? 'NOT NULL' : 'NULL'}</td>
                                     <td style={{ padding: '4px 8px', borderRight: '1px solid var(--win-border)', color: c.primaryKey ? 'var(--win-accent)' : 'var(--win-text-disabled)', whiteSpace: 'nowrap' }}>
-                                      {c.primaryKey ? (c.autoIncrement ? 'PK, tự tăng' : 'PK') : (c.autoIncrement ? 'tự tăng' : '—')}
+                                      {c.primaryKey
+                                        ? (c.autoIncrement ? t('importDialog.pkAuto') : t('importDialog.pk'))
+                                        : (c.autoIncrement ? t('importDialog.auto') : '—')}
                                     </td>
                                     <td style={{ padding: '4px 8px', color: 'var(--win-text-secondary)', fontFamily: 'monospace', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '140px' }}>
                                       {c.defaultValue ?? '—'}
@@ -925,9 +895,9 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
                               </tbody>
                             </table>
                             </div>
-                            {t.constraints.length > 0 && (
+                            {vt.constraints.length > 0 && (
                               <div style={{ fontSize: '10px', color: 'var(--win-text-secondary)', marginTop: '4px', lineHeight: 1.5 }}>
-                                {t.constraints.map((c, i) => (
+                                {vt.constraints.map((c, i) => (
                                   <div key={i} style={{ fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c}</div>
                                 ))}
                               </div>
@@ -937,7 +907,7 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
                       )
                     ) : visualRows.length === 0 ? (
                       <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>
-                        Tệp không có câu lệnh INSERT nào cho các bảng đang chọn.
+                        {t('importDialog.noInsert')}
                       </div>
                     ) : (
                       visualRows.map((r) => (
@@ -945,14 +915,14 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
                           <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-primary)', marginBottom: '4px', fontFamily: 'monospace' }}>
                             {r.table}{' '}
                             <span style={{ fontWeight: 400, color: 'var(--win-text-secondary)', fontFamily: 'inherit' }}>
-                              (hiện {r.rows.length}/{r.total} dòng)
+                              {t('importDialog.showingRows', { shown: r.rows.length, total: r.total })}
                             </span>
                           </div>
                           <div style={{ overflowX: 'auto', minWidth: 0 }}>
                             <table style={{ minWidth: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
                               <thead>
                                 <tr style={{ background: 'var(--win-bg-hover)', borderBottom: '1px solid var(--win-border)' }}>
-                                  {(r.columns || r.rows[0]?.map((_, i) => `cột ${i + 1}`) || []).map((c, i) => (
+                                  {(r.columns || r.rows[0]?.map((_, i) => t('importDialog.unnamedColumn', { n: i + 1 })) || []).map((c, i) => (
                                     <th key={i} style={{ padding: '4px 8px', textAlign: 'left', fontWeight: 600, borderRight: '1px solid var(--win-border)', whiteSpace: 'nowrap' }}>{c}</th>
                                   ))}
                                 </tr>
@@ -982,16 +952,7 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
           </div>
         </div>
 
-        <div style={{
-          display: 'flex',
-          justifyContent: 'flex-end',
-          alignItems: 'center',
-          gap: '8px',
-          padding: '12px 16px',
-          borderTop: '1px solid var(--win-border)',
-          background: 'var(--win-bg-tab-bar, rgba(0,0,0,0.15))',
-          flexShrink: 0
-        }}>
+        <ModalFooter>
           {progress ? (
             <ProgressBar progress={progress} />
           ) : error ? (
@@ -999,7 +960,7 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
               {error}
             </span>
           ) : null}
-          <button className="btn btn-secondary" onClick={onClose} disabled={submitting} style={{ flexShrink: 0 }}>Hủy</button>
+          <button className="btn btn-secondary" onClick={onClose} disabled={submitting} style={{ flexShrink: 0 }}>{t('common.cancel')}</button>
           <button
             className="btn btn-primary"
             onClick={askConfirm}
@@ -1012,11 +973,10 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
               flexShrink: 0
             }}
           >
-            {submitting ? 'Đang nhập...' : 'Bắt đầu Nhập'}
+            {submitting ? t('importDialog.importing') : t('importDialog.startImport')}
           </button>
-        </div>
-      </div>
-    </div>
+        </ModalFooter>
+    </Modal>
     </>
   );
 };

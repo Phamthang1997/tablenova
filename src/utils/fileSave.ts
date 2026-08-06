@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import i18n from '../i18n';
 
 /**
  * Chọn thư mục lưu và ghi tệp xuất ra đó.
@@ -86,7 +87,7 @@ export interface SaveResult {
 /** Nén text thành gzip bằng CompressionStream của WebView (Chromium). */
 export async function gzipText(text: string): Promise<Uint8Array> {
   const CS = (globalThis as any).CompressionStream;
-  if (!CS) throw new Error('WebView không hỗ trợ nén gzip.');
+  if (!CS) throw new Error(i18n.t('errors.noGzipSupport'));
   const stream = new Blob([text]).stream().pipeThrough(new CS('gzip'));
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }

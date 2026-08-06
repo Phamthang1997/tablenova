@@ -1,3 +1,5 @@
+import i18n from '../i18n';
+
 /**
  * WebCrypto Helper for Export/Import Connections with optional AES-GCM 256-bit password protection.
  */
@@ -92,7 +94,7 @@ export async function decryptConnectionExport(fileContent: string, password?: st
   try {
     parsed = JSON.parse(fileContent);
   } catch {
-    throw new Error('Định dạng tệp không hợp lệ (Không phải tệp JSON/TablePlus connection).');
+    throw new Error(i18n.t('errors.invalidConnFileFormat'));
   }
 
   // Handle plain unencrypted connection array or wrapped unencrypted format
@@ -106,7 +108,7 @@ export async function decryptConnectionExport(fileContent: string, password?: st
 
   if (parsed.encrypted === true) {
     if (!password || !password.trim()) {
-      const err: any = new Error('Tệp kết nối được bảo vệ bằng mật khẩu. Vui lòng nhập mật khẩu để giải mã.');
+      const err: any = new Error(i18n.t('errors.connFilePasswordProtected'));
       err.requiresPassword = true;
       throw err;
     }
@@ -127,7 +129,7 @@ export async function decryptConnectionExport(fileContent: string, password?: st
       const jsonText = decoder.decode(decryptedBuf);
       return JSON.parse(jsonText);
     } catch {
-      const err: any = new Error('Mật khẩu không chính xác hoặc tệp kết nối bị hỏng.');
+      const err: any = new Error(i18n.t('errors.wrongPasswordOrCorrupt'));
       err.requiresPassword = true;
       throw err;
     }

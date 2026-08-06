@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { Trans, useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { dbHelper } from '../utils/dbHelper';
 import type { DbConnectionConfig } from '../utils/dbHelper';
 import { Database, Server, CheckCircle2, AlertTriangle, Plus, Trash2, Save, Copy, Download, Upload, Lock, Key, TerminalSquare, Hash, FolderOpen, User, Link, Star, Eye, EyeOff, ShieldAlert, Search, X, ChevronDown, ChevronRight, RefreshCw, ShieldCheck, Network, ArrowLeft, Check, Cloud, HardDriveDownload, LogIn } from 'lucide-react';
@@ -15,16 +17,19 @@ import { splitStatements } from '../sql/statements';
 import { ProgressBar, type ProgressState } from './ProgressBar';
 import { ConfirmDialog } from './ConfirmDialog';
 
-/** Giây -> "12 giây" / "2 phút 5 giây" cho ETA khi phục hồi. */
-function formatRestoreEta(totalSeconds: number): string {
+/**
+ * Seconds -> "12 seconds" / "2 min 5 sec" for the restore ETA.
+ * Takes `t` because it is module-level and cannot call the hook itself.
+ */
+function formatRestoreEta(t: TFunction, totalSeconds: number): string {
   const s = Math.max(1, Math.round(totalSeconds));
-  if (s < 60) return `${s} giây`;
+  if (s < 60) return t('connection.etaSeconds', { s });
   const m = Math.floor(s / 60);
   const rest = s % 60;
-  if (m < 60) return rest ? `${m} phút ${rest} giây` : `${m} phút`;
+  if (m < 60) return rest ? t('connection.etaMinutesSeconds', { m, s: rest }) : t('connection.etaMinutes', { m });
   const h = Math.floor(m / 60);
   const restM = m % 60;
-  return restM ? `${h} giờ ${restM} phút` : `${h} giờ`;
+  return restM ? t('connection.etaHoursMinutes', { h, m: restM }) : t('connection.etaHours', { h });
 }
 import {
   SECRET_FIELDS,
@@ -67,11 +72,14 @@ const LoadingSpinner: React.FC<{ size?: number; style?: React.CSSProperties; cla
 );
 
 // Nút hiện/ẩn mật khẩu nằm bên trong ô input.
-const EyeBtn: React.FC<{ on: boolean; onClick: () => void }> = ({ on, onClick }) => (
-  <button type="button" className="cm-eye" onClick={onClick} title={on ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}>
-    {on ? <EyeOff size={14} /> : <Eye size={14} />}
-  </button>
-);
+const EyeBtn: React.FC<{ on: boolean; onClick: () => void }> = ({ on, onClick }) => {
+  const { t } = useTranslation();
+  return (
+    <button type="button" className="cm-eye" onClick={onClick} title={on ? t('connection.hidePassword') : t('connection.showPassword')}>
+      {on ? <EyeOff size={14} /> : <Eye size={14} />}
+    </button>
+  );
+};
 
 // Nút chọn tệp (chứng chỉ SSL, private key...) — chỉ hiện tên tệp cho gọn.
 const FilePick: React.FC<{ id: string; value: string; label: string; onPick: (path: string) => void }> = ({ id, value, label, onPick }) => (
@@ -106,23 +114,10 @@ interface ConnectionManagerProps {
   onConnect: (dbName: string, dbType: 'sqlite' | 'postgres' | 'mysql' | 'redis', color?: string, config?: DbConnectionConfig) => void;
 }
 
-// Giải thích từng mức SSL — hiển thị dưới ô select thay vì nhồi vào <option>
-// (option dài sẽ bị mũi tên của select đè lên và popup native tràn ra ngoài).
-const SSL_MODE_DESC: Record<string, string> = {
-  DISABLED: 'Tắt hẳn TLS — mật khẩu và dữ liệu đi ở dạng thô. Máy chủ nào bắt buộc SSL sẽ từ chối kết nối.',
-  PREFERRED: 'Có TLS thì dùng, không có thì vẫn kết nối thường — kẻ chặn đường truyền có thể ép tụt về không mã hoá.',
-  REQUIRED: 'Bắt buộc TLS nhưng không kiểm tra chứng chỉ — chống nghe lén, chưa chống được máy chủ giả mạo.',
-  VERIFY_CA: 'Bắt buộc TLS và chứng chỉ máy chủ phải do CA tin cậy ký — chống được máy chủ giả mạo.',
-  VERIFY_IDENTITY: 'Như VERIFY_CA, thêm điều kiện hostname khớp chứng chỉ — mức an toàn cao nhất.',
-};
-
-// Meta hiển thị theo loại DB (badge + nhãn + màu) dùng cho sidebar và header.
-// Nhãn cho đèn trạng thái ở mỗi dòng kết nối trong sidebar.
-const LED_TITLE: Record<'busy' | 'ok' | 'fail', string> = {
-  busy: 'Đang xử lý kết nối này...',
-  ok: 'Kiểm tra kết nối thành công',
-  fail: 'Kiểm tra kết nối thất bại',
-};
+// SSL levels in the order the <select> shows them. The explanation sits under
+// the select instead of inside each <option> (a long option gets covered by the
+// select arrow and the native popup overflows) — see sslModeDesc() below.
+const SSL_MODES = ['DISABLED', 'PREFERRED', 'REQUIRED', 'VERIFY_CA', 'VERIFY_IDENTITY'] as const;
 
 // Logo thật của từng hệ DB (xem DbIcons.tsx) + màu thương hiệu cho ô nền.
 const TYPE_META: Record<string, { label: string; color: string; Icon: React.FC<{ size?: number }> }> = {
@@ -133,6 +128,28 @@ const TYPE_META: Record<string, { label: string; color: string; Icon: React.FC<{
 };
 
 export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect }) => {
+  const { t } = useTranslation();
+
+  // A switch rather than t(`...${mode}`): a key built at runtime is not checked
+  // against the key tree declared in i18next.d.ts.
+  const sslModeDesc = (mode: string): string => {
+    switch (mode) {
+      case 'DISABLED': return t('connection.sslDescDisabled');
+      case 'PREFERRED': return t('connection.sslDescPreferred');
+      case 'REQUIRED': return t('connection.sslDescRequired');
+      case 'VERIFY_CA': return t('connection.sslDescVerifyCa');
+      case 'VERIFY_IDENTITY': return t('connection.sslDescVerifyIdentity');
+      default: return '';
+    }
+  };
+
+  // Labels for the status LED on each connection row in the sidebar.
+  const ledTitle: Record<'busy' | 'ok' | 'fail', string> = {
+    busy: t('connection.ledBusy'),
+    ok: t('connection.ledOk'),
+    fail: t('connection.ledFail'),
+  };
+
   const [activeType, setActiveType] = useState<'sqlite' | 'postgres' | 'mysql' | 'redis' | 'backup_restore'>('sqlite');
   // Redis form state
   const [redisHost, setRedisHost] = useState('127.0.0.1');
@@ -329,7 +346,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
       if (res.success && res.databases) {
         setAvailableDatabases(res.databases);
       } else {
-        setErrorMsg(res.error || 'Không thể tải danh sách database');
+        setErrorMsg(res.error || t('connection.errLoadDatabases'));
       }
     } catch (e: any) {
       setErrorMsg(e.toString());
@@ -464,7 +481,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
       setSecretError(null);
     } catch (e: any) {
       // Cấu hình vẫn được lưu, chỉ riêng bí mật không vào được kho HĐH -> phải nói rõ.
-      setSecretError('Không lưu được mật khẩu vào kho bảo mật của hệ điều hành: ' + (e?.message || e));
+      setSecretError(t('connection.errSaveSecrets', { message: e?.message || e }));
     }
     return stripped;
   };
@@ -475,7 +492,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
       const secrets = await dbHelper.getSecrets(profile.id, SECRET_FIELD_LIST);
       return mergeSecrets(profile.config, secrets);
     } catch (e: any) {
-      setSecretError('Không đọc được mật khẩu từ kho bảo mật của hệ điều hành: ' + (e?.message || e));
+      setSecretError(t('connection.errReadSecrets', { message: e?.message || e }));
       return profile.config;
     }
   };
@@ -489,7 +506,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
       if (Object.keys(values).length > 0) await dbHelper.setSecrets(toId, values);
       setSecretError(null);
     } catch (e: any) {
-      setSecretError('Không sao chép được mật khẩu trong kho bảo mật của hệ điều hành: ' + (e?.message || e));
+      setSecretError(t('connection.errCopySecrets', { message: e?.message || e }));
     }
   };
 
@@ -549,13 +566,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
       if (exportScope === 'all') {
         targetProfiles = [...profiles];
       } else if (exportScope === 'group') {
-        targetProfiles = profiles.filter(p => (p.group?.trim() || 'MẶC ĐỊNH') === exportGroupTarget);
+        targetProfiles = profiles.filter(p => (p.group?.trim() || t('connection.defaultGroup')) === exportGroupTarget);
       } else if (exportScope === 'single' && exportSingleProfile) {
         targetProfiles = [exportSingleProfile];
       }
 
       if (targetProfiles.length === 0) {
-        alert("Không có kết nối nào để xuất.");
+        alert(t('connection.errNoProfilesToExport'));
         setExporting(false);
         return;
       }
@@ -571,9 +588,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
       );
 
       if (exportIncludePasswords && !exportFilePassword.trim()) {
-        const ok = confirm(
-          'Tệp xuất sẽ chứa mật khẩu ở dạng thô vì bạn chưa đặt mật khẩu bảo vệ tệp.\nVẫn tiếp tục?'
-        );
+        const ok = confirm(t('connection.confirmExportPlainPasswords'));
         if (!ok) {
           setExporting(false);
           return;
@@ -596,9 +611,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
       URL.revokeObjectURL(url);
 
       setShowExportModal(false);
-      setSuccessMsg(`Đã xuất ${processedProfiles.length} kết nối thành công!`);
+      setSuccessMsg(t('connection.exportSuccess', { n: processedProfiles.length }));
     } catch (e: any) {
-      alert("Lỗi xuất kết nối: " + e.message);
+      alert(t('connection.errExport', { message: e.message }));
     } finally {
       setExporting(false);
     }
@@ -621,7 +636,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
           setImportPasswordInput('');
           setShowImportPasswordModal(true);
         } else {
-          alert('Lỗi nhập kết nối: ' + err.message);
+          alert(t('connection.errImport', { message: err.message }));
         }
       }
     };
@@ -646,7 +661,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
       }
 
       if (newProfilesToImport.length === 0) {
-        throw new Error('Tệp không chứa thông tin kết nối hợp lệ.');
+        throw new Error(t('connection.errImportInvalid'));
       }
 
       // Merge into existing profiles without duplicate IDs
@@ -670,12 +685,12 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
       await persistProfiles(merged);
       setShowImportPasswordModal(false);
       setPendingImportContent(null);
-      setSuccessMsg(`Đã nhập thành công ${importedCount} kết nối!`);
+      setSuccessMsg(t('connection.importSuccess', { n: importedCount }));
     } catch (e: any) {
       if (e.requiresPassword) {
         throw e;
       }
-      alert('Lỗi nhập kết nối: ' + e.message);
+      alert(t('connection.errImport', { message: e.message }));
     } finally {
       setImporting(false);
     }
@@ -687,7 +702,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
       await processImportContent(pendingImportContent, importPasswordInput);
     } catch (err: any) {
       if (!err.requiresPassword) {
-        alert('Lỗi giải mã: ' + err.message);
+        alert(t('connection.errDecrypt', { message: err.message }));
       }
     }
   };
@@ -711,7 +726,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
       } else if (cleanUrl.startsWith('mysql://')) {
         protocol = 'mysql';
       } else {
-        throw new Error("Giao thức URL không hỗ trợ (chỉ nhận postgres:// hoặc mysql://)");
+        throw new Error(t('connection.errUrlProtocol'));
       }
 
       // Parse URL
@@ -740,7 +755,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
         }
       };
     } catch (e: any) {
-      alert('Lỗi định dạng URL: ' + e.message);
+      alert(t('connection.errUrlFormat', { message: e.message }));
       return null;
     }
   };
@@ -762,7 +777,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
 
     setShowImportUrlModal(false);
     setImportUrlInput('');
-    setSuccessMsg('Đã nhập thành công cấu hình kết nối từ URL!');
+    setSuccessMsg(t('connection.importUrlSuccess'));
   };
 
 
@@ -798,6 +813,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
       localStorage.setItem(PROFILES_KEY, JSON.stringify(defaultProfiles));
       selectProfile(defaultProfiles[0]);
     }
+    // Mount-only bootstrap. persistProfiles/selectProfile now close over `t`,
+    // whose identity changes on every language switch, so listing them here
+    // would reload the profiles and wipe a half-filled form on each switch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Điền form từ một profile. Bí mật không nằm trong profile.config nữa nên phải đọc
@@ -883,7 +902,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
 
   const handleSaveProfile = async () => {
     if (!activeProfileId) return;
-    const targetName = profileNameInput.trim() || 'Kết nối mới';
+    const targetName = profileNameInput.trim() || t('connection.defaultProfileName');
 
     let config: any = {};
     if (activeType === 'sqlite') {
@@ -959,13 +978,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
 
     // config lấy từ form nên có mật khẩu; persistProfiles tách ra kho HĐH trước khi ghi.
     await persistProfiles(updatedProfiles);
-    setSuccessMsg('Đã lưu cấu hình kết nối!');
+    setSuccessMsg(t('connection.saveSuccess'));
   };
 
   const handleCreateNewProfile = async (type: 'sqlite' | 'postgres' | 'mysql' | 'redis') => {
     const newProfile: SavedProfile = {
       id: newProfileId(),
-      name: `Kết nối ${type.toUpperCase()}`,
+      name: t('connection.newProfileName', { type: type.toUpperCase() }),
       type,
       config: type === 'sqlite'
         ? { type, sqlitePath: 'new_database.db' }
@@ -983,10 +1002,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
   const handleDeleteProfile = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (id === 'demo') {
-      alert('Không thể xóa kết nối demo.');
+      alert(t('connection.errDeleteDemo'));
       return;
     }
-    if (!confirm('Bạn có chắc chắn muốn xóa cấu hình kết nối này?')) return;
+    if (!confirm(t('connection.confirmDeleteProfile'))) return;
 
     const newProfiles = profiles.filter(p => p.id !== id);
     await persistProfiles(newProfiles);
@@ -994,7 +1013,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     try {
       await dbHelper.deleteSecrets(id, SECRET_FIELD_LIST);
     } catch (err: any) {
-      setSecretError('Không xoá được mật khẩu khỏi kho bảo mật của hệ điều hành: ' + (err?.message || err));
+      setSecretError(t('connection.errDeleteSecrets', { message: err?.message || err }));
     }
 
     if (activeProfileId === id) {
@@ -1141,7 +1160,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
       });
       setLoading(false);
       setTestStatus(res.success ? 'ok' : 'fail');
-      if (res.success) setSuccessMsg('Kết nối Redis OK (PING thành công).');
+      if (res.success) setSuccessMsg(t('connection.redisTestOk'));
       else setErrorMsg(res.message);
       // Ngắt kết nối test để không giữ phiên.
       await dbHelper.redisDisconnect();
@@ -1217,7 +1236,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     setLoading(false);
     setTestStatus(res.success ? 'ok' : 'fail');
     if (res.success) {
-      setSuccessMsg('Kiểm tra kết nối thành công!');
+      setSuccessMsg(t('connection.testOk'));
       await dbHelper.disconnect();
     } else {
       setErrorMsg(res.message);
@@ -1270,14 +1289,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     try {
       const connRes = await dbHelper.connect(config);
       if (!connRes.success) {
-        throw new Error(`Kết nối thất bại: ${connRes.message}`);
+        throw new Error(t('connection.errConnectFailed', { message: connRes.message }));
       }
 
       if (brAction === 'backup') {
         const list = await dbHelper.getTables();
-        const tables = list.map(t => t.name);
+        const tables = list.map(item => item.name);
         if (tables.length === 0) {
-          throw new Error('Cơ sở dữ liệu không có bảng nào để sao lưu.');
+          throw new Error(t('connection.errNoTablesToBackup'));
         }
 
         const res = await dbHelper.exportMultiTables({
@@ -1293,13 +1312,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
         });
 
         if (res.success) {
-          setSuccessMsg(`Sao lưu cơ sở dữ liệu thành công!`);
+          setSuccessMsg(t('connection.backupSuccess'));
         } else {
-          throw new Error(res.error || 'Lỗi sao lưu cơ sở dữ liệu.');
+          throw new Error(res.error || t('connection.errBackup'));
         }
       } else {
         if (!brFile || !brSqlText) {
-          throw new Error('Vui lòng chọn tệp sao lưu (.sql hoặc .sql.gz) để khôi phục.');
+          throw new Error(t('connection.errNoBackupFile'));
         }
 
         // Ghi đè: chèn DROP ... IF EXISTS lên đầu, và cho các tên đó qua bộ lọc theo bảng
@@ -1312,28 +1331,31 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
           : brSelectedTables;
 
         const startedAt = Date.now();
-        setBrProgress({ label: 'Đang chuẩn bị...' });
+        setBrProgress({ label: t('connection.restorePreparing') });
         const resData = await dbHelper.restoreBackup(sqlToRun, tablesToRun, (msg) => {
           const done = msg.done ?? 0;
           const total = msg.total ?? 0;
           if (msg.type === 'start') {
-            setBrProgress({ label: `Đang chạy ${total.toLocaleString()} câu lệnh...`, current: 0, total });
+            setBrProgress({ label: t('connection.restoreRunning', { n: total.toLocaleString() }), current: 0, total });
             return;
           }
           // ETA từ tốc độ thật đang chạy
           const elapsed = (Date.now() - startedAt) / 1000;
           const rate = done > 0 ? done / elapsed : 0;
           const remain = rate > 0 && total > done ? Math.round((total - done) / rate) : 0;
+          const counts = { done: done.toLocaleString(), total: total.toLocaleString() };
           setBrProgress({
-            label: 'Đang phục hồi...',
+            label: t('connection.restoreInProgress'),
             current: done,
             total,
-            detail: `${done.toLocaleString()}/${total.toLocaleString()} câu lệnh${remain > 0 ? ` · còn ~${formatRestoreEta(remain)}` : ''}`,
+            detail: remain > 0
+              ? t('connection.restoreDetailEta', { ...counts, eta: formatRestoreEta(t, remain) })
+              : t('connection.restoreDetail', counts),
           });
         });
         setBrProgress(null);
         if (resData.success) {
-          setSuccessMsg(`Khôi phục thành công! Đã chạy ${resData.statementsCount || 0} câu lệnh SQL.`);
+          setSuccessMsg(t('connection.restoreSuccess', { n: resData.statementsCount || 0 }));
           if (resData.activeDatabase) {
             if (brType === 'postgres') {
               setBrPgDatabase(resData.activeDatabase);
@@ -1347,7 +1369,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
             }, 1200);
           }
         } else {
-          throw new Error(addExistsHint(resData.error || 'Lỗi khôi phục cơ sở dữ liệu.', brOverwrite));
+          throw new Error(addExistsHint(resData.error || t('connection.errRestore'), brOverwrite));
         }
       }
     } catch (err: any) {
@@ -1366,7 +1388,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
       .some((f) => (f || '').toString().toLowerCase().includes(_pq));
   });
   const groupedProfiles = filteredProfiles.reduce((acc, p) => {
-    const groupName = p.group?.trim() || 'MẶC ĐỊNH';
+    const groupName = p.group?.trim() || t('connection.defaultGroup');
     if (!acc[groupName]) acc[groupName] = [];
     acc[groupName].push(p);
     return acc;
@@ -1423,7 +1445,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     const opts = (!q || exact) ? availableDatabases : availableDatabases.filter(d => d.toLowerCase().includes(q));
     return (
       <div className="form-group">
-        <label>Cơ sở dữ liệu</label>
+        <label>{t('connection.databaseLabel')}</label>
         <div className="input-icon-wrapper cm-combo two-btn">
           <input
             type="text"
@@ -1437,7 +1459,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
           <button
             type="button"
             className="cm-combo-btn second"
-            title="Tải lại danh sách database"
+            title={t('connection.reloadDbList')}
             onClick={() => fetchDatabases(fetchTarget)}
             disabled={loadingDbs}
           >
@@ -1446,7 +1468,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
           <button
             type="button"
             className={`cm-combo-btn ${showDbList ? 'on' : ''}`}
-            title="Chọn từ danh sách"
+            title={t('connection.pickFromList')}
             onClick={() => {
               setShowDbList((v) => !v);
               if (!availableDatabases.length && !loadingDbs) fetchDatabases(fetchTarget);
@@ -1461,8 +1483,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                 {opts.length === 0 ? (
                   <div className="cm-combo-empty">
                     {loadingDbs
-                      ? 'Đang tải danh sách...'
-                      : availableDatabases.length ? 'Không có database nào khớp' : 'Chưa tải được danh sách'}
+                      ? t('connection.dbListLoading')
+                      : availableDatabases.length ? t('connection.dbListNoMatch') : t('connection.dbListNotLoaded')}
                   </div>
                 ) : opts.map(d => (
                   <button
@@ -1486,22 +1508,22 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
   // ——— Khối "Thông tin cơ bản": tên, nhóm, màu nhận diện ———
   const renderBasicSection = () => (
     <div className="cm-section">
-      <div className="cm-section-title">Thông tin cơ bản</div>
+      <div className="cm-section-title">{t('connection.basicSection')}</div>
       {/* Tên + nhóm gộp trên một dòng: header phía trên đã hiển thị lại những
           thông tin này nên không cần mô tả dài dòng ở đây. */}
       <div className="cm-grid basic" style={{ marginTop: '12px' }}>
         <div className="form-group">
-          <label>Tên kết nối</label>
+          <label>{t('connection.profileName')}</label>
           <input
             type="text"
             className="form-input"
             value={profileNameInput}
             onChange={(e) => setProfileNameInput(e.target.value)}
-            placeholder="VD: Fleet Staging"
+            placeholder={t('connection.profileNamePlaceholder')}
           />
         </div>
         <div className="form-group">
-          <label>Nhóm</label>
+          <label>{t('connection.group')}</label>
           {/* Combobox tự dựng thay cho <datalist>: native datalist hiện thêm một
               mũi tên riêng và popup không theo được theme của app. */}
           <div className="cm-combo">
@@ -1511,13 +1533,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
               value={profileGroup}
               onChange={(e) => setProfileGroup(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Escape') setShowGroupList(false); }}
-              placeholder={existingGroups.length ? 'Chọn hoặc nhập...' : 'STG, PROD...'}
+              placeholder={existingGroups.length ? t('connection.groupPlaceholderPick') : t('connection.groupPlaceholderNew')}
             />
             {existingGroups.length > 0 && (
               <button
                 type="button"
                 className={`cm-combo-btn ${showGroupList ? 'on' : ''}`}
-                title="Chọn nhóm đã có"
+                title={t('connection.pickExistingGroup')}
                 onClick={() => setShowGroupList((v) => !v)}
               >
                 <ChevronDown size={13} />
@@ -1543,7 +1565,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                       <div className="cm-pop-sep" />
                       <button type="button" className="cm-combo-opt" onClick={() => { setProfileGroup(''); setShowGroupList(false); }}>
                         <X size={12} style={{ flexShrink: 0 }} />
-                        <span>Bỏ nhóm</span>
+                        <span>{t('connection.clearGroup')}</span>
                       </button>
                     </>
                   )}
@@ -1563,8 +1585,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
       return (
         <div className="cm-warn">
           <ShieldAlert size={15} style={{ flexShrink: 0 }} />
-          <span style={{ flex: 1 }}>Redis <b>từ xa</b> nhưng TLS đang tắt — dữ liệu truyền không mã hoá (server phải hỗ trợ <b>rediss://</b>).</span>
-          <button type="button" className="cm-warn-btn" onClick={() => setSslEnabled(true)}>Bật TLS</button>
+          <span style={{ flex: 1 }}>
+            <Trans i18nKey="connection.warnRedisTls" components={{ strong: <b /> }} />
+          </span>
+          <button type="button" className="cm-warn-btn" onClick={() => setSslEnabled(true)}>{t('connection.enableTls')}</button>
         </div>
       );
     }
@@ -1574,8 +1598,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     return (
       <div className="cm-warn">
         <ShieldAlert size={15} style={{ flexShrink: 0 }} />
-        <span style={{ flex: 1 }}>Máy chủ <b>từ xa</b> nhưng SSL đang <b>DISABLED</b> — mật khẩu và dữ liệu truyền đi không được mã hoá.</span>
-        <button type="button" className="cm-warn-btn" onClick={() => { setSslMode('REQUIRED'); setFormTab('ssl'); }}>Bật SSL</button>
+        <span style={{ flex: 1 }}>
+          <Trans i18nKey="connection.warnSslDisabled" components={{ strong: <b /> }} />
+        </span>
+        <button type="button" className="cm-warn-btn" onClick={() => { setSslMode('REQUIRED'); setFormTab('ssl'); }}>{t('connection.enableSsl')}</button>
       </div>
     );
   };
@@ -1587,22 +1613,22 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
 
       {activeType === 'sqlite' && (
         <div className="cm-section">
-          <div className="cm-section-title">Tệp cơ sở dữ liệu</div>
-          <div className="cm-section-desc">SQLite lưu toàn bộ dữ liệu trong một tệp duy nhất trên máy bạn.</div>
+          <div className="cm-section-title">{t('connection.sqliteSection')}</div>
+          <div className="cm-section-desc">{t('connection.sqliteDesc')}</div>
           <div className="cm-fields">
             <div className="form-group">
-              <label>Đường dẫn tệp (.db, .sqlite)</label>
+              <label>{t('connection.sqlitePathLabel')}</label>
               <div className="input-icon-wrapper">
                 <input
                   type="text"
                   className="form-input"
                   value={sqlitePath}
                   onChange={(e) => setSqlitePath(e.target.value)}
-                  placeholder="my_database.db"
+                  placeholder={t('connection.sqlitePathPlaceholder')}
                 />
                 <FolderOpen size={14} className="input-icon" />
               </div>
-              <span className="cm-hint">Nếu tệp chưa tồn tại, TableNova sẽ tự tạo tệp mới khi kết nối.</span>
+              <span className="cm-hint">{t('connection.sqliteHint')}</span>
             </div>
           </div>
         </div>
@@ -1610,19 +1636,19 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
 
       {activeType === 'redis' && (
         <div className="cm-section">
-          <div className="cm-section-title">Máy chủ Redis</div>
-          <div className="cm-section-desc">Thông tin đăng nhập được lưu cục bộ trên thiết bị của bạn.</div>
+          <div className="cm-section-title">{t('connection.redisSection')}</div>
+          <div className="cm-section-desc">{t('connection.redisDesc')}</div>
           <div className="cm-fields">
             <div className="cm-grid host">
               <div className="form-group">
-                <label>Host</label>
+                <label>{t('connection.host')}</label>
                 <div className="input-icon-wrapper">
                   <input type="text" className="form-input" value={redisHost} onChange={(e) => setRedisHost(e.target.value)} placeholder="127.0.0.1" />
                   <Server size={14} className="input-icon" />
                 </div>
               </div>
               <div className="form-group">
-                <label>Port</label>
+                <label>{t('connection.port')}</label>
                 <div className="input-icon-wrapper">
                   <input type="number" className="form-input" value={redisPort} onChange={(e) => setRedisPort(parseInt(e.target.value) || 6379)} />
                   <Hash size={14} className="input-icon" />
@@ -1631,14 +1657,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
             </div>
             <div className="cm-grid two">
               <div className="form-group">
-                <label>Username (ACL — bỏ trống nếu không dùng)</label>
+                <label>{t('connection.redisUserLabel')}</label>
                 <div className="input-icon-wrapper">
                   <input type="text" className="form-input" value={redisUser} onChange={(e) => setRedisUser(e.target.value)} placeholder="default" />
                   <User size={14} className="input-icon" />
                 </div>
               </div>
               <div className="form-group">
-                <label>Mật khẩu</label>
+                <label>{t('connection.password')}</label>
                 <div className="input-icon-wrapper">
                   <input
                     type={showPw ? 'text' : 'password'}
@@ -1655,7 +1681,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
             </div>
             <div className="cm-grid two">
               <div className="form-group">
-                <label>Database index (0–15)</label>
+                <label>{t('connection.redisDbIndex')}</label>
                 <input
                   type="number"
                   min={0}
@@ -1667,10 +1693,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
               </div>
             </div>
             <div className="cm-switch-row">
-              <button type="button" className={`cm-switch ${sslEnabled ? 'on' : ''}`} onClick={() => setSslEnabled(!sslEnabled)} aria-label="Bật TLS" />
+              <button type="button" className={`cm-switch ${sslEnabled ? 'on' : ''}`} onClick={() => setSslEnabled(!sslEnabled)} aria-label={t('connection.enableTls')} />
               <div style={{ flex: 1 }}>
-                <div className="cm-switch-label">Mã hoá TLS (rediss://)</div>
-                <div className="cm-hint">Bắt buộc với Redis Cloud, ElastiCache in-transit encryption và hầu hết Redis từ xa.</div>
+                <div className="cm-switch-label">{t('connection.tlsSwitchLabel')}</div>
+                <div className="cm-hint">{t('connection.tlsSwitchHint')}</div>
               </div>
             </div>
             {renderSslWarning()}
@@ -1694,12 +1720,12 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
         return (
           <>
             <div className="cm-section">
-              <div className="cm-section-title">Máy chủ</div>
-              <div className="cm-section-desc">Địa chỉ máy chủ và cổng kết nối tới {activeMeta.label}.</div>
+              <div className="cm-section-title">{t('connection.serverSection')}</div>
+              <div className="cm-section-desc">{t('connection.serverDesc', { db: activeMeta.label })}</div>
               <div className="cm-fields">
                 <div className="cm-grid host">
                   <div className="form-group">
-                    <label>Host</label>
+                    <label>{t('connection.host')}</label>
                     <div className="input-icon-wrapper">
                       <input
                         type="text"
@@ -1712,7 +1738,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                     </div>
                   </div>
                   <div className="form-group">
-                    <label>Port</label>
+                    <label>{t('connection.port')}</label>
                     <div className="input-icon-wrapper">
                       <input
                         type="number"
@@ -1728,7 +1754,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                   database,
                   setDatabase,
                   activeType === 'postgres' ? 'postgres' : 'mysql',
-                  activeType === 'postgres' ? 'postgres' : 'Không bắt buộc',
+                  activeType === 'postgres' ? 'postgres' : t('connection.databaseOptional'),
                 )}
                 {renderSslWarning()}
               </div>
@@ -1737,18 +1763,18 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
             <div className="cm-section">
               <div className="cm-label-row">
                 <div>
-                  <div className="cm-section-title">Xác thực</div>
-                  <div className="cm-section-desc">Đăng nhập bằng mật khẩu hoặc token AWS IAM (RDS/Aurora).</div>
+                  <div className="cm-section-title">{t('connection.authSection')}</div>
+                  <div className="cm-section-desc">{t('connection.authDesc')}</div>
                 </div>
                 <div className="cm-seg">
-                  <button type="button" className={authMethod === 'password' ? 'on' : ''} onClick={() => setAuthMethod('password')}>Mật khẩu</button>
-                  <button type="button" className={authMethod === 'aws_iam' ? 'on' : ''} onClick={() => setAuthMethod('aws_iam')}>AWS IAM</button>
+                  <button type="button" className={authMethod === 'password' ? 'on' : ''} onClick={() => setAuthMethod('password')}>{t('connection.authPassword')}</button>
+                  <button type="button" className={authMethod === 'aws_iam' ? 'on' : ''} onClick={() => setAuthMethod('aws_iam')}>{t('connection.authAwsIam')}</button>
                 </div>
               </div>
               <div className="cm-fields">
                 <div className="cm-grid two">
                   <div className="form-group">
-                    <label>{authMethod === 'aws_iam' ? 'DB user (đã bật IAM auth)' : 'Tên đăng nhập'}</label>
+                    <label>{authMethod === 'aws_iam' ? t('connection.usernameIam') : t('connection.username')}</label>
                     <div className="input-icon-wrapper">
                       <input
                         type="text"
@@ -1762,7 +1788,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                   </div>
                   {authMethod === 'password' && (
                     <div className="form-group">
-                      <label>Mật khẩu</label>
+                      <label>{t('connection.password')}</label>
                       <div className="input-icon-wrapper">
                         <input
                           type={showPw ? 'text' : 'password'}
@@ -1783,32 +1809,32 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                   <div className="cm-subcard">
                     <div className="cm-subcard-head">
                       <Cloud size={13} />
-                      <span>AWS IAM authentication</span>
+                      <span>{t('connection.awsHeading')}</span>
                     </div>
                     <div className="cm-hint" style={{ marginBottom: '12px' }}>
-                      TableNova sinh token IAM (hiệu lực 15 phút) thay cho mật khẩu và tự ép SSL <b>REQUIRED</b>.
+                      <Trans i18nKey="connection.awsHint" components={{ strong: <b /> }} />
                     </div>
                     <div className="cm-seg" style={{ marginBottom: '12px' }}>
-                      <button type="button" className={awsAuthType === 'access_key' ? 'on' : ''} onClick={() => setAwsAuthType('access_key')}>Access Key</button>
-                      <button type="button" className={awsAuthType === 'profile' ? 'on' : ''} onClick={() => setAwsAuthType('profile')}>Profile (~/.aws)</button>
+                      <button type="button" className={awsAuthType === 'access_key' ? 'on' : ''} onClick={() => setAwsAuthType('access_key')}>{t('connection.awsAccessKeySeg')}</button>
+                      <button type="button" className={awsAuthType === 'profile' ? 'on' : ''} onClick={() => setAwsAuthType('profile')}>{t('connection.awsProfileSeg')}</button>
                     </div>
                     <div className="cm-fields" style={{ marginTop: 0 }}>
                       {awsAuthType === 'access_key' ? (
                         <>
                           <div className="form-group">
-                            <label>Access Key ID</label>
+                            <label>{t('connection.awsAccessKeyId')}</label>
                             <input type="text" className="form-input" value={awsAccessKeyId} onChange={(e) => setAwsAccessKeyId(e.target.value)} placeholder="AKIA..." autoComplete="off" />
                           </div>
                           <div className="cm-grid two">
                             <div className="form-group">
-                              <label>Secret Access Key</label>
+                              <label>{t('connection.awsSecretKey')}</label>
                               <div className="input-icon-wrapper">
                                 <input type={showPw ? 'text' : 'password'} className="form-input" value={awsSecretAccessKey} onChange={(e) => setAwsSecretAccessKey(e.target.value)} autoComplete="off" style={{ paddingRight: '32px', paddingLeft: '10px' }} />
                                 <EyeBtn on={showPw} onClick={() => setShowPw((v) => !v)} />
                               </div>
                             </div>
                             <div className="form-group">
-                              <label>Session Token (tuỳ chọn)</label>
+                              <label>{t('connection.awsSessionToken')}</label>
                               <div className="input-icon-wrapper">
                                 <input type={showPw ? 'text' : 'password'} className="form-input" value={awsSessionToken} onChange={(e) => setAwsSessionToken(e.target.value)} autoComplete="off" style={{ paddingRight: '32px', paddingLeft: '10px' }} />
                                 <EyeBtn on={showPw} onClick={() => setShowPw((v) => !v)} />
@@ -1818,13 +1844,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                         </>
                       ) : (
                         <div className="form-group">
-                          <label>Tên profile</label>
+                          <label>{t('connection.awsProfileName')}</label>
                           <input type="text" className="form-input" value={awsProfile} onChange={(e) => setAwsProfile(e.target.value)} placeholder="default" autoComplete="off" />
                         </div>
                       )}
                       <div className="form-group">
-                        <label>AWS Region</label>
-                        <input type="text" className="form-input" value={awsRegion} onChange={(e) => setAwsRegion(e.target.value)} placeholder="Bỏ trống = tự dò từ host RDS" autoComplete="off" />
+                        <label>{t('connection.awsRegion')}</label>
+                        <input type="text" className="form-input" value={awsRegion} onChange={(e) => setAwsRegion(e.target.value)} placeholder={t('connection.awsRegionPlaceholder')} autoComplete="off" />
                       </div>
                     </div>
                   </div>
@@ -1847,15 +1873,17 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     const needVerify = sslMode === 'VERIFY_CA' || sslMode === 'VERIFY_IDENTITY';
     return (
       <div className="cm-section">
-        <div className="cm-section-title">Mã hoá đường truyền (SSL/TLS)</div>
-        <div className="cm-section-desc">Chọn mức độ yêu cầu mã hoá. Với máy chủ trên Internet nên dùng ít nhất <b>REQUIRED</b>.</div>
+        <div className="cm-section-title">{t('connection.sslSection')}</div>
+        <div className="cm-section-desc">
+          <Trans i18nKey="connection.sslDesc" components={{ strong: <b /> }} />
+        </div>
         <div className="cm-fields">
           <div className="form-group">
-            <label>SSL mode</label>
+            <label>{t('connection.sslModeLabel')}</label>
             <select className="form-input" value={sslMode} onChange={(e) => setSslMode(e.target.value)} style={{ maxWidth: '240px' }}>
-              {Object.keys(SSL_MODE_DESC).map(m => <option key={m} value={m}>{m}</option>)}
+              {SSL_MODES.map(m => <option key={m} value={m}>{m}</option>)}
             </select>
-            <span className="cm-hint">{SSL_MODE_DESC[sslMode] || ''}</span>
+            <span className="cm-hint">{sslModeDesc(sslMode)}</span>
           </div>
 
           {renderSslWarning()}
@@ -1865,7 +1893,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
               <div className="cm-label-row" style={{ marginBottom: '12px' }}>
                 <div className="cm-subcard-head" style={{ margin: 0 }}>
                   <ShieldCheck size={13} />
-                  <span>{needVerify ? 'Chứng chỉ' : 'Chứng chỉ (tuỳ chọn)'}</span>
+                  <span>{needVerify ? t('connection.certs') : t('connection.certsOptional')}</span>
                 </div>
                 <button
                   type="button"
@@ -1873,31 +1901,31 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                   onClick={() => { setSslKeyPath(''); setSslCertPath(''); setSslCaPath(''); }}
                   disabled={!sslKeyPath && !sslCertPath && !sslCaPath}
                 >
-                  <X size={10} /> <span>Xoá tất cả</span>
+                  <X size={10} /> <span>{t('connection.clearAll')}</span>
                 </button>
               </div>
               <div className="cm-grid three">
                 <div className="form-group">
-                  <label>Client key</label>
-                  <FilePick id={`${prefix}-ssl-key-picker`} value={sslKeyPath} label="Chọn key..." onPick={setSslKeyPath} />
+                  <label>{t('connection.clientKey')}</label>
+                  <FilePick id={`${prefix}-ssl-key-picker`} value={sslKeyPath} label={t('connection.pickKey')} onPick={setSslKeyPath} />
                 </div>
                 <div className="form-group">
-                  <label>Client cert</label>
-                  <FilePick id={`${prefix}-ssl-cert-picker`} value={sslCertPath} label="Chọn cert..." onPick={setSslCertPath} />
+                  <label>{t('connection.clientCert')}</label>
+                  <FilePick id={`${prefix}-ssl-cert-picker`} value={sslCertPath} label={t('connection.pickCert')} onPick={setSslCertPath} />
                 </div>
                 <div className="form-group">
-                  <label>CA cert{needVerify ? ' *' : ''}</label>
-                  <FilePick id={`${prefix}-ssl-ca-picker`} value={sslCaPath} label="Chọn CA..." onPick={setSslCaPath} />
+                  <label>{t('connection.caCert')}{needVerify ? ' *' : ''}</label>
+                  <FilePick id={`${prefix}-ssl-ca-picker`} value={sslCaPath} label={t('connection.pickCa')} onPick={setSslCaPath} />
                 </div>
               </div>
               <div className="cm-hint" style={{ marginTop: '10px' }}>
-                <b>Client key + cert</b> chỉ cần khi máy chủ bắt client tự xác thực (mTLS) — không liên quan tới việc kiểm tra máy chủ.{' '}
+                <Trans i18nKey="connection.certHintBase" components={{ strong: <b /> }} />{' '}
                 {needVerify ? (
-                  <><b>CA cert</b> cần điền nếu CA của máy chủ không nằm trong store chứng chỉ hệ thống; thiếu thì kết nối sẽ bị từ chối.</>
+                  <Trans i18nKey="connection.certHintVerify" components={{ strong: <b /> }} />
                 ) : activeType === 'postgres' ? (
-                  <>Riêng Postgres: nếu điền <b>CA cert</b> thì REQUIRED sẽ tự kiểm tra chứng chỉ như VERIFY_CA.</>
+                  <Trans i18nKey="connection.certHintPostgres" components={{ strong: <b /> }} />
                 ) : (
-                  <>REQUIRED không kiểm tra chứng chỉ máy chủ, nên <b>CA cert</b> ở đây không có tác dụng.</>
+                  <Trans i18nKey="connection.certHintMysql" components={{ strong: <b /> }} />
                 )}
               </div>
             </div>
@@ -1910,14 +1938,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
   // ——— Tab "SSH Tunnel" ———
   const renderSshTab = () => (
     <div className="cm-section">
-      <div className="cm-section-title">SSH Tunnel</div>
-      <div className="cm-section-desc">Kết nối qua một máy chủ trung gian (bastion/jump host) khi cơ sở dữ liệu không mở ra ngoài.</div>
+      <div className="cm-section-title">{t('connection.sshSection')}</div>
+      <div className="cm-section-desc">{t('connection.sshDesc')}</div>
       <div className="cm-fields">
         <div className="cm-switch-row">
-          <button type="button" className={`cm-switch ${sshEnabled ? 'on' : ''}`} onClick={() => setSshEnabled(!sshEnabled)} aria-label="Bật SSH tunnel" />
+          <button type="button" className={`cm-switch ${sshEnabled ? 'on' : ''}`} onClick={() => setSshEnabled(!sshEnabled)} aria-label={t('connection.sshEnableAria')} />
           <div style={{ flex: 1 }}>
-            <div className="cm-switch-label">Kết nối qua SSH</div>
-            <div className="cm-hint">Host/port của cơ sở dữ liệu sẽ được truy cập từ phía máy chủ SSH.</div>
+            <div className="cm-switch-label">{t('connection.sshSwitchLabel')}</div>
+            <div className="cm-hint">{t('connection.sshSwitchHint')}</div>
           </div>
         </div>
 
@@ -1925,14 +1953,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
           <>
             <div className="cm-grid host">
               <div className="form-group">
-                <label>SSH host</label>
+                <label>{t('connection.sshHost')}</label>
                 <div className="input-icon-wrapper">
                   <input type="text" className="form-input" value={sshHost} onChange={(e) => setSshHost(e.target.value)} placeholder="bastion.example.com" />
                   <Network size={14} className="input-icon" />
                 </div>
               </div>
               <div className="form-group">
-                <label>SSH port</label>
+                <label>{t('connection.sshPort')}</label>
                 <div className="input-icon-wrapper">
                   <input type="number" className="form-input" value={sshPort} onChange={(e) => setSshPort(parseInt(e.target.value) || 22)} />
                   <Hash size={14} className="input-icon" />
@@ -1943,16 +1971,16 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                 "Xác thực" ở tab Chung) để user + mật khẩu/passphrase luôn nằm
                 cùng một dòng 2 cột, không còn field lẻ loi nửa dòng. */}
             <div className="cm-label-row">
-              <span className="cm-subhead">Xác thực SSH</span>
+              <span className="cm-subhead">{t('connection.sshAuthHeading')}</span>
               <div className="cm-seg">
-                <button type="button" className={sshAuthType === 'password' ? 'on' : ''} onClick={() => setSshAuthType('password')}>Mật khẩu</button>
-                <button type="button" className={sshAuthType === 'key' ? 'on' : ''} onClick={() => setSshAuthType('key')}>Private key</button>
+                <button type="button" className={sshAuthType === 'password' ? 'on' : ''} onClick={() => setSshAuthType('password')}>{t('connection.authPassword')}</button>
+                <button type="button" className={sshAuthType === 'key' ? 'on' : ''} onClick={() => setSshAuthType('key')}>{t('connection.sshAuthKey')}</button>
               </div>
             </div>
 
             <div className="cm-grid two">
               <div className="form-group">
-                <label>SSH user</label>
+                <label>{t('connection.sshUser')}</label>
                 <div className="input-icon-wrapper">
                   <input type="text" className="form-input" value={sshUser} onChange={(e) => setSshUser(e.target.value)} placeholder="ubuntu" />
                   <User size={14} className="input-icon" />
@@ -1960,7 +1988,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
               </div>
               {sshAuthType === 'password' ? (
                 <div className="form-group">
-                  <label>Mật khẩu SSH</label>
+                  <label>{t('connection.sshPassword')}</label>
                   <div className="input-icon-wrapper">
                     <input
                       type={showPw ? 'text' : 'password'}
@@ -1976,7 +2004,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                 </div>
               ) : (
                 <div className="form-group">
-                  <label>Passphrase (nếu key có mật khẩu)</label>
+                  <label>{t('connection.sshPassphrase')}</label>
                   <div className="input-icon-wrapper">
                     <input
                       type={showPw ? 'text' : 'password'}
@@ -1997,11 +2025,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
               <div className="cm-subcard">
                 <div className="cm-subcard-head">
                   <Key size={13} />
-                  <span>Private key</span>
+                  <span>{t('connection.sshAuthKey')}</span>
                 </div>
                 <div className="cm-fields" style={{ marginTop: 0 }}>
                   <div className="form-group">
-                    <label>Đường dẫn tệp key</label>
+                    <label>{t('connection.sshKeyPath')}</label>
                     <div className="cm-file-row">
                       <input
                         type="text"
@@ -2010,11 +2038,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                         onChange={(e) => setSshKeyPath(e.target.value)}
                         placeholder="C:\Users\me\.ssh\id_rsa"
                       />
-                      <FilePick id="ssh-key-file-picker" value="" label="Chọn tệp..." onPick={setSshKeyPath} />
+                      <FilePick id="ssh-key-file-picker" value="" label={t('connection.pickFile')} onPick={setSshKeyPath} />
                     </div>
                   </div>
                   <div className="form-group">
-                    <label>Hoặc dán trực tiếp nội dung key</label>
+                    <label>{t('connection.sshKeyContent')}</label>
                     <textarea
                       className="form-input cm-key-area"
                       value={sshKeyContent}
@@ -2060,38 +2088,47 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
       <ConfirmDialog
         open={brConfirm}
         tone={brOverwrite ? 'danger' : 'info'}
-        title="Xác nhận phục hồi dữ liệu"
+        title={t('connection.brConfirmTitle')}
         message={
           <>
             <div>
-              Phục hồi vào{' '}
-              <b style={{ fontFamily: 'monospace' }}>{brTargetDb || '(database mặc định của kết nối)'}</b>
-              {brType !== 'sqlite' && (
-                <> trên <b style={{ fontFamily: 'monospace' }}>{brType === 'mysql' ? brMyHost : brPgHost}</b></>
-              )}.
+              {brType === 'sqlite' ? (
+                <Trans
+                  i18nKey="connection.brRestoreInto"
+                  values={{ db: brTargetDb || t('connection.brTargetDefault') }}
+                  components={{ code: <b style={{ fontFamily: 'monospace' }} /> }}
+                />
+              ) : (
+                <Trans
+                  i18nKey="connection.brRestoreIntoHost"
+                  values={{
+                    db: brTargetDb || t('connection.brTargetDefault'),
+                    host: brType === 'mysql' ? brMyHost : brPgHost,
+                  }}
+                  components={{ code: <b style={{ fontFamily: 'monospace' }} /> }}
+                />
+              )}
               {!brTargetDb && brType !== 'sqlite' && (
-                <> Tệp dump có lệnh <code style={{ fontFamily: 'monospace' }}>USE</code> thì sẽ chuyển theo tệp.</>
+                <>{' '}<Trans i18nKey="connection.brUseHint" components={{ code: <code style={{ fontFamily: 'monospace' }} /> }} /></>
               )}
             </div>
             <div style={{ marginTop: '8px', display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '2px 10px' }}>
-              <span style={{ color: 'var(--win-text-secondary)' }}>Bảng:</span>
-              <b>{brParsedTables.length === 0 ? 'toàn bộ tệp' : `${brSelectedTables.length}/${brParsedTables.length} bảng`}</b>
-              <span style={{ color: 'var(--win-text-secondary)' }}>Câu lệnh sẽ chạy:</span>
+              <span style={{ color: 'var(--win-text-secondary)' }}>{t('connection.brRowTables')}</span>
+              <b>{brParsedTables.length === 0
+                ? t('connection.brAllFile')
+                : t('connection.brTablesCount', { selected: brSelectedTables.length, total: brParsedTables.length })}</b>
+              <span style={{ color: 'var(--win-text-secondary)' }}>{t('connection.brRowStatements')}</span>
               <b>{brPlannedStatements.toLocaleString()}</b>
-              <span style={{ color: 'var(--win-text-secondary)' }}>Tệp:</span>
+              <span style={{ color: 'var(--win-text-secondary)' }}>{t('connection.brRowFile')}</span>
               <b>{brFile ? `${brFile.name} (${(brFile.size / 1024 / 1024).toFixed(2)} MB)` : ''}</b>
-              <span style={{ color: 'var(--win-text-secondary)' }}>Ước tính:</span>
-              <b>~{formatRestoreEta(brPlannedStatements / 800)}</b>
+              <span style={{ color: 'var(--win-text-secondary)' }}>{t('connection.brRowEta')}</span>
+              <b>~{formatRestoreEta(t, brPlannedStatements / 800)}</b>
             </div>
           </>
         }
-        note={
-          brOverwrite
-            ? 'Các đối tượng trùng tên sẽ bị DROP rồi tạo lại — dữ liệu hiện có của chúng mất hẳn.'
-            : 'Ước tính chỉ là tương đối; khi chạy sẽ hiện tiến độ và thời gian còn lại thật.'
-        }
-        confirmLabel="Bắt đầu phục hồi"
-        cancelLabel="Quay lại"
+        note={brOverwrite ? t('connection.brNoteOverwrite') : t('connection.brNoteEstimate')}
+        confirmLabel={t('connection.brStartRestore')}
+        cancelLabel={t('connection.back')}
         onConfirm={() => handleBrSubmit()}
         onCancel={() => setBrConfirm(false)}
       />
@@ -2099,23 +2136,21 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
       <div className="cm-section">
         <div className="cm-label-row">
           <div>
-            <div className="cm-section-title">{brAction === 'backup' ? 'Sao lưu cơ sở dữ liệu' : 'Phục hồi từ tệp sao lưu'}</div>
+            <div className="cm-section-title">{brAction === 'backup' ? t('connection.brBackupTitle') : t('connection.brRestoreTitle')}</div>
             <div className="cm-section-desc">
-              {brAction === 'backup'
-                ? 'Xuất toàn bộ cấu trúc và dữ liệu ra tệp .sql (có thể nén gzip).'
-                : 'Chạy lại tệp .sql / .sql.gz vào cơ sở dữ liệu đích, chọn được từng bảng.'}
+              {brAction === 'backup' ? t('connection.brBackupDesc') : t('connection.brRestoreDesc')}
             </div>
           </div>
           <div className="cm-seg">
-            <button type="button" className={brAction === 'backup' ? 'on' : ''} onClick={() => setBrAction('backup')}>Sao lưu</button>
-            <button type="button" className={brAction === 'restore' ? 'on' : ''} onClick={() => setBrAction('restore')}>Phục hồi</button>
+            <button type="button" className={brAction === 'backup' ? 'on' : ''} onClick={() => setBrAction('backup')}>{t('connection.brSegBackup')}</button>
+            <button type="button" className={brAction === 'restore' ? 'on' : ''} onClick={() => setBrAction('restore')}>{t('connection.brSegRestore')}</button>
           </div>
         </div>
 
         <div className="cm-fields">
           <div className="cm-grid two">
             <div className="form-group">
-              <label>Lấy cấu hình từ kết nối đã lưu</label>
+              <label>{t('connection.brFromProfile')}</label>
               <select
                 className="form-input"
                 value={selectedBrProfileId || ''}
@@ -2145,14 +2180,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                   }
                 }}
               >
-                <option value="">— Nhập thủ công —</option>
+                <option value="">{t('connection.brManual')}</option>
                 {profiles.map(p => (
                   <option key={p.id} value={p.id}>{p.name} ({p.type.toUpperCase()})</option>
                 ))}
               </select>
             </div>
             <div className="form-group">
-              <label>Loại cơ sở dữ liệu</label>
+              <label>{t('connection.brDbType')}</label>
               <select className="form-input" value={brType} onChange={(e) => setBrType(e.target.value as any)}>
                 <option value="sqlite">SQLite</option>
                 <option value="postgres">PostgreSQL</option>
@@ -2163,7 +2198,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
 
           {brType === 'sqlite' ? (
             <div className="form-group">
-              <label>Đường dẫn tệp SQLite</label>
+              <label>{t('connection.brSqlitePath')}</label>
               <div className="input-icon-wrapper">
                 <input type="text" className="form-input" value={brSqlitePath} onChange={(e) => setBrSqlitePath(e.target.value)} />
                 <FolderOpen size={14} className="input-icon" />
@@ -2173,7 +2208,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
             <>
               <div className="cm-grid host">
                 <div className="form-group">
-                  <label>Host</label>
+                  <label>{t('connection.host')}</label>
                   <div className="input-icon-wrapper">
                     <input
                       type="text"
@@ -2185,7 +2220,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                   </div>
                 </div>
                 <div className="form-group">
-                  <label>Port</label>
+                  <label>{t('connection.port')}</label>
                   <div className="input-icon-wrapper">
                     <input
                       type="number"
@@ -2199,7 +2234,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
               </div>
               <div className="cm-grid two">
                 <div className="form-group">
-                  <label>Tên đăng nhập</label>
+                  <label>{t('connection.username')}</label>
                   <div className="input-icon-wrapper">
                     <input
                       type="text"
@@ -2211,7 +2246,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                   </div>
                 </div>
                 <div className="form-group">
-                  <label>Mật khẩu</label>
+                  <label>{t('connection.password')}</label>
                   <div className="input-icon-wrapper">
                     <input
                       type={showPw ? 'text' : 'password'}
@@ -2229,7 +2264,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                 brType === 'postgres' ? brPgDatabase : brMyDatabase,
                 brType === 'postgres' ? setBrPgDatabase : setBrMyDatabase,
                 brType === 'postgres' ? 'br_postgres' : 'br_mysql',
-                brType === 'postgres' ? 'postgres' : 'Không bắt buộc',
+                brType === 'postgres' ? 'postgres' : t('connection.databaseOptional'),
               )}
             </>
           )}
@@ -2239,23 +2274,23 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
       <div className="cm-section">
         {brAction === 'backup' ? (
           <>
-            <div className="cm-section-title">Tuỳ chọn xuất</div>
+            <div className="cm-section-title">{t('connection.brExportOptions')}</div>
             <div className="cm-fields">
               <div className="form-group" style={{ maxWidth: '340px' }}>
-                <label>Tên tệp sao lưu</label>
+                <label>{t('connection.brFilename')}</label>
                 <input type="text" className="form-input" value={brFilename} onChange={(e) => setBrFilename(e.target.value)} />
               </div>
               <div className="cm-check-grid">
                 <label className="cm-check"><input type="checkbox" checked={brDropTable} onChange={(e) => setBrDropTable(e.target.checked)} /><span>DROP TABLE IF EXISTS</span></label>
-                <label className="cm-check"><input type="checkbox" checked={brIncludeStructure} onChange={(e) => setBrIncludeStructure(e.target.checked)} /><span>Kèm cấu trúc bảng</span></label>
-                <label className="cm-check"><input type="checkbox" checked={brIncludeContent} onChange={(e) => setBrIncludeContent(e.target.checked)} /><span>Kèm dữ liệu</span></label>
-                <label className="cm-check"><input type="checkbox" checked={brCompressGzip} onChange={(e) => setBrCompressGzip(e.target.checked)} /><span>Nén gzip (.sql.gz)</span></label>
+                <label className="cm-check"><input type="checkbox" checked={brIncludeStructure} onChange={(e) => setBrIncludeStructure(e.target.checked)} /><span>{t('connection.brIncludeStructure')}</span></label>
+                <label className="cm-check"><input type="checkbox" checked={brIncludeContent} onChange={(e) => setBrIncludeContent(e.target.checked)} /><span>{t('connection.brIncludeContent')}</span></label>
+                <label className="cm-check"><input type="checkbox" checked={brCompressGzip} onChange={(e) => setBrCompressGzip(e.target.checked)} /><span>{t('connection.brGzip')}</span></label>
               </div>
             </div>
           </>
         ) : (
           <>
-            <div className="cm-section-title">Tệp sao lưu</div>
+            <div className="cm-section-title">{t('connection.brFileSection')}</div>
             <div className="cm-fields">
               <label className="cm-dropzone">
                 <input
@@ -2266,14 +2301,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                 />
                 <Upload size={18} />
                 <div>
-                  <div className="cm-dropzone-title">{brFile ? brFile.name : 'Chọn tệp .sql hoặc .sql.gz'}</div>
-                  <div className="cm-hint">{brFile ? `${(brFile.size / 1024 / 1024).toFixed(2)} MB — bấm để đổi tệp` : 'Bấm để chọn tệp từ máy của bạn'}</div>
+                  <div className="cm-dropzone-title">{brFile ? brFile.name : t('connection.brPickFile')}</div>
+                  <div className="cm-hint">{brFile ? t('connection.brFileSize', { size: (brFile.size / 1024 / 1024).toFixed(2) }) : t('connection.brPickHint')}</div>
                 </div>
               </label>
 
               {brParsing && (
                 <div className="cm-hint" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <LoadingSpinner size={11} /> Đang đọc danh sách bảng từ tệp...
+                  <LoadingSpinner size={11} /> {t('connection.brParsingTables')}
                 </div>
               )}
 
@@ -2282,27 +2317,27 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                   <div className="cm-label-row" style={{ marginBottom: '10px' }}>
                     <div className="cm-subcard-head" style={{ margin: 0 }}>
                       <Database size={13} />
-                      <span>Bảng sẽ phục hồi ({brSelectedTables.length}/{brParsedTables.length})</span>
+                      <span>{t('connection.brTablesToRestore', { selected: brSelectedTables.length, total: brParsedTables.length })}</span>
                     </div>
                     <button
                       type="button"
                       className="cm-mini-btn"
                       onClick={() => setBrSelectedTables(brSelectedTables.length === brParsedTables.length ? [] : [...brParsedTables])}
                     >
-                      {brSelectedTables.length === brParsedTables.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
+                      {brSelectedTables.length === brParsedTables.length ? t('connection.brDeselectAll') : t('connection.brSelectAll')}
                     </button>
                   </div>
                   <div className="cm-table-picker">
-                    {brParsedTables.map(t => {
-                      const isChecked = brSelectedTables.includes(t);
+                    {brParsedTables.map(tableName => {
+                      const isChecked = brSelectedTables.includes(tableName);
                       return (
-                        <label key={t} className="cm-check">
+                        <label key={tableName} className="cm-check">
                           <input
                             type="checkbox"
                             checked={isChecked}
-                            onChange={() => setBrSelectedTables(isChecked ? brSelectedTables.filter(x => x !== t) : [...brSelectedTables, t])}
+                            onChange={() => setBrSelectedTables(isChecked ? brSelectedTables.filter(x => x !== tableName) : [...brSelectedTables, tableName])}
                           />
-                          <span>{t}</span>
+                          <span>{tableName}</span>
                         </label>
                       );
                     })}
@@ -2320,9 +2355,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                     onChange={(e) => setBrOverwrite(e.target.checked)}
                   />
                   <span>
-                    Ghi đè đối tượng trùng tên (DROP bảng/view/trigger/routine trước khi tạo lại)
+                    {t('connection.brOverwriteLabel')}
                     <span className="cm-hint" style={{ display: 'block' }}>
-                      Không bật thì gặp bảng đã tồn tại sẽ lỗi và huỷ toàn bộ lần phục hồi.
+                      {t('connection.brOverwriteHint')}
                     </span>
                   </span>
                 </label>
@@ -2343,13 +2378,17 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
               <Database size={32} className="connection-success-icon" />
               <CheckCircle2 size={16} className="connection-success-badge" />
             </div>
-            <div className="connection-success-title">Kết nối thành công!</div>
+            <div className="connection-success-title">{t('connection.successTitle')}</div>
             <div className="connection-success-subtitle">
-              Đang chuẩn bị workspace cho <strong>{connectingDbName}</strong>...
+              <Trans
+                i18nKey="connection.successSubtitle"
+                values={{ name: connectingDbName }}
+                components={{ strong: <strong /> }}
+              />
             </div>
             <div className="connection-success-loader">
               <LoadingSpinner size={16} />
-              <span>Đang mở giao diện CSDL...</span>
+              <span>{t('connection.successLoading')}</span>
             </div>
           </div>
         </div>
@@ -2360,42 +2399,42 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
           {/* ————— Sidebar: danh sách kết nối đã lưu ————— */}
           <aside className="cm-side">
             <div className="cm-side-head">
-              <span className="cm-side-title">Kết nối · {profiles.length}</span>
-              <button className="cm-icon-btn" title="Nhập từ tệp cấu hình" onClick={() => document.getElementById('cm-import-file')?.click()}>
+              <span className="cm-side-title">{t('connection.sideTitle', { n: profiles.length })}</span>
+              <button className="cm-icon-btn" title={t('connection.importFromFile')} onClick={() => document.getElementById('cm-import-file')?.click()}>
                 <Upload size={13} />
               </button>
               <input id="cm-import-file" type="file" accept=".tableplusconnection,.tableforgeconnection,.json" onChange={handleFileImportSelect} style={{ display: 'none' }} />
-              <button className="cm-icon-btn" title="Xuất tất cả kết nối" onClick={() => openExportModal('all')}>
+              <button className="cm-icon-btn" title={t('connection.exportAll')} onClick={() => openExportModal('all')}>
                 <Download size={13} />
               </button>
             </div>
 
             <div className="cm-new-wrap">
               <button className="cm-new-btn" onClick={() => setShowNewMenu((v) => !v)}>
-                <Plus size={14} /> Kết nối mới
+                <Plus size={14} /> {t('connection.newConnection')}
                 <ChevronDown size={13} style={{ opacity: 0.6, marginLeft: 'auto' }} />
               </button>
               {showNewMenu && (
                 <>
                   <div className="cm-pop-backdrop" onClick={() => setShowNewMenu(false)} />
                   <div className="cm-pop">
-                    {NEW_TYPES.map(t => {
-                      const m = TYPE_META[t.val];
+                    {NEW_TYPES.map(nt => {
+                      const m = TYPE_META[nt.val];
                       return (
                         <button
-                          key={t.val}
+                          key={nt.val}
                           className="cm-pop-item"
-                          onClick={() => { setShowNewMenu(false); handleCreateNewProfile(t.val); }}
+                          onClick={() => { setShowNewMenu(false); handleCreateNewProfile(nt.val); }}
                         >
                           <span className="cm-badge sm" style={{ background: m.color }}><m.Icon size={13} /></span>
-                          <span>{t.label}</span>
+                          <span>{nt.label}</span>
                         </button>
                       );
                     })}
                     <div className="cm-pop-sep" />
                     <button className="cm-pop-item" onClick={() => { setShowNewMenu(false); setShowImportUrlModal(true); }}>
                       <span className="cm-badge sm ghost"><Link size={12} /></span>
-                      <span>Từ connection URL...</span>
+                      <span>{t('connection.fromUrl')}</span>
                     </button>
                   </div>
                 </>
@@ -2408,10 +2447,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                 type="text"
                 value={profileSearch}
                 onChange={(e) => setProfileSearch(e.target.value)}
-                placeholder="Tìm theo tên, host, database..."
+                placeholder={t('connection.searchPlaceholder')}
               />
               {profileSearch && (
-                <button className="cm-icon-btn sm" onClick={() => setProfileSearch('')} title="Xoá tìm kiếm">
+                <button className="cm-icon-btn sm" onClick={() => setProfileSearch('')} title={t('connection.clearSearch')}>
                   <X size={12} />
                 </button>
               )}
@@ -2424,8 +2463,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
               {groupNames.length === 0 && (
                 <div className="cm-empty">
                   {profiles.length === 0
-                    ? <>Chưa có kết nối nào.<br />Bấm <b>Kết nối mới</b> để bắt đầu.</>
-                    : <>Không có kết nối nào khớp<br />với “{profileSearch}”.</>}
+                    ? <Trans i18nKey="connection.emptyNoProfiles" components={{ strong: <b /> }} />
+                    : t('connection.emptyNoMatch', { q: profileSearch })}
                 </div>
               )}
 
@@ -2471,8 +2510,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                             <div className="cm-item-name">
                               <span className="cm-ellipsis">{p.name}</span>
                               {/* Đèn trạng thái: chỉ 'busy' nháy. */}
-                              {led && <span className={`cm-item-led ${led}`} title={LED_TITLE[led]} />}
-                              {defaultProfileId === p.id && <Star size={10} style={{ fill: 'var(--st-warn)', color: 'var(--st-warn)', flexShrink: 0 }} aria-label="Kết nối mặc định" />}
+                              {led && <span className={`cm-item-led ${led}`} title={ledTitle[led]} />}
+                              {defaultProfileId === p.id && <Star size={10} style={{ fill: 'var(--st-warn)', color: 'var(--st-warn)', flexShrink: 0 }} aria-label={t('connection.defaultConnectionAria')} />}
                             </div>
                             <div className="cm-item-sub">{m.label}{sub ? ` · ${sub}` : ''}</div>
                           </div>
@@ -2480,17 +2519,17 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                             <button
                               className="cm-icon-btn sm"
                               onClick={(e) => handleToggleDefaultProfile(p.id, e)}
-                              title={defaultProfileId === p.id ? 'Bỏ kết nối mặc định' : 'Đặt làm kết nối mặc định'}
+                              title={defaultProfileId === p.id ? t('connection.unsetDefault') : t('connection.setDefault')}
                             >
                               {/* fill đặt qua CSS chứ không qua prop: prop thành thuộc
                                   tính SVG, mà thuộc tính SVG không nhận var(). */}
                               <Star size={12} style={{ fill: defaultProfileId === p.id ? 'var(--st-warn)' : 'none', color: defaultProfileId === p.id ? 'var(--st-warn)' : 'currentColor' }} />
                             </button>
-                            <button className="cm-icon-btn sm" onClick={(e) => handleDuplicateProfile(p, e)} title="Nhân bản kết nối">
+                            <button className="cm-icon-btn sm" onClick={(e) => handleDuplicateProfile(p, e)} title={t('connection.duplicateProfile')}>
                               <Copy size={12} />
                             </button>
                             {p.id !== 'demo' && (
-                              <button className="cm-icon-btn sm danger" onClick={(e) => handleDeleteProfile(p.id, e)} title="Xoá kết nối">
+                              <button className="cm-icon-btn sm danger" onClick={(e) => handleDeleteProfile(p.id, e)} title={t('connection.deleteProfile')}>
                                 <Trash2 size={12} />
                               </button>
                             )}
@@ -2509,7 +2548,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                 onClick={() => setActiveType('backup_restore' as any)}
               >
                 <HardDriveDownload size={14} />
-                <span>Sao lưu &amp; Phục hồi</span>
+                <span>{t('connection.backupRestore')}</span>
               </button>
             </div>
           </aside>
@@ -2518,12 +2557,12 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
           <main className="cm-main">
             {isBrMode ? (
               <header className="cm-main-head">
-                <button className="cm-icon-btn lg" title="Quay lại danh sách kết nối" onClick={() => setActiveType(((profiles.find(p => p.id === activeProfileId)?.type) || 'sqlite') as any)}>
+                <button className="cm-icon-btn lg" title={t('connection.backToList')} onClick={() => setActiveType(((profiles.find(p => p.id === activeProfileId)?.type) || 'sqlite') as any)}>
                   <ArrowLeft size={16} />
                 </button>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="cm-head-name">Sao lưu &amp; Phục hồi</div>
-                  <div className="cm-head-meta">Không cần mở kết nối trước — chỉ cần thông tin máy chủ.</div>
+                  <div className="cm-head-name">{t('connection.backupRestore')}</div>
+                  <div className="cm-head-meta">{t('connection.brHeadMeta')}</div>
                 </div>
               </header>
             ) : hasProfile ? (
@@ -2534,18 +2573,18 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div className="cm-head-name">
-                      <span className="cm-ellipsis">{profileNameInput || 'Kết nối mới'}</span>
+                      <span className="cm-ellipsis">{profileNameInput || t('connection.defaultProfileName')}</span>
                     </div>
                     <div className="cm-head-meta">
                       <span>{activeMeta.label}</span>
                       {profileGroup && <span className="cm-chip">{profileGroup}</span>}
                       <span className={`cm-pill ${testStatus === 'ok' ? 'ok' : testStatus === 'fail' ? 'fail' : 'idle'}`}>
                         <i />
-                        {testStatus === 'ok' ? 'Đã kiểm tra' : testStatus === 'fail' ? 'Kiểm tra thất bại' : 'Chưa kiểm tra'}
+                        {testStatus === 'ok' ? t('connection.pillTested') : testStatus === 'fail' ? t('connection.pillFailed') : t('connection.pillUntested')}
                       </span>
                     </div>
                   </div>
-                  <button className="cm-uri" onClick={handleCopyUri} title="Sao chép connection string (không kèm mật khẩu)">
+                  <button className="cm-uri" onClick={handleCopyUri} title={t('connection.copyUri')}>
                     <span>{connectionUri}</span>
                     {uriCopied ? <Check size={12} style={{ flexShrink: 0, color: 'var(--st-ok)' }} /> : <Copy size={12} style={{ flexShrink: 0, opacity: 0.7 }} />}
                   </button>
@@ -2554,16 +2593,16 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                 {isServerDb && (
                   <nav className="cm-tabs">
                     <button className={`cm-tab ${formTab === 'general' ? 'active' : ''}`} onClick={() => setFormTab('general')}>
-                      <Server size={13} /> Chung
-                      {authMethod === 'aws_iam' && <span className="cm-tab-dot" title="Đang dùng AWS IAM" />}
+                      <Server size={13} /> {t('connection.tabGeneral')}
+                      {authMethod === 'aws_iam' && <span className="cm-tab-dot" title={t('connection.tabDotAws')} />}
                     </button>
                     <button className={`cm-tab ${formTab === 'ssl' ? 'active' : ''}`} onClick={() => setFormTab('ssl')}>
                       <ShieldCheck size={13} /> SSL
-                      {sslMode !== 'DISABLED' && <span className="cm-tab-dot" title={`SSL: ${sslMode}`} />}
+                      {sslMode !== 'DISABLED' && <span className="cm-tab-dot" title={t('connection.tabDotSsl', { mode: sslMode })} />}
                     </button>
                     <button className={`cm-tab ${formTab === 'ssh' ? 'active' : ''}`} onClick={() => setFormTab('ssh')}>
                       <Network size={13} /> SSH Tunnel
-                      {sshEnabled && <span className="cm-tab-dot" title="SSH tunnel đang bật" />}
+                      {sshEnabled && <span className="cm-tab-dot" title={t('connection.tabDotSsh')} />}
                     </button>
                   </nav>
                 )}
@@ -2583,17 +2622,17 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                         className="cm-alert-btn"
                         onClick={() => { setSslMode('REQUIRED'); setFormTab('ssl'); setErrorMsg(null); }}
                       >
-                        Bật SSL
+                        {t('connection.enableSsl')}
                       </button>
                     )}
-                    <button className="cm-icon-btn sm" onClick={() => setErrorMsg(null)} title="Đóng"><X size={12} /></button>
+                    <button className="cm-icon-btn sm" onClick={() => setErrorMsg(null)} title={t('common.close')}><X size={12} /></button>
                   </div>
                 )}
                 {successMsg && (
                   <div className="cm-alert ok">
                     <CheckCircle2 size={15} style={{ flexShrink: 0 }} />
                     <span style={{ flex: 1 }}>{successMsg}</span>
-                    <button className="cm-icon-btn sm" onClick={() => setSuccessMsg(null)} title="Đóng"><X size={12} /></button>
+                    <button className="cm-icon-btn sm" onClick={() => setSuccessMsg(null)} title={t('common.close')}><X size={12} /></button>
                   </div>
                 )}
                 {/* Kho bí mật HĐH hỏng thì cấu hình vẫn lưu được nhưng mật khẩu thì không —
@@ -2602,7 +2641,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                   <div className="cm-alert err">
                     <ShieldAlert size={15} style={{ flexShrink: 0 }} />
                     <span style={{ flex: 1 }}>{secretError}</span>
-                    <button className="cm-icon-btn sm" onClick={() => setSecretError(null)} title="Đóng"><X size={12} /></button>
+                    <button className="cm-icon-btn sm" onClick={() => setSecretError(null)} title={t('common.close')}><X size={12} /></button>
                   </div>
                 )}
 
@@ -2612,8 +2651,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                     ? (
                       <div className="cm-blank">
                         <Database size={34} style={{ opacity: 0.35 }} />
-                        <div className="cm-blank-title">Chưa chọn kết nối</div>
-                        <div className="cm-hint">Chọn một kết nối ở cột bên trái, hoặc tạo kết nối mới để bắt đầu.</div>
+                        <div className="cm-blank-title">{t('connection.blankTitle')}</div>
+                        <div className="cm-hint">{t('connection.blankHint')}</div>
                       </div>
                     )
                     : formTab === 'ssl' && isServerDb
@@ -2634,7 +2673,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                   ) : (
                     <span className="cm-foot-msg cm-hint">
                       {brAction === 'restore' && brFile && brParsedTables.length > 0
-                        ? `${brSelectedTables.length}/${brParsedTables.length} bảng được chọn`
+                        ? t('connection.brFootSelected', { selected: brSelectedTables.length, total: brParsedTables.length })
                         : ''}
                     </span>
                   )}
@@ -2644,21 +2683,25 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                     disabled={brLoading || (brAction === 'restore' && (!brFile || (brParsedTables.length > 0 && brSelectedTables.length === 0)))}
                   >
                     {brLoading
-                      ? <><LoadingSpinner size={13} /> {brAction === 'backup' ? 'Đang sao lưu...' : 'Đang phục hồi...'}</>
-                      : <>{brAction === 'backup' ? <><Download size={14} /> Bắt đầu sao lưu</> : <><Upload size={14} /> Bắt đầu phục hồi</>}</>}
+                      ? <><LoadingSpinner size={13} /> {brAction === 'backup' ? t('connection.brBackingUp') : t('connection.brRestoring')}</>
+                      : <>{brAction === 'backup'
+                        ? <><Download size={14} /> {t('connection.brStartBackup')}</>
+                        : <><Upload size={14} /> {t('connection.brStartRestore')}</>}</>}
                   </button>
                 </>
               ) : hasProfile ? (
                 <>
                   <button className="cm-btn" onClick={handleSaveProfile}>
-                    <Save size={13} /> Lưu thay đổi
+                    <Save size={13} /> {t('connection.saveChanges')}
                   </button>
                   <span className="cm-foot-msg" />
                   <button className="cm-btn" onClick={handleTestConnection} disabled={loading}>
-                    {loading ? <LoadingSpinner size={13} /> : <CheckCircle2 size={13} />} Kiểm tra
+                    {loading ? <LoadingSpinner size={13} /> : <CheckCircle2 size={13} />} {t('connection.test')}
                   </button>
                   <button className="cm-btn primary" onClick={() => handleConnect(false)} disabled={loading}>
-                    {loading ? <><LoadingSpinner size={13} /> Đang kết nối...</> : <><LogIn size={14} /> Kết nối</>}
+                    {loading
+                      ? <><LoadingSpinner size={13} /> {t('connection.connecting')}</>
+                      : <><LogIn size={14} /> {t('connection.connect')}</>}
                   </button>
                 </>
               ) : null}
@@ -2672,12 +2715,12 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
         <div className="cm-modal-backdrop">
           <div className="cm-modal" onClick={(e) => e.stopPropagation()}>
             <div className="cm-modal-head">
-              <Link size={16} style={{ color: 'var(--win-accent)' }} />
-              <h3>Nhập từ connection URL</h3>
-              <button className="cm-icon-btn" onClick={() => { setShowImportUrlModal(false); setImportUrlInput(''); }} title="Đóng"><X size={14} /></button>
+              <Link size={14} style={{ color: 'var(--win-accent)' }} />
+              <h3>{t('connection.importUrlTitle')}</h3>
+              <button className="cm-icon-btn" onClick={() => { setShowImportUrlModal(false); setImportUrlInput(''); }} title={t('common.close')}><X size={14} /></button>
             </div>
             <div className="form-group">
-              <label>Connection URL</label>
+              <label>{t('connection.connectionUrl')}</label>
               <input
                 type="text"
                 className="form-input"
@@ -2687,11 +2730,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                 onKeyDown={(e) => { if (e.key === 'Enter' && importUrlInput.trim()) handleImportUrlSubmit(); }}
                 autoFocus
               />
-              <span className="cm-hint">Hỗ trợ <code>postgres://</code>, <code>postgresql://</code>, <code>mysql://</code> và <code>sqlite://</code>.</span>
+              <span className="cm-hint">{t('connection.importUrlHint')}</span>
             </div>
             <div className="cm-modal-foot">
-              <button className="cm-btn" onClick={() => { setShowImportUrlModal(false); setImportUrlInput(''); }}>Huỷ</button>
-              <button className="cm-btn primary" onClick={handleImportUrlSubmit} disabled={!importUrlInput.trim()}>Nhập</button>
+              <button className="cm-btn" onClick={() => { setShowImportUrlModal(false); setImportUrlInput(''); }}>{t('common.cancel')}</button>
+              <button className="cm-btn primary" onClick={handleImportUrlSubmit} disabled={!importUrlInput.trim()}>{t('connection.importAction')}</button>
             </div>
           </div>
         </div>
@@ -2706,36 +2749,36 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
               <>
                 <button className="context-menu-item" onClick={() => { handleToggleDefaultProfile(contextMenu.profile!.id); setContextMenu(null); }}>
                   <Star size={13} style={{ fill: defaultProfileId === contextMenu.profile.id ? 'var(--st-warn)' : 'none', color: 'var(--st-warn)', flexShrink: 0 }} />
-                  <span>{defaultProfileId === contextMenu.profile.id ? 'Bỏ kết nối mặc định' : 'Đặt làm kết nối mặc định'}</span>
+                  <span>{defaultProfileId === contextMenu.profile.id ? t('connection.unsetDefault') : t('connection.setDefault')}</span>
                 </button>
                 <button className="context-menu-item" onClick={() => { handleDuplicateProfile(contextMenu.profile!, { stopPropagation: () => { } } as any); setContextMenu(null); }}>
                   <Copy size={13} style={{ flexShrink: 0 }} />
-                  <span>Nhân bản kết nối</span>
+                  <span>{t('connection.duplicateProfile')}</span>
                 </button>
                 <button className="context-menu-item" onClick={async () => { const p = contextMenu.profile!; setContextMenu(null); /* SSH terminal cần mật khẩu/private key -> lấy từ kho HĐH */ setTerminalProfile({ ...p, config: await configWithSecrets(p) }); }}>
                   <TerminalSquare size={13} style={{ flexShrink: 0 }} />
                   <span>
                     {contextMenu.profile.config?.sshEnabled && contextMenu.profile.config?.sshHost
-                      ? 'Mở SSH Terminal'
-                      : 'Mở Terminal (local)'}
+                      ? t('connection.ctxOpenSshTerminal')
+                      : t('connection.ctxOpenLocalTerminal')}
                   </span>
                 </button>
                 <div className="cm-pop-sep" />
                 <button className="context-menu-item" onClick={() => openExportModal('single', undefined, contextMenu.profile)}>
                   <Download size={13} style={{ flexShrink: 0 }} />
-                  <span>Xuất kết nối này</span>
+                  <span>{t('connection.ctxExportThis')}</span>
                 </button>
               </>
             )}
             {(contextMenu.scope === 'group' || contextMenu.scope === 'single') && contextMenu.groupName && (
               <button className="context-menu-item" onClick={() => openExportModal('group', contextMenu.groupName)}>
                 <Download size={13} style={{ flexShrink: 0 }} />
-                <span>Xuất nhóm "{contextMenu.groupName}"</span>
+                <span>{t('connection.ctxExportGroup', { name: contextMenu.groupName })}</span>
               </button>
             )}
             <button className="context-menu-item" onClick={() => openExportModal('all')}>
               <Download size={13} style={{ flexShrink: 0 }} />
-              <span>Xuất tất cả kết nối</span>
+              <span>{t('connection.exportAll')}</span>
             </button>
           </div>
         </>
@@ -2756,43 +2799,43 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
         <div className="cm-modal-backdrop">
           <div className="cm-modal" onClick={(e) => e.stopPropagation()}>
             <div className="cm-modal-head">
-              <Download size={16} style={{ color: 'var(--win-accent)' }} />
+              <Download size={14} style={{ color: 'var(--win-accent)' }} />
               <h3>
-                {exportScope === 'group' ? `Xuất nhóm "${exportGroupTarget}"` :
-                  exportScope === 'single' ? `Xuất "${exportSingleProfile?.name}"` :
-                    'Xuất tất cả kết nối'}
+                {exportScope === 'group' ? t('connection.exportModalGroup', { name: exportGroupTarget }) :
+                  exportScope === 'single' ? t('connection.exportModalSingle', { name: exportSingleProfile?.name }) :
+                    t('connection.exportAll')}
               </h3>
-              <button className="cm-icon-btn" onClick={() => setShowExportModal(false)} title="Đóng" disabled={exporting}><X size={14} /></button>
+              <button className="cm-icon-btn" onClick={() => setShowExportModal(false)} title={t('common.close')} disabled={exporting}><X size={14} /></button>
             </div>
 
             <div className="cm-subcard">
               <label className="cm-check">
                 <input type="checkbox" checked={exportIncludePasswords} onChange={(e) => setExportIncludePasswords(e.target.checked)} />
-                <span style={{ fontWeight: 600 }}>Kèm mật khẩu database / SSH</span>
+                <span style={{ fontWeight: 600 }}>{t('connection.exportIncludePasswords')}</span>
               </label>
               <div className={`cm-hint ${exportIncludePasswords ? 'warn' : ''}`} style={{ marginLeft: '24px', marginTop: '4px' }}>
                 {exportIncludePasswords
-                  ? '⚠ Mật khẩu sẽ nằm trong tệp xuất — nên đặt mật khẩu bảo vệ tệp bên dưới.'
-                  : '✓ Mật khẩu sẽ bị loại khỏi tệp xuất.'}
+                  ? t('connection.exportWarnIncluded')
+                  : t('connection.exportWarnExcluded')}
               </div>
               <div className="form-group" style={{ marginTop: '14px' }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <Lock size={11} /> Mật khẩu bảo vệ tệp (tuỳ chọn)
+                  <Lock size={11} /> {t('connection.exportFilePassword')}
                 </label>
                 <input
                   type="password"
                   className="form-input"
                   value={exportFilePassword}
                   onChange={(e) => setExportFilePassword(e.target.value)}
-                  placeholder="Để trống nếu không đặt mật khẩu"
+                  placeholder={t('connection.exportFilePasswordPlaceholder')}
                 />
               </div>
             </div>
 
             <div className="cm-modal-foot">
-              <button className="cm-btn" onClick={() => setShowExportModal(false)} disabled={exporting}>Huỷ</button>
+              <button className="cm-btn" onClick={() => setShowExportModal(false)} disabled={exporting}>{t('common.cancel')}</button>
               <button className="cm-btn primary" onClick={handlePerformExport} disabled={exporting}>
-                {exporting ? <LoadingSpinner size={12} /> : <Download size={13} />} Xuất
+                {exporting ? <LoadingSpinner size={12} /> : <Download size={13} />} {t('connection.exportAction')}
               </button>
             </div>
           </div>
@@ -2804,28 +2847,28 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
         <div className="cm-modal-backdrop">
           <div className="cm-modal sm" onClick={(e) => e.stopPropagation()}>
             <div className="cm-modal-head">
-              <Lock size={16} style={{ color: 'var(--st-warn)' }} />
-              <h3>Tệp kết nối được mã hoá</h3>
+              <Lock size={14} style={{ color: 'var(--st-warn)' }} />
+              <h3>{t('connection.importPwTitle')}</h3>
             </div>
             <p className="cm-hint" style={{ margin: 0 }}>
-              Nhập mật khẩu đã dùng khi xuất tệp để tiếp tục nhập kết nối.
+              {t('connection.importPwDesc')}
             </p>
             <div className="form-group">
-              <label>Mật khẩu tệp</label>
+              <label>{t('connection.importPwLabel')}</label>
               <input
                 type="password"
                 className="form-input"
                 value={importPasswordInput}
                 onChange={(e) => setImportPasswordInput(e.target.value)}
-                placeholder="Nhập mật khẩu..."
+                placeholder={t('connection.importPwPlaceholder')}
                 onKeyDown={(e) => { if (e.key === 'Enter') handlePasswordDecryptSubmit(); }}
                 autoFocus
               />
             </div>
             <div className="cm-modal-foot">
-              <button className="cm-btn" onClick={() => { setShowImportPasswordModal(false); setPendingImportContent(null); }} disabled={importing}>Huỷ</button>
+              <button className="cm-btn" onClick={() => { setShowImportPasswordModal(false); setPendingImportContent(null); }} disabled={importing}>{t('common.cancel')}</button>
               <button className="cm-btn primary" onClick={handlePasswordDecryptSubmit} disabled={importing || !importPasswordInput.trim()}>
-                {importing ? <LoadingSpinner size={12} /> : <Key size={13} />} Giải mã &amp; nhập
+                {importing ? <LoadingSpinner size={12} /> : <Key size={13} />} {t('connection.importPwSubmit')}
               </button>
             </div>
           </div>

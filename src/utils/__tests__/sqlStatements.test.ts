@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { splitStatements, statementAt, analyzeStatements, resolveAliases, isSchemaChangingSql } from '../../sql/statements';
+import { splitStatements, statementAt, analyzeStatements, resolveAliases, collectTableRefs, isSchemaChangingSql, findUnsafeStatements } from '../../sql/statements';
 import { formatSql, minifySql } from '../../sql/format';
 
 describe('splitStatements', () => {
@@ -173,9 +173,56 @@ describe('resolveAliases', () => {
     expect(m2.get('on')).toBeUndefined();
   });
 
+  it('bảng ngay sau một bảng không alias vẫn được nhận', () => {
+    // Trước đây nhóm alias khớp rồi mới loại 'JOIN', nên con trỏ regex đã trượt qua và
+    // 'b' bị bỏ hẳn — hover trên b.* không tra được bảng.
+    const m = resolveAliases('SELECT * FROM a JOIN b ON a.id = b.id');
+    expect(m.get('a')).toBe('a');
+    expect(m.get('b')).toBe('b');
+  });
+
   it('bỏ dấu bao quanh và tiền tố schema', () => {
     const m = resolveAliases('SELECT * FROM "public"."orders" o');
     expect(m.get('o')).toBe('orders');
+  });
+});
+
+describe('collectTableRefs', () => {
+  it('giữ đúng thứ tự xuất hiện (gợi ý JOIN cần biết bảng nào JOIN sau cùng)', () => {
+    const refs = collectTableRefs('SELECT * FROM a JOIN b ON a.id = b.id JOIN c ON c.id = b.id');
+    expect(refs.map(r => r.table)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('tách được alias, và không nhận từ khoá làm alias', () => {
+    const refs = collectTableRefs('SELECT * FROM orders o JOIN users AS u ON u.id = o.user_id');
+    expect(refs).toEqual([
+      { table: 'orders', alias: 'o' },
+      { table: 'users', alias: 'u' },
+    ]);
+    expect(collectTableRefs('SELECT * FROM orders WHERE x = 1')[0].alias).toBeUndefined();
+  });
+
+  // Hai ca dưới đây là lý do hàm này tồn tại: parser ANTLR trả entity thiếu/rỗng khi câu
+  // lệnh còn gõ dở (Postgres bỏ mất bảng vừa JOIN ở ca 1; MySQL trả 0 entity ở ca 2),
+  // làm mất alias -> gợi ý cột rơi về "mọi bảng" và không gợi ý được điều kiện JOIN.
+  it('câu JOIN chưa gõ điều kiện: vẫn thấy cả hai bảng', () => {
+    const refs = collectTableRefs('SELECT * FROM city c\nJOIN address a on ');
+    expect(refs).toEqual([
+      { table: 'city', alias: 'c' },
+      { table: 'address', alias: 'a' },
+    ]);
+  });
+
+  it('caret ngay sau "alias.": vẫn giữ được alias để lọc cột đúng bảng', () => {
+    const refs = collectTableRefs('SELECT * FROM city c\nJOIN address a on c.');
+    expect(resolveAliases('SELECT * FROM city c\nJOIN address a on c.').get('c')).toBe('city');
+    expect(refs.map(r => r.table)).toEqual(['city', 'address']);
+  });
+
+  it('bỏ dấu bao quanh và tiền tố schema', () => {
+    expect(collectTableRefs('SELECT * FROM `sakila`.`city` AS c')).toEqual([
+      { table: 'city', alias: 'c' },
+    ]);
   });
 });
 
@@ -327,5 +374,57 @@ describe('minifySql', () => {
 
   it('bỏ khoảng trắng thừa quanh dấu ngoặc và dấu phẩy', () => {
     expect(minifySql('SELECT COUNT( a , b )   FROM t')).toBe('SELECT COUNT(a, b) FROM t');
+  });
+});
+
+describe('findUnsafeStatements', () => {
+  const kinds = (sql: string) => findUnsafeStatements(sql).map(s => s.kind);
+
+  it('cảnh báo DELETE không có WHERE', () => {
+    expect(kinds('DELETE FROM users')).toEqual(['deleteNoWhere']);
+  });
+
+  it('bỏ qua DELETE có WHERE', () => {
+    expect(kinds('DELETE FROM users WHERE id = 1')).toEqual([]);
+  });
+
+  it('cảnh báo DROP TABLE (kể cả IF EXISTS / TEMPORARY)', () => {
+    expect(kinds('DROP TABLE users')).toEqual(['dropTable']);
+    expect(kinds('DROP TABLE IF EXISTS users')).toEqual(['dropTable']);
+    expect(kinds('DROP TEMPORARY TABLE t')).toEqual(['dropTable']);
+  });
+
+  it('không cảnh báo DROP VIEW/INDEX/DATABASE', () => {
+    expect(kinds('DROP VIEW v; DROP INDEX i; DROP DATABASE d')).toEqual([]);
+  });
+
+  it('chỉ cảnh báo đúng câu vi phạm trong script nhiều câu lệnh', () => {
+    const sql = 'DELETE FROM a WHERE id=1;\nDELETE FROM b;\nSELECT 1;\nDROP TABLE c;';
+    expect(kinds(sql)).toEqual(['deleteNoWhere', 'dropTable']);
+  });
+
+  // WHERE nằm trong comment thì không chạy -> vẫn phải cảnh báo (hướng an toàn).
+  it('không bị comment qua mặt', () => {
+    expect(kinds('DELETE FROM t -- WHERE id = 1')).toEqual(['deleteNoWhere']);
+    expect(kinds('DELETE FROM t /* WHERE id = 1 */')).toEqual(['deleteNoWhere']);
+  });
+
+  // Ngược lại: từ khoá nằm trong chuỗi/tên có nháy không được tính là câu lệnh thật.
+  it('không báo nhầm khi DROP TABLE nằm trong chuỗi', () => {
+    expect(kinds("DELETE FROM logs WHERE msg = 'drop table x'")).toEqual([]);
+    expect(kinds("INSERT INTO t VALUES ('DELETE FROM u')")).toEqual([]);
+  });
+
+  it('cảnh báo dạng DELETE nhiều bảng của MySQL khi thiếu WHERE', () => {
+    expect(kinds('DELETE a FROM a JOIN b ON a.id = b.id')).toEqual(['deleteNoWhere']);
+  });
+
+  it('trả về nguyên văn câu lệnh để hiện trong hộp cảnh báo', () => {
+    expect(findUnsafeStatements('  DELETE FROM users  ;')[0].text).toBe('DELETE FROM users');
+  });
+
+  it('văn bản rỗng / chỉ có comment -> không có gì', () => {
+    expect(kinds('')).toEqual([]);
+    expect(kinds('-- DELETE FROM t')).toEqual([]);
   });
 });

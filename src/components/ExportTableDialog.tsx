@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { Trans, useTranslation } from 'react-i18next';
 import { FolderOpen } from 'lucide-react';
 import { dbHelper } from '../utils/dbHelper';
 import { buildTableFile, buildPreview, type ExportFormat } from '../utils/exportHelper';
 import { getLastExportDir, openInFileManager, pickExportFolder, saveExportFile } from '../utils/fileSave';
 import { ProgressBar, type ProgressState } from './ProgressBar';
 import { ConfirmDialog } from './ConfirmDialog';
+import { Modal, ModalBody, ModalFooter } from './Modal';
 
 /** Ngữ cảnh grid — chỉ có khi mở từ tab đang xem bảng (thanh dưới DataGrid). */
 export interface ExportGridContext {
@@ -57,6 +58,9 @@ export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
   onSuccess,
   onError,
 }) => {
+  const { t, i18n } = useTranslation();
+  const fmtNum = (n: number) => n.toLocaleString(i18n.language);
+
   const [step, setStep] = useState<'options' | 'preview'>('options');
   const [format, setFormat] = useState<ExportFormat>('csv');
   const [fileName, setFileName] = useState(tableName);
@@ -131,12 +135,12 @@ export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
     let page = 1;
     for (;;) {
       setProgress({
-        label: `Đang tải dữ liệu bảng ${tableName}...`,
+        label: t('exportDialog.loadingTable', { table: tableName }),
         current: all.length,
         total: total || undefined,
         detail: total
-          ? `${all.length.toLocaleString()}/${total.toLocaleString()} dòng`
-          : `${all.length.toLocaleString()} dòng`,
+          ? t('exportDialog.rowsOfTotal', { rows: fmtNum(all.length), total: fmtNum(total) })
+          : t('exportDialog.rows', { rows: fmtNum(all.length) }),
       });
       const data = await dbHelper.getTableData(
         tableName,
@@ -154,10 +158,10 @@ export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
       page++;
     }
     setProgress({
-      label: `Đang tải dữ liệu bảng ${tableName}...`,
+      label: t('exportDialog.loadingTable', { table: tableName }),
       current: all.length,
       total: all.length,
-      detail: `${all.length.toLocaleString()} dòng`,
+      detail: t('exportDialog.rows', { rows: fmtNum(all.length) }),
     });
     return all;
   };
@@ -188,20 +192,20 @@ export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
       // Tới đây mới tải hết dữ liệu — trước đó preview chỉ dùng vài dòng mẫu.
       const allRows = await fetchAllRows();
       const cols = colNames.length ? colNames : (allRows[0] ? Object.keys(allRows[0]) : []);
-      setProgress({ label: `Đang dựng tệp ${format.toUpperCase()}...` });
+      setProgress({ label: t('exportDialog.building', { format: format.toUpperCase() }) });
       const file = buildTableFile(tableName, cols, allRows, format, dbType, fileName);
-      setProgress({ label: 'Đang ghi tệp...' });
+      setProgress({ label: t('exportDialog.writing') });
       const res = await saveExportFile(dir || null, file.name, file.data, file.mime);
       setProgress(null);
       setDone({
-        message: `Đã xuất bảng "${tableName}" (${allRows.length} dòng) sang ${format.toUpperCase()}.`,
+        message: t('exportDialog.exportedTable', { table: tableName, rows: allRows.length, format: format.toUpperCase() }),
         path: res.path || file.name,
         dir: res.dir,
         viaDownload: res.savedTo === 'download',
       });
     } catch (err: any) {
       setProgress(null);
-      onError?.('Lỗi xuất dữ liệu: ' + (err?.message || err));
+      onError?.(t('exportDialog.errExport', { message: err?.message || err }));
     }
   };
 
@@ -220,7 +224,7 @@ export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
       <ConfirmDialog
         open
         tone="success"
-        title="Xuất dữ liệu xong"
+        title={t('app.exportDoneTitle')}
         message={
           <>
             {done.message}
@@ -231,70 +235,29 @@ export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
             )}
           </>
         }
-        note={done.viaDownload ? 'Tệp được tải qua WebView nên nằm ở thư mục tải xuống của hệ thống.' : undefined}
-        confirmLabel={done.dir ? 'Mở thư mục' : 'Đóng'}
-        cancelLabel="Đóng"
+        note={done.viaDownload ? t('app.exportDoneNoteWebView') : undefined}
+        confirmLabel={done.dir ? t('app.openFolder') : t('common.close')}
+        cancelLabel={t('common.close')}
         onConfirm={() => closeDone(true)}
         onCancel={() => closeDone(false)}
       />
     );
   }
 
-  // Portal ra body: popup này render từ trong DataGrid, nơi có panel dùng backdrop-filter —
-  // thứ tạo containing block mới làm `position: fixed` chỉ phủ trong panel.
-  return createPortal(
-    <div
-      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        width: '100%',
-        height: '100%',
-        background: 'rgba(0,0,0,0.6)',
-        zIndex: 10000,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        backdropFilter: 'blur(2px)'
-      }}
+  return (
+    <Modal
+      title={step === 'options'
+        ? t('exportDialog.titleOptions', { table: tableName })
+        : t('exportDialog.titlePreview', { table: tableName })}
+      onClose={onClose}
+      width={step === 'options' ? '500px' : '640px'}
+      zIndex={10000}
     >
-      <div style={{
-        width: step === 'options' ? '500px' : '640px',
-        background: 'var(--win-bg-card)',
-        border: '1px solid var(--win-border-strong, var(--win-border))',
-        borderRadius: '6px',
-        boxShadow: '0 20px 40px rgba(0,0,0,0.4)',
-        display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden'
-      }}>
-        <div style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          padding: '12px 16px',
-          borderBottom: '1px solid var(--win-border)',
-          background: 'var(--win-bg-tab-bar, rgba(0,0,0,0.15))'
-        }}>
-          <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--win-text-primary)' }}>
-            {step === 'options'
-              ? `Xuất dữ liệu (Export Data) - Bảng: ${tableName}`
-              : `Xem trước & Tải tệp - Bảng: ${tableName}`}
-          </span>
-          <button
-            onClick={onClose}
-            style={{ background: 'transparent', border: 'none', color: 'var(--win-text-secondary)', cursor: 'pointer', fontSize: '16px' }}
-          >
-            ×
-          </button>
-        </div>
-
         {step === 'options' ? (
           <>
-            <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <ModalBody>
               <div className="form-group">
-                <label style={labelStyle}>Tên tệp xuất (File name):</label>
+                <label style={labelStyle}>{t('exportDialog.fileName')}</label>
                 <input
                   type="text"
                   className="form-input"
@@ -306,16 +269,16 @@ export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
               </div>
 
               <div className="form-group">
-                <label style={labelStyle}>Thư mục lưu:</label>
+                <label style={labelStyle}>{t('exportDialog.saveFolder')}</label>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <input
                     type="text"
                     className="form-input"
                     readOnly
                     value={dir}
-                    placeholder="Thư mục tải xuống của hệ thống"
+                    placeholder={t('exportDialog.folderPlaceholder')}
                     onClick={chooseFolder}
-                    title={dir || 'Bấm để chọn thư mục'}
+                    title={dir || t('exportDialog.pickFolderTitle')}
                     style={{ flex: 1, minWidth: 0, height: '30px', fontSize: '11px', cursor: 'pointer' }}
                   />
                   <button
@@ -324,18 +287,18 @@ export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
                     style={{ padding: '0 10px', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}
                   >
                     <FolderOpen size={13} />
-                    Chọn...
+                    {t('exportDialog.pick')}
                   </button>
                   {dir && (
                     <button className="btn btn-secondary" onClick={() => setDir('')} style={{ padding: '0 10px', whiteSpace: 'nowrap' }}>
-                      Bỏ
+                      {t('exportDialog.clear')}
                     </button>
                   )}
                 </div>
               </div>
 
               <div>
-                <label style={labelStyle}>Định dạng xuất:</label>
+                <label style={labelStyle}>{t('exportDialog.formatLabel')}</label>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   {FORMATS.map((fmt) => (
                     <button
@@ -370,43 +333,38 @@ export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
                 }}>
                   <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}>
                     <input type="checkbox" checked={visibleOnly} onChange={(e) => setVisibleOnly(e.target.checked)} />
-                    <span>Chỉ xuất các cột đang hiện ({grid.visibleColumns.length}/{grid.columns.length} cột)</span>
+                    <span>{t('exportDialog.visibleColumnsOnly', { shown: grid.visibleColumns.length, total: grid.columns.length })}</span>
                   </label>
                   <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}>
                     <input type="checkbox" checked={applyView} onChange={(e) => setApplyView(e.target.checked)} />
-                    <span>Áp dụng sắp xếp &amp; bộ lọc đang dùng trên grid</span>
+                    <span>{t('exportDialog.applyGridView')}</span>
                   </label>
                 </div>
               )}
 
               <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)', lineHeight: 1.5 }}>
-                Xuất toàn bộ dòng của bảng (không chỉ trang hiện tại)
-                {grid?.totalCount ? <> — khoảng <b style={{ color: 'var(--win-text-primary)' }}>{grid.totalCount}</b> dòng</> : null}.
-                Bước sau chỉ xem {PREVIEW_ROWS} dòng làm mẫu; dữ liệu chỉ được tải hết khi bấm xuất.
+                {t('exportDialog.exportAllRowsNote')}
+                {grid?.totalCount
+                  ? <Trans i18nKey="exportDialog.exportAllRowsCount" values={{ n: grid.totalCount }} components={{ strong: <b style={{ color: 'var(--win-text-primary)' }} /> }} />
+                  : null}.
+                {' '}{t('exportDialog.previewOnlyNote', { n: PREVIEW_ROWS })}
               </div>
-            </div>
+            </ModalBody>
 
-            <div style={{
-              display: 'flex',
-              justifyContent: 'flex-end',
-              gap: '8px',
-              padding: '12px 16px',
-              borderTop: '1px solid var(--win-border)',
-              background: 'var(--win-bg-tab-bar, rgba(0,0,0,0.15))'
-            }}>
-              <button className="btn btn-secondary" onClick={onClose}>Hủy</button>
+            <ModalFooter>
+              <button className="btn btn-secondary" onClick={onClose}>{t('common.cancel')}</button>
               <button
                 className="btn btn-primary"
                 onClick={() => setStep('preview')}
                 style={{ background: 'var(--win-accent)', color: '#fff', border: 'none' }}
               >
-                Xem trước &amp; Xuất
+                {t('exportDialog.previewAndExport')}
               </button>
-            </div>
+            </ModalFooter>
           </>
         ) : (
           <>
-            <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <ModalBody style={{ gap: '12px' }}>
               <div style={{ display: 'flex', gap: '4px', borderBottom: '1px solid var(--win-border)', paddingBottom: '8px' }}>
                 {FORMATS.map((fmt) => (
                   <button
@@ -430,9 +388,13 @@ export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
 
               <div>
                 <div style={{ fontSize: '10px', color: 'var(--win-text-secondary)', marginBottom: '6px', fontWeight: 600 }}>
-                  Mẫu {Math.min(rows.length, PREVIEW_ROWS)} dòng đầu
+                  {t('exportDialog.sampleRows', { n: Math.min(rows.length, PREVIEW_ROWS) })}
                   {!loading && (
-                    <> — tệp xuất sẽ có đủ <b style={{ color: 'var(--win-text-primary)' }}>{totalRows || rows.length}</b> dòng, {colNames.length || '?'} cột</>
+                    <Trans
+                      i18nKey="exportDialog.sampleRowsNote"
+                      values={{ rows: totalRows || rows.length, cols: colNames.length || '?' }}
+                      components={{ strong: <b style={{ color: 'var(--win-text-primary)' }} /> }}
+                    />
                   )}:
                 </div>
                 {loading ? (
@@ -447,7 +409,7 @@ export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
                     fontSize: '11px',
                     color: 'var(--win-text-secondary)'
                   }}>
-                    Đang tải dữ liệu xem trước...
+                    {t('exportDialog.loadingPreview')}
                   </div>
                 ) : format === 'xlsx' ? (
                   <div
@@ -482,31 +444,24 @@ export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
                   />
                 )}
               </div>
-            </div>
+            </ModalBody>
 
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '12px',
-              padding: '12px 16px',
-              borderTop: '1px solid var(--win-border)',
-              background: 'var(--win-bg-tab-bar, rgba(0,0,0,0.15))'
-            }}>
+            <ModalFooter style={{ gap: '12px' }}>
               {progress ? (
                 <ProgressBar progress={progress} />
               ) : (
                 <button className="btn btn-secondary" onClick={() => setStep('options')} style={{ marginRight: 'auto' }}>
-                  ← Tuỳ chọn
+                  {t('exportDialog.backToOptions')}
                 </button>
               )}
               <button
                 className="btn btn-secondary"
                 onClick={() => navigator.clipboard.writeText(preview)}
                 disabled={loading || !!progress || !preview || format === 'xlsx'}
-                title={format === 'xlsx' ? 'Preview XLSX là bảng HTML, không sao chép được' : undefined}
+                title={format === 'xlsx' ? t('exportDialog.copyPreviewDisabled') : undefined}
                 style={{ flexShrink: 0 }}
               >
-                Sao chép Preview
+                {t('exportDialog.copyPreview')}
               </button>
               <button
                 className="btn btn-primary"
@@ -514,13 +469,11 @@ export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
                 disabled={loading || !!progress}
                 style={{ background: 'var(--win-accent)', color: '#fff', border: 'none', flexShrink: 0 }}
               >
-                {dir ? 'Xuất vào thư mục' : 'Tải xuống tệp đầy đủ'}
+                {dir ? t('exportDialog.exportToFolder') : t('exportDialog.downloadFile')}
               </button>
-            </div>
+            </ModalFooter>
           </>
         )}
-      </div>
-    </div>,
-    document.body
+    </Modal>
   );
 };

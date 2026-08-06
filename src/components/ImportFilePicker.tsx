@@ -1,12 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
+import { Modal, ModalBody, ModalFooter } from './Modal';
 
-/** Định dạng tệp được phép nhập (dùng chung cho Import ở DataGrid và context menu Sidebar). */
+/**
+ * Định dạng tệp được phép nhập (dùng chung cho Import ở DataGrid và context menu Sidebar).
+ * `hintKey` is resolved through `t()` inside the component — this array is module
+ * level, so it cannot hold already-translated text.
+ */
 const IMPORT_FORMATS = [
-  { ext: '.csv', label: 'CSV', hint: 'Dòng đầu tiên là tên cột, các dòng sau là dữ liệu.' },
-  { ext: '.json', label: 'JSON', hint: 'Phải là một mảng các đối tượng: [{ "col": "value" }, ...]' },
-  { ext: '.xlsx', label: 'XLSX', hint: 'Đọc sheet đầu tiên, dòng đầu là tên cột.' },
-  { ext: '.sql', label: 'SQL', hint: 'Các câu lệnh trong tệp sẽ được chạy trực tiếp trên database.' },
+  { ext: '.csv', label: 'CSV', hintKey: 'importPicker.hintCsv' },
+  { ext: '.json', label: 'JSON', hintKey: 'importPicker.hintJson' },
+  { ext: '.xlsx', label: 'XLSX', hintKey: 'importPicker.hintXlsx' },
+  { ext: '.sql', label: 'SQL', hintKey: 'importPicker.hintSql' },
 ] as const;
 
 type ImportExt = typeof IMPORT_FORMATS[number]['ext'];
@@ -33,6 +38,7 @@ export const ImportFilePicker: React.FC<ImportFilePickerProps> = ({
   onCancel,
   onConfirm,
 }) => {
+  const { t } = useTranslation();
   const inputRef = useRef<HTMLInputElement>(null);
   const [format, setFormat] = useState<ImportExt>('.csv');
   const [file, setFile] = useState<File | null>(null);
@@ -77,7 +83,7 @@ export const ImportFilePicker: React.FC<ImportFilePickerProps> = ({
     const matched = IMPORT_FORMATS.find(f => lower.endsWith(f.ext));
     if (!matched) {
       setFile(null);
-      setError(`Định dạng không được hỗ trợ. Chỉ nhận ${ALL_ACCEPT.replace(/,/g, ', ')}.`);
+      setError(t('importPicker.errUnsupported', { formats: ALL_ACCEPT.replace(/,/g, ', ') }));
       return;
     }
     // Chọn tệp khác định dạng đang bật thì chuyển định dạng theo tệp, không báo lỗi.
@@ -100,72 +106,31 @@ export const ImportFilePicker: React.FC<ImportFilePickerProps> = ({
     marginBottom: '6px',
   };
 
-  // Portal ra body: popup này render từ trong DataGrid, nơi có panel dùng backdrop-filter —
-  // thứ tạo containing block mới làm `position: fixed` chỉ phủ trong panel.
-  return createPortal(
-    <div
-      onMouseDown={e => { if (e.target === e.currentTarget) onCancel(); }}
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        width: '100%',
-        height: '100%',
-        background: 'rgba(0,0,0,0.6)',
-        zIndex: 10000,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        backdropFilter: 'blur(2px)'
-      }}
+  return (
+    <Modal
+      title={t('importPicker.title')}
+      onClose={onCancel}
+      width="500px"
+      zIndex={10000}
     >
-      <div style={{
-        width: '500px',
-        background: 'var(--win-bg-card)',
-        border: '1px solid var(--win-border-strong, var(--win-border))',
-        borderRadius: '6px',
-        boxShadow: '0 20px 40px rgba(0,0,0,0.4)',
-        display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden'
-      }}>
-        <div style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          padding: '12px 16px',
-          borderBottom: '1px solid var(--win-border)',
-          background: 'var(--win-bg-tab-bar, rgba(0,0,0,0.15))'
-        }}>
-          <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--win-text-primary)' }}>
-            Nhập dữ liệu (Import Data)
-          </span>
-          <button
-            onClick={onCancel}
-            style={{ background: 'transparent', border: 'none', color: 'var(--win-text-secondary)', cursor: 'pointer', fontSize: '16px' }}
-          >
-            ×
-          </button>
-        </div>
-
-        <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+      <ModalBody>
           <div className="form-group">
             <label style={labelStyle}>
-              {targetTable ? 'Bảng đích (Target table):' : 'Bảng mới sẽ tạo từ tên tệp:'}
+              {targetTable ? t('importPicker.targetTable') : t('importPicker.newTableFromFile')}
             </label>
             <input
               type="text"
               className="form-input"
               readOnly
               value={targetTable || (file ? file.name.replace(/\.[^.]+$/, '') : '')}
-              placeholder="(suy ra từ tên tệp)"
+              placeholder={t('importPicker.tableNamePlaceholder')}
               style={{ height: '30px', fontSize: '11px', width: '100%', background: 'var(--win-bg-hover)' }}
             />
           </div>
 
           <div>
             <label style={labelStyle}>
-              Định dạng cho phép:
+              {t('importPicker.allowedFormats')}
             </label>
             <div style={{ display: 'flex', gap: '8px' }}>
               {IMPORT_FORMATS.map(f => (
@@ -199,12 +164,12 @@ export const ImportFilePicker: React.FC<ImportFilePickerProps> = ({
             lineHeight: 1.5
           }}>
             <b style={{ color: 'var(--win-text-primary)', fontFamily: 'monospace' }}>{activeFormat.ext}</b>
-            {' — '}{activeFormat.hint}
+            {' — '}{t(activeFormat.hintKey)}
           </div>
 
           <div className="form-group">
             <label style={labelStyle}>
-              Tệp nguồn (Source file):
+              {t('importPicker.sourceFile')}
             </label>
             <div style={{ display: 'flex', gap: '8px' }}>
               <input
@@ -212,17 +177,17 @@ export const ImportFilePicker: React.FC<ImportFilePickerProps> = ({
                 className="form-input"
                 readOnly
                 value={file ? file.name : ''}
-                placeholder={`Chưa chọn tệp ${activeFormat.label}...`}
+                placeholder={t('importPicker.noFileSelected', { format: activeFormat.label })}
                 onClick={handleBrowse}
                 style={{ flex: 1, height: '30px', fontSize: '11px', cursor: 'pointer' }}
-                title="Bấm để chọn tệp"
+                title={t('importPicker.pickFileTitle')}
               />
               <button
                 className="btn btn-secondary"
                 onClick={handleBrowse}
                 style={{ padding: '0 12px', whiteSpace: 'nowrap' }}
               >
-                Chọn tệp...
+                {t('importPicker.pickFile')}
               </button>
             </div>
             <input
@@ -234,7 +199,7 @@ export const ImportFilePicker: React.FC<ImportFilePickerProps> = ({
             />
             {file && (
               <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)', marginTop: '6px' }}>
-                Kích thước: <b style={{ color: 'var(--win-text-primary)' }}>{formatSize(file.size)}</b>
+                {t('importPicker.fileSize')} <b style={{ color: 'var(--win-text-primary)' }}>{formatSize(file.size)}</b>
               </div>
             )}
           </div>
@@ -251,35 +216,26 @@ export const ImportFilePicker: React.FC<ImportFilePickerProps> = ({
               {error}
             </div>
           )}
-        </div>
+      </ModalBody>
 
-        <div style={{
-          display: 'flex',
-          justifyContent: 'flex-end',
-          gap: '8px',
-          padding: '12px 16px',
-          borderTop: '1px solid var(--win-border)',
-          background: 'var(--win-bg-tab-bar, rgba(0,0,0,0.15))'
-        }}>
-          <button className="btn btn-secondary" onClick={onCancel}>
-            Hủy
-          </button>
-          <button
-            className="btn btn-primary"
-            disabled={!file}
-            onClick={() => file && onConfirm(file)}
-            style={{
-              background: file ? 'var(--win-accent)' : 'var(--win-bg-hover)',
-              color: file ? '#fff' : 'var(--win-text-disabled)',
-              border: 'none',
-              cursor: file ? 'pointer' : 'not-allowed'
-            }}
-          >
-            Bắt đầu Nhập
-          </button>
-        </div>
-      </div>
-    </div>,
-    document.body
+      <ModalFooter>
+        <button className="btn btn-secondary" onClick={onCancel}>
+          {t('common.cancel')}
+        </button>
+        <button
+          className="btn btn-primary"
+          disabled={!file}
+          onClick={() => file && onConfirm(file)}
+          style={{
+            background: file ? 'var(--win-accent)' : 'var(--win-bg-hover)',
+            color: file ? '#fff' : 'var(--win-text-disabled)',
+            border: 'none',
+            cursor: file ? 'pointer' : 'not-allowed'
+          }}
+        >
+          {t('importPicker.startImport')}
+        </button>
+      </ModalFooter>
+    </Modal>
   );
 };

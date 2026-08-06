@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
-import { Settings, Check, X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { Settings, Check } from 'lucide-react';
 import { QUERY_PARAM_PATTERNS, type QueryParamsConfig } from '../utils/queryParamHelper';
+import { Modal, ModalBody, ModalFooter } from './Modal';
 
 interface QueryParamsConfigModalProps {
   initialConfig: QueryParamsConfig;
@@ -13,6 +15,7 @@ export const QueryParamsConfigModal: React.FC<QueryParamsConfigModalProps> = ({
   onSave,
   onClose
 }) => {
+  const { t } = useTranslation();
   const [enabled, setEnabled] = useState(initialConfig.enabled);
   const [patternIndex, setPatternIndex] = useState(initialConfig.patternIndex);
 
@@ -22,37 +25,14 @@ export const QueryParamsConfigModal: React.FC<QueryParamsConfigModalProps> = ({
   };
 
   return (
-    <div style={{
-      position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.65)',
-      display: 'flex', justifyContent: 'center', alignItems: 'center',
-      zIndex: 10000, backdropFilter: 'blur(2px)'
-    }} onClick={onClose}>
-      <div style={{
-        background: 'var(--win-bg-card)',
-        border: '1px solid var(--win-border-strong, var(--win-border))',
-        borderRadius: '8px',
-        width: '440px',
-        boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
-        padding: '20px',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '16px'
-      }} onClick={(e) => e.stopPropagation()}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Settings size={18} style={{ color: 'var(--win-accent)' }} />
-            <h3 style={{ margin: 0, fontSize: '15px', color: 'var(--win-text-primary)' }}>
-              Tùy chọn Tham số Truy vấn (Query Params Options)
-            </h3>
-          </div>
-          <button
-            onClick={onClose}
-            style={{ background: 'transparent', border: 'none', color: 'var(--win-text-secondary)', cursor: 'pointer' }}
-          >
-            <X size={16} />
-          </button>
-        </div>
-
+    <Modal
+      title={t('queryParams.configTitle')}
+      icon={<Settings size={14} style={{ color: 'var(--win-accent)', flexShrink: 0 }} />}
+      onClose={onClose}
+      width="440px"
+      zIndex={10000}
+    >
+      <ModalBody>
         {/* Enable Checkbox */}
         <div style={{
           background: 'rgba(0,0,0,0.1)',
@@ -67,17 +47,17 @@ export const QueryParamsConfigModal: React.FC<QueryParamsConfigModalProps> = ({
               onChange={(e) => setEnabled(e.target.checked)}
               style={{ width: '15px', height: '15px', accentColor: 'var(--win-accent)' }}
             />
-            <span>Bật tham số truy vấn (Enable query params)</span>
+            <span>{t('queryParams.enable')}</span>
           </label>
           <div style={{ fontSize: '11px', color: 'var(--win-text-disabled)', marginTop: '4px', marginLeft: '25px' }}>
-            Khi bật, trình viết SQL sẽ tự động nhận diện tham số và nhắc bạn nhập giá trị trước khi chạy truy vấn.
+            {t('queryParams.enableHint')}
           </div>
         </div>
 
         {/* Patterns list */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
           <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--win-text-primary)' }}>
-            Mẫu nhận diện biến tham số (Query Param Regex):
+            {t('queryParams.regexLabel')}
           </div>
           {QUERY_PARAM_PATTERNS.map((p) => (
             <label
@@ -109,24 +89,23 @@ export const QueryParamsConfigModal: React.FC<QueryParamsConfigModalProps> = ({
                   </code>
                 </div>
                 <div style={{ fontSize: '10.5px', color: 'var(--win-text-disabled)', fontFamily: 'var(--win-font-mono)' }}>
-                  Ví dụ: {p.example}
+                  {t('queryParams.example', { example: p.example })}
                 </div>
               </div>
             </label>
           ))}
         </div>
+      </ModalBody>
 
-        {/* Buttons */}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
-          <button className="btn btn-secondary" onClick={onClose} style={{ padding: '6px 16px' }}>
-            Hủy
-          </button>
-          <button className="btn btn-primary" onClick={handleSave} style={{ padding: '6px 16px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <Check size={14} />
-            <span>Lưu cài đặt</span>
-          </button>
-        </div>
-      </div>
-    </div>
+      <ModalFooter>
+        <button className="btn btn-secondary" onClick={onClose} style={{ padding: '6px 16px' }}>
+          {t('common.cancel')}
+        </button>
+        <button className="btn btn-primary" onClick={handleSave} style={{ padding: '6px 16px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <Check size={14} />
+          <span>{t('queryParams.saveSettings')}</span>
+        </button>
+      </ModalFooter>
+    </Modal>
   );
 };

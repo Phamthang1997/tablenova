@@ -3,6 +3,7 @@
 // không cần Tauri save dialog. XLSX được dựng bởi xlsxWriter tự chứa (không thư viện ngoài).
 
 import { buildXlsx, buildXlsxWorkbook, buildZip, type XlsxSheet, type ZipEntry } from './xlsxWriter';
+import i18n from '../i18n';
 
 export type ExportFormat = 'csv' | 'json' | 'sql' | 'xlsx';
 
@@ -50,7 +51,7 @@ export function buildSql(tableName: string, colNames: string[], rows: any[], dbT
   const q = dbType === 'mysql' ? '`' : '"';
   const qi = (n: string) => `${q}${n}${q}`;
   const cols = colNames.map(qi).join(', ');
-  if (rows.length === 0) return `-- Bảng ${qi(tableName)} không có dữ liệu\n`;
+  if (rows.length === 0) return i18n.t('errors.sqlTableNoData', { table: qi(tableName) });
   return rows
     .map((r) => `INSERT INTO ${qi(tableName)} (${cols}) VALUES (${colNames.map((c) => sqlValue(r?.[c])).join(', ')});`)
     .join('\n');

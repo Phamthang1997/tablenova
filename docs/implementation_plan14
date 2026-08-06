@@ -1,0 +1,269 @@
+# Kế hoạch Thiết kế & Phát triển: Data Generator (sinh dữ liệu test)
+
+> **Trạng thái: Phase 1 đã làm xong** (2026-08-06) — `data_generator.rs` + `datasets.rs`, 4 command,
+> `dataGenHelper.ts` (+ 51 unit test), `DataGeneratorDialog.tsx`, lối vào ở Sidebar + menu ngữ cảnh
+> của bảng, i18n EN/VI/JA, bảng dịch lỗi backend. Phase 1 còn được làm **rộng hơn** kế hoạch: đã có
+> luôn ~35 generator "có nghĩa" (tên/email/địa chỉ/công ty/kỹ thuật) với dataset EN+VI nhúng sẵn,
+> vốn xếp ở Phase 2. Còn lại của Phase 2: mở rộng dataset (thêm locale JA, nhiều mục hơn).
+> Phase 3 chưa làm: `generate_data_script` (xuất `.sql` / mở tab SQL) và lưu/nạp project.
+
+Sao chép tính năng **dbForge Data Generator for MySQL** (https://www.devart.com/dbforge/mysql/studio/data-generator.html): chọn bảng/cột → chọn "generator" cho từng cột → xem trước → sinh hàng loạt dữ liệu giả **thật giống dữ liệu thật**, chạy trực tiếp vào DB hoặc xuất ra script `.sql`.
+
+Áp dụng cho cả **SQLite / PostgreSQL / MySQL** (3 dialect app đang hỗ trợ), không chỉ MySQL như bản gốc.
+
+---
+
+## 🎯 Phạm vi tính năng
+
+### Có làm (đối chiếu bản gốc)
+
+| dbForge | TableNova |
+|---|---|
+| Chọn nhiều bảng + số dòng mỗi bảng | ✅ |
+| "Basic generators" (~20 loại theo kiểu dữ liệu) | ✅ Phase 1 |
+| "Meaningful generators" (200+ dữ liệu thật: tên, email, địa chỉ…) | ⚠️ **~70 generator tuyển chọn** (Phase 2) — 200+ là *dataset*, không phải kiến trúc; thêm sau chỉ là thêm bảng từ vựng |
+| Tuỳ chỉnh từng cột (range, null %, unique, list, template, regex) | ✅ Phase 1–2 |
+| "Preserve inter-column data dependencies" / toàn vẹn FK | ✅ FK generator lấy mẫu từ bảng cha + topo-sort thứ tự insert |
+| "Disable triggers and constraints" khi sinh | ✅ tuỳ chọn (đi theo đúng 3 nhánh dialect như `restore_backup`) |
+| Real-time preview | ✅ preview 100 dòng, **sinh bằng đúng code sẽ chạy thật** |
+| Generate script / execute / save & edit later | ✅ 3 đầu ra: chạy trực tiếp, lưu `.sql`, mở trong tab SQL mới |
+| User-defined generators | ✅ dạng "custom list" + "template/regex" (không có scripting engine) |
+| Lưu project, chạy lại | ✅ JSON project (localStorage theo `scopeKey` + export/import file) |
+| Command-line automation | ❌ **ngoài phạm vi** — app không có CLI entry point; thay thế bằng project file chạy lại 1 click |
+
+### Không làm
+- Spatial data generator (`POINT`, `POLYGON`…): chỉ sinh literal WKT đơn giản nếu cột có kiểu spatial, không có editor hình học.
+- Sinh dữ liệu vào bảng/schema **chưa tồn tại** (không tạo bảng hộ).
+
+---
+
+## 🏗️ Quyết định kiến trúc (đọc trước khi code)
+
+### 1. Toàn bộ engine sinh dữ liệu nằm ở **Rust**, không có bản song sinh ở TS
+
+Lý do:
+- Khối lượng: 1 triệu dòng × 20 cột là chuyện thường của tính năng này. Sinh ở WebView rồi đẩy qua IPC là hai lần chi phí (JSON serialize + string SQL).
+- FK generator phải **đọc bảng cha** → cần kết nối, mà kết nối chỉ có ở Rust.
+- CLAUDE.md đã có 2 vết đau về "twin": `split_sql_statements` ↔ `src/sql/statements.ts`, các message lỗi Rust ↔ `backendErrors.ts`. **Không tạo thêm cái thứ ba.** Preview cũng gọi Rust (`preview_generated_data`) với cùng seed + cùng spec → cái user thấy đúng bằng cái sẽ insert.
+- Việc suy luận "cột này nên dùng generator gì" (theo tên cột + kiểu dữ liệu) cũng nằm ở Rust và trả về cho UI, để chỉ có **một** bảng luật.
+
+Phần TS thuần (`src/utils/dataGenHelper.ts`) chỉ giữ: validate spec trước khi gửi, đổi enum generator → **key i18n**, format nhãn/số. Đây là phần được unit test.
+
+### 2. Không thêm crate mới (`rand`, `fake`, `rand_regex`)
+
+`src-tauri/Cargo.toml` hiện chưa có `rand`. Theo CLAUDE.md, build Rust trên máy này đã mong manh (`cargo` từng crash trong build script của Tauri), nên tránh mở rộng cây phụ thuộc cho một thứ dễ tự viết:
+
+- **PRNG**: tự cài `xoshiro256**` + `SplitMix64` để seed (~30 dòng, deterministic, `u64` seed hiện trên UI). Seed cố định = chạy lại ra **đúng** dữ liệu cũ → đây là yêu cầu, không phải nice-to-have.
+- **Regex**: `regex` crate (đã có) chỉ *match*, không *sinh*. Tự viết bộ mở rộng **tập con** regex: literal, `.`, `[a-z0-9_]`, `\d \w \s`, `()`, `|`, `?`, `*` (chặn ở 8 lần), `+`, `{n}`, `{n,m}`. Cú pháp ngoài tập con → trả lỗi *ngay lúc cấu hình*, không phải lúc sinh 1 triệu dòng.
+- **Dataset**: từ vựng nhúng thành `&[&str]` trong `data_generator/datasets.rs` (mỗi bộ 100–500 mục). Nhúng như font đã nhúng — app phải chạy offline.
+
+### 3. Sinh dữ liệu **theo lô, streaming**, không dựng cả bảng trong RAM
+
+Vòng lặp: sinh 500 dòng → dựng 1 câu `INSERT INTO t (cols) VALUES (...),(...)` → thực thi → gửi progress qua `Channel` → lặp. Không bao giờ giữ quá 1 lô + tập unique trong bộ nhớ.
+
+- Số dòng/lô mặc định **500**, giảm còn 100 nếu bảng > 40 cột (an toàn với `max_allowed_packet` của MySQL, mặc định 64 MB nhưng nhiều server prod để 4 MB).
+- Bọc trong transaction, commit mỗi **N lô** (mặc định 20) để rollback được mà không phồng WAL/undo log.
+- Tuân đúng luật của repo: lock `state.db_manager`, clone handle ra, **drop lock trước mọi `.await`**.
+
+### 4. Escape/quote đi theo dialect có sẵn
+
+Dùng lại đúng cách `database.rs` đang làm: MySQL backtick, Postgres/SQLite double quote; chuỗi escape `'` → `''`; `NULL` là literal `NULL` chứ không phải chuỗi `"NULL"`. Byte/blob → `X'...'` (MySQL/SQLite) và `'\x...'::bytea` (Postgres).
+
+---
+
+## 📦 Thư viện generator
+
+### Cấu trúc spec (JSON qua IPC)
+
+```jsonc
+{
+  "seed": 20260806,
+  "tables": [
+    {
+      "table": "customer",
+      "rows": 5000,
+      "mode": "append",              // "append" | "truncate" (TRUNCATE/DELETE trước khi sinh)
+      "columns": [
+        { "column": "customer_id", "generator": "skip" },              // auto-increment
+        { "column": "first_name",  "generator": "firstName", "nullPercent": 0 },
+        { "column": "email",       "generator": "email", "unique": true,
+          "options": { "domains": ["gmail.com", "corp.local"] } },
+        { "column": "store_id",    "generator": "foreignKey",
+          "options": { "refTable": "store", "refColumn": "store_id", "onlyExisting": true } },
+        { "column": "credit",      "generator": "decimal",
+          "options": { "min": 0, "max": 5000, "scale": 2, "distribution": "normal" } },
+        { "column": "created_at",  "generator": "datetime",
+          "options": { "min": "2024-01-01", "max": "2026-08-06" } },
+        { "column": "status",      "generator": "weightedList",
+          "options": { "values": [["active", 80], ["banned", 5], ["idle", 15]] } },
+        { "column": "code",        "generator": "template", "options": { "pattern": "??-####" } }
+      ]
+    }
+  ],
+  "options": {
+    "disableConstraints": true,
+    "batchSize": 500,
+    "commitEveryBatches": 20,
+    "output": "execute"            // "execute" | "script"
+  }
+}
+```
+
+### Phase 1 — Basic (≈24)
+
+`skip` (không sinh, để DB tự lo: auto-increment/identity/default), `null`, `integer`, `bigint`, `decimal`, `float`, `bool`, `date`, `time`, `datetime`, `timestamp`, `year`, `string` (charset + độ dài), `text` (lorem), `uuid`, `json`, `blob`, `enumValues` (đọc từ `ENUM(...)`/CHECK), `list`, `weightedList`, `template`, `regex`, `sequence` (số tăng dần, có `start`/`step`), `foreignKey`, `expression` (SQL literal thô do user nhập — ví dụ `NOW()`).
+
+**Option chung cho mọi generator**: `nullPercent`, `emptyPercent` (chuỗi), `unique`, `prefix`, `suffix`, `case` (`upper|lower|title`).
+**Option số/ngày**: `min`, `max`, `step`, `scale`, `distribution` (`uniform|normal|exponential` — bản gốc gọi là phân phối ngẫu nhiên).
+
+### Phase 2 — Meaningful (≈45, dữ liệu nhúng)
+
+Người: `firstName`, `lastName`, `fullName`, `gender`, `email`, `username`, `password`, `phone`, `birthDate`, `age`, `nationalId`, `jobTitle`, `avatarUrl`.
+Địa chỉ: `country`, `countryCode`, `city`, `state`, `street`, `zipCode`, `latitude`, `longitude`, `timezone`.
+Kinh doanh: `company`, `department`, `productName`, `sku`, `price`, `currencyCode`, `iban`, `creditCard` (đúng Luhn), `orderStatus`, `invoiceNo`.
+Kỹ thuật: `ipv4`, `ipv6`, `macAddress`, `url`, `domain`, `userAgent`, `mimeType`, `fileName`, `filePath`, `semver`, `hexColor`, `httpStatus`, `sqlIdentifier`.
+Văn bản: `word`, `sentence`, `paragraph`, `title`.
+
+**Locale-aware**: mỗi dataset có biến thể `vi` / `en` / `ja` (khớp 3 ngôn ngữ i18n của app) — tên tiếng Việt cho DB tiếng Việt là điểm bản gốc *không* có.
+
+### Suy luận generator mặc định (Rust, `suggest_generator()`)
+
+Ưu tiên: (1) cột là FK → `foreignKey`; (2) auto-increment/identity/có DEFAULT + NOT NULL → `skip`; (3) **tên cột** khớp luật (`%email%`, `%phone%`, `first_name`, `%city%`, `%_at`/`%_date`, `%price%`, `is_%`…); (4) kiểu dữ liệu. Đây là thứ làm tính năng "dùng được ngay" — user mở dialog, bấm Generate, ra dữ liệu hợp lý mà không cấu hình gì.
+
+---
+
+## 🔌 Backend — `src-tauri/src/data_generator.rs` (mới)
+
+### [NEW] [data_generator.rs](src-tauri/src/data_generator.rs) (~1400 dòng) + [datasets.rs](src-tauri/src/datasets.rs) (~600 dòng dữ liệu)
+
+Comment đầu file viết theo mẫu `db_compare.rs` (nêu rõ quyết định kiến trúc & phần ngôn ngữ). Comment mới viết **tiếng Anh**; message lỗi/`warnings` trả về **tiếng Việt** như phần còn lại của backend rồi dịch ở `backendErrors.ts`.
+
+4 command:
+
+| Command | Vai trò |
+|---|---|
+| `get_generation_targets` | Danh sách bảng + cột + kiểu + PK/FK/auto-increment/nullable + `suggestedGenerator` cho từng cột + **thứ tự insert đã topo-sort** + `warnings` (chu trình FK). Đọc metadata qua `execute_raw_sql_generic` (đã `pub(crate)`), tái dùng phần lớn SQL của `get_full_catalog`. |
+| `preview_generated_data` | Nhận spec + `limit` (mặc định 100) → `{ columns, data }` **không** chạm DB (trừ FK: `SELECT ref_col FROM parent LIMIT 1000`). Cùng shape với các command khác nên `DataGrid`/grid của `SqlEditor` dùng lại được. |
+| `generate_data` | Chạy thật. `Channel` progress `{type:'start'\|'table'\|'progress'\|'done'\|'error', table, done, total, elapsedMs}`. Trả `{ success, inserted: {table: n}, warnings, elapsedMs }`. |
+| `generate_data_script` | Cùng engine, nhưng nối vào `String` và trả về (hoặc ghi file qua tham số `filePath`). Cảnh báo và **giới hạn** kích thước script (mặc định chặn > 200 MB, báo lỗi rõ thay vì OOM). |
+
+Ghi chú thực thi:
+- **MySQL + DDL/prepared**: `TRUNCATE`/`SET FOREIGN_KEY_CHECKS` phải qua `sqlx::raw_sql()` (text protocol) — xem mục MySQL 1295 trong CLAUDE.md. `INSERT` thì `query()` bình thường vẫn được, nhưng để một đường duy nhất, dùng `raw_sql()` cho cả lô insert.
+- **Tắt ràng buộc** (`disableConstraints`) chia đúng 3 nhánh như `restore_backup`: MySQL `SET FOREIGN_KEY_CHECKS=0` trên **một connection acquire sẵn**; Postgres `SET CONSTRAINTS ALL DEFERRED`; SQLite `PRAGMA foreign_keys=OFF`. Luôn bật lại ở cuối, kể cả khi lỗi.
+- **Huỷ giữa đường**: `AtomicBool` trong `AppState` (mẫu sẵn có: huỷ scan key của `redis_db.rs`), kèm command `cancel_data_generation`.
+- **Unique**: `HashSet<String>` cho mỗi cột `unique`, thử lại tối đa 100 lần/giá trị; cạn không gian giá trị → trả warning nêu tên cột và số dòng đã sinh được, **không** im lặng chèn trùng. Ước lượng không gian giá trị **trước khi chạy** (ví dụ `template "??-####"` = 26²×10⁴) và cảnh báo ngay ở UI nếu nhỏ hơn số dòng yêu cầu.
+- **FK**: `onlyExisting: true` → chỉ lấy giá trị đang có ở bảng cha (nếu cha rỗng → lỗi rõ ràng); `false` → lấy cả giá trị vừa sinh trong cùng phiên (giữ pool giá trị PK đã sinh của bảng cha, giới hạn 100k mẫu rồi lấy mẫu ngẫu nhiên có lặp).
+- **Thứ tự bảng**: topo-sort theo FK. Chu trình → giữ thứ tự user chọn + warning "phải bật *Tắt ràng buộc*".
+
+### [MODIFY] [lib.rs](src-tauri/src/lib.rs)
+`pub mod data_generator;` + 5 command vào `invoke_handler!` (thiếu là runtime "unknown command").
+
+---
+
+## 🖥️ Frontend
+
+### [MODIFY] [dbHelper.ts](src/utils/dbHelper.ts)
+Types `GenTarget`, `GenColumnSpec`, `GenTableSpec`, `GenSpec`, `GenResult` + 5 method wrapper (`getGenerationTargets`, `previewGeneratedData`, `generateData(spec, onProgress)`, `generateDataScript`, `cancelDataGeneration`). `generateData` tạo `Channel` **luôn luôn** (Rust nhận `Channel` bắt buộc, không `Option<Channel>` — đúng lưu ý đã có ở `restoreBackup`).
+
+### [NEW] [dataGenHelper.ts](src/utils/dataGenHelper.ts) — phần thuần, có test
+- `validateSpec(spec): {field, messageKey, params}[]` — min>max, scale âm, rows ≤ 0, unique + nullPercent=100, list rỗng, regex ngoài tập con, FK không có bảng cha.
+- `generatorLabelKey(id)`, `generatorGroup(id)` → **key i18n** (`switch` trả literal key, không nội suy — luật CLAUDE.md).
+- `estimateValueSpace(spec)` → cảnh báo unique không đủ.
+- `formatRowCount`, `formatEta` (nhận `t` làm tham số vì là module-level helper).
+
+### [NEW] [DataGeneratorDialog.tsx](src/components/DataGeneratorDialog.tsx)
+Dựng trên `Modal` / `ModalBody` / `ModalFooter` — **không tự viết overlay** (portal là bắt buộc vì dialog mở từ panel có `backdrop-filter`). `zIndex` 10000, `ConfirmDialog` (10001) dùng cho bước xác nhận cuối.
+
+Layout 3 cột, một cửa sổ (không wizard nhiều bước — app không có pattern wizard nào khác):
+
+```
+┌ Data Generator ────────────────────────────────────────────── × ┐
+│ Seed [20260806] 🎲   Rows [1000]  ☐ Tắt ràng buộc   ☐ Xoá trước │
+├────────────┬──────────────────────────┬────────────────────────┤
+│ ☑ customer │  Cột        Generator     │  Cấu hình generator    │
+│ ☑ address  │  ─────────────────────── │  min / max / scale     │
+│ ☐ film     │  id        skip          │  null %   [0]          │
+│ ☑ payment  │  email     email  ✓uniq  │  ☑ unique              │
+│            │  city_id   foreignKey    │  prefix / suffix / case │
+│ (thứ tự    │  amount    decimal       │                        │
+│  insert →) │  ...                     │                        │
+├────────────┴──────────────────────────┴────────────────────────┤
+│ Preview (100 dòng của bảng đang chọn)  ⟳                        │
+│ ┌───────────────────────────────────────────────────────────┐  │
+│ └───────────────────────────────────────────────────────────┘  │
+├─────────────────────────────────────────────────────────────────┤
+│ [Lưu project] [Nạp project]   [Xuất script] [Mở tab SQL] [Sinh]│
+└─────────────────────────────────────────────────────────────────┘
+```
+
+- Preview debounce **300ms** sau mỗi lần đổi cấu hình (giống debounce 150ms của `SqlEditor`); grid `<th>/<td>` key theo **vị trí**, không theo tên cột (luật `uniquify_columns`).
+- Khi chạy: `ProgressBar` + số dòng/bảng + ETA + nút Huỷ; `closeDisabled` khi đang chạy (Esc/backdrop không đóng được).
+- Xong: dispatch `database-restored` (`Sidebar`/`DataGrid` đã lắng nghe và refetch — không cần event mới). **Không** gọi `invalidateCatalog()` vì schema không đổi.
+- "Mở tab SQL" gọi `openQueryTabWithSql` của `App.tsx` (đúng hàm `DbCompareDialog` đang dùng, không phải `handleNewQueryTab`).
+- Project file: `localStorage` key qua `scopeKey(config, db)` (`utils/connKey.ts`) — **không** key theo `dbName`; export/import `.json` qua `utils/fileSave.ts`.
+
+### [MODIFY] [Sidebar.tsx](src/components/Sidebar.tsx) + [App.tsx](src/App.tsx)
+- Thêm `onGenerateData?: () => void` vào cụm tools (cạnh `onCompareDatabases`, `sidebar.generateData`).
+- Context menu từng bảng: **"Sinh dữ liệu test"** → mở dialog với bảng đó chọn sẵn.
+- `App.tsx`: state `showDataGen` + `dataGenTable`, render dialog (lazy import nếu đã có pattern `React.lazy` sau plan12).
+
+### [MODIFY] [i18n](src/i18n/locales/en.ts)
+Namespace `dataGen.*`: nhãn dialog, tên + mô tả từng generator (~70 × 2), tên nhóm, lỗi validate, tiến trình. `vi.ts`/`ja.ts` là `typeof en` → thiếu key là **compile error**. Placeholder dùng `{{n}}`, không `{{count}}`. Chuỗi có `<strong>`/`<code>` dùng `<Trans>`.
+
+### [MODIFY] [backendErrors.ts](src/utils/backendErrors.ts)
+Thêm các message tiếng Việt mới của `data_generator.rs` (whole-message + regex rule cho phần nội suy tên bảng/cột) và bổ sung case vào `__tests__/backendErrors.test.ts` (round-trip byte-identical).
+
+### [MODIFY] [index.css](src/index.css)
+Chỉ layout 3 cột + bảng cấu hình của dialog (`.dgen-*`). Chrome dialog đã do `Modal` lo — **không** thêm biến thể `.ctm-*`/`.cm-modal*` thứ ba.
+
+---
+
+## 🚦 Thứ tự triển khai
+
+| Phase | Nội dung | Định nghĩa "xong" |
+|---|---|---|
+| **1** | PRNG + 24 basic generator + `get_generation_targets` + `preview_generated_data` + `generate_data` (execute) + dialog + i18n | Sinh 10k dòng vào `sakila.customer` (MySQL) và một DB SQLite, FK đúng, seed lặp lại y hệt |
+| **2** | 45 meaningful generator + datasets 3 locale + template/regex/weightedList + distribution | Dữ liệu "đọc như thật"; regex sai được báo tại chỗ cấu hình |
+| **3** | `generate_data_script` + xuất file + mở tab SQL + save/load project + huỷ giữa đường + đo hiệu năng 1M dòng | Script chạy lại được bằng `mysql`/`psql` CLI; 1M dòng không OOM |
+
+Mỗi phase là một PR độc lập chạy được.
+
+---
+
+## 📋 Kế hoạch kiểm thử
+
+### Rust (không cần cargo — theo cách đã dùng cho `split_sql_statements`)
+Trích PRNG, bộ mở rộng regex, `template`, Luhn, `suggest_generator`, topo-sort ra file `.rs` độc lập + `fn main()` assert, rồi `rustc --edition 2024 -o check.exe check.rs && ./check.exe` (cần MinGW64 `bin` trong PATH từ `dev-start.bat`). Ca bắt buộc:
+- cùng seed → cùng dãy; khác seed → khác dãy; `u64::MAX`/`0` không panic.
+- regex: `[A-Z]{3}-\d{4}`, `(a|b)+`, `\w{1,5}`; cú pháp không hỗ trợ (`(?=`, backreference) → `Err`.
+- topo-sort: chuỗi thẳng, cây, chu trình 2 bảng, tự tham chiếu (`employee.manager_id`).
+- escape: giá trị chứa `'`, `\`, `\0`, newline, emoji 4-byte, chuỗi rỗng, `NULL`.
+
+### TS
+- `npm test` — `__tests__/dataGenHelper.test.ts` (validate + estimate + label key), `locales.test.ts` (placeholder/tag), `backendErrors.test.ts`.
+- `cmd /c "npx tsc -b"` và `cmd /c "npx oxlint"` — giữ output sạch (oxlint chạy cả default set).
+
+### Manual (bắt buộc)
+1. **3 dialect**: SQLite (`demo.db`), MySQL (`sakila`), Postgres — cùng một spec.
+2. Bảng có auto-increment / identity / `DEFAULT CURRENT_TIMESTAMP` → cột `skip` không xuất hiện trong `INSERT`.
+3. Chuỗi FK 3 tầng (`city → address → customer`) khi **chưa** chọn bảng cha → dữ liệu vẫn hợp lệ nhờ `onlyExisting`.
+4. `unique` trên cột hẹp (`template "?#"` = 260 khả năng) với 1000 dòng → cảnh báo trước khi chạy, không treo.
+5. Tắt/bật "Tắt ràng buộc" trên bảng có FK → nhánh MySQL/Postgres/SQLite đều đúng, ràng buộc được bật lại sau khi lỗi giữa đường.
+6. Huỷ giữa 500k dòng → dừng nhanh, số dòng đã commit đúng như báo cáo.
+7. Xuất script rồi chạy bằng `mysql < file.sql` → không lỗi cú pháp (kiểm chứng quoting/escape).
+8. Đổi ngôn ngữ EN/VI/JA khi dialog đang mở → nhãn generator đổi; dataset locale đổi theo cấu hình, **không** theo UI language (tách rõ hai thứ).
+9. Sau khi sinh: `DataGrid`/`Sidebar` tự refresh (event `database-restored`).
+10. 1M dòng × 15 cột trên MySQL local → đo thời gian + RAM tiến trình Rust; RAM phải phẳng (bằng chứng streaming đúng).
+
+---
+
+## ⚠️ Rủi ro
+
+| Rủi ro | Xử lý |
+|---|---|
+| `max_allowed_packet` (MySQL) làm lô lớn bị từ chối | Lô 500/100 dòng + bắt lỗi `1153/2006` → tự giảm lô một nửa và thử lại |
+| MySQL **implicit commit** khi có DDL (`TRUNCATE`) → transaction không rollback được | `TRUNCATE` chạy **trước** transaction và có bước xác nhận riêng ở UI (`ConfirmDialog`) |
+| Script `.sql` khổng lồ | Chặn ngưỡng + gợi ý dùng "chạy trực tiếp" |
+| Không gian giá trị `unique` cạn | Ước lượng trước + warning; retry có giới hạn, không loop vô hạn |
+| 200+ generator của bản gốc | Kiến trúc mở (thêm 1 entry `datasets.rs` + 1 nhánh match + 2 key i18n); bổ sung dần, không chặn release |
+| Người dùng chạy vào DB production | Dialog hiện rõ **server + database** đang trỏ tới (như `DbCompareDialog`), bước xác nhận cuối ghi rõ số dòng và bảng |

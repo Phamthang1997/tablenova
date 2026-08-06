@@ -4,6 +4,7 @@
 // file do người dùng chọn là dữ liệu không tin cậy, không nên diễn giải thành DOM.
 
 import { parseXml, XmlParseError, type XmlElement } from './xmlParser';
+import i18n from '../i18n';
 
 async function inflateRaw(bytes: Uint8Array): Promise<Uint8Array> {
   const ds = new DecompressionStream('deflate-raw');
@@ -31,7 +32,7 @@ function readZipEntries(buf: Uint8Array): ZipEntry[] {
       break;
     }
   }
-  if (eocd < 0) throw new Error('File không phải ZIP/XLSX hợp lệ');
+  if (eocd < 0) throw new Error(i18n.t('errors.notZipXlsx'));
 
   const cdCount = dv.getUint16(eocd + 10, true);
   let off = dv.getUint32(eocd + 16, true);
@@ -55,14 +56,14 @@ function readZipEntries(buf: Uint8Array): ZipEntry[] {
 // Lấy dữ liệu (đã giải nén) của một entry.
 async function readEntryData(buf: Uint8Array, entry: ZipEntry): Promise<Uint8Array> {
   const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
-  if (dv.getUint32(entry.offset, true) !== 0x04034b50) throw new Error('Local header ZIP lỗi');
+  if (dv.getUint32(entry.offset, true) !== 0x04034b50) throw new Error(i18n.t('errors.zipLocalHeader'));
   const nameLen = dv.getUint16(entry.offset + 26, true);
   const extraLen = dv.getUint16(entry.offset + 28, true);
   const dataStart = entry.offset + 30 + nameLen + extraLen;
   const comp = buf.subarray(dataStart, dataStart + entry.compSize);
   if (entry.method === 0) return comp.slice(); // stored
   if (entry.method === 8) return inflateRaw(comp); // deflate
-  throw new Error('Phương thức nén ZIP không hỗ trợ: ' + entry.method);
+  throw new Error(i18n.t('errors.zipMethodUnsupported', { method: entry.method }));
 }
 
 // Bọc parser để lỗi cú pháp hiện ra dưới dạng thông báo quen thuộc của luồng import.
@@ -70,7 +71,7 @@ function parseXmlPart(text: string): XmlElement {
   try {
     return parseXml(text);
   } catch (e) {
-    if (e instanceof XmlParseError) throw new Error('Lỗi phân tích XML trong XLSX: ' + e.message);
+    if (e instanceof XmlParseError) throw new Error(i18n.t('errors.xlsxXmlParse', { message: e.message }));
     throw e;
   }
 }
@@ -258,7 +259,7 @@ export async function parseXlsx(buffer: ArrayBuffer): Promise<any[]> {
 
   let sheetText = await textOf(sheetPath);
   if (!sheetText) sheetText = await textOf('xl/worksheets/sheet1.xml');
-  if (!sheetText) throw new Error('Không tìm thấy worksheet trong file XLSX');
+  if (!sheetText) throw new Error(i18n.t('errors.xlsxNoWorksheet'));
 
   return parseSheet(parseXmlPart(sheetText), shared, xfIsDate, date1904);
 }

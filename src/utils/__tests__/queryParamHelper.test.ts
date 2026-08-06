@@ -47,7 +47,8 @@ describe('queryParamHelper', () => {
     it('should extract positional parameters (?)', () => {
       const sql = 'SELECT * FROM users WHERE id = ? AND status = ?';
       const params = extractQueryParams(sql, 2);
-      expect(params).toEqual(['Tham số ? #1', 'Tham số ? #2']);
+      // Language-independent identity — the UI label is built from it at render time.
+      expect(params).toEqual(['?#1', '?#2']);
     });
 
     it('should extract dollar template parameters (${name})', () => {

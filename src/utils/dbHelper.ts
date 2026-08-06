@@ -1,4 +1,36 @@
-import { invoke, Channel } from '@tauri-apps/api/core';
+import { invoke as rawInvoke, Channel } from '@tauri-apps/api/core';
+import i18n from '../i18n';
+import { translateBackendError, translateResultErrors } from './backendErrors';
+import type {
+  CompareSide,
+  DataCompareResult,
+  DataOverviewResult,
+  SchemaCompareResult,
+} from './compareHelper';
+import type {
+  GenPreview,
+  GenProgress,
+  GenResult,
+  GenSpec,
+  GenTargets,
+} from './dataGenHelper';
+
+/**
+ * Every backend call goes through here so the Vietnamese error text the Rust side
+ * returns is mapped to the active UI language in ONE place — see `backendErrors.ts`.
+ * Shadowing the imported name keeps all existing `await invoke(...)` call sites
+ * unchanged; a message with no mapping is passed through untouched.
+ */
+async function invoke<T = any>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  try {
+    return translateResultErrors(await rawInvoke<T>(cmd, args));
+  } catch (err) {
+    // A command that returns Err(String) surfaces here as a thrown *string*, and the
+    // catch blocks below interpolate it directly (`${err}`). Rethrow a string, not an
+    // Error, so the message does not gain an "Error: " prefix.
+    throw typeof err === 'string' ? translateBackendError(err) : err;
+  }
+}
 
 // Message do backend đẩy qua Channel khi stream kết quả SQL (execute_query_stream).
 export interface QueryStreamMessage {
@@ -98,6 +130,34 @@ export interface RedisValueDetail {
   message?: string;
 }
 
+/** Kết quả của một lệnh sửa phần tử (hash/list/set/zset/stream). */
+export interface RedisEditResult {
+  success: boolean;
+  error?: string;
+}
+
+/**
+ * Một phần tử của collection. `binary` = giá trị gốc không phải UTF-8 hợp lệ, `value` đã bị
+ * lossy-convert -> KHÔNG được ghi lại (sẽ thay bytes thật bằng U+FFFD). Xem `is_binary` trong
+ * `redis_db.rs`.
+ */
+export interface RedisElement {
+  value: string;
+  binary?: boolean;
+}
+
+/**
+ * `translateResultErrors` only covers the `message`/`error` fields. The comparison
+ * commands also return a `warnings` array of backend strings, so run those through the
+ * same table — otherwise an English UI would show Vietnamese notes.
+ */
+function translateWarnings<T extends { warnings?: string[] }>(res: T): T {
+  if (Array.isArray(res?.warnings)) {
+    res.warnings = res.warnings.map((w) => (typeof w === 'string' ? translateBackendError(w) : w));
+  }
+  return res;
+}
+
 export const dbHelper = {
   async connect(config: DbConnectionConfig): Promise<{ success: boolean; message: string; database?: string }> {
     // Redis đi qua bộ command redis_* riêng (không dùng connect_db của SQL).
@@ -114,11 +174,11 @@ export const dbHelper = {
           },
         });
         if (res.success) {
-          return { success: true, message: 'Kết nối Redis thành công', database: `db${res.dbIndex ?? config.dbIndex ?? 0}` };
+          return { success: true, message: i18n.t('db.redisConnected'), database: `db${res.dbIndex ?? config.dbIndex ?? 0}` };
         }
-        return { success: false, message: res.message || 'Lỗi kết nối Redis' };
+        return { success: false, message: res.message || i18n.t('db.errRedisConnect') };
       } catch (err: any) {
-        return { success: false, message: `Không thể kết nối Redis: ${err}` };
+        return { success: false, message: i18n.t('db.errRedisConnectDetail', { message: String(err) }) };
       }
     }
     try {
@@ -155,11 +215,11 @@ export const dbHelper = {
 
       const res: any = await invoke('connect_db', { config: mappedConfig });
       if (res.success) {
-        return { success: true, message: 'Kết nối thành công', database: config.database || config.sqlitePath };
+        return { success: true, message: i18n.t('db.connected'), database: config.database || config.sqlitePath };
       }
-      return { success: false, message: res.message || 'Lỗi kết nối' };
+      return { success: false, message: res.message || i18n.t('db.errConnect') };
     } catch (err: any) {
-      return { success: false, message: `Không thể kết nối đến backend Rust: ${err}` };
+      return { success: false, message: i18n.t('db.errBackendUnreachable', { message: String(err) }) };
     }
   },
 
@@ -169,6 +229,33 @@ export const dbHelper = {
       return { success: !!res.success };
     } catch {
       return { success: false };
+    }
+  },
+
+  async getConnectionStatus(): Promise<{
+    isConnected: boolean;
+    dbType: string;
+    connType: 'loc' | 'ssh' | 'ssl' | 'rem';
+    host: string;
+    latencyMs: number;
+  }> {
+    try {
+      const res: any = await invoke('get_connection_status');
+      return {
+        isConnected: !!res.is_connected,
+        dbType: res.db_type || '',
+        connType: res.conn_type || 'loc',
+        host: res.host || '',
+        latencyMs: res.latency_ms || 0,
+      };
+    } catch {
+      return {
+        isConnected: false,
+        dbType: '',
+        connType: 'loc',
+        host: '',
+        latencyMs: 0,
+      };
     }
   },
 
@@ -265,9 +352,9 @@ export const dbHelper = {
           columns: res.results[0].columns || [],
         };
       }
-      return { success: false, error: 'Không nhận được dữ liệu truy vấn' };
+      return { success: false, error: i18n.t('db.errNoQueryData') };
     } catch (err: any) {
-      return { success: false, error: `Lỗi truy vấn: ${err}` };
+      return { success: false, error: i18n.t('db.errQuery', { message: String(err) }) };
     }
   },
 
@@ -284,7 +371,7 @@ export const dbHelper = {
         error: res.message,
       };
     } catch (err: any) {
-      return { success: false, results: [], error: `Lỗi truy vấn: ${err}` };
+      return { success: false, results: [], error: i18n.t('db.errQuery', { message: String(err) }) };
     }
   },
 
@@ -442,7 +529,7 @@ export const dbHelper = {
         const res = await this.executeQuery(
           "SHOW VARIABLES WHERE Variable_name IN ('log_error','slow_query_log_file','general_log_file','datadir')"
         );
-        if (!res.success) return { paths, error: res.error || 'Không đọc được SHOW VARIABLES' };
+        if (!res.success) return { paths, error: res.error || i18n.t('db.errShowVariables') };
         for (const row of res.data || []) {
           const name = pick(row, 'Variable_name');
           const val = pick(row, 'Value');
@@ -458,7 +545,7 @@ export const dbHelper = {
            SELECT name, setting FROM pg_settings
            WHERE name IN ('data_directory','log_directory','log_filename')`
         );
-        if (!res.success) return { paths, error: res.error || 'Không đọc được pg_settings' };
+        if (!res.success) return { paths, error: res.error || i18n.t('db.errPgSettings') };
         const map: Record<string, string> = {};
         for (const row of res.data || []) {
           map[pick(row, 'name')] = pick(row, 'setting');
@@ -469,7 +556,7 @@ export const dbHelper = {
         if (cur) paths.push({ label: 'current_logfile', path: isAbs(cur) ? cur : `${dataDir}/${cur}` });
         if (logDir) paths.push({ label: 'log_directory', path: isAbs(logDir) ? logDir : `${dataDir}/${logDir}` });
       } else {
-        return { paths, error: `${dbType} không có log file phía server để dò.` };
+        return { paths, error: i18n.t('db.errNoServerLog', { dbType }) };
       }
     } catch (e: any) {
       return { paths, error: String(e?.message || e) };
@@ -493,7 +580,7 @@ export const dbHelper = {
       if (kind === 'collector') { sql = "ALTER SYSTEM SET logging_collector='on';"; needsRestart = true; }
       else sql = "ALTER SYSTEM SET log_statement='all'; SELECT pg_reload_conf();";
     } else {
-      return { success: false, message: 'SQLite không có server log để bật.', needsRestart: false };
+      return { success: false, message: i18n.t('db.errSqliteNoServerLog'), needsRestart: false };
     }
     const res = await this.executeQueryMulti(sql);
     return { success: res.success, message: res.error || '', needsRestart };
@@ -508,7 +595,7 @@ export const dbHelper = {
         ? 'ALTER SYSTEM RESET logging_collector;'
         : 'ALTER SYSTEM RESET log_statement; SELECT pg_reload_conf();';
     } else {
-      return { success: false, message: 'Không áp dụng cho SQLite.' };
+      return { success: false, message: i18n.t('db.errNotForSqlite') };
     }
     const res = await this.executeQueryMulti(sql);
     return { success: res.success, message: res.error || '' };
@@ -524,7 +611,7 @@ export const dbHelper = {
       const res: any = await invoke('commit_changes', { payload: { tableName, changes, primaryKey, preview: !!preview } });
       return { success: !!res.success, sqls: res.sqls, message: res.message };
     } catch (err: any) {
-      return { success: false, message: `Lỗi đồng bộ thay đổi: ${err}` };
+      return { success: false, message: i18n.t('db.errCommitChanges', { message: String(err) }) };
     }
   },
 
@@ -545,7 +632,7 @@ export const dbHelper = {
       const res: any = await invoke('alter_table_schema', { name: tableName, payload: changes });
       return { success: !!res.success };
     } catch (err: any) {
-      return { success: false, error: `Lỗi kết nối: ${err}` };
+      return { success: false, error: i18n.t('db.errConnection', { message: String(err) }) };
     }
   },
 
@@ -569,7 +656,7 @@ export const dbHelper = {
         sqls: res.sql ? [res.sql] : [],
       };
     } catch (err: any) {
-      return { success: false, error: `Lỗi kết nối: ${err}` };
+      return { success: false, error: i18n.t('db.errConnection', { message: String(err) }) };
     }
   },
 
@@ -578,7 +665,7 @@ export const dbHelper = {
       const res: any = await invoke('ai_chat', { message: prompt });
       return { response: res.reply || '' };
     } catch {
-      return { response: 'Lỗi: Không thể kết nối với máy chủ AI Rust.' };
+      return { response: i18n.t('db.errAiUnreachable') };
     }
   },
 
@@ -851,6 +938,113 @@ export const dbHelper = {
     }
   },
 
+  // Sửa từng phần tử của collection. Tách khỏi redisSetKey (ngữ nghĩa REPLACE: DEL rồi dựng lại,
+  // mất TTL và ghi lại toàn bộ phần tử) — mỗi hàm dưới đây map tới đúng một lệnh Redis.
+  // oldField/oldMember: đổi phần "định danh" của phần tử (ghi mới trước, xóa cũ sau).
+  async redisHashSet(key: string, field: string, value: string, oldField?: string): Promise<RedisEditResult> {
+    try {
+      const res: any = await invoke('redis_hash_set', { key, field, value, oldField: oldField ?? null });
+      return { success: !!res.success };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  async redisHashDel(key: string, field: string): Promise<RedisEditResult> {
+    try {
+      const res: any = await invoke('redis_hash_del', { key, field });
+      return { success: !!res.success };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  async redisListSet(key: string, index: number, value: string): Promise<RedisEditResult> {
+    try {
+      const res: any = await invoke('redis_list_set', { key, index, value });
+      return { success: !!res.success };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  async redisListPush(key: string, value: string, atHead = false): Promise<RedisEditResult> {
+    try {
+      const res: any = await invoke('redis_list_push', { key, value, atHead });
+      return { success: !!res.success };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  async redisListDel(key: string, index: number): Promise<RedisEditResult> {
+    try {
+      const res: any = await invoke('redis_list_del', { key, index });
+      return { success: !!res.success };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  async redisSetMember(key: string, member: string, oldMember?: string): Promise<RedisEditResult> {
+    try {
+      const res: any = await invoke('redis_set_member', { key, member, oldMember: oldMember ?? null });
+      return { success: !!res.success };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  async redisSetDelMember(key: string, member: string): Promise<RedisEditResult> {
+    try {
+      const res: any = await invoke('redis_set_del_member', { key, member });
+      return { success: !!res.success };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  async redisZsetAdd(key: string, member: string, score: number, oldMember?: string): Promise<RedisEditResult> {
+    try {
+      const res: any = await invoke('redis_zset_add', { key, member, score, oldMember: oldMember ?? null });
+      return { success: !!res.success };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  async redisZsetDel(key: string, member: string): Promise<RedisEditResult> {
+    try {
+      const res: any = await invoke('redis_zset_del', { key, member });
+      return { success: !!res.success };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  // id rỗng = '*' (server tự sinh id kế tiếp).
+  async redisStreamAdd(
+    key: string,
+    id: string,
+    fields: { field: string; value: string }[]
+  ): Promise<RedisEditResult & { id?: string }> {
+    try {
+      const res: any = await invoke('redis_stream_add', { key, id, fields });
+      return { success: !!res.success, id: res.id };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  async redisStreamDel(key: string, id: string): Promise<RedisEditResult> {
+    try {
+      const res: any = await invoke('redis_stream_del', { key, id });
+      return { success: !!res.success };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
   async redisDeleteKeys(keys: string[]): Promise<{ success: boolean; deleted?: number; error?: string }> {
     try {
       const res: any = await invoke('redis_delete_keys', { keys });
@@ -932,7 +1126,87 @@ export const dbHelper = {
     } catch (err: any) {
       return { success: false, error: err.toString() };
     }
-  }
+  },
+
+  // ---- So sánh hai database (db_compare.rs) ----
+  // Mỗi "phía" chỉ cần tên database / tệp SQLite: backend tự lấy cấu hình kết nối
+  // (kể cả mật khẩu, SSH tunnel, token IAM) từ kết nối đang mở, nên frontend KHÔNG
+  // phải giữ hay gửi lại thông tin đăng nhập.
+
+  /** So cấu trúc hai database. Trả về diff theo bảng + script SQL đồng bộ (source -> target). */
+  async compareSchemas(
+    source: CompareSide,
+    target: CompareSide,
+    includeDrops = false,
+  ): Promise<SchemaCompareResult> {
+    return translateWarnings(
+      await invoke<SchemaCompareResult>('compare_schemas', { source, target, includeDrops }),
+    );
+  },
+
+  /** Đếm số dòng từng bảng ở hai phía để biết bảng nào đáng so chi tiết. */
+  async compareDataOverview(
+    source: CompareSide,
+    target: CompareSide,
+    tables?: string[],
+  ): Promise<DataOverviewResult> {
+    return await invoke<DataOverviewResult>('compare_data_overview', { source, target, tables });
+  },
+
+  /** So dữ liệu MỘT bảng theo khóa. `keyColumns` bỏ trống -> dùng khóa chính của nguồn. */
+  async compareTableData(
+    source: CompareSide,
+    target: CompareSide,
+    table: string,
+    opts?: { keyColumns?: string[]; limit?: number; maxDiffRows?: number; includeDrops?: boolean },
+  ): Promise<DataCompareResult> {
+    return translateWarnings(
+      await invoke<DataCompareResult>('compare_table_data', {
+        source,
+        target,
+        table,
+        keyColumns: opts?.keyColumns,
+        limit: opts?.limit,
+        maxDiffRows: opts?.maxDiffRows,
+        includeDrops: opts?.includeDrops ?? false,
+      }),
+    );
+  },
+
+  // ---- Sinh dữ liệu test (data_generator.rs) ----
+  // Mọi giá trị được sinh Ở RUST, kể cả bản xem trước — nên preview đúng bằng dữ liệu sẽ chèn.
+
+  /** Bảng/cột có thể sinh dữ liệu + generator gợi ý cho từng cột + thứ tự chèn an toàn FK. */
+  async getGenerationTargets(): Promise<GenTargets> {
+    return translateWarnings(await invoke<GenTargets>('get_generation_targets'));
+  },
+
+  /** Sinh thử `limit` dòng của MỘT bảng, không ghi vào CSDL. */
+  async previewGeneratedData(spec: GenSpec, table: string, limit = 100): Promise<GenPreview> {
+    return translateWarnings(
+      await invoke<GenPreview>('preview_generated_data', { spec, table, limit }),
+    );
+  },
+
+  /** Sinh và chèn thật. `onProgress` nhận {type:'start'|'table'|'progress'|'done'|'error', ...}. */
+  async generateData(spec: GenSpec, onProgress?: (msg: GenProgress) => void): Promise<GenResult> {
+    // Luôn tạo kênh: tham số onProgress ở Rust là Channel bắt buộc (Channel không impl
+    // Deserialize nên không dùng được Option<Channel>). Không có callback thì bỏ tin nhắn đi.
+    const channel = new Channel<GenProgress>();
+    if (onProgress) channel.onmessage = onProgress;
+    return translateWarnings(
+      await invoke<GenResult>('generate_data', { spec, onProgress: channel }),
+    );
+  },
+
+  /** Đánh dấu lần sinh dữ liệu đang chạy cần dừng. Không lỗi nếu không có gì đang chạy. */
+  async cancelDataGeneration(): Promise<void> {
+    try {
+      await invoke('cancel_data_generation');
+    } catch {
+      // Huỷ là thao tác "best effort": lỗi ở đây không có gì để người dùng làm.
+    }
+  },
 };
 
 export interface TableStatItem {

@@ -1,4 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
+import i18n from '../i18n';
 import { dbHelper } from '../utils/dbHelper';
 import { Send, Bot, User, Copy, CornerDownLeft } from 'lucide-react';
 
@@ -14,11 +16,12 @@ interface AiAssistantProps {
 }
 
 export const AiAssistant: React.FC<AiAssistantProps> = ({ onInsertSql, tableNameContext }) => {
+  const { t } = useTranslation();
+  // The greeting is seeded into state once, so it is read off the i18next
+  // instance directly rather than through the hook. Switching language later
+  // deliberately leaves the existing conversation untouched.
   const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      sender: 'assistant',
-      text: 'Xin chào! Tôi là Trợ lý AI hỗ trợ SQL của TableNova. Tôi có thể dịch câu hỏi tiếng Việt của bạn thành truy vấn SQL tương ứng.\n\nHãy thử hỏi tôi: *"lấy danh sách admin hoạt động trong bảng users"* hoặc *"tổng doanh thu của tất cả đơn hàng"*!',
-    },
+    { sender: 'assistant', text: i18n.t('ai.greeting') },
   ]);
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
@@ -40,8 +43,8 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({ onInsertSql, tableName
     setInputValue('');
     setLoading(true);
 
-    const schemaContext = tableNameContext 
-      ? `Bảng hiện tại: ${tableNameContext}. Bảng khác: users, products, orders`
+    const schemaContext = tableNameContext
+      ? t('ai.schemaCurrentTable', { table: tableNameContext })
       : 'Các bảng hiện có: users (id, full_name, email, role, status, created_at), products (id, name, price, stock, category), orders (id, user_id, product_id, quantity, total_amount, order_date)';
 
     const res = await dbHelper.askAi(userText, schemaContext);
@@ -75,7 +78,7 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({ onInsertSql, tableName
     <div className="ai-panel">
       <div className="ai-panel-header">
         <Bot size={16} />
-        <span>Trợ lý AI</span>
+        <span>{t('ai.title')}</span>
       </div>
 
       <div className="ai-messages-container">
@@ -84,7 +87,7 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({ onInsertSql, tableName
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px', opacity: 0.8 }}>
               {msg.sender === 'assistant' ? <Bot size={13} /> : <User size={13} />}
               <span style={{ fontSize: '10px', fontWeight: 600 }}>
-                {msg.sender === 'assistant' ? 'Trợ lý AI' : 'Bạn'}
+                {msg.sender === 'assistant' ? t('ai.title') : t('ai.you')}
               </span>
             </div>
             
@@ -102,7 +105,7 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({ onInsertSql, tableName
                     style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
                   >
                     <CornerDownLeft size={10} />
-                    <span>Nạp vào editor</span>
+                    <span>{t('ai.insertIntoEditor')}</span>
                   </button>
                   <button
                     className="ai-action-btn"
@@ -110,7 +113,7 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({ onInsertSql, tableName
                     style={{ background: 'transparent', border: '1px solid var(--win-border-strong)', color: '#fff', display: 'flex', alignItems: 'center', gap: '4px' }}
                   >
                     <Copy size={10} />
-                    <span>Sao chép</span>
+                    <span>{t('common.copy')}</span>
                   </button>
                 </div>
               </div>
@@ -121,7 +124,7 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({ onInsertSql, tableName
           <div className="ai-message assistant">
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', opacity: 0.8 }}>
               <Bot size={13} />
-              <span style={{ fontSize: '10px' }}>Đang nghĩ...</span>
+              <span style={{ fontSize: '10px' }}>{t('ai.thinking')}</span>
             </div>
           </div>
         )}
@@ -131,7 +134,7 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({ onInsertSql, tableName
       <div className="ai-input-container">
         <textarea
           className="ai-textarea"
-          placeholder="Hỏi AI viết SQL (nhấn Enter)..."
+          placeholder={t('ai.inputPlaceholder')}
           value={inputValue}
           onChange={(e) => setInputValue(e.target.value)}
           onKeyDown={(e) => {

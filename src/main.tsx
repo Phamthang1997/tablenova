@@ -1,6 +1,9 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
+// Side-effect import: initialises i18next before the first render, for both the
+// main window and the standalone terminal window below.
+import './i18n'
 import App from './App.tsx'
 import { TerminalWindow } from './TerminalWindow.tsx'
 

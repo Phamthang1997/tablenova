@@ -93,6 +93,17 @@ fn tokenize(input: &str) -> Vec<String> {
     out
 }
 
+// A collection element is shipped as text so the UI can show it, but a value that is not
+// valid UTF-8 would come back mangled by the lossy conversion — flag it so the editor can
+// refuse to write it back (the round-trip would replace the real bytes with U+FFFD).
+fn is_binary(bytes: &[u8]) -> bool {
+    std::str::from_utf8(bytes).is_err()
+}
+
+fn lossy_text(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).to_string()
+}
+
 fn parse_info(text: &str) -> Value {
     let mut sections = serde_json::Map::new();
     let mut cur = serde_json::Map::new();
@@ -281,22 +292,30 @@ pub async fn redis_get_key(state: tauri::State<'_, crate::AppState>, key: String
         }
         "hash" => {
             let pairs: Vec<(String, Vec<u8>)> = redis::cmd("HGETALL").arg(&key).query_async(&mut c).await.map_err(|e| e.to_string())?;
-            let fields: Vec<Value> = pairs.into_iter().map(|(f, v)| json!({ "field": f, "value": String::from_utf8_lossy(&v) })).collect();
+            let fields: Vec<Value> = pairs.into_iter()
+                .map(|(f, v)| json!({ "field": f, "value": lossy_text(&v), "binary": is_binary(&v) }))
+                .collect();
             json!({ "kind": "hash", "fields": fields })
         }
         "list" => {
             let items: Vec<Vec<u8>> = redis::cmd("LRANGE").arg(&key).arg(0).arg(-1).query_async(&mut c).await.map_err(|e| e.to_string())?;
-            let items: Vec<Value> = items.into_iter().map(|v| json!(String::from_utf8_lossy(&v))).collect();
+            let items: Vec<Value> = items.into_iter()
+                .map(|v| json!({ "value": lossy_text(&v), "binary": is_binary(&v) }))
+                .collect();
             json!({ "kind": "list", "items": items })
         }
         "set" => {
             let members: Vec<Vec<u8>> = redis::cmd("SMEMBERS").arg(&key).query_async(&mut c).await.map_err(|e| e.to_string())?;
-            let members: Vec<Value> = members.into_iter().map(|v| json!(String::from_utf8_lossy(&v))).collect();
+            let members: Vec<Value> = members.into_iter()
+                .map(|v| json!({ "value": lossy_text(&v), "binary": is_binary(&v) }))
+                .collect();
             json!({ "kind": "set", "members": members })
         }
         "zset" => {
             let entries: Vec<(Vec<u8>, f64)> = redis::cmd("ZRANGE").arg(&key).arg(0).arg(-1).arg("WITHSCORES").query_async(&mut c).await.map_err(|e| e.to_string())?;
-            let entries: Vec<Value> = entries.into_iter().map(|(m, s)| json!({ "member": String::from_utf8_lossy(&m), "score": s })).collect();
+            let entries: Vec<Value> = entries.into_iter()
+                .map(|(m, s)| json!({ "member": lossy_text(&m), "score": s, "binary": is_binary(&m) }))
+                .collect();
             json!({ "kind": "zset", "entries": entries })
         }
         "stream" => {
@@ -387,6 +406,160 @@ pub async fn redis_set_key(state: tauri::State<'_, crate::AppState>, payload: Va
     }
 
     Ok(json!({ "success": true }))
+}
+
+// ---- Element-level edits ----
+// Editing one element must NOT go through redis_set_key: that command has REPLACE semantics
+// (DEL then rebuild), which drops the TTL and rewrites every element of the collection — a
+// hash with 100k fields would be resent in full to change one value. Each command below maps
+// to the single Redis command for that edit, so the rest of the key is untouched.
+//
+// "Renaming" the identity part of an element (hash field, set/zset member) has no atomic Redis
+// command: write the new one first, then remove the old, so a failure leaves a duplicate
+// rather than losing the value.
+
+#[tauri::command]
+pub async fn redis_hash_set(
+    state: tauri::State<'_, crate::AppState>,
+    key: String,
+    field: String,
+    value: String,
+    old_field: Option<String>,
+) -> Result<Value, String> {
+    let mut c = take_conn(&state)?;
+    let _: i64 = redis::cmd("HSET").arg(&key).arg(&field).arg(&value)
+        .query_async(&mut c).await.map_err(|e| e.to_string())?;
+    if let Some(old) = old_field.filter(|o| *o != field) {
+        let _: i64 = redis::cmd("HDEL").arg(&key).arg(&old)
+            .query_async(&mut c).await.map_err(|e| e.to_string())?;
+    }
+    Ok(json!({ "success": true }))
+}
+
+#[tauri::command]
+pub async fn redis_hash_del(state: tauri::State<'_, crate::AppState>, key: String, field: String) -> Result<Value, String> {
+    let mut c = take_conn(&state)?;
+    let removed: i64 = redis::cmd("HDEL").arg(&key).arg(&field)
+        .query_async(&mut c).await.map_err(|e| e.to_string())?;
+    Ok(json!({ "success": true, "removed": removed }))
+}
+
+#[tauri::command]
+pub async fn redis_list_set(state: tauri::State<'_, crate::AppState>, key: String, index: i64, value: String) -> Result<Value, String> {
+    let mut c = take_conn(&state)?;
+    let _: String = redis::cmd("LSET").arg(&key).arg(index).arg(&value)
+        .query_async(&mut c).await.map_err(|e| e.to_string())?;
+    Ok(json!({ "success": true }))
+}
+
+#[tauri::command]
+pub async fn redis_list_push(state: tauri::State<'_, crate::AppState>, key: String, value: String, at_head: bool) -> Result<Value, String> {
+    let mut c = take_conn(&state)?;
+    let len: i64 = redis::cmd(if at_head { "LPUSH" } else { "RPUSH" }).arg(&key).arg(&value)
+        .query_async(&mut c).await.map_err(|e| e.to_string())?;
+    Ok(json!({ "success": true, "length": len }))
+}
+
+// Redis has no "delete by index": overwrite the slot with a sentinel nobody else can hold,
+// then LREM exactly that one occurrence. The timestamp keeps the sentinel unique so a
+// concurrent delete on the same list cannot remove the wrong element.
+#[tauri::command]
+pub async fn redis_list_del(state: tauri::State<'_, crate::AppState>, key: String, index: i64) -> Result<Value, String> {
+    let mut c = take_conn(&state)?;
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let sentinel = format!("__tablenova_deleted__{}__{}", index, nanos);
+    let _: String = redis::cmd("LSET").arg(&key).arg(index).arg(&sentinel)
+        .query_async(&mut c).await.map_err(|e| e.to_string())?;
+    let removed: i64 = redis::cmd("LREM").arg(&key).arg(1).arg(&sentinel)
+        .query_async(&mut c).await.map_err(|e| e.to_string())?;
+    Ok(json!({ "success": true, "removed": removed }))
+}
+
+#[tauri::command]
+pub async fn redis_set_member(
+    state: tauri::State<'_, crate::AppState>,
+    key: String,
+    member: String,
+    old_member: Option<String>,
+) -> Result<Value, String> {
+    let mut c = take_conn(&state)?;
+    let added: i64 = redis::cmd("SADD").arg(&key).arg(&member)
+        .query_async(&mut c).await.map_err(|e| e.to_string())?;
+    if let Some(old) = old_member.filter(|o| *o != member) {
+        let _: i64 = redis::cmd("SREM").arg(&key).arg(&old)
+            .query_async(&mut c).await.map_err(|e| e.to_string())?;
+    }
+    Ok(json!({ "success": true, "added": added }))
+}
+
+#[tauri::command]
+pub async fn redis_set_del_member(state: tauri::State<'_, crate::AppState>, key: String, member: String) -> Result<Value, String> {
+    let mut c = take_conn(&state)?;
+    let removed: i64 = redis::cmd("SREM").arg(&key).arg(&member)
+        .query_async(&mut c).await.map_err(|e| e.to_string())?;
+    Ok(json!({ "success": true, "removed": removed }))
+}
+
+#[tauri::command]
+pub async fn redis_zset_add(
+    state: tauri::State<'_, crate::AppState>,
+    key: String,
+    member: String,
+    score: f64,
+    old_member: Option<String>,
+) -> Result<Value, String> {
+    let mut c = take_conn(&state)?;
+    // ZADD upserts, so changing only the score of an existing member needs nothing else.
+    let _: i64 = redis::cmd("ZADD").arg(&key).arg(score).arg(&member)
+        .query_async(&mut c).await.map_err(|e| e.to_string())?;
+    if let Some(old) = old_member.filter(|o| *o != member) {
+        let _: i64 = redis::cmd("ZREM").arg(&key).arg(&old)
+            .query_async(&mut c).await.map_err(|e| e.to_string())?;
+    }
+    Ok(json!({ "success": true }))
+}
+
+#[tauri::command]
+pub async fn redis_zset_del(state: tauri::State<'_, crate::AppState>, key: String, member: String) -> Result<Value, String> {
+    let mut c = take_conn(&state)?;
+    let removed: i64 = redis::cmd("ZREM").arg(&key).arg(&member)
+        .query_async(&mut c).await.map_err(|e| e.to_string())?;
+    Ok(json!({ "success": true, "removed": removed }))
+}
+
+// Stream entries are immutable in Redis — there is no "edit entry", only XADD/XDEL.
+// An empty `id` means "*" (let the server assign the next id).
+#[tauri::command]
+pub async fn redis_stream_add(
+    state: tauri::State<'_, crate::AppState>,
+    key: String,
+    id: String,
+    fields: Vec<Value>,
+) -> Result<Value, String> {
+    if fields.is_empty() {
+        return Err("Stream cần ít nhất một field".to_string());
+    }
+    let mut c = take_conn(&state)?;
+    let id = id.trim();
+    let mut cmd = redis::cmd("XADD");
+    cmd.arg(&key).arg(if id.is_empty() { "*" } else { id });
+    for f in &fields {
+        cmd.arg(f.get("field").and_then(|v| v.as_str()).unwrap_or(""))
+            .arg(f.get("value").and_then(|v| v.as_str()).unwrap_or(""));
+    }
+    let new_id: String = cmd.query_async(&mut c).await.map_err(|e| e.to_string())?;
+    Ok(json!({ "success": true, "id": new_id }))
+}
+
+#[tauri::command]
+pub async fn redis_stream_del(state: tauri::State<'_, crate::AppState>, key: String, id: String) -> Result<Value, String> {
+    let mut c = take_conn(&state)?;
+    let removed: i64 = redis::cmd("XDEL").arg(&key).arg(&id)
+        .query_async(&mut c).await.map_err(|e| e.to_string())?;
+    Ok(json!({ "success": true, "removed": removed }))
 }
 
 #[tauri::command]

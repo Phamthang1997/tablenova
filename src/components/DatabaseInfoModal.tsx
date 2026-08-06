@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { Trans, useTranslation } from 'react-i18next';
 import { dbHelper, type DatabaseStats, type AllDatabasesStats } from '../utils/dbHelper';
-import { X, RefreshCw, HardDrive, Hash, Table, Search, ArrowUpDown, ExternalLink, ShieldCheck, Database, Server, ScanSearch, Lock, Layers, Eye, Braces, Cog, ChevronRight, ChevronDown } from 'lucide-react';
+import { RefreshCw, HardDrive, Hash, Table, Search, ArrowUpDown, ExternalLink, ShieldCheck, Database, Server, ScanSearch, Lock, Layers, Eye, Braces, Cog, ChevronRight, ChevronDown } from 'lucide-react';
+import { Modal, ModalFooter } from './Modal';
 
 type InfoTab = 'current' | 'all';
 /** Nhóm đối tượng đang xem trong tab "Database hiện tại". */
@@ -23,6 +25,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
   initialTab = 'current',
   onDatabaseChanged,
 }) => {
+  const { t } = useTranslation();
   const [tab, setTab] = useState<InfoTab>(initialTab);
   const [stats, setStats] = useState<DatabaseStats | null>(null);
   const [loading, setLoading] = useState(false);
@@ -57,7 +60,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
     if (res.success && res.stats) {
       setStats(res.stats);
     } else {
-      setError(res.error || 'Không thể lấy thông tin database');
+      setError(res.error || t('dbInfo.errStats'));
     }
   };
 
@@ -75,7 +78,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
     setLoadingDef(null);
     setObjDefs((prev) => ({
       ...prev,
-      [key]: res.success && res.sql ? res.sql : (res.error || 'Không lấy được định nghĩa'),
+      [key]: res.success && res.sql ? res.sql : (res.error || t('dbInfo.errDefinition')),
     }));
   };
 
@@ -87,7 +90,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
     if (res.success && res.stats) {
       setAllStats(res.stats);
     } else {
-      setAllError(res.error || 'Không thể lấy thống kê toàn bộ database');
+      setAllError(res.error || t('dbInfo.errAllStats'));
     }
   };
 
@@ -109,6 +112,10 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
     setTab(initialTab);
     if (initialTab === 'all') fetchAllStats(false);
     else fetchStats();
+    // fetchStats/fetchAllStats close over `t`, whose identity changes on every
+    // language switch. Listing them here would refetch the whole statistics set
+    // just because the UI language changed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, initialTab]);
 
   // Chuyển tab: chỉ nạp khi tab đó chưa có dữ liệu (tránh gọi lại mỗi lần bấm qua lại).
@@ -127,7 +134,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
       onDatabaseChanged?.(res.database || name);
       onClose();
     } else {
-      setAllError('Lỗi đổi database: ' + (res.error || ''));
+      setAllError(t('dbInfo.errSwitchDb', { message: res.error || '' }));
     }
   };
 
@@ -233,147 +240,91 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
 
   if (!isOpen) return null;
 
+  const headerTitle = tab === 'all' ? (
+    <Trans
+      i18nKey="dbInfo.titleAll"
+      values={{ n: allStats ? scopedDatabases.length : '...' }}
+      components={{ accent: <span style={{ color: 'var(--win-accent)', fontFamily: 'var(--win-font-mono, monospace)', fontWeight: 600 }} /> }}
+    />
+  ) : (
+    <Trans
+      i18nKey="dbInfo.titleCurrent"
+      values={{ name: stats?.db_name || '...' }}
+      components={{ accent: <span style={{ color: 'var(--win-accent)', fontFamily: 'var(--win-font-mono, monospace)', fontWeight: 600 }} /> }}
+    />
+  );
+
   return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 9999,
-        background: 'rgba(0, 0, 0, 0.65)',
-        backdropFilter: 'blur(4px)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '20px',
-      }}
-    >
-      <div
-        style={{
-          width: '95%',
-          maxWidth: '1100px',
-          height: '85vh',
-          maxHeight: '90vh',
-          background: 'var(--win-bg-card)',
-          border: '1px solid var(--win-border-strong, var(--win-border))',
-          borderRadius: '10px',
-          boxShadow: '0 25px 60px rgba(0, 0, 0, 0.45)',
-          display: 'flex',
-          flexDirection: 'column',
-          color: 'var(--win-text-primary)',
-          overflow: 'hidden',
-          fontFamily: 'var(--win-font-sans, system-ui, sans-serif)',
-        }}
-      >
-        {/* Modal Header */}
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '16px 24px',
-            borderBottom: '1px solid var(--win-border)',
-            background: 'var(--win-bg-tab-bar)',
-          }}
+    <Modal
+      title={headerTitle}
+      icon={tab === 'all'
+        ? <Server size={14} style={{ color: 'var(--win-accent)', flexShrink: 0 }} />
+        : <HardDrive size={14} style={{ color: 'var(--win-accent)', flexShrink: 0 }} />}
+      onClose={onClose}
+      width="1100px"
+      maxWidth="95%"
+      height="85vh"
+      zIndex={9999}
+      cardStyle={{ color: 'var(--win-text-primary)', fontFamily: 'var(--win-font-sans, system-ui, sans-serif)' }}
+      headerExtra={
+        <span
+          title={t('dbInfo.dbTypeLabel')}
+          style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', color: 'var(--win-accent)', background: 'var(--win-accent-glow)', border: '1px solid var(--win-border)', padding: '1px 8px', borderRadius: '4px', letterSpacing: '0.05em' }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <div
-              style={{
-                padding: '9px',
-                borderRadius: '8px',
-                background: 'var(--win-accent-glow)',
-                color: 'var(--win-accent)',
-                display: 'flex',
-              }}
-            >
-              {tab === 'all' ? <Server size={20} /> : <HardDrive size={20} />}
-            </div>
-            <div>
-              <h2 style={{ fontSize: '16px', fontWeight: 600, margin: 0, color: 'var(--win-text-primary)' }}>
-                {tab === 'all' ? (
-                  <>Thống kê toàn máy chủ: <span style={{ color: 'var(--win-accent)', fontFamily: 'var(--win-font-mono, monospace)', fontWeight: 600 }}>{allStats ? `${scopedDatabases.length} database` : '...'}</span></>
-                ) : (
-                  <>Thông tin Database: <span style={{ color: 'var(--win-accent)', fontFamily: 'var(--win-font-mono, monospace)', fontWeight: 600 }}>{stats?.db_name || '...'}</span></>
-                )}
-              </h2>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '3px' }}>
-                <span style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>Loại DB:</span>
-                <span style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', color: 'var(--win-accent)', background: 'var(--win-accent-glow)', border: '1px solid var(--win-border)', padding: '1px 8px', borderRadius: '4px', letterSpacing: '0.05em' }}>
-                  {(tab === 'all' ? allStats?.db_type : stats?.db_type) || '-'}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <button
-              onClick={() => (tab === 'all' ? fetchAllStats(allStats?.deep ?? false) : fetchStats())}
-              disabled={tab === 'all' ? allLoading : loading}
-              title="Làm mới thống kê"
-              style={{
-                background: 'var(--win-bg-hover)',
-                border: '1px solid var(--win-border)',
-                color: 'var(--win-text-secondary)',
-                cursor: busy ? 'default' : 'pointer',
-                padding: '7px 14px',
-                borderRadius: '6px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                fontSize: '12px',
-                fontWeight: 500,
-                opacity: busy ? 0.5 : 1,
-              }}
-            >
-              <RefreshCw size={14} className={busy ? 'loading-spinner' : ''} />
-              <span>{busy ? 'Đang tải...' : 'Làm mới'}</span>
-            </button>
-            <button
-              onClick={onClose}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: 'var(--win-text-secondary)',
-                cursor: 'pointer',
-                padding: '6px',
-                borderRadius: '4px',
-                display: 'flex',
-                alignItems: 'center',
-              }}
-            >
-              <X size={18} />
-            </button>
-          </div>
-        </div>
-
-        {/* Segmented tabs: database hiện tại ↔ toàn bộ database trên server */}
-        <div style={{ display: 'flex', gap: '4px', padding: '10px 24px 0', borderBottom: '1px solid var(--win-border)', background: 'var(--win-bg-tab-bar)' }}>
+          {(tab === 'all' ? allStats?.db_type : stats?.db_type) || '-'}
+        </span>
+      }
+    >
+        {/* Segmented tabs: database hiện tại ↔ toàn bộ database trên server.
+            Nút Refresh nằm ở hàng này thay vì trên thanh tiêu đề, để header
+            cao đúng bằng mọi dialog khác (xem `Modal.tsx`). */}
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '4px', padding: '10px 24px 0', borderBottom: '1px solid var(--win-border)', background: 'var(--win-bg-tab-bar)' }}>
           {([
-            { key: 'current' as const, icon: <Database size={13} />, label: `Database hiện tại${stats?.db_name ? ` (${stats.db_name})` : ''}` },
-            { key: 'all' as const, icon: <Server size={13} />, label: `Tất cả Database${allStats ? ` (${scopedDatabases.length} CSDL)` : ''}` },
-          ]).map((t) => (
+            {
+              key: 'current' as const,
+              icon: <Database size={13} />,
+              label: stats?.db_name ? t('dbInfo.tabCurrentNamed', { name: stats.db_name }) : t('dbInfo.tabCurrent'),
+            },
+            {
+              key: 'all' as const,
+              icon: <Server size={13} />,
+              label: allStats ? t('dbInfo.tabAllCount', { n: scopedDatabases.length }) : t('dbInfo.tabAll'),
+            },
+            // Not named `t` — that is the translation function.
+          ]).map((item) => (
             <button
-              key={t.key}
-              onClick={() => selectTab(t.key)}
+              key={item.key}
+              onClick={() => selectTab(item.key)}
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: '6px',
                 padding: '9px 16px',
                 fontSize: '12px',
-                fontWeight: tab === t.key ? 600 : 500,
-                color: tab === t.key ? 'var(--win-accent)' : 'var(--win-text-secondary)',
+                fontWeight: tab === item.key ? 600 : 500,
+                color: tab === item.key ? 'var(--win-accent)' : 'var(--win-text-secondary)',
                 background: 'transparent',
                 border: 'none',
-                borderBottom: `2px solid ${tab === t.key ? 'var(--win-accent)' : 'transparent'}`,
+                borderBottom: `2px solid ${tab === item.key ? 'var(--win-accent)' : 'transparent'}`,
                 marginBottom: '-1px',
                 cursor: 'pointer',
                 whiteSpace: 'nowrap',
               }}
             >
-              {t.icon}
-              <span>{t.label}</span>
+              {item.icon}
+              <span>{item.label}</span>
             </button>
           ))}
+          <button
+            className="btn btn-secondary"
+            onClick={() => (tab === 'all' ? fetchAllStats(allStats?.deep ?? false) : fetchStats())}
+            disabled={busy}
+            title={t('dbInfo.refreshTitle')}
+            style={{ marginLeft: 'auto', marginBottom: '8px', padding: '0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}
+          >
+            <RefreshCw size={13} className={busy ? 'loading-spinner' : ''} />
+            <span>{busy ? t('dbInfo.loading') : t('dbInfo.refresh')}</span>
+          </button>
         </div>
 
         {/* Content Body */}
@@ -390,7 +341,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
             {/* Card 1: Total Size */}
             <div style={{ padding: '16px 20px', borderRadius: '8px', background: 'var(--win-bg-window)', border: '1px solid var(--win-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div>
-                <div style={{ fontSize: '12px', color: 'var(--win-text-secondary)', fontWeight: 500, marginBottom: '4px' }}>Dung lượng Database</div>
+                <div style={{ fontSize: '12px', color: 'var(--win-text-secondary)', fontWeight: 500, marginBottom: '4px' }}>{t('dbInfo.cardSize')}</div>
                 <div style={{ fontSize: '22px', fontWeight: 700, color: 'var(--win-text-primary)' }}>{formatBytes(stats?.total_size_bytes)}</div>
               </div>
               <div style={{ padding: '12px', borderRadius: '8px', background: 'var(--win-accent-glow)', color: 'var(--win-accent)', display: 'flex' }}>
@@ -401,7 +352,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
             {/* Card 2: Total Rows */}
             <div style={{ padding: '16px 20px', borderRadius: '8px', background: 'var(--win-bg-window)', border: '1px solid var(--win-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div>
-                <div style={{ fontSize: '12px', color: 'var(--win-text-secondary)', fontWeight: 500, marginBottom: '4px' }}>Tổng số bản ghi</div>
+                <div style={{ fontSize: '12px', color: 'var(--win-text-secondary)', fontWeight: 500, marginBottom: '4px' }}>{t('dbInfo.cardRows')}</div>
                 <div style={{ fontSize: '22px', fontWeight: 700, color: 'var(--win-text-primary)' }}>
                   {stats?.total_rows !== undefined ? Math.max(0, stats.total_rows).toLocaleString() : '-'}
                 </div>
@@ -414,7 +365,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
             {/* Card 3: Total Tables */}
             <div style={{ padding: '16px 20px', borderRadius: '8px', background: 'var(--win-bg-window)', border: '1px solid var(--win-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div>
-                <div style={{ fontSize: '12px', color: 'var(--win-text-secondary)', fontWeight: 500, marginBottom: '4px' }}>Tổng số bảng</div>
+                <div style={{ fontSize: '12px', color: 'var(--win-text-secondary)', fontWeight: 500, marginBottom: '4px' }}>{t('dbInfo.cardTables')}</div>
                 <div style={{ fontSize: '22px', fontWeight: 700, color: 'var(--win-text-primary)' }}>{stats?.total_tables ?? 0}</div>
               </div>
               <div style={{ padding: '12px', borderRadius: '8px', background: 'rgba(168, 85, 247, 0.15)', color: '#a855f7', display: 'flex' }}>
@@ -425,12 +376,16 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
             {/* Card 4: View / hàm / thủ tục */}
             <div style={{ padding: '16px 20px', borderRadius: '8px', background: 'var(--win-bg-window)', border: '1px solid var(--win-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div>
-                <div style={{ fontSize: '12px', color: 'var(--win-text-secondary)', fontWeight: 500, marginBottom: '4px' }}>Đối tượng khác</div>
+                <div style={{ fontSize: '12px', color: 'var(--win-text-secondary)', fontWeight: 500, marginBottom: '4px' }}>{t('dbInfo.cardOther')}</div>
                 <div style={{ fontSize: '22px', fontWeight: 700, color: 'var(--win-text-primary)' }}>
                   {objectCounts.view + objectCounts.function + objectCounts.procedure}
                 </div>
                 <div style={{ fontSize: '11px', color: 'var(--win-text-disabled)', marginTop: '2px' }}>
-                  {objectCounts.view} view · {objectCounts.function} hàm · {objectCounts.procedure} thủ tục
+                  {t('dbInfo.otherBreakdown', {
+                    views: objectCounts.view,
+                    functions: objectCounts.function,
+                    procedures: objectCounts.procedure,
+                  })}
                 </div>
               </div>
               <div style={{ padding: '12px', borderRadius: '8px', background: 'rgba(245, 158, 11, 0.15)', color: '#f59e0b', display: 'flex' }}>
@@ -442,10 +397,10 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
           {/* Chọn nhóm đối tượng để liệt kê bên dưới */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
             {([
-              { key: 'table' as const, icon: <Table size={12} />, label: 'Bảng', count: stats?.total_tables ?? 0 },
-              { key: 'view' as const, icon: <Eye size={12} />, label: 'View', count: objectCounts.view },
-              { key: 'function' as const, icon: <Braces size={12} />, label: 'Hàm', count: objectCounts.function },
-              { key: 'procedure' as const, icon: <Cog size={12} />, label: 'Thủ tục', count: objectCounts.procedure },
+              { key: 'table' as const, icon: <Table size={12} />, label: t('dbInfo.kindTable'), count: stats?.total_tables ?? 0 },
+              { key: 'view' as const, icon: <Eye size={12} />, label: t('dbInfo.kindView'), count: objectCounts.view },
+              { key: 'function' as const, icon: <Braces size={12} />, label: t('dbInfo.kindFunction'), count: objectCounts.function },
+              { key: 'procedure' as const, icon: <Cog size={12} />, label: t('dbInfo.kindProcedure'), count: objectCounts.procedure },
             ]).map((k) => (
               <button
                 key={k.key}
@@ -477,7 +432,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
               <Search size={14} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--win-text-disabled)' }} />
               <input
                 type="text"
-                placeholder={objKind === 'table' ? 'Tìm kiếm tên bảng...' : 'Tìm kiếm tên đối tượng...'}
+                placeholder={objKind === 'table' ? t('dbInfo.searchTables') : t('dbInfo.searchObjects')}
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 style={{
@@ -515,9 +470,9 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
                     cursor: 'pointer',
                   }}
                 >
-                  <option value="size_desc">Dung lượng (Giảm dần)</option>
-                  <option value="rows_desc">Số dòng (Giảm dần)</option>
-                  <option value="name_asc">Tên bảng (A - Z)</option>
+                  <option value="size_desc">{t('dbInfo.sortSizeDesc')}</option>
+                  <option value="rows_desc">{t('dbInfo.sortRowsDesc')}</option>
+                  <option value="name_asc">{t('dbInfo.sortNameAsc')}</option>
                 </select>
               </div>
             )}
@@ -530,13 +485,13 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '12px' }}>
                 <thead>
                   <tr style={{ background: 'var(--win-bg-tab-bar)', borderBottom: '1px solid var(--win-border)', color: 'var(--win-text-secondary)', fontWeight: 600, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                    <th style={{ padding: '12px 16px' }}>Tên bảng</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'right' }}>Số bản ghi (Rows)</th>
+                    <th style={{ padding: '12px 16px' }}>{t('dbInfo.colTableName')}</th>
+                    <th style={{ padding: '12px 16px', textAlign: 'right' }}>{t('dbInfo.colRows')}</th>
                     <th style={{ padding: '12px 16px', textAlign: 'right' }}>Data Size</th>
                     <th style={{ padding: '12px 16px', textAlign: 'right' }}>Index Size</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'right' }}>Tổng dung lượng</th>
+                    <th style={{ padding: '12px 16px', textAlign: 'right' }}>{t('dbInfo.colTotalSize')}</th>
                     <th style={{ padding: '12px 16px', textAlign: 'center' }}>Engine</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'center' }}>Thao tác</th>
+                    <th style={{ padding: '12px 16px', textAlign: 'center' }}>{t('dbInfo.colActions')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -545,32 +500,32 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
                       <td colSpan={7} style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--win-text-secondary)' }}>
                         <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '10px', fontSize: '13px', fontWeight: 500 }}>
                           <RefreshCw size={18} className="loading-spinner" style={{ color: 'var(--win-accent)' }} />
-                          <span>Đang tải thống kê database...</span>
+                          <span>{t('dbInfo.loadingStats')}</span>
                         </div>
                       </td>
                     </tr>
                   ) : filteredTables.length === 0 ? (
                     <tr>
                       <td colSpan={7} style={{ textAlign: 'center', padding: '40px', color: 'var(--win-text-disabled)' }}>
-                        Không tìm thấy bảng phù hợp
+                        {t('dbInfo.noTableMatch')}
                       </td>
                     </tr>
                   ) : (
-                    filteredTables.map((t) => {
-                      const isExact = exactCounts[t.table_name] !== undefined || t.is_exact;
-                      const rawRows = exactCounts[t.table_name] ?? t.rows;
+                    filteredTables.map((row) => {
+                      const isExact = exactCounts[row.table_name] !== undefined || row.is_exact;
+                      const rawRows = exactCounts[row.table_name] ?? row.rows;
                       const displayRows = Math.max(0, rawRows);
-                      const isCounting = countingTable === t.table_name;
+                      const isCounting = countingTable === row.table_name;
 
                       return (
                         <tr
-                          key={t.table_name}
+                          key={row.table_name}
                           style={{ borderBottom: '1px solid var(--win-border)', transition: 'background 0.12s' }}
                           onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--win-bg-hover)')}
                           onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                         >
                           <td style={{ padding: '10px 16px', fontFamily: 'var(--win-font-mono, monospace)', fontWeight: 600, color: 'var(--win-accent)' }}>
-                            {t.table_name}
+                            {row.table_name}
                           </td>
                           <td style={{ padding: '10px 16px', textAlign: 'right', fontFamily: 'var(--win-font-mono, monospace)', color: 'var(--win-text-primary)' }}>
                             <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
@@ -578,9 +533,9 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
                               <span>{displayRows.toLocaleString()}</span>
                               {!isExact && (
                                 <button
-                                  onClick={() => handleFetchExactCount(t.table_name)}
+                                  onClick={() => handleFetchExactCount(row.table_name)}
                                   disabled={isCounting}
-                                  title="Đếm chính xác (SELECT COUNT(*))"
+                                  title={t('dbInfo.exactCountTitle')}
                                   style={{
                                     background: 'var(--win-bg-hover)',
                                     border: '1px solid var(--win-border)',
@@ -595,30 +550,30 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
                                 </button>
                               )}
                               {isExact && (
-                                <span title="Số dòng chính xác 100%">
+                                <span title={t('dbInfo.exactRowsTitle')}>
                                   <ShieldCheck size={14} style={{ color: 'var(--win-status-added-border, #10b981)', verticalAlign: 'middle' }} />
                                 </span>
                               )}
                             </div>
                           </td>
                           <td style={{ padding: '10px 16px', textAlign: 'right', fontFamily: 'var(--win-font-mono, monospace)', color: 'var(--win-text-secondary)' }}>
-                            {formatBytes(t.data_size_bytes)}
+                            {formatBytes(row.data_size_bytes)}
                           </td>
                           <td style={{ padding: '10px 16px', textAlign: 'right', fontFamily: 'var(--win-font-mono, monospace)', color: 'var(--win-text-secondary)' }}>
-                            {formatBytes(t.index_size_bytes)}
+                            {formatBytes(row.index_size_bytes)}
                           </td>
                           <td style={{ padding: '10px 16px', textAlign: 'right', fontFamily: 'var(--win-font-mono, monospace)', fontWeight: 600, color: 'var(--win-text-primary)' }}>
-                            {formatBytes(t.total_size_bytes)}
+                            {formatBytes(row.total_size_bytes)}
                           </td>
                           <td style={{ padding: '10px 16px', textAlign: 'center' }}>
                             <span style={{ padding: '2px 8px', fontSize: '11px', fontWeight: 500, background: 'var(--win-bg-tab-bar)', borderRadius: '4px', border: '1px solid var(--win-border)', color: 'var(--win-text-secondary)' }}>
-                              {t.engine || '-'}
+                              {row.engine || '-'}
                             </span>
                           </td>
                           <td style={{ padding: '10px 16px', textAlign: 'center' }}>
                             <button
                               onClick={() => {
-                                onSelectTable(t.table_name);
+                                onSelectTable(row.table_name);
                                 onClose();
                               }}
                               style={{
@@ -638,7 +593,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
                                 flexShrink: 0,
                               }}
                             >
-                              <span>Xem dữ liệu</span>
+                              <span>{t('dbInfo.viewData')}</span>
                               <ExternalLink size={12} />
                             </button>
                           </td>
@@ -654,9 +609,9 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
                 <thead>
                   <tr style={{ background: 'var(--win-bg-tab-bar)', borderBottom: '1px solid var(--win-border)', color: 'var(--win-text-secondary)', fontWeight: 600, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>
                     <th style={{ padding: '12px 16px' }}>
-                      {objKind === 'view' ? 'Tên view' : objKind === 'function' ? 'Tên hàm' : 'Tên thủ tục'}
+                      {objKind === 'view' ? t('dbInfo.colViewName') : objKind === 'function' ? t('dbInfo.colFunctionName') : t('dbInfo.colProcedureName')}
                     </th>
-                    <th style={{ padding: '12px 16px', width: '260px', textAlign: 'center' }}>Thao tác</th>
+                    <th style={{ padding: '12px 16px', width: '260px', textAlign: 'center' }}>{t('dbInfo.colActions')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -665,14 +620,14 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
                       <td colSpan={2} style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--win-text-secondary)' }}>
                         <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '10px', fontSize: '13px', fontWeight: 500 }}>
                           <RefreshCw size={18} className="loading-spinner" style={{ color: 'var(--win-accent)' }} />
-                          <span>Đang tải danh sách đối tượng...</span>
+                          <span>{t('dbInfo.loadingObjects')}</span>
                         </div>
                       </td>
                     </tr>
                   ) : currentObjects.length === 0 ? (
                     <tr>
                       <td colSpan={2} style={{ textAlign: 'center', padding: '40px', color: 'var(--win-text-disabled)' }}>
-                        {objKind === 'view' ? 'Database này chưa có view nào' : objKind === 'function' ? 'Database này chưa có hàm nào' : 'Database này chưa có thủ tục nào'}
+                        {objKind === 'view' ? t('dbInfo.noViews') : objKind === 'function' ? t('dbInfo.noFunctions') : t('dbInfo.noProcedures')}
                       </td>
                     </tr>
                   ) : (
@@ -711,7 +666,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
                                   }}
                                 >
                                   {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                                  <span>Định nghĩa</span>
+                                  <span>{t('dbInfo.definition')}</span>
                                 </button>
                                 {objKind === 'view' && (
                                   <button
@@ -723,7 +678,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
                                       padding: '5px 12px', borderRadius: '4px', cursor: 'pointer',
                                     }}
                                   >
-                                    <span>Xem dữ liệu</span>
+                                    <span>{t('dbInfo.viewData')}</span>
                                     <ExternalLink size={12} />
                                   </button>
                                 )}
@@ -748,7 +703,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
                                   whiteSpace: 'pre-wrap',
                                   wordBreak: 'break-word',
                                 }}>
-                                  {isLoadingDef ? 'Đang tải định nghĩa...' : objDefs[key]}
+                                  {isLoadingDef ? t('dbInfo.loadingDefinition') : objDefs[key]}
                                 </pre>
                               </td>
                             </tr>
@@ -775,7 +730,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
             <div style={{ padding: '16px 20px', borderRadius: '8px', background: 'var(--win-bg-window)', border: '1px solid var(--win-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div>
-                <div style={{ fontSize: '12px', color: 'var(--win-text-secondary)', fontWeight: 500, marginBottom: '4px' }}>Tổng dung lượng máy chủ</div>
+                <div style={{ fontSize: '12px', color: 'var(--win-text-secondary)', fontWeight: 500, marginBottom: '4px' }}>{t('dbInfo.cardServerSize')}</div>
                 <div style={{ fontSize: '22px', fontWeight: 700, color: 'var(--win-text-primary)' }}>{formatBytes(serverSummary.size)}</div>
               </div>
               <div style={{ padding: '12px', borderRadius: '8px', background: 'var(--win-accent-glow)', color: 'var(--win-accent)', display: 'flex' }}>
@@ -785,11 +740,13 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
 
             <div style={{ padding: '16px 20px', borderRadius: '8px', background: 'var(--win-bg-window)', border: '1px solid var(--win-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div>
-                <div style={{ fontSize: '12px', color: 'var(--win-text-secondary)', fontWeight: 500, marginBottom: '4px' }}>Số Database</div>
+                <div style={{ fontSize: '12px', color: 'var(--win-text-secondary)', fontWeight: 500, marginBottom: '4px' }}>{t('dbInfo.cardDbCount')}</div>
                 <div style={{ fontSize: '22px', fontWeight: 700, color: 'var(--win-text-primary)' }}>{serverSummary.count}</div>
                 {systemDbCount > 0 && (
                   <div style={{ fontSize: '11px', color: 'var(--win-text-disabled)', marginTop: '2px' }}>
-                    {showSystemDbs ? `gồm ${systemDbCount} DB hệ thống` : `đang ẩn ${systemDbCount} DB hệ thống`}
+                    {showSystemDbs
+                      ? t('dbInfo.includingSystemDbs', { n: systemDbCount })
+                      : t('dbInfo.hidingSystemDbs', { n: systemDbCount })}
                   </div>
                 )}
               </div>
@@ -800,7 +757,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
 
             <div style={{ padding: '16px 20px', borderRadius: '8px', background: 'var(--win-bg-window)', border: '1px solid var(--win-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div>
-                <div style={{ fontSize: '12px', color: 'var(--win-text-secondary)', fontWeight: 500, marginBottom: '4px' }}>Tổng bảng / bản ghi</div>
+                <div style={{ fontSize: '12px', color: 'var(--win-text-secondary)', fontWeight: 500, marginBottom: '4px' }}>{t('dbInfo.cardTablesRows')}</div>
                 <div style={{ fontSize: '22px', fontWeight: 700, color: 'var(--win-text-primary)' }}>
                   {serverSummary.tables.toLocaleString()}
                   <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--win-text-secondary)' }}>
@@ -808,7 +765,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
                   </span>
                 </div>
                 {serverSummary.hasUnknown && (
-                  <div style={{ fontSize: '11px', color: 'var(--win-text-disabled)', marginTop: '2px' }}>chưa tính hết — cần quét sâu</div>
+                  <div style={{ fontSize: '11px', color: 'var(--win-text-disabled)', marginTop: '2px' }}>{t('dbInfo.incompleteScan')}</div>
                 )}
               </div>
               <div style={{ padding: '12px', borderRadius: '8px', background: 'var(--win-status-added)', color: 'var(--win-status-added-border)', display: 'flex' }}>
@@ -822,7 +779,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', background: 'var(--win-bg-window)', border: '1px dashed var(--win-border)', borderRadius: '8px', fontSize: '12px', color: 'var(--win-text-secondary)' }}>
               <ScanSearch size={16} style={{ color: 'var(--win-accent)', flexShrink: 0 }} />
               <span style={{ flex: 1 }}>
-                PostgreSQL chỉ cho phép đọc số bảng/số dòng của database đang kết nối. Quét sâu sẽ mở kết nối tạm tới từng database để lấy đủ số liệu (chậm hơn).
+                {t('dbInfo.pgScanNote')}
               </span>
               <button
                 onClick={() => fetchAllStats(true)}
@@ -835,7 +792,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
                 }}
               >
                 <ScanSearch size={13} />
-                <span>{allLoading ? 'Đang quét...' : 'Quét sâu'}</span>
+                <span>{allLoading ? t('dbInfo.scanning') : t('dbInfo.deepScan')}</span>
               </button>
             </div>
           )}
@@ -846,7 +803,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
               <Search size={14} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--win-text-disabled)' }} />
               <input
                 type="text"
-                placeholder="Tìm kiếm tên database..."
+                placeholder={t('dbInfo.searchDatabases')}
                 value={allSearch}
                 onChange={(e) => setAllSearch(e.target.value)}
                 style={{
@@ -869,7 +826,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
             <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginLeft: 'auto' }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--win-text-secondary)', cursor: 'pointer' }}>
                 <input type="checkbox" checked={showSystemDbs} onChange={(e) => setShowSystemDbs(e.target.checked)} />
-                <span>Hiện DB hệ thống</span>
+                <span>{t('dbInfo.showSystemDbs')}</span>
               </label>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <ArrowUpDown size={14} style={{ color: 'var(--win-text-secondary)' }} />
@@ -887,10 +844,10 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
                     cursor: 'pointer',
                   }}
                 >
-                  <option value="size_desc">Dung lượng (Giảm dần)</option>
-                  <option value="tables_desc">Số bảng (Giảm dần)</option>
-                  <option value="rows_desc">Số dòng (Giảm dần)</option>
-                  <option value="name_asc">Tên database (A - Z)</option>
+                  <option value="size_desc">{t('dbInfo.sortSizeDesc')}</option>
+                  <option value="tables_desc">{t('dbInfo.sortTablesDesc')}</option>
+                  <option value="rows_desc">{t('dbInfo.sortRowsDesc')}</option>
+                  <option value="name_asc">{t('dbInfo.sortDbNameAsc')}</option>
                 </select>
               </div>
             </div>
@@ -906,12 +863,12 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
                 <thead>
                   <tr style={{ background: 'var(--win-bg-tab-bar)', borderBottom: '1px solid var(--win-border)', color: 'var(--win-text-secondary)', fontWeight: 600, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>
                     <th style={{ padding: '12px 16px', width: '17%' }}>Database</th>
-                    <th style={{ padding: '12px 16px', width: '20%' }}>Tỉ lệ dung lượng</th>
-                    <th style={{ padding: '12px 16px', width: '12%', textAlign: 'right' }}>Dung lượng</th>
-                    <th style={{ padding: '12px 16px', width: '10%', textAlign: 'right' }}>Số bảng</th>
-                    <th style={{ padding: '12px 16px', width: '13%', textAlign: 'right' }}>Số bản ghi</th>
-                    <th style={{ padding: '12px 16px', width: '13%' }}>Bảng mã</th>
-                    <th style={{ padding: '12px 16px', width: '15%', textAlign: 'center' }}>Thao tác</th>
+                    <th style={{ padding: '12px 16px', width: '20%' }}>{t('dbInfo.colSizeShare')}</th>
+                    <th style={{ padding: '12px 16px', width: '12%', textAlign: 'right' }}>{t('dbInfo.colSize')}</th>
+                    <th style={{ padding: '12px 16px', width: '10%', textAlign: 'right' }}>{t('dbInfo.colTables')}</th>
+                    <th style={{ padding: '12px 16px', width: '13%', textAlign: 'right' }}>{t('dbInfo.colRows')}</th>
+                    <th style={{ padding: '12px 16px', width: '13%' }}>{t('dbInfo.colEncoding')}</th>
+                    <th style={{ padding: '12px 16px', width: '15%', textAlign: 'center' }}>{t('dbInfo.colActions')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -920,14 +877,14 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
                       <td colSpan={7} style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--win-text-secondary)' }}>
                         <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '10px', fontSize: '13px', fontWeight: 500 }}>
                           <RefreshCw size={18} className="loading-spinner" style={{ color: 'var(--win-accent)' }} />
-                          <span>Đang tải thống kê toàn bộ database...</span>
+                          <span>{t('dbInfo.loadingAllStats')}</span>
                         </div>
                       </td>
                     </tr>
                   ) : visibleDatabases.length === 0 ? (
                     <tr>
                       <td colSpan={7} style={{ textAlign: 'center', padding: '40px', color: 'var(--win-text-disabled)' }}>
-                        Không tìm thấy database phù hợp
+                        {t('dbInfo.noDbMatch')}
                       </td>
                     </tr>
                   ) : (
@@ -953,12 +910,12 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
                               </span>
                               {d.is_current && (
                                 <span style={{ fontSize: '10px', fontWeight: 600, padding: '1px 6px', borderRadius: '4px', background: 'var(--win-status-added)', color: 'var(--win-status-added-border)', whiteSpace: 'nowrap', flexShrink: 0 }}>
-                                  Đang dùng
+                                  {t('dbInfo.inUse')}
                                 </span>
                               )}
                               {d.is_system && (
-                                <span title="Database hệ thống" style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '10px', fontWeight: 600, padding: '1px 6px', borderRadius: '4px', background: 'var(--win-bg-tab-bar)', border: '1px solid var(--win-border)', color: 'var(--win-text-secondary)', whiteSpace: 'nowrap', flexShrink: 0 }}>
-                                  <Lock size={9} /> Hệ thống
+                                <span title={t('dbInfo.systemDbTitle')} style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '10px', fontWeight: 600, padding: '1px 6px', borderRadius: '4px', background: 'var(--win-bg-tab-bar)', border: '1px solid var(--win-border)', color: 'var(--win-text-secondary)', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                                  <Lock size={9} /> {t('dbInfo.system')}
                                 </span>
                               )}
                               {d.error && (
@@ -1017,7 +974,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
                                   flexShrink: 0,
                                 }}
                               >
-                                <span>{isSwitching ? 'Đang chuyển...' : 'Chuyển CSDL'}</span>
+                                <span>{isSwitching ? t('dbInfo.switching') : t('dbInfo.switchDb')}</span>
                                 {!isSwitching && <ExternalLink size={12} />}
                               </button>
                             )}
@@ -1034,39 +991,15 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
         </div>
 
         {/* Modal Footer */}
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '14px 24px',
-            borderTop: '1px solid var(--win-border)',
-            background: 'var(--win-bg-tab-bar)',
-            fontSize: '12px',
-            color: 'var(--win-text-secondary)',
-          }}
-        >
+        <ModalFooter style={{ justifyContent: 'space-between', fontSize: '12px', color: 'var(--win-text-secondary)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: 'var(--win-status-added-border, #10b981)' }} />
-            <span>Hệ thống tự động sử dụng Catalog Metadata giúp bảo vệ hiệu năng Production DB</span>
+            <span>{t('dbInfo.catalogNote')}</span>
           </div>
-          <button
-            onClick={onClose}
-            style={{
-              padding: '7px 20px',
-              background: 'var(--win-bg-btn-secondary)',
-              border: '1px solid var(--win-border-btn-secondary)',
-              color: 'var(--win-text-btn-secondary)',
-              fontSize: '12px',
-              fontWeight: 500,
-              borderRadius: '6px',
-              cursor: 'pointer',
-            }}
-          >
-            Đóng
+          <button className="btn btn-secondary" onClick={onClose} style={{ padding: '0 20px' }}>
+            {t('common.close')}
           </button>
-        </div>
-      </div>
-    </div>
+        </ModalFooter>
+    </Modal>
   );
 };

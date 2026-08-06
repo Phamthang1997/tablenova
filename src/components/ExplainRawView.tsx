@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Copy, Check } from 'lucide-react';
 
 interface ExplainRawViewProps {
@@ -6,6 +7,7 @@ interface ExplainRawViewProps {
 }
 
 export const ExplainRawView: React.FC<ExplainRawViewProps> = ({ rawText }) => {
+  const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
 
   const handleCopy = () => {
@@ -37,7 +39,7 @@ export const ExplainRawView: React.FC<ExplainRawViewProps> = ({ rawText }) => {
           style={{ padding: '4px 10px', display: 'flex', alignItems: 'center', gap: '6px' }}
         >
           {copied ? <Check size={13} style={{ color: 'var(--st-ok)' }} /> : <Copy size={13} />}
-          <span>{copied ? 'Đã sao chép!' : 'Sao chép văn bản (Copy Raw)'}</span>
+          <span>{copied ? t('explain.copied') : t('explain.copyRaw')}</span>
         </button>
       </div>
 

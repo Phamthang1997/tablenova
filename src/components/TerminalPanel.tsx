@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { Trans, useTranslation } from 'react-i18next';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
@@ -35,6 +36,13 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   inOwnWindow = false,
   closable: _closable = true,
 }) => {
+  const { t } = useTranslation();
+  // The shell-opening effect runs once per session (deps: [epoch]) and writes into
+  // the xterm buffer from its callbacks. Reading `t` directly would put it in the
+  // dependency graph, so switching language would tear down the live PTY.
+  const tRef = useRef(t);
+  tRef.current = t;
+
   const containerRef = useRef<HTMLDivElement>(null);
   // crypto.randomUUID thay cho Math.random: sessionId là định danh phiên gửi xuống backend,
   // không nên đoán trước được (cũng loại luôn khả năng trùng id).
@@ -138,20 +146,20 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
           // '\x1b[2K' xoá sạch dòng hiện tại trước khi in, tránh ghi đè lên dòng
           // shell đang in dở (chỉ '\r\n' thì '\r' kéo con trỏ về cột 0 và đè chữ).
           term.write('\r\n\x1b[2K');
-          term.writeln(`\x1b[33m[Phiên shell kết thúc, mã thoát ${msg.code ?? 0}]\x1b[0m`);
-          term.writeln('\x1b[33m[Bấm "Kết nối lại" trên thanh tiêu đề để mở phiên mới]\x1b[0m');
+          term.writeln(`\x1b[33m${tRef.current('terminal.sessionExited', { code: msg.code ?? 0 })}\x1b[0m`);
+          term.writeln(`\x1b[33m${tRef.current('terminal.reconnectHint')}\x1b[0m`);
           setAlive(false);
         } else if (msg.type === 'closed') {
           term.write('\r\n\x1b[2K');
-          term.writeln('\x1b[31m[Đã ngắt kết nối]\x1b[0m');
-          term.writeln('\x1b[31m[Bấm "Kết nối lại" trên thanh tiêu đề để mở phiên mới]\x1b[0m');
+          term.writeln(`\x1b[31m${tRef.current('terminal.disconnected')}\x1b[0m`);
+          term.writeln(`\x1b[31m${tRef.current('terminal.reconnectHint')}\x1b[0m`);
           setAlive(false);
         }
       })
       .catch((e) => {
         if (!disposed) {
           term.write('\r\n\x1b[2K');
-          term.writeln(`\x1b[31m[Lỗi mở Terminal] ${e}\x1b[0m`);
+          term.writeln(`\x1b[31m${tRef.current('terminal.errOpen', { message: String(e) })}\x1b[0m`);
         }
         setAlive(false);
       });
@@ -279,15 +287,20 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
       const vals = Object.values(row);
       term.writeln(
         ansi.dim('│') +
+        // Not named `t` — that is the translation function.
         columns.map((_, i) => {
-          const t = cellText(vals[i]);
-          return ' ' + (t === 'NULL' ? ansi.dim(pad(t, widths[i])) : pad(t, widths[i])) + ' ';
+          const cell = cellText(vals[i]);
+          return ' ' + (cell === 'NULL' ? ansi.dim(pad(cell, widths[i])) : pad(cell, widths[i])) + ' ';
         }).join(ansi.dim('│')) +
         ansi.dim('│')
       );
     }
     term.writeln(line('└', '┴', '┘'));
-    term.writeln(ansi.dim(`${rows.length} dòng${rows.length > MAX_SQL_ROWS ? ` (chỉ hiện ${MAX_SQL_ROWS} dòng đầu)` : ''}`));
+    term.writeln(ansi.dim(
+      rows.length > MAX_SQL_ROWS
+        ? t('terminal.rowCountClipped', { n: rows.length, shown: MAX_SQL_ROWS })
+        : t('terminal.rowCount', { n: rows.length })
+    ));
   };
 
   const runSql = async () => {
@@ -302,20 +315,20 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     try {
       const res = await dbHelper.executeQueryMulti(sql);
       if (!res.success) {
-        term?.writeln(ansi.err(`[SQL lỗi] ${res.error || 'không rõ nguyên nhân'}`));
+        term?.writeln(ansi.err(t('terminal.sqlError', { message: res.error || t('terminal.unknownReason') })));
       } else {
         for (const r of res.results) {
           if (r.columns && r.columns.length > 0) {
             printTable(r.columns, r.data || []);
           } else {
             // Lệnh không trả bảng (INSERT/UPDATE/DDL...)
-            term?.writeln(ansi.ok('[OK] Lệnh đã thực thi.'));
+            term?.writeln(ansi.ok(t('terminal.sqlOk')));
           }
         }
-        if (res.results.length === 0) term?.writeln(ansi.ok('[OK] Lệnh đã thực thi.'));
+        if (res.results.length === 0) term?.writeln(ansi.ok(t('terminal.sqlOk')));
       }
     } catch (e: any) {
-      term?.writeln(ansi.err(`[SQL lỗi] ${e?.message || e}`));
+      term?.writeln(ansi.err(t('terminal.sqlError', { message: e?.message || e })));
     } finally {
       setSqlBusy(false);
       setSqlText('');
@@ -326,7 +339,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   // thì api.input() rơi vào hư không mà không báo gì — phải chặn và nói rõ.
   const sendCommand = (cmd: string) => {
     if (!alive) {
-      note('Phiên shell đã đóng — bấm "Kết nối lại" rồi thử lại.', 'err');
+      note(t('terminal.errSessionClosed'), 'err');
       return false;
     }
     apiRef.current?.input(cmd + '\r');
@@ -361,17 +374,17 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   const handleEnableLog = async (kind: string, confirmMsg: string) => {
     setSetupMenu(false);
     if (!window.confirm(confirmMsg)) return;
-    note('Đang bật log...');
+    note(t('terminal.enablingLog'));
     const res = await dbHelper.enableLogging(config.type, kind);
     if (!res.success) {
-      note(`Bật log thất bại: ${res.message || 'kiểm tra quyền (SUPER/superuser).'}`, 'err');
+      note(t('terminal.errEnableLog', { message: res.message || t('terminal.errEnableLogPerm') }), 'err');
       return;
     }
     if (res.needsRestart) {
-      note('Đã ghi cấu hình, nhưng cần KHỞI ĐỘNG LẠI server DB thì logging_collector mới có tác dụng.', 'err');
+      note(t('terminal.needsRestart'), 'err');
       return;
     }
-    note('Đã bật log. Đang dò đường dẫn...');
+    note(t('terminal.logEnabledDetecting'));
     const det = await dbHelper.detectLogPaths(config.type);
     setLogPaths(det.paths);
     setDetectError(det.error || null);
@@ -379,35 +392,38 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     // In kết quả ra ngay terminal: trước đây chỉ mở menu, nếu menu rỗng thì
     // người dùng thấy tiến trình đứng lại ở "Đang dò đường dẫn..." mà không hiểu vì sao.
     if (det.error) {
-      note(`Dò đường dẫn log thất bại: ${det.error}`, 'err');
+      note(t('terminal.errDetectPaths', { message: det.error }), 'err');
     } else if (det.paths.length === 0) {
-      note('Không tìm thấy đường dẫn log nào (DB có thể ghi ra stderr/syslog/TABLE).');
+      note(t('terminal.noLogPaths'));
     } else {
-      note(`Tìm được ${det.paths.length} đường dẫn log — mở menu "Dò log" để chọn.`, 'ok');
+      note(t('terminal.foundLogPaths', { n: det.paths.length }), 'ok');
     }
   };
 
   const handleDisableLog = async (kind: string) => {
     setSetupMenu(false);
     const res = await dbHelper.disableLogging(config.type, kind);
-    note(res.success ? 'Đã tắt log.' : `Tắt log thất bại: ${res.message}`, res.success ? 'ok' : 'err');
+    note(
+      res.success ? t('terminal.logDisabled') : t('terminal.errDisableLog', { message: res.message }),
+      res.success ? 'ok' : 'err'
+    );
   };
 
   // Các mục bật/tắt log theo dialect
   const setupItems: { label: string; danger?: boolean; onClick: () => void }[] = (() => {
     if (config.type === 'mysql') {
       return [
-        { label: 'Bật slow query log', onClick: () => handleEnableLog('slow', 'Bật slow query log (long_query_time=1s) trên MySQL server?') },
-        { label: 'Bật general log (nặng — ghi mọi câu lệnh)', onClick: () => handleEnableLog('general', 'Bật GENERAL log? Ghi MỌI câu lệnh, tốn đĩa nhanh. Nhớ tắt sau khi xem.') },
-        { label: 'Tắt slow query log', danger: true, onClick: () => handleDisableLog('slow') },
-        { label: 'Tắt general log', danger: true, onClick: () => handleDisableLog('general') },
+        { label: t('terminal.mysqlEnableSlow'), onClick: () => handleEnableLog('slow', t('terminal.mysqlEnableSlowConfirm')) },
+        { label: t('terminal.mysqlEnableGeneral'), onClick: () => handleEnableLog('general', t('terminal.mysqlEnableGeneralConfirm')) },
+        { label: t('terminal.mysqlDisableSlow'), danger: true, onClick: () => handleDisableLog('slow') },
+        { label: t('terminal.mysqlDisableGeneral'), danger: true, onClick: () => handleDisableLog('general') },
       ];
     }
     if (config.type === 'postgres') {
       return [
-        { label: 'Bật log_statement=all (reload, ra stderr)', onClick: () => handleEnableLog('statements', "ALTER SYSTEM SET log_statement='all' rồi reload cấu hình Postgres?") },
-        { label: 'Bật logging_collector (cần restart)', onClick: () => handleEnableLog('collector', "ALTER SYSTEM SET logging_collector='on'? Chỉ có tác dụng sau khi RESTART server thủ công.") },
-        { label: 'Tắt log_statement', danger: true, onClick: () => handleDisableLog('statements') },
+        { label: t('terminal.pgEnableStatements'), onClick: () => handleEnableLog('statements', t('terminal.pgEnableStatementsConfirm')) },
+        { label: t('terminal.pgEnableCollector'), onClick: () => handleEnableLog('collector', t('terminal.pgEnableCollectorConfirm')) },
+        { label: t('terminal.pgDisableStatements'), danger: true, onClick: () => handleDisableLog('statements') },
       ];
     }
     return [];
@@ -416,7 +432,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   const title = useSsh ? 'SSH Terminal' : 'Local Terminal';
   const subtitle = useSsh
     ? `${config.sshUser || 'root'}@${config.sshHost}:${config.sshPort || 22}`
-    : 'shell máy cục bộ';
+    : t('terminal.localShell');
 
   // Style gốc theo chế độ
   const rootStyle: React.CSSProperties = floating
@@ -459,7 +475,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
             gom tên/địa chỉ thành 2 dòng cho đỡ chật khi cửa sổ hẹp. */}
         <div className="tp-title">
           <TerminalSquare size={15} style={{ flexShrink: 0, opacity: 0.8 }} />
-          <span className={`tp-dot ${alive ? 'on' : 'off'}`} title={alive ? 'Phiên đang chạy' : 'Phiên đã đóng'} />
+          <span className={`tp-dot ${alive ? 'on' : 'off'}`} title={alive ? t('terminal.sessionAlive') : t('terminal.sessionDead')} />
           <div style={{ minWidth: 0 }}>
             <div className="tp-title-main">{title}{profileName ? ` — ${profileName}` : ''}</div>
             <div className="tp-title-sub">{subtitle}</div>
@@ -469,9 +485,9 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
           {/* Phiên chết thì panel trở thành cục gạch: shell chỉ được mở một lần trong
               effect khởi tạo, không có đường nào mở lại ngoài đóng hẳn terminal. */}
           {!alive && (
-            <button className="tp-btn warn" onClick={() => setEpoch(e => e + 1)} title="Mở lại phiên shell mới">
+            <button className="tp-btn warn" onClick={() => setEpoch(e => e + 1)} title={t('terminal.reconnectTitle')}>
               <RefreshCw size={13} />
-              <span>Kết nối lại</span>
+              <span>{t('terminal.reconnect')}</span>
             </button>
           )}
 
@@ -480,7 +496,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
             <button
               className={`tp-btn ${sqlBar ? 'on' : ''}`}
               onClick={() => { setSqlBar(v => !v); setLogMenu(false); setSetupMenu(false); }}
-              title="Chạy SQL trên kết nối hiện tại, kết quả in ra terminal"
+              title={t('terminal.runSqlTitle')}
             >
               <Play size={12} />
               <span>SQL</span>
@@ -494,10 +510,10 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
                 className="tp-btn"
                 onClick={() => { setSetupMenu(m => !m); setLogMenu(false); }}
                 style={{ padding: '2px 6px', display: 'flex', alignItems: 'center', gap: '4px' }}
-                title="Bật/tắt ghi log ở phía DB server"
+                title={t('terminal.setupLogTitle')}
               >
                 <ScrollText size={13} />
-                <span>Bật log</span>
+                <span>{t('terminal.setupLog')}</span>
               </button>
               {setupMenu && (
                 <>
@@ -514,7 +530,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
                       </button>
                     ))}
                     <div style={{ padding: '6px 8px', color: 'var(--win-text-disabled)', lineHeight: 1.35, borderTop: '1px solid var(--win-border)' }}>
-                      Cần quyền cao (SUPER/superuser). Đây là thao tác đổi cấu hình server.
+                      {t('terminal.setupLogNote')}
                     </div>
                   </div>
                 </>
@@ -527,10 +543,10 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
               className="tp-btn"
               onClick={handleDetectLog}
               style={{ padding: '2px 6px', display: 'flex', alignItems: 'center', gap: '4px' }}
-              title="Dò đường dẫn file log của DB rồi tail"
+              title={t('terminal.findLogsTitle')}
             >
               <FileSearch size={13} />
-              <span>Dò log</span>
+              <span>{t('terminal.findLogs')}</span>
             </button>
             {logMenu && (
               <>
@@ -538,7 +554,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
                 <div className="tp-menu" style={{ position: 'absolute', top: 'calc(100% + 4px)', right: 0, width: '360px', maxWidth: '80vw', zIndex: 999, overflow: 'hidden', fontSize: '11px' }}>
                   {/* Nguồn log: Local / SSH (VM) / Docker */}
                   <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--win-border)' }}>
-                    <div style={{ color: 'var(--win-text-secondary)', fontWeight: 600, marginBottom: '6px' }}>Nguồn log</div>
+                    <div style={{ color: 'var(--win-text-secondary)', fontWeight: 600, marginBottom: '6px' }}>{t('terminal.logSource')}</div>
                     <div style={{ display: 'flex', gap: '4px', marginBottom: '6px' }}>
                       {(['local', 'ssh', 'docker'] as const).map(m => (
                         <button
@@ -564,7 +580,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
                         <input
                           value={dockerContainer}
                           onChange={(e) => setDockerContainer(e.target.value)}
-                          placeholder="tên container (vd: mysql8)"
+                          placeholder={t('terminal.dockerContainerPlaceholder')}
                           style={{ flex: 1, padding: '4px 6px', fontSize: '11px', background: 'var(--win-bg-input, #1c1c1e)', color: 'var(--win-text-primary)', border: '1px solid var(--win-border)', borderRadius: '4px', outline: 'none', boxSizing: 'border-box' }}
                         />
                         <button className="tp-btn" onClick={dockerLogs} disabled={!dockerContainer.trim()} style={{ padding: '2px 8px', whiteSpace: 'nowrap' }} title="docker logs -f (log ra stdout)">
@@ -574,11 +590,11 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
                     )}
                   </div>
                   <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--win-border)', color: 'var(--win-text-secondary)', fontWeight: 600 }}>
-                    Đường dẫn log — bấm để theo dõi
+                    {t('terminal.logPathsHint')}
                   </div>
                   <div style={{ maxHeight: '300px', overflowY: 'auto', padding: '4px' }}>
                     {detecting ? (
-                      <div style={{ padding: '10px', color: 'var(--win-text-secondary)' }}>Đang dò...</div>
+                      <div style={{ padding: '10px', color: 'var(--win-text-secondary)' }}>{t('terminal.detecting')}</div>
                     ) : logPaths && logPaths.length > 0 ? (
                       logPaths.map((lp, i) => {
                         const folder = isFolder(lp);
@@ -588,12 +604,12 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
                             className="context-menu-item"
                             style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%', padding: '6px 8px', borderRadius: '6px', cursor: 'pointer' }}
                             onClick={() => runItem(lp)}
-                            title={folder ? `Liệt kê file log trong: ${lp.path}` : `Theo dõi: ${lp.path}`}
+                            title={folder ? t('terminal.listInFolder', { path: lp.path }) : t('terminal.tailPath', { path: lp.path })}
                           >
                             {folder ? <FolderOpen size={14} style={{ flexShrink: 0, color: 'var(--win-text-secondary)' }} /> : <FileSearch size={14} style={{ flexShrink: 0, color: 'var(--win-accent)' }} />}
                             <div style={{ minWidth: 0, flex: 1 }}>
                               <div style={{ color: 'var(--win-accent)', fontSize: '10px' }}>
-                                {lp.label}{folder ? ' (thư mục)' : ''}
+                                {lp.label}{folder ? t('terminal.folderSuffix') : ''}
                               </div>
                               <div style={{ color: 'var(--win-text-primary)', wordBreak: 'break-all', lineHeight: 1.3 }}>{lp.path}</div>
                             </div>
@@ -601,7 +617,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
                               className="tp-btn"
                               onClick={(e) => { e.stopPropagation(); copyPath(lp.path); }}
                               style={{ flexShrink: 0 }}
-                              title="Sao chép đường dẫn"
+                              title={t('terminal.copyPath')}
                             >
                               <Copy size={12} />
                             </button>
@@ -612,15 +628,15 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
                       /* Hiện đúng lỗi từ DB (mất kết nối, thiếu quyền...) thay vì
                          gộp chung vào thông báo "không tìm thấy file log". */
                       <div style={{ padding: '10px', color: 'var(--st-danger)', lineHeight: 1.5 }}>
-                        Không dò được đường dẫn log:
+                        {t('terminal.errDetectHeading')}
                         <div style={{ marginTop: '4px', color: 'var(--win-text-secondary)', fontFamily: 'var(--win-font-mono)', fontSize: '10px', whiteSpace: 'pre-wrap' }}>
                           {detectError}
                         </div>
                       </div>
                     ) : (
                       <div style={{ padding: '10px', color: 'var(--win-text-secondary)', lineHeight: 1.5 }}>
-                        Không tìm thấy file log. DB có thể ghi ra stderr/syslog/TABLE.
-                        Thử <code>journalctl -u postgresql</code> / <code>-u mysql</code> hoặc Event Viewer.
+                        {t('terminal.noLogFile')}{' '}
+                        <Trans i18nKey="terminal.noLogFileHint" components={{ code: <code /> }} />
                       </div>
                     )}
                   </div>
@@ -634,7 +650,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
               className="tp-btn"
               onClick={() => openTerminalWindow(config, profileName)}
               style={{ padding: '2px 6px', display: 'flex', alignItems: 'center' }}
-              title="Mở trong cửa sổ riêng"
+              title={t('terminal.openInOwnWindow')}
             >
               <ExternalLink size={14} />
             </button>
@@ -644,7 +660,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
               className="tp-btn"
               onClick={() => setMaximized(m => !m)}
               style={{ padding: '2px 6px', display: 'flex', alignItems: 'center' }}
-              title={maximized ? 'Thu nhỏ cửa sổ' : 'Toàn màn hình'}
+              title={maximized ? t('terminal.restoreWindow') : t('terminal.fullScreen')}
             >
               {maximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
             </button>
@@ -654,7 +670,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
               className="tp-btn"
               onClick={onToggleFloat}
               style={{ padding: '2px 6px', display: 'flex', alignItems: 'center' }}
-              title={floating ? 'Ghim vào tab' : 'Tách ra cửa sổ nổi'}
+              title={floating ? t('terminal.dockToTab') : t('terminal.popOut')}
             >
               {floating ? <PanelBottom size={14} /> : <PictureInPicture2 size={14} />}
             </button>
@@ -667,7 +683,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
       {banner && (
         <div className={`tp-banner ${banner.kind}`}>
           <span>{banner.text}</span>
-          <button className="tp-banner-close" onClick={() => setBanner(null)} title="Đóng" aria-label="Đóng">
+          <button className="tp-banner-close" onClick={() => setBanner(null)} title={t('common.close')} aria-label={t('common.close')}>
             <X size={12} />
           </button>
         </div>
@@ -697,15 +713,15 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
                 else { setHistIdx(i); setSqlText(sqlHistory[i]); }
               }
             }}
-            placeholder={`Câu SQL chạy trên kết nối hiện tại — Enter để chạy${sqlHistory.length ? ', ↑/↓ xem lại' : ''}`}
+            placeholder={sqlHistory.length ? t('terminal.sqlPlaceholderHistory') : t('terminal.sqlPlaceholder')}
             spellCheck={false}
             autoFocus
           />
-          <button className="tp-btn" onClick={() => void runSql()} disabled={sqlBusy || !sqlText.trim()} title="Chạy (Enter)">
+          <button className="tp-btn" onClick={() => void runSql()} disabled={sqlBusy || !sqlText.trim()} title={t('terminal.runTitle')}>
             {sqlBusy ? <RefreshCw size={12} className="loading-spinner" /> : <Play size={12} />}
-            <span>Chạy</span>
+            <span>{t('terminal.run')}</span>
           </button>
-          <button className="tp-btn" onClick={() => { termRef.current?.clear(); }} title="Xoá màn hình terminal">
+          <button className="tp-btn" onClick={() => { termRef.current?.clear(); }} title={t('terminal.clearScreen')}>
             <Eraser size={12} />
           </button>
         </div>
