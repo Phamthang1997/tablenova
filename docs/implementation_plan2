@@ -1,80 +1,220 @@
-# Implementation Plan - Internationalization (i18n) using react-i18next
+# Implementation Plan — Internationalization (i18n) with react-i18next
 
-Add full i18n localization support to TableNova for **English (en)**, **Vietnamese (vi)**, and **Japanese (ja)** using `react-i18next` & `i18next`.
+Localize TableNova into **English (en)**, **Vietnamese (vi)** and **Japanese (ja)**.
 
-## User Review Required
+Delivered in phases. **Phase 1 is implemented**; phase 2 and 3 are the remaining scope.
 
-> [!IMPORTANT]
-> The app will use `react-i18next` with automatic language detection (`i18next-browser-languagedetector`), fallback to `vi` / `en`, and seamless persistence in `localStorage`.
+## Libraries
 
-## Library Versions
+Already present in `package.json` and installed:
 
-The following npm packages are specified and installed in `package.json`:
-
-- **`i18next`**: `^26.3.6` — Core internationalization framework
-- **`react-i18next`**: `^17.0.11` — React 19 integration & translation hooks (`useTranslation`)
-- **`i18next-browser-languagedetector`**: `^8.2.1` — Language detector (detects browser settings & saves preference in `localStorage`)
+- **`i18next`** `^26.3.6`
+- **`react-i18next`** `^17.0.11`
+- **`i18next-browser-languagedetector`** `^8.2.1`
 
 ---
 
-## Proposed Changes
+## Decisions
 
-### `src/i18n/` (i18n Setup & Translation Resources)
+These were settled before writing code; they are the reason the file layout looks the way it does.
 
-#### [NEW] [locales/en.ts](file:///c:/workspace/table/src/i18n/locales/en.ts)
-- Complete English translation dictionary covering:
-  - `common`: OK, Cancel, Save, Delete, Close, Search, Refresh, Copy, Edit, Loading, Success, Error, Confirm, etc.
-  - `titlebar`: Menu categories (Connection, Database, View, Help) and menu items (New Connection, Disconnect, New Query, Backup & Restore, Language, Theme, etc.).
-  - `sidebar`: Tables, Views, Search, New Table, Drop Table, Rename Table, Export Table, Import Data, Query, AI Assistant, Terminal, Migration, Redis, etc.
-  - `connection`: Connection Manager, DB types (SQLite, PostgreSQL, MySQL, Redis), Host, Port, Database, User, Password, Test Connection, Connect, Saved Connections, etc.
-  - `datagrid`: Apply, Cancel, Add Row, Delete Selected, Search, Filter, Pagination, Row Count, Null, Empty.
-  - `sqleditor`: Run, Format, Clear, History, Save Query, Export Results, Execution Time, Results, Messages, Explain.
-  - `structure`: Columns, Indexes, Foreign Keys, Primary Key, Auto Increment, Not Null, Default, Preview SQL, Save Schema.
-  - `createtable`: Table Name, Columns, Data Type, Add Column, Create Table.
-  - `backup`: Backup & Restore, Export Backup, Restore Database, Select Tables, Start Backup, Start Restore.
-  - `ai`: AI Assistant, Ask AI, Send, SQL Generator, Clear.
-
-#### [NEW] [locales/vi.ts](file:///c:/workspace/table/src/i18n/locales/vi.ts)
-- Complete Vietnamese translation dictionary matching all keys in `en.ts`.
-
-#### [NEW] [locales/ja.ts](file:///c:/workspace/table/src/i18n/locales/ja.ts)
-- Complete Japanese translation dictionary matching all keys in `en.ts`.
-
-#### [NEW] [index.ts](file:///c:/workspace/table/src/i18n/index.ts)
-- Initialize `i18next` with `initReactI18next` and `LanguageDetector`.
-- Configure `en`, `vi`, `ja` resources.
+| Topic | Decision |
+|---|---|
+| Fallback | `fallbackLng: 'en'` (single value, not "vi / en"). |
+| Detection | `order: ['localStorage', 'navigator']` only. Querystring/cookie detection is **off** — the app already uses a query param of its own (`?term=`) for the terminal window. |
+| Storage key | `tf_lang`, matching the existing `tf_theme` / `tf_default_profile_id` convention. |
+| Locale resolution | `supportedLngs` + `nonExplicitSupportedLngs: true`, so `ja-JP` / `vi-VN` from `navigator` resolve to `ja` / `vi` instead of dropping to the fallback. |
+| Loading | Dictionaries are **bundled**, not fetched — the app must work offline (same reason fonts are vendored). `react.useSuspense: false`; there is nothing to suspend on. |
+| Key type-safety | `vi.ts` / `ja.ts` are typed `typeof en`, and `i18next.d.ts` augments `CustomTypeOptions`. A missing key or a typo in `t('…')` is a **build error**, not a raw key rendered at runtime. |
+| Plurals | Placeholders are named `{{n}}`, never `{{count}}` — `count` switches i18next into plural mode and would require `_one`/`_other` siblings per language, breaking flat key parity. |
+| Inline markup | Strings with emphasis go through `<Trans>` with `<strong>` / `<code>` tags so each language controls word order around the emphasised part. |
+| Vietnamese comments | Unchanged. The CLAUDE.md convention covers **comments**; only user-facing **strings** moved into `vi.ts`, verbatim, so the Vietnamese UI reads exactly as before. |
+| CJK fonts | Inter and JetBrains Mono carry no CJK glyphs. `--win-font-sans` / `--win-font-mono` gained OS CJK fallbacks (Yu Gothic UI / Hiragino Sans / Noto Sans JP / Meiryo). These are system fonts, never fetched — offline rendering is preserved. |
 
 ---
 
-### `src/` & `src/components/`
+## Phase 1 — Infrastructure + connection & navigation surfaces (DONE)
 
-#### [MODIFY] [main.tsx](file:///c:/workspace/table/src/main.tsx)
-- Import `./i18n` to initialize i18next before React renders.
+### `src/i18n/`
 
-#### [MODIFY] [TitleBar.tsx](file:///c:/workspace/table/src/components/TitleBar.tsx)
-- Use `useTranslation()` hook.
-- Add "Language / Ngôn ngữ / 言語" selector in TitleBar allowing fast selection of:
-  - 🇬🇧 English (`en`)
-  - 🇻🇳 Tiếng Việt (`vi`)
-  - 🇯🇵 日本語 (`ja`)
-- Localize top-level menus and action items.
+- **`index.ts`** — i18next bootstrap with the config above. Exports `SUPPORTED_LANGUAGES`, `LANGUAGE_STORAGE_KEY` and `currentLanguage()`. Keeps `<html lang>` in sync on `languageChanged` so the browser picks the right CJK face and line-breaking rules.
+- **`i18next.d.ts`** — `CustomTypeOptions` augmentation that makes `t()` key-aware.
+- **`locales/en.ts`** — source of truth for the key tree.
+- **`locales/vi.ts`**, **`locales/ja.ts`** — typed `typeof en`.
+- **`__tests__/locales.test.ts`** — runtime guard for what types cannot see: empty values, dropped `{{…}}` placeholders, dropped `<Trans>` tags.
 
-#### [MODIFY] [Sidebar.tsx](file:///c:/workspace/table/src/components/Sidebar.tsx)
-- Use `useTranslation()` for tooltips, search placeholders, context menu items, and section titles.
+Namespaces so far: `common`, `language`, `titlebar`, `sidebar`, `createTable`, `connection`, `confirmDialog`.
 
-#### [MODIFY] [ConnectionManager.tsx](file:///c:/workspace/table/src/components/ConnectionManager.tsx)
-- Use `useTranslation()` for connection setup fields, tab headers, buttons, and connection status messages.
+### Wiring
 
-#### [MODIFY] [CreateTableModal.tsx](file:///c:/workspace/table/src/components/CreateTableModal.tsx)
-- Use `useTranslation()` for modal titles, column definitions, data types, and action buttons.
+- **`main.tsx`** — side-effect `import './i18n'` before the first render. Covers both the main window and the standalone terminal window (`?term=`), since both come through this entry.
+- **`index.css`** — CJK fallbacks appended to the two font stacks.
+
+### Localized components
+
+- **`TitleBar.tsx`** — all menus + a **Language** menu (🇬🇧/🇻🇳/🇯🇵, check mark on the active one). Its category label is bilingual (`Language / 言語`) so a user staring at a UI they cannot read still finds it.
+- **`Sidebar.tsx`** — database switcher, tools, table/function/procedure lists, context menu, and every rename/create/drop dialog.
+- **`ConnectionManager.tsx`** — the full screen: profile list, all four DB forms, SSL and SSH tabs, AWS IAM block, Backup & Restore mode, and the URL-import / export / decrypt modals.
+- **`CreateTableModal.tsx`**, **`ConfirmDialog.tsx`**.
+
+### Notes for anyone extending this
+
+- `t` shadowing: several `.map(t => …)` / `.find(t => …)` callbacks had to be renamed (`item`, `nt`, `tableName`) because `t` is now the translation function. Watch for this in the remaining files.
+- Module-level helpers cannot call the hook. `formatRestoreEta()` takes `t` as its first argument; `SSL_MODE_DESC` / `LED_TITLE` became lookups inside the component. Dynamic keys (`t(\`a.${x}\`)`) defeat the typed key tree — use a `switch` instead.
+- The mount-only bootstrap effect in `ConnectionManager` carries an `eslint-disable-next-line react-hooks/exhaustive-deps`: `t` changes identity on language change, and adding it to the deps would reload profiles and reset a half-filled form.
 
 ---
 
-## Verification Plan
+## Phase 2 — Remaining components (DONE)
 
-### Automated Tests
-- Run `npm run build-frontend` (`tsc -b && vite build`) to verify type safety and build success.
+Every component below is localized; namespaces added in this phase: `dataGrid`, `structure`,
+`sqlEditor`, `app`, `tabs`, `ai`, `explain`, `queryParams`, `importPicker`, `exportDialog`,
+`importDialog`, `dbInfo`, `migration`, `terminal`, `redis`.
 
-### Manual Verification
-- Test switching language dynamically between English, Vietnamese, and Japanese via TitleBar.
-- Verify active language persists across page refreshes.
+| File | Lines | Status |
+|---|---|---|
+| `components/SqlEditor.tsx` | 2330 | done |
+| `components/DataGrid.tsx` | 2042 | done |
+| `App.tsx` | 1604 | done |
+| `components/StructureViewer.tsx` | 1411 | done |
+| `components/DatabaseInfoModal.tsx` | 1072 | done |
+| `components/ImportDatabaseDialog.tsx` | 1022 | done |
+| `components/ExportTableDialog.tsx` | 526 | done |
+| `components/ExportDatabaseDialog.tsx` | 401 | done |
+| `components/ImportFilePicker.tsx` | 285 | done |
+| `components/SchemaMigration.tsx` | 256 | done |
+| `components/TabManager.tsx` | 240 | done |
+| `components/QueryParamsModal.tsx`, `QueryParamsConfigModal.tsx` | | done |
+| `components/AiAssistant.tsx` | 150 | done |
+| Explain family (`ExplainViewer/Tree/Raw/Diagram`) | | done |
+| `components/TerminalPanel.tsx` | 717 | done |
+| `components/RedisBrowser.tsx` | 510 | done |
+| `TerminalWindow.tsx` | 28 | nothing to do — it renders `TerminalPanel` and holds no user-facing string |
+
+### Additional notes from phase 2
+
+- **Locale-aware number and date formatting.** `toLocaleString('vi-VN')` / `toLocaleDateString('vi-VN')`
+  were hardcoded in DataGrid, SqlEditor, App, SchemaMigration and the export/import dialogs. They now
+  take `i18n.language`, so the thousands separator and the date format follow the active UI language.
+- **`t` in a memoized callback.** In `DataGrid`, `fetchSchema` is a `useCallback` feeding an effect that
+  clears the unsaved-edit buffer. Reading `t` directly would make it re-run — and wipe the buffer — on a
+  language switch, so it reads through a `tRef`. `SqlEditor` uses the same ref for the Monaco action
+  labels and the gutter run-glyph, which are registered once per editor mount.
+- **A real bug the migration surfaced.** `SchemaMigration` drove its spinner off
+  `busy.startsWith('Đang')` — a prefix match on a user-facing string. It now has a separate `working`
+  boolean; the old check would have silently stopped working in English and Japanese.
+- **More module-level helpers taking `t`:** `formatDuration()` and `gunzipToText()` in
+  `ImportDatabaseDialog`, `formatRestoreEta()` in `ConnectionManager`. `IMPORT_FORMATS` in
+  `ImportFilePicker` and `FORMAT_HINT` in `ExportDatabaseDialog` hold translation **keys** now, resolved
+  with `t()` inside the component.
+- **More `t` shadowing found and renamed:** `row` in `DatabaseInfoModal`, `vt` in
+  `ImportDatabaseDialog`, `item` in `DatabaseInfoModal`'s tab list, `tab` in `DataGrid`'s import tabs,
+  `name` in `SchemaMigration`'s diff list.
+- **A second `exhaustive-deps` disable** was added to `DatabaseInfoModal`'s open/close effect, for the
+  same reason as `ConnectionManager`'s.
+- **`TerminalPanel` needs a `tRef`, not `t`.** Its shell-opening effect has `[epoch]` deps and writes
+  into the xterm buffer from the PTY callbacks. Reading `t` directly would put it in the dependency
+  graph, so switching language would tear down the live shell session. Same pattern as `DataGrid`.
+- **Text already written into the xterm buffer is not re-translated** on a language switch — the
+  buffer holds bytes, not React nodes. Only new output uses the new language. This is deliberate:
+  rewriting scrollback would mean owning the terminal buffer, which the shell also draws into.
+- **`RedisBrowser` has four components in one file** (`RedisBrowser`, `ValuePanel`, `KVTable`,
+  `RedisConsole`, `RedisDashboard`); each needs its own `useTranslation()`. `KVTable` had to change
+  from an implicit-return arrow to a block body to host the hook.
+- **Two more `t` shadows:** `onChangeTypeFilter(t: string)` in `RedisBrowser` and the `cellText` local
+  inside `printTable` in `TerminalPanel`. Neither was broken yet, but both would have silently hidden
+  the translation function from any string added later in the same scope.
+
+## Phase 3 — Non-component strings (DONE)
+
+### 1. `src/utils/` — plain modules, no hook
+
+`cryptoHelper`, `fileSave`, `redisDecode`, `xlsxReader`, `xmlParser`, `dumpPreview`, `exportHelper`,
+`importPreview` now `import i18n from '../i18n'` and call `i18n.t('errors.…')` on the shared instance.
+Namespace: `errors`.
+
+`src/sql/statements.ts` needed no change — it throws nothing localizable, so it keeps its
+"no imports beyond pure text helpers" property and stays testable in the node environment.
+
+**The i18n bootstrap works under `environment: 'node'`.** The language detector no-ops without
+`window`/`localStorage`, so tests resolve to `fallbackLng: 'en'`. Verified: importing `../i18n` into
+`xmlParser.ts` left `xmlParser.test.ts` green. No test asserted on a localized error message, so
+nothing had to be relaxed.
+
+### 2. The positional-parameter key was a latent bug
+
+`Tham số ? #N` was generated at three sites in `queryParamHelper.ts` and used as **the key of the
+value map** — a map that is persisted in `localStorage` (`sql_query_param_values`). Localizing it
+directly would have meant the extract pass and the substitute pass could disagree, and every saved
+value would be orphaned on a language switch.
+
+Fixed by splitting identity from presentation:
+- `positionalParamKey(n)` -> `?#N`, language-independent, used by all three sites.
+- `positionalParamIndex(name)` + `queryParams.positionalParam` build the label at render time in
+  `QueryParamsModal`.
+
+One-time cost: values saved under the old Vietnamese keys are ignored. `queryParamHelper.test.ts` was
+updated to assert the stable key.
+
+### 3. Rust backend errors — mapped at the `dbHelper` boundary
+
+The real scope was **69 distinct strings** (≈55 genuine errors), not the ~280 lines quoted earlier —
+that figure counted Vietnamese *comments* too. `"Chưa kết nối CSDL"` alone accounts for 26 call sites.
+
+`src/utils/backendErrors.ts` maps them to the `backend` namespace:
+- `EXACT` — 38 whole-message entries.
+- `PATTERNS` — 21 regex rules that translate only the Vietnamese *framing* and pass the interpolated
+  payload through, because that payload is usually a driver error already in the server's own
+  language.
+- Unmatched text is returned unchanged, so a missed or reworded message degrades to today's behaviour
+  instead of being lost.
+
+Wired in with **one** change rather than 63: `dbHelper.ts` imports `invoke as rawInvoke` and defines a
+local `invoke()` that shadows it, translating `message`/`error` on the way out. Every existing
+`await invoke(...)` call site therefore routes through it untouched.
+
+> The wrapper rethrows a **string**, not an `Error`. A Tauri command returning `Err(String)` surfaces
+> as a thrown string, and the `catch` blocks in `dbHelper` interpolate it directly (`${err}`) —
+> wrapping it would have silently prefixed every message with `"Error: "`.
+
+`dbHelper`'s own 18 Vietnamese literals moved to the `db` namespace.
+
+**Why a table and not error codes in Rust.** Codes emitted by Rust would be the cleaner protocol, but
+`cargo check` crashes in Tauri's build script on this machine (documented above in Commands), so a
+103-site refactor of `src-tauri/` would have shipped without ever being compiled. The table is not the
+"branch on user-facing text" mistake: these strings are produced by Rust in one fixed language and
+never vary with the UI language, so they are protocol constants — the same relationship
+`src/sql/statements.ts` has with `split_sql_statements`. **Reword a message in Rust and you must
+update `backendErrors.ts`.** If you later want codes in Rust, that is a follow-up needing a working
+`cargo build`.
+
+`src/utils/__tests__/backendErrors.test.ts` (12 tests) guards it. The load-bearing one is the
+**Vietnamese round-trip**: every `EXACT` message must translate back to byte-identical Vietnamese,
+which proves in one assertion that the key exists, that `vi.ts` transcribed the Rust wording
+faithfully, and that Vietnamese users see no behaviour change. It immediately caught a real merge —
+`"Chưa kết nối database"` and `"Chưa kết nối CSDL"` mean the same thing and now share one key, so the
+former is declared in `NORMALIZED_ALIASES` to mark the normalization as deliberate.
+
+---
+
+## Verification
+
+### Automated
+
+- `npx tsc -b` — key parity between `en`/`vi`/`ja` and every `t('…')` call site are type-checked here.
+- `npm test`:
+  - `src/i18n/__tests__/locales.test.ts` — empty values, placeholder parity, `<Trans>` tag parity.
+  - `src/utils/__tests__/backendErrors.test.ts` — the Rust-message table: keys exist, Vietnamese
+    round-trip is byte-identical, payloads survive, unmapped text passes through.
+- `npx oxlint` — must stay clean.
+
+Status after phase 3 (all three phases done): `tsc -b` clean, `oxlint` clean, `vitest` 151/151
+passing, `npm run build-frontend` succeeds. Not run in the real app yet — the live language switch and
+the Japanese glyph rendering still need a manual pass.
+
+### Manual
+
+- Switch language from the TitleBar and confirm every phase-1 surface updates without a reload.
+- Restart the app and confirm the choice persists (`tf_lang` in localStorage).
+- With the app in `ja`, confirm Japanese text renders with a real CJK face (no tofu) in both the sans and mono stacks.
+- Confirm a fresh profile (no `tf_lang`) follows the OS/browser language, including `ja-JP` → `ja`.

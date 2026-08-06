@@ -1,4 +1,7 @@
+pub mod data_generator;
 pub mod database;
+pub mod datasets;
+pub mod db_compare;
 pub mod db_stats;
 pub mod redis_db;
 pub mod ssh_tunnel;
@@ -94,6 +97,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             database::connect_db,
             database::disconnect_db,
+            database::get_connection_status,
             database::get_tables,
             database::get_full_catalog,
             database::get_table_data,
@@ -143,6 +147,13 @@ pub fn run() {
             secret_store::secret_get_many,
             secret_store::secret_set_many,
             secret_store::secret_delete_many,
+            data_generator::get_generation_targets,
+            data_generator::preview_generated_data,
+            data_generator::generate_data,
+            data_generator::cancel_data_generation,
+            db_compare::compare_schemas,
+            db_compare::compare_data_overview,
+            db_compare::compare_table_data,
             db_stats::get_database_stats,
             db_stats::get_all_databases_stats,
             db_stats::get_exact_table_row_count,
@@ -153,6 +164,17 @@ pub fn run() {
             redis_db::redis_scan_stream,
             redis_db::redis_get_key,
             redis_db::redis_set_key,
+            redis_db::redis_hash_set,
+            redis_db::redis_hash_del,
+            redis_db::redis_list_set,
+            redis_db::redis_list_push,
+            redis_db::redis_list_del,
+            redis_db::redis_set_member,
+            redis_db::redis_set_del_member,
+            redis_db::redis_zset_add,
+            redis_db::redis_zset_del,
+            redis_db::redis_stream_add,
+            redis_db::redis_stream_del,
             redis_db::redis_delete_keys,
             redis_db::redis_set_ttl,
             redis_db::redis_rename_key,

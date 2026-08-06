@@ -88,8 +88,11 @@
   --win-border: rgba(255, 255, 255, 0.12);
   --win-border-strong: rgba(255, 255, 255, 0.22);
 
-  --win-font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-  --win-font-mono: 'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace;
+  /* The bundled Inter and JetBrains Mono carry no CJK glyphs, so Japanese text
+     falls through to the platform CJK faces listed after them. These are OS
+     fonts, never fetched — the app still renders offline. */
+  --win-font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Yu Gothic UI', 'Hiragino Sans', 'Noto Sans JP', Meiryo, sans-serif;
+  --win-font-mono: 'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', 'Yu Gothic UI', 'Hiragino Sans', monospace;
 
   --win-bg-btn-secondary: rgba(255, 255, 255, 0.10);
   --win-border-btn-secondary: rgba(255, 255, 255, 0.20);
@@ -734,7 +737,9 @@ select.form-input {
 [data-theme='light'] .btn-primary:disabled,
 [data-theme='light'] .btn-secondary:disabled {
   background: #f8fafc !important;
-  color: #94a3b8 !important;
+  /* #94a3b8 on #f8fafc is ~2.2:1 — a disabled label should read as unavailable,
+     not as absent. #64748b is ~4.9:1 and still clearly muted. */
+  color: #64748b !important;
   border-color: #e2e8f0 !important;
   opacity: 1 !important;
 }
@@ -1519,6 +1524,73 @@ select.form-input {
 [data-theme='light'] .grid-input-edit {
   background: #ffffff;
   color: #000;
+}
+
+/* DB Connection Speed & Status Pill (TablePlus style) */
+.tn-connection-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-family: var(--win-font-mono, monospace);
+  font-size: 11px;
+  color: var(--win-text-primary, #ffffff);
+  user-select: none;
+  cursor: default;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+[data-theme='light'] .tn-connection-pill {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.1);
+  color: #1a1a1a;
+}
+
+.tn-connection-pill:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.tn-connection-pill-speed {
+  font-weight: 500;
+  letter-spacing: 0.2px;
+}
+
+.tn-connection-pill-badge {
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+  text-transform: lowercase;
+  padding: 1px 4px;
+  border-radius: 2px;
+  border: 1px solid currentColor;
+}
+
+.tn-badge-loc {
+  color: #4caf50;
+  border-color: rgba(76, 175, 80, 0.6);
+  background: rgba(76, 175, 80, 0.08);
+}
+
+.tn-badge-ssh {
+  color: #2196f3;
+  border-color: rgba(33, 150, 243, 0.6);
+  background: rgba(33, 150, 243, 0.08);
+}
+
+.tn-badge-ssl {
+  color: #9c27b0;
+  border-color: rgba(156, 39, 176, 0.6);
+  background: rgba(156, 39, 176, 0.08);
+}
+
+.tn-badge-rem {
+  color: #ff9800;
+  border-color: rgba(255, 152, 0, 0.6);
+  background: rgba(255, 152, 0, 0.08);
 }
 
 /* Grid Pagination */
@@ -3478,6 +3550,9 @@ select.form-input {
 .cm-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
 /* ————— Modal dùng chung ————— */
+/* Chrome dưới đây phải khớp `Modal.tsx` — xem ghi chú ở đầu tệp đó. Riêng
+   .cm-modal vẫn tự dựng header/footer trong JSX nên header không có nền
+   tab-bar; bù lại nó dùng cùng backdrop, bo góc và bóng đổ. */
 .cm-modal-backdrop {
   position: fixed;
   inset: 0;
@@ -3485,8 +3560,8 @@ select.form-input {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(3px);
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(2px);
 }
 
 .cm-modal {
@@ -3494,22 +3569,21 @@ select.form-input {
   max-width: calc(100vw - 48px);
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding: 20px;
-  border-radius: 14px;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 6px;
   border: 1px solid var(--win-border-strong);
   background: var(--win-bg-card);
-  box-shadow: 0 26px 60px rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(40px) saturate(200%);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
 }
 .cm-modal.sm { width: 400px; }
 
-.cm-modal-head { display: flex; align-items: center; gap: 9px; }
+.cm-modal-head { display: flex; align-items: center; gap: 8px; }
 .cm-modal-head h3 {
   flex: 1;
   margin: 0;
-  font-size: 14px;
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 600;
   color: var(--win-text-primary);
 }
 
@@ -3640,16 +3714,13 @@ select.form-input {
 
 .cm-pane { background: transparent; }
 
-/* Popup/menu/modal: giữ blur riêng nhưng thêm hairline + bóng theo tông kính
-   để cùng một chất liệu với panel. */
+/* Popup/menu: giữ blur riêng nhưng thêm hairline + bóng theo tông kính
+   để cùng một chất liệu với panel. `.cm-modal` không nằm trong nhóm này —
+   nó dùng bóng đổ chuẩn của `Modal.tsx`. */
 .cm-pop,
 .cm-combo-pop,
 .cm-ctx {
   box-shadow: 0 18px 44px var(--cm-glass-shadow), inset 0 1px 0 var(--cm-hairline);
-}
-
-.cm-modal {
-  box-shadow: 0 26px 60px var(--cm-glass-shadow), inset 0 1px 0 var(--cm-hairline);
 }
 
 /* Ô nhập trên nền kính: bớt đặc hơn mặc định để thấy màu loang phía sau,
@@ -3976,6 +4047,7 @@ select.form-input {
    chú thích, xóa) nên khung 740px cũ quá chật: tiêu đề tab bị xuống dòng,
    các ô input bị bóp. Nới khung và cho bảng cuộn ngang khi cần.
    ===================================================================== */
+/* Chrome dưới đây phải khớp `Modal.tsx` — xem ghi chú ở đầu tệp đó. */
 .ctm-backdrop {
   position: fixed;
   inset: 0;
@@ -3984,8 +4056,8 @@ select.form-input {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(3px);
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(2px);
 }
 
 .ctm-dialog {
@@ -3994,56 +4066,49 @@ select.form-input {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border-radius: 14px;
+  border-radius: 6px;
   border: 1px solid var(--win-border-strong);
   background: var(--win-bg-card);
-  box-shadow: 0 26px 60px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(40px) saturate(200%);
-}
-
-[data-theme='dark'] .ctm-dialog {
-  box-shadow: 0 26px 60px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
 }
 
 .ctm-head {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 14px 18px;
+  gap: 8px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--win-border);
+  background: var(--win-bg-tab-bar, rgba(0, 0, 0, 0.15));
   flex-shrink: 0;
 }
 
 .ctm-title {
   flex: 1;
-  font-size: 14px;
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 600;
   color: var(--win-text-primary);
 }
 
 .ctm-close {
-  width: 26px;
-  height: 26px;
-  border-radius: 7px;
+  padding: 0;
   border: none;
   background: transparent;
   color: var(--win-text-secondary);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  font-size: 16px;
+  line-height: 1;
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition: color 0.12s ease;
 }
-.ctm-close:hover { background: var(--win-bg-hover); color: var(--win-text-primary); }
+.ctm-close:hover { color: var(--win-text-primary); }
 
 .ctm-body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 18px;
+  padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
 }
 
 .ctm-name { max-width: 360px; }
@@ -4095,8 +4160,9 @@ select.form-input {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 12px 18px;
+  padding: 12px 16px;
   border-top: 1px solid var(--win-border);
+  background: var(--win-bg-tab-bar, rgba(0, 0, 0, 0.15));
   flex-shrink: 0;
 }
 
@@ -4380,16 +4446,13 @@ select.form-input {
   flex-direction: column;
   align-items: center;
   padding: 28px 24px 18px;
-  border-radius: 16px;
+  /* Bố cục riêng (logo giữa, không có thanh tiêu đề), nhưng khung ngoài —
+     bo góc, viền, bóng đổ — dùng đúng chrome của `Modal.tsx`. */
+  border-radius: 6px;
   border: 1px solid var(--win-border-strong);
   background: var(--win-bg-card);
-  box-shadow: 0 26px 60px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(40px) saturate(200%);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
   text-align: center;
-}
-
-[data-theme='dark'] .about-dialog {
-  box-shadow: 0 26px 60px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.10);
 }
 
 .about-close {
@@ -4781,6 +4844,10 @@ select.form-input {
 .btn-join-r {
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
+  /* Divider between the two halves. Lives here rather than inline so the
+     `.btn:disabled` rules below can recolour it — as an inline translucent white
+     it stayed invisible once the button turned light. */
+  border-left: 1px solid rgba(255, 255, 255, 0.35);
 }
 
 /* Nút phụ: thêm hairline sáng cho cùng chất liệu với .gp-btn / .cm-btn.
@@ -5078,4 +5145,347 @@ select.form-input {
 @keyframes tn-progress-slide {
   0%   { background-position: -40% 0; }
   100% { background-position: 140% 0; }
+}
+
+
+/* =====================================================================
+   Data Generator (DataGeneratorDialog) — liquid glass.
+
+   Dialog render qua PORTAL ra <body> (xem Modal.tsx) nên nó nằm NGOÀI
+   .workspace-container, tức không thấy các biến --ws-* của workspace. Token
+   kính vì thế được khai lại ở đây cho cả hai giao diện; giữ đúng cùng giá trị
+   với --ws-* để hai nơi không trôi khỏi nhau.
+   ===================================================================== */
+.dgen {
+  --dgen-glass: rgba(255, 255, 255, 0.42);
+  --dgen-glass-weak: rgba(255, 255, 255, 0.28);
+  --dgen-recess: rgba(15, 23, 42, 0.06);
+  --dgen-th: rgba(246, 248, 251, 0.94);
+  --dgen-hairline: rgba(255, 255, 255, 0.70);
+  --dgen-shadow: rgba(15, 23, 42, 0.12);
+  --dgen-hover: rgba(255, 255, 255, 0.45);
+  --dgen-sel: linear-gradient(rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.66));
+  --dgen-sel-border: rgba(255, 255, 255, 0.90);
+
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  flex: 1;
+}
+
+[data-theme='dark'] .dgen {
+  --dgen-glass: rgba(20, 24, 32, 0.46);
+  --dgen-glass-weak: rgba(18, 22, 30, 0.34);
+  --dgen-recess: rgba(0, 0, 0, 0.26);
+  --dgen-th: rgba(22, 26, 34, 0.94);
+  --dgen-hairline: rgba(255, 255, 255, 0.10);
+  --dgen-shadow: rgba(0, 0, 0, 0.38);
+  --dgen-hover: rgba(255, 255, 255, 0.07);
+  --dgen-sel: linear-gradient(rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.08));
+  --dgen-sel-border: rgba(255, 255, 255, 0.20);
+}
+
+/* Thanh điều khiển chung: card phẳng kính mờ đồng bộ với các pane. */
+.dgen-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: var(--dgen-glass-weak);
+  border: 1px solid var(--win-border);
+  box-shadow: 0 1px 2px var(--dgen-shadow);
+}
+
+.dgen-bar-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--win-border-strong);
+  margin: 0 2px;
+}
+
+/* Card kính cho từng pane (Bảng / Cột / Cấu hình / Xem trước) */
+.dgen-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--win-border);
+  border-radius: 12px;
+  background: var(--dgen-glass-weak);
+  box-shadow: 0 1px 3px var(--dgen-shadow), inset 0 1px 0 var(--dgen-hairline);
+}
+
+.dgen-pane-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 7px 10px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--win-text-secondary);
+  background: var(--dgen-recess);
+  border-bottom: 1px solid var(--win-border);
+}
+
+.dgen-pane-body {
+  overflow: auto;
+  min-height: 0;
+  flex: 1;
+}
+
+.dgen-pane-pad {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dgen-grid {
+  display: grid;
+  grid-template-columns: 232px minmax(0, 1fr) 306px;
+  gap: 10px;
+  min-height: 240px;
+  flex: 1 1 auto;
+}
+
+/* Cửa sổ hẹp: bóp hai cột biên chứ không đổi số cột — ba pane phụ thuộc nhau
+   theo chiều ngang (chọn bảng -> cột -> cấu hình) nên xếp dọc sẽ mất mạch. */
+@media (max-width: 1120px) {
+  .dgen-grid { grid-template-columns: 190px minmax(0, 1fr) 250px; }
+}
+
+.dgen-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--win-text-secondary);
+}
+
+.dgen-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+/* Ô nhập trong hộp thoại nhỏ hơn mặc định của app (13px/6-10px) vì mật độ
+   thông tin ở đây cao; phần còn lại (nền, viền, focus ring) thừa hưởng từ
+   style input chung để không có ngoại lệ về màu. */
+/* `:not([type='checkbox'])` thay vì liệt kê từng type: style input CHUNG của app chỉ
+   khớp input[type="text"], nên một <input> không ghi type sẽ mất hết nền/viền. Ở đây
+   nền/viền được đặt lại đầy đủ để không phụ thuộc vào việc khai type. */
+.dgen input:not([type='checkbox']),
+.dgen select,
+.dgen textarea {
+  font-size: 11.5px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  width: 100%;
+  color: var(--win-text-primary);
+  font-family: var(--win-font-sans);
+  background: rgba(10, 12, 16, 0.55);
+  border: 1px solid var(--win-border-strong);
+  outline: none;
+  transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+[data-theme='light'] .dgen input:not([type='checkbox']),
+[data-theme='light'] .dgen select,
+[data-theme='light'] .dgen textarea {
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  color: #0f172a;
+}
+
+.dgen input:not([type='checkbox']):focus,
+.dgen select:focus,
+.dgen textarea:focus {
+  border-color: var(--win-accent);
+  box-shadow: 0 0 0 3px var(--win-accent-glow);
+}
+
+/* 28px = chiều cao của .btn, để ô nhập và nút cạnh nhau thẳng hàng (textarea trừ ra). */
+.dgen input:not([type='checkbox']),
+.dgen select {
+  height: 28px;
+}
+
+.dgen textarea {
+  min-height: 66px;
+  font-family: var(--win-font-mono);
+}
+
+.dgen input[type='checkbox'] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--win-accent);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.dgen-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+/* Một dòng trong danh sách bảng. Mục đang chọn là chip SÁNG nổi lên (giống
+   .sidebar-item.active của workspace), không phải scrim tối. */
+.dgen-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  margin: 1px 5px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.dgen-row:hover { background: var(--dgen-hover); }
+
+.dgen-row.on {
+  background: var(--dgen-sel);
+  border-color: var(--dgen-sel-border);
+  box-shadow: 0 1px 4px var(--dgen-shadow), inset 0 1px 0 var(--dgen-hairline);
+}
+
+.dgen-row-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dgen-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+/* th phải gần đục: nó sticky, và một hàng trong suốt sẽ để chữ của dòng bên
+   dưới trượt xuyên qua. */
+.dgen-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: left;
+  padding: 6px 8px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--win-text-secondary);
+  background: var(--dgen-th);
+  border-bottom: 1px solid var(--win-border);
+}
+
+.dgen-table td {
+  padding: 3px 8px;
+  font-size: 11.5px;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--win-border);
+}
+
+.dgen-table tbody tr { cursor: pointer; }
+.dgen-table tbody tr:hover td { background: var(--dgen-hover); }
+.dgen-table tbody tr.on td { background: var(--dgen-sel); }
+
+.dgen-mono {
+  font-family: var(--win-font-mono);
+  font-size: 10.5px;
+}
+
+.dgen-dim { color: var(--win-text-secondary); }
+
+.dgen-badge {
+  font-size: 9.5px;
+  font-weight: 700;
+  color: var(--win-text-secondary);
+  background: var(--dgen-recess);
+  border: 1px solid var(--win-border);
+  border-radius: 4px;
+  padding: 0 4px;
+  margin-left: 4px;
+}
+
+.dgen-hint {
+  font-size: 10.5px;
+  color: var(--win-text-secondary);
+  line-height: 1.4;
+}
+
+/* Chip hiển thị seed: chỉ để đọc/ghi nhớ, nên là nhãn chứ không phải ô nhập. */
+.dgen-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--win-font-mono);
+  font-size: 10.5px;
+  color: var(--win-text-secondary);
+  background: var(--dgen-recess);
+  border: 1px solid var(--win-border);
+  border-radius: 999px;
+  padding: 1px 4px 1px 9px;
+}
+
+/* Nút chỉ có icon: 7px như .cm-icon-btn/.title-bar-btn, và nhỏ hơn 28px của .btn vì
+   nó nằm trong thanh tiêu đề pane. */
+.dgen-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 20px;
+  padding: 0;
+  border-radius: 7px;
+  border: 1px solid var(--win-border);
+  background: var(--dgen-glass);
+  color: var(--win-text-secondary);
+  cursor: pointer;
+}
+
+.dgen-icon-btn:hover:not(:disabled) {
+  background: var(--dgen-hover);
+  color: var(--win-text-primary);
+}
+
+.dgen-icon-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.dgen-msg {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.dgen-msg.error { color: var(--st-danger); }
+.dgen-msg.warn { color: var(--st-warn); }
+.dgen-msg.ok { color: var(--st-ok); }
+
+.dgen-issues {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 84px;
+  overflow: auto;
+}
+
+.dgen-foot-db {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+  font-size: 11px;
+  color: var(--win-text-secondary);
 }

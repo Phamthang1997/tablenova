@@ -3,6 +3,8 @@
  * Chỉ phục vụ hiển thị — không dùng để sinh DDL hay câu lệnh chạy thật.
  */
 
+import i18n from '../i18n';
+
 /** Gộp tên cột của mọi dòng (CSV/JSON có thể thiếu cột ở một số dòng). */
 export function collectColumns(rows: any[], sample = 200): string[] {
   const cols: string[] = [];
@@ -26,10 +28,10 @@ export function inferColType(rows: any[], col: string): string {
     if (/^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2})?)?/.test(s)) { date++; continue; }
     if (/^[[{].*[\]}]$/.test(s)) { json++; continue; }
   }
-  if (seen === 0) return 'trống (NULL)';
-  if (num === seen) return hasDecimal ? 'số thực' : 'số nguyên';
-  if (bool === seen) return 'boolean';
-  if (date === seen) return 'ngày/giờ';
-  if (json === seen) return 'JSON';
-  return 'chuỗi';
+  if (seen === 0) return i18n.t('errors.inferEmpty');
+  if (num === seen) return hasDecimal ? i18n.t('errors.inferFloat') : i18n.t('errors.inferInteger');
+  if (bool === seen) return i18n.t('errors.inferBoolean');
+  if (date === seen) return i18n.t('errors.inferDateTime');
+  if (json === seen) return i18n.t('errors.inferJson');
+  return i18n.t('errors.inferString');
 }

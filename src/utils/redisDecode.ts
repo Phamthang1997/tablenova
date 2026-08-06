@@ -5,6 +5,8 @@
 //   4) Còn lại -> text thô.
 // Không phụ thuộc thư viện ngoài.
 
+import i18n from '../i18n';
+
 async function gunzipIfNeeded(bytes: Uint8Array): Promise<{ bytes: Uint8Array; gz: boolean }> {
   if (bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) {
     try {
@@ -95,7 +97,7 @@ export function phpUnserialize(bytes: Uint8Array): any {
         return obj;
       }
       default:
-        throw new Error('PHP token không hỗ trợ: ' + String.fromCharCode(t));
+        throw new Error(i18n.t('errors.phpTokenUnsupported', { token: String.fromCharCode(t) }));
     }
   }
 

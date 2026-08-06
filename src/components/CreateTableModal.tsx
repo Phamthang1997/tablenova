@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { dbHelper } from '../utils/dbHelper';
-import { Plus, Trash2, X } from 'lucide-react';
+import { Plus, Trash2 } from 'lucide-react';
 
 interface ColumnInfo {
   name: string;
@@ -38,6 +39,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
   dbType,
   onTableCreated,
 }) => {
+  const { t } = useTranslation();
   const [tableName, setTableName] = useState('');
   const [activeTab, setActiveTab] = useState<'columns' | 'indexes' | 'foreignKeys'>('columns');
 
@@ -139,11 +141,11 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
   const handleSubmit = async () => {
     const name = tableName.trim();
     if (!name) {
-      alert('Vui lòng nhập tên bảng.');
+      alert(t('createTable.errNoName'));
       return;
     }
     if (cols.length === 0) {
-      alert('Vui lòng tạo ít nhất 1 cột.');
+      alert(t('createTable.errNoColumn'));
       return;
     }
 
@@ -153,14 +155,14 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
       const validFks = fks.filter(f => f.column.trim() && f.refTable.trim() && f.refColumn.trim());
       const res = await dbHelper.createTable(name, cols, validIdxs, validFks);
       if (res.success) {
-        alert('Tạo bảng mới thành công!');
+        alert(t('createTable.created'));
         onTableCreated(name);
         onClose();
       } else {
-        alert('Lỗi tạo bảng: ' + res.error);
+        alert(t('createTable.errCreate', { message: res.error }));
       }
     } catch (e: any) {
-      alert('Lỗi kết nối: ' + e.message);
+      alert(t('common.connectionError', { message: e.message }));
     }
   };
 
@@ -169,9 +171,9 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
       <div className="ctm-dialog">
         {/* Header */}
         <div className="ctm-head">
-          <span className="ctm-title">Tạo bảng mới</span>
-          <button className="ctm-close" onClick={onClose} title="Đóng" aria-label="Đóng">
-            <X size={15} />
+          <span className="ctm-title">{t('createTable.title')}</span>
+          <button className="ctm-close" onClick={onClose} title={t('common.close')} aria-label={t('common.close')}>
+            ×
           </button>
         </div>
 
@@ -179,13 +181,13 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
         <div className="ctm-body">
           {/* Table Name Input */}
           <div className="form-group ctm-name">
-            <label>Tên bảng</label>
+            <label>{t('createTable.tableName')}</label>
             <input
               type="text"
               className="form-input"
               value={tableName}
               onChange={(e) => setTableName(e.target.value)}
-              placeholder="nhap_ten_bang"
+              placeholder={t('createTable.tableNamePlaceholder')}
               autoFocus
             />
           </div>
@@ -196,19 +198,19 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
               className={`ctm-tab ${activeTab === 'columns' ? 'active' : ''}`}
               onClick={() => setActiveTab('columns')}
             >
-              Cột dữ liệu <span className="ctm-tab-count">{cols.length}</span>
+              {t('createTable.tabColumns')} <span className="ctm-tab-count">{cols.length}</span>
             </button>
             <button
               className={`ctm-tab ${activeTab === 'indexes' ? 'active' : ''}`}
               onClick={() => setActiveTab('indexes')}
             >
-              Chỉ mục <span className="ctm-tab-count">{idxs.length}</span>
+              {t('createTable.tabIndexes')} <span className="ctm-tab-count">{idxs.length}</span>
             </button>
             <button
               className={`ctm-tab ${activeTab === 'foreignKeys' ? 'active' : ''}`}
               onClick={() => setActiveTab('foreignKeys')}
             >
-              Khóa ngoại <span className="ctm-tab-count">{fks.length}</span>
+              {t('createTable.tabForeignKeys')} <span className="ctm-tab-count">{fks.length}</span>
             </button>
           </div>
 
@@ -223,21 +225,21 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                     style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '0 8px' }}
                   >
                     <Plus size={10} />
-                    <span>Thêm cột</span>
+                    <span>{t('createTable.addColumn')}</span>
                   </button>
                 </div>
 
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
                   <thead>
                     <tr style={{ background: 'var(--win-bg-hover)', borderBottom: '1px solid var(--win-border)' }}>
-                      <th style={{ padding: '6px', textAlign: 'left', fontWeight: 600 }}>Tên cột</th>
-                      <th style={{ padding: '6px', textAlign: 'left', fontWeight: 600 }}>Kiểu dữ liệu</th>
-                      <th style={{ padding: '6px', textAlign: 'center', fontWeight: 600 }}>Cho phép Rỗng</th>
-                      <th style={{ padding: '6px', textAlign: 'center', fontWeight: 600 }}>Khóa chính</th>
-                      <th style={{ padding: '6px', textAlign: 'center', fontWeight: 600 }}>Tự tăng</th>
-                      <th style={{ padding: '6px', textAlign: 'left', fontWeight: 600 }}>Mặc định</th>
-                      <th style={{ padding: '6px', textAlign: 'left', fontWeight: 600 }}>Chú thích</th>
-                      <th style={{ padding: '6px', textAlign: 'center', fontWeight: 600 }}>Xóa</th>
+                      <th style={{ padding: '6px', textAlign: 'left', fontWeight: 600 }}>{t('createTable.colName')}</th>
+                      <th style={{ padding: '6px', textAlign: 'left', fontWeight: 600 }}>{t('createTable.colType')}</th>
+                      <th style={{ padding: '6px', textAlign: 'center', fontWeight: 600 }}>{t('createTable.colNullable')}</th>
+                      <th style={{ padding: '6px', textAlign: 'center', fontWeight: 600 }}>{t('createTable.colPrimaryKey')}</th>
+                      <th style={{ padding: '6px', textAlign: 'center', fontWeight: 600 }}>{t('createTable.colAutoIncrement')}</th>
+                      <th style={{ padding: '6px', textAlign: 'left', fontWeight: 600 }}>{t('createTable.colDefault')}</th>
+                      <th style={{ padding: '6px', textAlign: 'left', fontWeight: 600 }}>{t('createTable.colComment')}</th>
+                      <th style={{ padding: '6px', textAlign: 'center', fontWeight: 600 }}>{t('createTable.colDelete')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -328,17 +330,17 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                     style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '0 8px' }}
                   >
                     <Plus size={10} />
-                    <span>Thêm chỉ mục</span>
+                    <span>{t('createTable.addIndex')}</span>
                   </button>
                 </div>
 
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
                   <thead>
                     <tr style={{ background: 'var(--win-bg-hover)', borderBottom: '1px solid var(--win-border)' }}>
-                      <th style={{ padding: '6px', textAlign: 'left', fontWeight: 600 }}>Tên Chỉ mục</th>
-                      <th style={{ padding: '6px', textAlign: 'left', fontWeight: 600 }}>Cột Áp Dụng (cách nhau bởi dấu phẩy)</th>
-                      <th style={{ padding: '6px', textAlign: 'center', fontWeight: 600 }}>Duy Nhất (Unique)</th>
-                      <th style={{ padding: '6px', textAlign: 'center', fontWeight: 600 }}>Xóa</th>
+                      <th style={{ padding: '6px', textAlign: 'left', fontWeight: 600 }}>{t('createTable.idxName')}</th>
+                      <th style={{ padding: '6px', textAlign: 'left', fontWeight: 600 }}>{t('createTable.idxColumns')}</th>
+                      <th style={{ padding: '6px', textAlign: 'center', fontWeight: 600 }}>{t('createTable.idxUnique')}</th>
+                      <th style={{ padding: '6px', textAlign: 'center', fontWeight: 600 }}>{t('createTable.colDelete')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -356,7 +358,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                           <input 
                             type="text" 
                             value={idxInfo.columns} 
-                            placeholder="vd: name, age"
+                            placeholder={t('createTable.idxColumnsPlaceholder')}
                             onChange={(e) => handleIdxChange(idx, 'columns', e.target.value)}
                             style={{ width: '250px', fontSize: '11px', background: 'var(--win-bg-input)', border: '1px solid var(--win-border)', color: 'var(--win-text-primary)', padding: '2px 4px', borderRadius: '3px', cursor: 'text' }}
                           />
@@ -392,18 +394,18 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                     style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '0 8px' }}
                   >
                     <Plus size={10} />
-                    <span>Thêm khóa ngoại</span>
+                    <span>{t('createTable.addForeignKey')}</span>
                   </button>
                 </div>
 
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
                   <thead>
                     <tr style={{ background: 'var(--win-bg-hover)', borderBottom: '1px solid var(--win-border)' }}>
-                      <th style={{ padding: '6px', textAlign: 'left', fontWeight: 600 }}>Tên Khóa Ngoại</th>
-                      <th style={{ padding: '6px', textAlign: 'left', fontWeight: 600 }}>Cột Nguồn</th>
-                      <th style={{ padding: '6px', textAlign: 'left', fontWeight: 600 }}>Bảng Tham Chiếu</th>
-                      <th style={{ padding: '6px', textAlign: 'left', fontWeight: 600 }}>Cột Tham Chiếu</th>
-                      <th style={{ padding: '6px', textAlign: 'center', fontWeight: 600 }}>Xóa</th>
+                      <th style={{ padding: '6px', textAlign: 'left', fontWeight: 600 }}>{t('createTable.fkName')}</th>
+                      <th style={{ padding: '6px', textAlign: 'left', fontWeight: 600 }}>{t('createTable.fkColumn')}</th>
+                      <th style={{ padding: '6px', textAlign: 'left', fontWeight: 600 }}>{t('createTable.fkRefTable')}</th>
+                      <th style={{ padding: '6px', textAlign: 'left', fontWeight: 600 }}>{t('createTable.fkRefColumn')}</th>
+                      <th style={{ padding: '6px', textAlign: 'center', fontWeight: 600 }}>{t('createTable.colDelete')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -421,7 +423,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                           <input 
                             type="text" 
                             value={fk.column} 
-                            placeholder="cột nguồn"
+                            placeholder={t('createTable.fkColumnPlaceholder')}
                             onChange={(e) => handleFkChange(idx, 'column', e.target.value)}
                             style={{ width: '100px', fontSize: '11px', background: 'var(--win-bg-input)', border: '1px solid var(--win-border)', color: 'var(--win-text-primary)', padding: '2px 4px', borderRadius: '3px', cursor: 'text' }}
                           />
@@ -430,7 +432,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                           <input 
                             type="text" 
                             value={fk.refTable} 
-                            placeholder="bảng đích"
+                            placeholder={t('createTable.fkRefTablePlaceholder')}
                             onChange={(e) => handleFkChange(idx, 'refTable', e.target.value)}
                             style={{ width: '120px', fontSize: '11px', background: 'var(--win-bg-input)', border: '1px solid var(--win-border)', color: 'var(--win-text-primary)', padding: '2px 4px', borderRadius: '3px', cursor: 'text' }}
                           />
@@ -439,7 +441,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                           <input 
                             type="text" 
                             value={fk.refColumn} 
-                            placeholder="cột đích"
+                            placeholder={t('createTable.fkRefColumnPlaceholder')}
                             onChange={(e) => handleFkChange(idx, 'refColumn', e.target.value)}
                             style={{ width: '100px', fontSize: '11px', background: 'var(--win-bg-input)', border: '1px solid var(--win-border)', color: 'var(--win-text-primary)', padding: '2px 4px', borderRadius: '3px', cursor: 'text' }}
                           />
@@ -464,10 +466,14 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
         {/* Footer Actions */}
         <div className="ctm-foot">
           <span className="ctm-foot-hint">
-            {cols.length} cột · {idxs.length} chỉ mục · {fks.length} khóa ngoại
+            {t('createTable.footerSummary', {
+              columns: cols.length,
+              indexes: idxs.length,
+              foreignKeys: fks.length,
+            })}
           </span>
-          <button className="cm-btn" onClick={onClose}>Hủy bỏ</button>
-          <button className="cm-btn primary" onClick={handleSubmit}>Tạo bảng</button>
+          <button className="cm-btn" onClick={onClose}>{t('common.cancel')}</button>
+          <button className="cm-btn primary" onClick={handleSubmit}>{t('createTable.submit')}</button>
         </div>
       </div>
     </div>

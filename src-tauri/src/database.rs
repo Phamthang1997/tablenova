@@ -23,9 +23,13 @@ const LIST_DB_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 // Thử lần lượt nhiều kiểu để không mất dữ liệu: số nguyên/thực, bool, NUMERIC, ngày giờ, UUID, JSON, chuỗi, blob.
 // Kiểu ngày/số thập phân/json/uuid được hỗ trợ nhờ bật feature trên sqlx-postgres (không kéo sqlx-sqlite).
 macro_rules! decode_pg_cell {
+    // `$col` may be a column name OR a 0-based index (both implement sqlx::ColumnIndex).
+    // Callers reading a result set must pass the INDEX: `try_get` by name resolves to the
+    // first column with that name, so `SELECT *` over joins would return that same first
+    // value for every repeated name.
     ($row:expr, $col:expr) => {{
         let row = $row;
-        let col: &str = $col;
+        let col = $col;
         if let Ok(v) = row.try_get::<Option<i16>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
         else if let Ok(v) = row.try_get::<Option<i32>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
         else if let Ok(v) = row.try_get::<Option<i64>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
@@ -47,9 +51,10 @@ macro_rules! decode_pg_cell {
 
 // Giải mã một ô dữ liệu MySQL (bao gồm cả kiểu số không dấu, DECIMAL, ngày giờ, JSON).
 macro_rules! decode_mysql_cell {
+    // Same contract as decode_pg_cell!: pass the 0-based INDEX when reading a result set.
     ($row:expr, $col:expr) => {{
         let row = $row;
-        let col: &str = $col;
+        let col = $col;
         if let Ok(v) = row.try_get::<Option<i8>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
         else if let Ok(v) = row.try_get::<Option<i16>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
         else if let Ok(v) = row.try_get::<Option<i32>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
@@ -239,7 +244,7 @@ pub(crate) fn build_mysql_url(config: &Value, db_override: Option<&str>) -> Stri
 
 // Nếu bật SSH, mở tunnel tới (host, port) hiện tại của config và trả về config đã chỉnh
 // để trỏ kết nối tới 127.0.0.1:<local_port>. Trả về (config_dùng_để_kết_nối, tunnel).
-async fn apply_ssh_tunnel(config: &Value, default_port: u16) -> Result<(Value, Option<SshTunnel>), String> {
+pub(crate) async fn apply_ssh_tunnel(config: &Value, default_port: u16) -> Result<(Value, Option<SshTunnel>), String> {
     let use_ssh = config.get("useSsh").and_then(|v| v.as_bool()).unwrap_or(false);
     if !use_ssh {
         return Ok((config.clone(), None));
@@ -264,7 +269,7 @@ fn is_iam(config: &Value) -> bool {
 
 // Nếu dùng AWS IAM: sinh token và gán làm password cho conn_config, đồng thời ép SSL (IAM bắt buộc SSL).
 // Token ký từ ORIGINAL config (host/region thật), nên gọi trước khi dùng conn_config đã qua tunnel.
-fn apply_iam_password(orig_config: &Value, conn_config: &mut Value, default_port: u16) -> Result<(), String> {
+pub(crate) fn apply_iam_password(orig_config: &Value, conn_config: &mut Value, default_port: u16) -> Result<(), String> {
     if !is_iam(orig_config) {
         return Ok(());
     }
@@ -394,6 +399,43 @@ fn rows_of(res: &[Value]) -> Vec<Value> {
 }
 fn cell<'a>(row: &'a Value, key: &str) -> &'a str {
     row.get(key).and_then(|v| v.as_str()).unwrap_or("")
+}
+
+/// Makes the column names of a result set unique, in place.
+///
+/// Every row we hand to the frontend is a JSON object keyed by column name, so two
+/// columns with the same name would collapse into one: `serde_json::Map::insert`
+/// overwrites, and all but the last value is lost without any error. `SELECT *` over
+/// a few joins hits this immediately — sakila's `film JOIN inventory JOIN store JOIN
+/// address JOIN city` yields five `last_update` columns and three `film_id`s.
+///
+/// Repeats get a ` (2)`, ` (3)`, … suffix. The caller must build the row map from the
+/// SAME (already uniquified) vector, so the frontend's `row[col]` lookups still
+/// resolve — the suffix is the only thing that changes, and it shows up in the grid
+/// header exactly where a duplicate really exists.
+fn uniquify_columns(columns: &mut [String]) {
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for i in 0..columns.len() {
+        let base = columns[i].clone();
+        // Scoped so the mutable borrow of `seen` ends before the lookup below.
+        let count = {
+            let c = seen.entry(base.clone()).or_insert(0);
+            *c += 1;
+            *c
+        };
+        if count == 1 {
+            continue;
+        }
+        // A real column could already be named "x (2)", so keep bumping until free.
+        let mut n = count;
+        let mut candidate = format!("{base} ({n})");
+        while seen.contains_key(&candidate) {
+            n += 1;
+            candidate = format!("{base} ({n})");
+        }
+        seen.insert(candidate.clone(), 1);
+        columns[i] = candidate;
+    }
 }
 
 #[tauri::command]
@@ -598,7 +640,8 @@ pub async fn get_table_data(
             for i in 0..col_count {
                 columns.push(stmt.column_name(i).map_err(|e| e.to_string())?.to_string());
             }
-            
+            uniquify_columns(&mut columns);
+
             let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
             while let Some(row) = rows.next().map_err(|e| e.to_string())? {
                 let mut map = serde_json::Map::new();
@@ -1565,6 +1608,7 @@ async fn stream_one_statement(
                 for i in 0..col_count {
                     columns.push(stmt.column_name(i).map_err(|e| e.to_string())?.to_string());
                 }
+                uniquify_columns(&mut columns);
                 let _ = channel.send(json!({ "type": "columns", "stmtIndex": stmt_index, "query": sql, "columns": columns }));
 
                 let mut rows = stmt.query(rusqlite::params_from_iter(sqlite_params.iter())).map_err(|e| e.to_string())?;
@@ -1637,11 +1681,14 @@ async fn stream_one_statement(
                     for col in r.columns() {
                         columns.push(col.name().to_string());
                     }
+                    uniquify_columns(&mut columns);
                     let _ = channel.send(json!({ "type": "columns", "stmtIndex": stmt_index, "query": sql, "columns": columns.clone() }));
                 }
                 let mut map = serde_json::Map::new();
-                for col_name in &columns {
-                    let val: Value = decode_pg_cell!(&r, col_name.as_str());
+                // Read by index: `columns` now holds the de-duplicated names, and reading by
+                // name would hand back the first same-named column's value for every repeat.
+                for (i, col_name) in columns.iter().enumerate() {
+                    let val: Value = decode_pg_cell!(&r, i);
                     map.insert(col_name.clone(), val);
                 }
                 batch.push(Value::Object(map));
@@ -1657,6 +1704,7 @@ async fn stream_one_statement(
                     for col in stmt.columns() {
                         columns.push(col.name().to_string());
                     }
+                    uniquify_columns(&mut columns);
                 }
                 let _ = channel.send(json!({ "type": "columns", "stmtIndex": stmt_index, "query": sql, "columns": columns }));
             }
@@ -1706,11 +1754,13 @@ async fn stream_one_statement(
                     for col in r.columns() {
                         columns.push(col.name().to_string());
                     }
+                    uniquify_columns(&mut columns);
                     let _ = channel.send(json!({ "type": "columns", "stmtIndex": stmt_index, "query": sql, "columns": columns.clone() }));
                 }
                 let mut map = serde_json::Map::new();
-                for col_name in &columns {
-                    let val: Value = decode_mysql_cell!(&r, col_name.as_str());
+                // Read by index — see the Postgres branch above.
+                for (i, col_name) in columns.iter().enumerate() {
+                    let val: Value = decode_mysql_cell!(&r, i);
                     map.insert(col_name.clone(), val);
                 }
                 batch.push(Value::Object(map));
@@ -1726,6 +1776,7 @@ async fn stream_one_statement(
                     for col in stmt.columns() {
                         columns.push(col.name().to_string());
                     }
+                    uniquify_columns(&mut columns);
                 }
                 let _ = channel.send(json!({ "type": "columns", "stmtIndex": stmt_index, "query": sql, "columns": columns }));
             }
@@ -2718,7 +2769,7 @@ fn is_mysql_unprepared_error(err_text: &str) -> bool {
     err_text.contains("1295") || err_text.contains("not supported in the prepared statement protocol")
 }
 
-async fn execute_raw_sql_generic(conn: &DbConnection, sql: String) -> Result<Vec<Value>, String> {
+pub(crate) async fn execute_raw_sql_generic(conn: &DbConnection, sql: String) -> Result<Vec<Value>, String> {
     let mut results = Vec::new();
     match conn {
         DbConnection::Sqlite(conn_arc) => {
@@ -2729,7 +2780,8 @@ async fn execute_raw_sql_generic(conn: &DbConnection, sql: String) -> Result<Vec
             for i in 0..col_count {
                 columns.push(stmt.column_name(i).map_err(|e| e.to_string())?.to_string());
             }
-            
+            uniquify_columns(&mut columns);
+
             let mut rows_json = Vec::new();
             let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
             while let Some(row) = rows.next().map_err(|e| e.to_string())? {
@@ -2765,10 +2817,12 @@ async fn execute_raw_sql_generic(conn: &DbConnection, sql: String) -> Result<Vec
                     for col in rows[0].columns() {
                         columns.push(col.name().to_string());
                     }
+                    uniquify_columns(&mut columns);
                     for r in rows {
                         let mut map = serde_json::Map::new();
-                        for col_name in &columns {
-                            let val: Value = decode_pg_cell!(&r, col_name.as_str());
+                        // By index, not name — see decode_pg_cell!.
+                        for (i, col_name) in columns.iter().enumerate() {
+                            let val: Value = decode_pg_cell!(&r, i);
                             map.insert(col_name.clone(), val);
                         }
                         rows_json.push(Value::Object(map));
@@ -2778,6 +2832,7 @@ async fn execute_raw_sql_generic(conn: &DbConnection, sql: String) -> Result<Vec
                         for col in stmt.columns() {
                             columns.push(col.name().to_string());
                         }
+                        uniquify_columns(&mut columns);
                     }
                 }
                 results.push(json!({
@@ -2811,10 +2866,12 @@ async fn execute_raw_sql_generic(conn: &DbConnection, sql: String) -> Result<Vec
                     for col in rows[0].columns() {
                         columns.push(col.name().to_string());
                     }
+                    uniquify_columns(&mut columns);
                     for r in rows {
                         let mut map = serde_json::Map::new();
-                        for col_name in &columns {
-                            let val: Value = decode_mysql_cell!(&r, col_name.as_str());
+                        // By index, not name — see decode_mysql_cell!.
+                        for (i, col_name) in columns.iter().enumerate() {
+                            let val: Value = decode_mysql_cell!(&r, i);
                             map.insert(col_name.clone(), val);
                         }
                         rows_json.push(Value::Object(map));
@@ -2824,6 +2881,7 @@ async fn execute_raw_sql_generic(conn: &DbConnection, sql: String) -> Result<Vec
                         for col in stmt.columns() {
                             columns.push(col.name().to_string());
                         }
+                        uniquify_columns(&mut columns);
                     }
                 }
                 results.push(json!({
@@ -2850,6 +2908,7 @@ async fn run_bound_query(conn: &DbConnection, sql: String, params: &[Value]) -> 
             for i in 0..col_count {
                 columns.push(stmt.column_name(i).map_err(|e| e.to_string())?.to_string());
             }
+            uniquify_columns(&mut columns);
             let sqlite_params: Vec<rusqlite::types::Value> = params.iter().map(json_to_sqlite_value).collect();
             let mut rows_json = Vec::new();
             let mut rows = stmt.query(rusqlite::params_from_iter(sqlite_params.iter())).map_err(|e| e.to_string())?;
@@ -2880,10 +2939,12 @@ async fn run_bound_query(conn: &DbConnection, sql: String, params: &[Value]) -> 
                 for col in rows[0].columns() {
                     columns.push(col.name().to_string());
                 }
+                uniquify_columns(&mut columns);
                 for r in rows {
                     let mut map = serde_json::Map::new();
-                    for col_name in &columns {
-                        let val: Value = decode_pg_cell!(&r, col_name.as_str());
+                    // By index, not name — see decode_pg_cell!.
+                    for (i, col_name) in columns.iter().enumerate() {
+                        let val: Value = decode_pg_cell!(&r, i);
                         map.insert(col_name.clone(), val);
                     }
                     rows_json.push(Value::Object(map));
@@ -2901,10 +2962,12 @@ async fn run_bound_query(conn: &DbConnection, sql: String, params: &[Value]) -> 
                 for col in rows[0].columns() {
                     columns.push(col.name().to_string());
                 }
+                uniquify_columns(&mut columns);
                 for r in rows {
                     let mut map = serde_json::Map::new();
-                    for col_name in &columns {
-                        let val: Value = decode_mysql_cell!(&r, col_name.as_str());
+                    // By index, not name — see decode_mysql_cell!.
+                    for (i, col_name) in columns.iter().enumerate() {
+                        let val: Value = decode_mysql_cell!(&r, i);
                         map.insert(col_name.clone(), val);
                     }
                     rows_json.push(Value::Object(map));
@@ -3412,6 +3475,109 @@ pub fn set_app_window_size(window: tauri::Window, width: u32, height: u32) -> Re
     }));
     let _ = window.center();
     Ok(())
+}
+
+#[derive(serde::Serialize)]
+pub struct ConnectionStatusInfo {
+    pub is_connected: bool,
+    pub db_type: String,
+    pub conn_type: String,
+    pub host: String,
+    pub latency_ms: u64,
+}
+
+/// Trả về trạng thái kết nối DB hiện tại, loại kết nối (loc/ssh/ssl/rem) và độ trễ ping (ms).
+#[tauri::command]
+pub async fn get_connection_status(
+    // `State`/`AppState` không được import ở đầu file — mọi command khác trong file đều viết
+    // đường dẫn đầy đủ, giữ nguyên quy ước đó.
+    state: tauri::State<'_, crate::AppState>,
+) -> Result<ConnectionStatusInfo, String> {
+    let start = std::time::Instant::now();
+    let (conn, db_type, config, has_ssh) = {
+        let mgr = state.db_manager.lock().map_err(|e| e.to_string())?;
+        let conn = match &mgr.connection {
+            Some(c) => c.clone(),
+            None => {
+                return Ok(ConnectionStatusInfo {
+                    is_connected: false,
+                    db_type: String::new(),
+                    conn_type: "loc".to_string(),
+                    host: String::new(),
+                    latency_ms: 0,
+                })
+            }
+        };
+        (
+            conn,
+            mgr.db_type.clone(),
+            mgr.last_config.clone(),
+            mgr.ssh_tunnel.is_some(),
+        )
+    };
+
+    match &conn {
+        DbConnection::Sqlite(arc) => {
+            if let Ok(conn) = arc.lock() {
+                let _ = conn.execute_batch("SELECT 1;");
+            }
+        }
+        DbConnection::Postgres(pool) => {
+            let _ = sqlx::query("SELECT 1;").execute(pool).await;
+        }
+        DbConnection::Mysql(pool) => {
+            let _ = sqlx::query("SELECT 1;").execute(pool).await;
+        }
+    }
+    let latency_ms = start.elapsed().as_millis() as u64;
+
+    let host = config
+        .as_ref()
+        .and_then(|c| c.get("host"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("localhost")
+        .to_string();
+
+    let conn_type = if db_type == "sqlite" {
+        "loc".to_string()
+    } else if has_ssh
+        || config
+            .as_ref()
+            .and_then(|c| c.get("useSshTunnel"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    {
+        "ssh".to_string()
+    } else if config
+        .as_ref()
+        .and_then(|c| c.get("sslEnabled"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+        || config
+            .as_ref()
+            .and_then(|c| c.get("sslMode"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("DISABLED")
+            != "DISABLED"
+    {
+        "ssl".to_string()
+    } else if host == "localhost"
+        || host == "127.0.0.1"
+        || host == "::1"
+        || host.starts_with("127.")
+    {
+        "loc".to_string()
+    } else {
+        "rem".to_string()
+    };
+
+    Ok(ConnectionStatusInfo {
+        is_connected: true,
+        db_type,
+        conn_type,
+        host,
+        latency_ms,
+    })
 }
 
 #[cfg(test)]

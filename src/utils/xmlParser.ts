@@ -7,6 +7,8 @@
 //
 // API bắt chước phần DOM mà xlsxReader cần: getElementsByTagName / getAttribute / textContent.
 
+import i18n from '../i18n';
+
 const XML_ENTITIES: Record<string, string> = {
   amp: '&',
   lt: '<',
@@ -125,7 +127,7 @@ function skipDeclaration(text: string, start: number): number {
       return i + 1;
     }
   }
-  throw new XmlParseError('Khai báo XML không được đóng');
+  throw new XmlParseError(i18n.t('errors.xmlDeclNotClosed'));
 }
 
 const ATTR_RE = /([^\s"'>/=]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
@@ -169,20 +171,20 @@ export function parseXml(text: string): XmlElement {
 
     if (text.startsWith('<!--', lt)) {
       const end = text.indexOf('-->', lt + 4);
-      if (end < 0) throw new XmlParseError('Chú thích XML không được đóng');
+      if (end < 0) throw new XmlParseError(i18n.t('errors.xmlCommentNotClosed'));
       i = end + 3;
       continue;
     }
     if (text.startsWith('<![CDATA[', lt)) {
       const end = text.indexOf(']]>', lt + 9);
-      if (end < 0) throw new XmlParseError('CDATA không được đóng');
+      if (end < 0) throw new XmlParseError(i18n.t('errors.xmlCdataNotClosed'));
       addText(text.slice(lt + 9, end), false); // CDATA: giữ nguyên, không giải mã entity
       i = end + 3;
       continue;
     }
     if (text.startsWith('<?', lt)) {
       const end = text.indexOf('?>', lt + 2);
-      if (end < 0) throw new XmlParseError('Processing instruction không được đóng');
+      if (end < 0) throw new XmlParseError(i18n.t('errors.xmlPiNotClosed'));
       i = end + 2;
       continue;
     }
@@ -192,7 +194,7 @@ export function parseXml(text: string): XmlElement {
     }
 
     const gt = findTagEnd(text, lt);
-    if (gt < 0) throw new XmlParseError('Thẻ XML không được đóng');
+    if (gt < 0) throw new XmlParseError(i18n.t('errors.xmlTagNotClosed'));
     const inner = text.slice(lt + 1, gt);
     i = gt + 1;
 
@@ -200,7 +202,7 @@ export function parseXml(text: string): XmlElement {
       const name = inner.slice(1).trim();
       const open = stack.pop();
       if (!open || open === root || open.name !== name) {
-        throw new XmlParseError(`Thẻ đóng không khớp: </${name}>`);
+        throw new XmlParseError(i18n.t('errors.xmlMismatchedClose', { name }));
       }
       continue;
     }
@@ -209,7 +211,7 @@ export function parseXml(text: string): XmlElement {
     const body = selfClosing ? inner.slice(0, -1) : inner;
     const nameEnd = body.search(/[\s/]/);
     const name = (nameEnd < 0 ? body : body.slice(0, nameEnd)).trim();
-    if (name === '') throw new XmlParseError('Thẻ XML thiếu tên');
+    if (name === '') throw new XmlParseError(i18n.t('errors.xmlTagMissingName'));
 
     const el = new XmlElement(name, nameEnd < 0 ? new Map() : parseAttrs(body.slice(nameEnd)));
     const parent = stack[stack.length - 1];
@@ -219,7 +221,7 @@ export function parseXml(text: string): XmlElement {
   }
 
   if (stack.length !== 1) {
-    throw new XmlParseError(`Thẻ XML chưa đóng: <${stack[stack.length - 1].name}>`);
+    throw new XmlParseError(i18n.t('errors.xmlUnclosedTag', { name: stack[stack.length - 1].name }));
   }
   return root;
 }

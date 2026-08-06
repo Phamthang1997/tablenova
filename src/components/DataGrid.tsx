@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useLayoutEffect, useRef } from 'react';
+import { Trans, useTranslation } from 'react-i18next';
 import { clampMenu, type MenuRect } from '../utils/menuPosition';
 import { dbHelper } from '../utils/dbHelper';
 import type { SchemaInfo, ColumnInfo, GridChange } from '../utils/dbHelper';
@@ -12,6 +13,7 @@ import { collectColumns, inferColType } from '../utils/importPreview';
 import { ProgressBar, type ProgressState } from './ProgressBar';
 import { ImportFilePicker } from './ImportFilePicker';
 import { ExportTableDialog } from './ExportTableDialog';
+import { Modal, ModalBody, ModalFooter } from './Modal';
 
 /** Số dòng mỗi lô khi nhập dữ liệu vào bảng (để báo được tiến độ). */
 const IMPORT_BATCH_SIZE = 500;
@@ -113,6 +115,15 @@ function parseCSV(text: string): string[][] {
 }
 
 export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialViewMode = 'data', readOnly = false }) => {
+  const { t, i18n } = useTranslation();
+  // Thousands separators follow the active UI language instead of a hardcoded locale.
+  const fmtNum = (n: number) => n.toLocaleString(i18n.language);
+  // `t` gets a new identity on every language switch. Memoized callbacks that
+  // feed an effect read it through this ref instead, so switching language does
+  // not re-run fetchSchema — that effect clears the unsaved edit buffer.
+  const tRef = useRef(t);
+  tRef.current = t;
+
   const [columns, setColumns] = useState<ColumnInfo[]>([]);
   const [schema, setSchema] = useState<SchemaInfo | null>(null);
 
@@ -282,12 +293,12 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
       try {
         const buf = await file.arrayBuffer();
         const rows = await parseXlsx(buf);
-        if (rows.length === 0) throw new Error('File XLSX không có dữ liệu.');
+        if (rows.length === 0) throw new Error(t('dataGrid.errXlsxEmpty'));
         setImportFileType('json'); // dòng dạng object, đi chung nhánh ghi DB với CSV/JSON
         setImportPendingRows(rows);
         setShowImportModal(true);
       } catch (err: any) {
-        setErrorMsg('Lỗi đọc file: ' + err.message);
+        setErrorMsg(t('dataGrid.errReadFile', { message: err.message }));
       }
       return;
     }
@@ -300,7 +311,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
         if (file.name.endsWith('.json')) {
           const parsedJson = JSON.parse(text);
           if (!Array.isArray(parsedJson)) {
-            throw new Error('Định dạng JSON phải là một mảng các đối tượng.');
+            throw new Error(t('dataGrid.errJsonArray'));
           }
           setImportFileType('json');
           setImportPendingRows(parsedJson);
@@ -312,7 +323,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
           }
           const parsedCsv = parseCSV(cleanText);
           if (parsedCsv.length < 2) {
-            throw new Error('File CSV không có dữ liệu.');
+            throw new Error(t('dataGrid.errCsvEmpty'));
           }
           const headers = parsedCsv[0];
           const rowsToImport: any[] = [];
@@ -333,10 +344,10 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
           setImportSqlContent(text);
           setShowImportModal(true);
         } else {
-          throw new Error('Chỉ hỗ trợ import tệp .csv, .json, .sql hoặc .xlsx');
+          throw new Error(t('dataGrid.errUnsupportedFile'));
         }
       } catch (err: any) {
-        setErrorMsg('Lỗi đọc file: ' + err.message);
+        setErrorMsg(t('dataGrid.errReadFile', { message: err.message }));
       }
     };
     reader.readAsText(file);
@@ -349,8 +360,8 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
     setSuccessMsg(null);
     setImportProgress({
       label: importFileType === 'sql'
-        ? 'Đang chạy câu lệnh SQL...'
-        : `Đang ghi ${importPendingRows.length} dòng vào bảng ${tableName}...`,
+        ? t('dataGrid.importRunningSql')
+        : t('dataGrid.importWritingRows', { n: importPendingRows.length, table: tableName }),
     });
 
     try {
@@ -359,10 +370,10 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
         setImportProgress(null);
         setLoading(false);
         if (res.success) {
-          setSuccessMsg('Đã thực thi câu lệnh SQL import thành công!');
+          setSuccessMsg(t('dataGrid.importSqlSuccess'));
           fetchData();
         } else {
-          setErrorMsg('Lỗi thực thi SQL: ' + res.error);
+          setErrorMsg(t('dataGrid.errImportSql', { message: res.error }));
         }
       } else {
         // Ghi theo lô để báo được tiến độ thật (backend chèn từng dòng trong mỗi lô).
@@ -374,30 +385,30 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
           if (!resData.success) {
             setImportProgress(null);
             setLoading(false);
+            const failure = resData.error || t('dataGrid.errImportFailed');
             setErrorMsg(
-              (resData.error || 'Import thất bại.') +
-              (done > 0 ? ` (đã ghi ${done}/${total} dòng trước khi lỗi)` : '')
+              done > 0 ? t('dataGrid.errImportWithProgress', { message: failure, done, total }) : failure
             );
             fetchData();
             return;
           }
           done += batch.length;
           setImportProgress({
-            label: `Đang ghi vào bảng ${tableName}...`,
+            label: t('dataGrid.importWriting', { table: tableName }),
             current: done,
             total,
-            detail: `${done.toLocaleString()}/${total.toLocaleString()} dòng`,
+            detail: t('dataGrid.importRowsDetail', { done: fmtNum(done), total: fmtNum(total) }),
           });
         }
         setImportProgress(null);
         setLoading(false);
-        setSuccessMsg(`Đã nhập ${done} dòng từ tệp vào bảng "${tableName}".`);
+        setSuccessMsg(t('dataGrid.importDone', { n: done, table: tableName }));
         fetchData();
       }
     } catch (err: any) {
       setImportProgress(null);
       setLoading(false);
-      setErrorMsg('Lỗi kết nối: ' + err.message);
+      setErrorMsg(t('common.connectionError', { message: err.message }));
     }
   };
 
@@ -437,7 +448,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
       }
     } catch (err: any) {
       console.error(err);
-      setErrorMsg('Không thể tải cấu trúc bảng.');
+      setErrorMsg(tRef.current('dataGrid.errLoadSchema'));
       setSchema(null);
       setColumns([]);
       setVisibleColumns([]);
@@ -609,7 +620,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
   // Handle Cell Editing
   const startEdit = (rowId: any, colName: string, currentValue: any) => {
     if (readOnly) {
-      setErrorMsg('Đang ở chế độ Chỉ đọc: không thể sửa dữ liệu.');
+      setErrorMsg(t('dataGrid.errReadOnlyEdit'));
       setTimeout(() => setErrorMsg(null), 3000);
       return;
     }
@@ -674,7 +685,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
   // Add Empty Row
   const handleAddRow = () => {
     if (readOnly) {
-      setErrorMsg('Đang ở chế độ Chỉ đọc: không thể thêm dòng.');
+      setErrorMsg(t('dataGrid.errReadOnlyAdd'));
       setTimeout(() => setErrorMsg(null), 3000);
       return;
     }
@@ -698,7 +709,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
       startEdit(tempId, firstEditable.name, newRow[firstEditable.name] ?? '');
     }
 
-    setSuccessMsg('Đã thêm dòng mới. Nhập giá trị rồi nhấn Ctrl+S để lưu.');
+    setSuccessMsg(t('dataGrid.rowAdded'));
     setTimeout(() => setSuccessMsg(null), 4000);
   };
 
@@ -706,7 +717,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
   const handleDeleteRow = (targetRowId?: any) => {
     const rowId = targetRowId ?? selectedRowId;
     if (rowId === null || rowId === undefined) {
-      setErrorMsg('Vui lòng click chọn một dòng để xóa.');
+      setErrorMsg(t('dataGrid.errNoRowSelected'));
       return;
     }
 
@@ -738,7 +749,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
     });
     setInserts(prev => [...prev, newRow]);
     setSelectedRowId(tempId);
-    setSuccessMsg('Đã nhân bản dòng. Nhấn Ctrl+S để lưu.');
+    setSuccessMsg(t('dataGrid.rowDuplicated'));
     setTimeout(() => setSuccessMsg(null), 3000);
   };
 
@@ -761,7 +772,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
     });
     const csv = withHeader ? `${cols.join(',')}\n${vals.join(',')}` : vals.join(',');
     copyToClipboard(csv);
-    setSuccessMsg('Đã sao chép dòng dưới dạng CSV!');
+    setSuccessMsg(t('dataGrid.copiedRowCsv'));
     setTimeout(() => setSuccessMsg(null), 2000);
   };
 
@@ -774,7 +785,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
       return `'${String(v).replace(/'/g, "''")}'`;
     }).join(', ');
     copyToClipboard(`INSERT INTO \`${tableName}\` (${colList}) VALUES (${valList});`);
-    setSuccessMsg('Đã sao chép dưới dạng SQL INSERT!');
+    setSuccessMsg(t('dataGrid.copiedRowSql'));
     setTimeout(() => setSuccessMsg(null), 2000);
   };
 
@@ -784,7 +795,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
     const sep = `| ${cols.map(() => '---').join(' | ')} |`;
     const vals = `| ${cols.map(c => String(row[c] ?? '')).join(' | ')} |`;
     copyToClipboard(`${header}\n${sep}\n${vals}`);
-    setSuccessMsg('Đã sao chép dưới dạng Markdown table!');
+    setSuccessMsg(t('dataGrid.copiedRowMarkdown'));
     setTimeout(() => setSuccessMsg(null), 2000);
   };
 
@@ -803,7 +814,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
     setDeletes(new Set());
     setInserts([]);
     setEditingCell(null);
-    setSuccessMsg('Đã hủy bỏ tất cả thay đổi nháp.');
+    setSuccessMsg(t('dataGrid.discarded'));
     setTimeout(() => setSuccessMsg(null), 3000);
   };
 
@@ -841,13 +852,13 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
     });
 
     if (readOnly) {
-      setErrorMsg('Đang ở chế độ Chỉ đọc: không thể lưu thay đổi. Tắt "Chỉ đọc" để ghi.');
+      setErrorMsg(t('dataGrid.errReadOnlyCommit'));
       setTimeout(() => setErrorMsg(null), 4000);
       return;
     }
 
     if (changesList.length === 0) {
-      setErrorMsg('Không có thay đổi nào cần lưu.');
+      setErrorMsg(t('dataGrid.errNoChanges'));
       setTimeout(() => setErrorMsg(null), 3000);
       return;
     }
@@ -858,7 +869,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
     setLoading(false);
 
     if (!preview.success) {
-      setErrorMsg(`Lỗi tạo bản xem trước: ${preview.message}`);
+      setErrorMsg(t('dataGrid.errPreview', { message: preview.message }));
       return;
     }
     setPendingChanges(changesList);
@@ -874,7 +885,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
     setPendingChanges([]);
 
     if (res.success) {
-      setSuccessMsg('Đã lưu tất cả thay đổi vào cơ sở dữ liệu thành công!');
+      setSuccessMsg(t('dataGrid.commitSuccess'));
       setUpdates({});
       setDeletes(new Set());
       setInserts([]);
@@ -882,7 +893,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
       fetchData();
       setTimeout(() => setSuccessMsg(null), 4000);
     } else {
-      setErrorMsg(`Lỗi lưu thay đổi: ${res.message}`);
+      setErrorMsg(t('dataGrid.errCommit', { message: res.message }));
     }
   };
 
@@ -960,10 +971,10 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
   const handleCopyFilterSql = async () => {
     try {
       await navigator.clipboard.writeText(buildFilterSql());
-      setSuccessMsg('Đã sao chép câu SQL của điều kiện lọc.');
+      setSuccessMsg(t('dataGrid.copiedFilterSql'));
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch {
-      setErrorMsg('Không sao chép được vào clipboard.');
+      setErrorMsg(t('dataGrid.errClipboard'));
       setTimeout(() => setErrorMsg(null), 3000);
     }
   };
@@ -1013,7 +1024,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
                   type="text"
                   className="sidebar-search-input"
                   style={{ width: '100%', paddingRight: '24px' }}
-                  placeholder="Lọc SQL (ví dụ: status='Active' hoặc age > 30)..."
+                  placeholder={t('dataGrid.filterSqlPlaceholder')}
                   value={filterText}
                   onChange={(e) => setFilterText(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && triggerFilter()}
@@ -1035,17 +1046,17 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
               <div className="visual-filter-footer">
                 <div style={{ display: 'flex', gap: '6px' }}>
                   <button className="visual-filter-btn-apply" onClick={clearFilter}>
-                    Xoá hết
+                    {t('dataGrid.clearAll')}
                   </button>
                   <button className="visual-filter-btn-apply" onClick={() => setFilterMode('visual')} style={{ fontWeight: 600 }}>
-                    Lọc trực quan
+                    {t('dataGrid.filterVisual')}
                   </button>
-                  <button className="visual-filter-btn-apply" onClick={handleCopyFilterSql} title="Sao chép câu SELECT tương ứng với điều kiện lọc">
-                    <Copy size={12} /> Sao chép SQL
+                  <button className="visual-filter-btn-apply" onClick={handleCopyFilterSql} title={t('dataGrid.copySqlTitle')}>
+                    <Copy size={12} /> {t('dataGrid.copySql')}
                   </button>
                 </div>
                 <button className="visual-filter-btn-primary" onClick={triggerFilter}>
-                  Chạy lọc SQL
+                  {t('dataGrid.runSqlFilter')}
                 </button>
               </div>
             </div>
@@ -1077,34 +1088,34 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
                     value={row.operator}
                     onChange={(e) => updateFilterRow(row.id, { operator: e.target.value })}
                   >
-                    <option value="Contains">Chứa</option>
+                    <option value="Contains">{t('dataGrid.opContains')}</option>
                     <option value="=">=</option>
                     <option value="!=">≠</option>
                     <option value=">">&gt;</option>
                     <option value=">=">≥</option>
                     <option value="<">&lt;</option>
                     <option value="<=">≤</option>
-                    <option value="Starts with">Bắt đầu bằng</option>
-                    <option value="Ends with">Kết thúc bằng</option>
-                    <option value="IS NULL">Là NULL</option>
-                    <option value="IS NOT NULL">Không phải NULL</option>
+                    <option value="Starts with">{t('dataGrid.opStartsWith')}</option>
+                    <option value="Ends with">{t('dataGrid.opEndsWith')}</option>
+                    <option value="IS NULL">{t('dataGrid.opIsNull')}</option>
+                    <option value="IS NOT NULL">{t('dataGrid.opIsNotNull')}</option>
                   </select>
                   <input
                     type="text"
                     className="visual-filter-input"
-                    placeholder="Nhập giá trị..."
+                    placeholder={t('dataGrid.filterValuePlaceholder')}
                     value={row.value}
                     disabled={row.operator === 'IS NULL' || row.operator === 'IS NOT NULL'}
                     onChange={(e) => updateFilterRow(row.id, { value: e.target.value })}
                     onKeyDown={(e) => e.key === 'Enter' && triggerFilter()}
                   />
-                  <button className="visual-filter-btn-apply" onClick={() => applySingleFilterRow(row.id)} title="Áp dụng riêng dòng lọc này">
-                    Áp dụng
+                  <button className="visual-filter-btn-apply" onClick={() => applySingleFilterRow(row.id)} title={t('dataGrid.applyRowTitle')}>
+                    {t('dataGrid.applyRow')}
                   </button>
-                  <button className="visual-filter-btn-icon" onClick={() => removeFilterRow(row.id)} title="Bỏ dòng lọc này" aria-label="Bỏ dòng lọc">
+                  <button className="visual-filter-btn-icon" onClick={() => removeFilterRow(row.id)} title={t('dataGrid.removeFilterRow')} aria-label={t('dataGrid.removeFilterRow')}>
                     <Minus size={13} />
                   </button>
-                  <button className="visual-filter-btn-icon" onClick={() => addFilterRow(row.id)} title="Thêm dòng lọc" aria-label="Thêm dòng lọc">
+                  <button className="visual-filter-btn-icon" onClick={() => addFilterRow(row.id)} title={t('dataGrid.addFilterRow')} aria-label={t('dataGrid.addFilterRow')}>
                     <Plus size={13} />
                   </button>
                 </div>
@@ -1112,23 +1123,23 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
               <div className="visual-filter-footer">
                 <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                   <button className="visual-filter-btn-apply" onClick={clearFilter}>
-                    Xoá hết
+                    {t('dataGrid.clearAll')}
                   </button>
                   <button className="visual-filter-btn-apply" onClick={() => setFilterMode('sql')} style={{ fontWeight: 600 }}>
-                    Lọc bằng SQL
+                    {t('dataGrid.filterBySql')}
                   </button>
-                  <button className="visual-filter-btn-apply" onClick={handleCopyFilterSql} title="Sao chép câu SELECT tương ứng với điều kiện lọc">
-                    <Copy size={12} /> Sao chép SQL
+                  <button className="visual-filter-btn-apply" onClick={handleCopyFilterSql} title={t('dataGrid.copySqlTitle')}>
+                    <Copy size={12} /> {t('dataGrid.copySql')}
                   </button>
                   {/* Chỉ hiện phím tắt của đúng nền tảng đang chạy, thay vì in cả
                       "⌘F / Ctrl+F" khiến người dùng phải tự lọc. */}
                   <div className="visual-filter-footer-info" style={{ marginLeft: '12px' }}>
-                    <span>Ẩn/hiện lọc: <kbd>{modKey}F</kbd></span>
-                    <span>Thêm dòng: <kbd>{modKey}I</kbd></span>
+                    <span>{t('dataGrid.shortcutToggleFilter')} <kbd>{modKey}F</kbd></span>
+                    <span>{t('dataGrid.shortcutAddRow')} <kbd>{modKey}I</kbd></span>
                   </div>
                 </div>
                 <button className="visual-filter-btn-primary" onClick={triggerFilter}>
-                  Áp dụng tất cả
+                  {t('dataGrid.applyAll')}
                 </button>
               </div>
             </div>
@@ -1177,7 +1188,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
           {loading && rows.length === 0 ? (
             <div style={{ padding: '40px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', color: 'var(--win-text-secondary)' }}>
               <LoadingSpinner size={32} />
-              <span style={{ fontSize: '11px' }}>Đang tải dữ liệu...</span>
+              <span style={{ fontSize: '11px' }}>{t('dataGrid.loadingData')}</span>
             </div>
           ) : (
             <table className="grid-table">
@@ -1339,31 +1350,31 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
               className={`segment-btn ${viewMode === 'data' ? 'active' : ''}`}
               onClick={() => setViewMode('data')}
             >
-              Data
+              {t('dataGrid.dataTab')}
             </button>
             <button
               className={`segment-btn ${viewMode === 'structure' ? 'active' : ''}`}
               onClick={() => setViewMode('structure')}
             >
-              Structure
+              {t('dataGrid.structureTab')}
             </button>
           </div>
 
           {viewMode === 'data' && (
             <>
-              <button className="gp-btn" onClick={handleAddRow} title="Thêm dòng mới">
+              <button className="gp-btn" onClick={handleAddRow} title={t('dataGrid.addRowTitle')}>
                 <Plus size={12} />
-                <span>Row</span>
+                <span>{t('dataGrid.rowLabel')}</span>
               </button>
 
               <button
                 className="gp-btn danger"
                 onClick={handleDeleteRow}
                 disabled={selectedRowId === null}
-                title="Xóa dòng đang chọn"
+                title={t('dataGrid.deleteRowTitle')}
               >
                 <Minus size={12} />
-                <span>Row</span>
+                <span>{t('dataGrid.rowLabel')}</span>
               </button>
             </>
           )}
@@ -1371,12 +1382,12 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
           {/* Commit/Discard Actions */}
           {changeCount > 0 && (
             <div style={{ display: 'flex', gap: '4px', marginLeft: '6px' }}>
-              <button className="gp-btn icon" onClick={handleDiscard} title="Hủy thay đổi nháp">
+              <button className="gp-btn icon" onClick={handleDiscard} title={t('dataGrid.discardTitle')}>
                 <RotateCcw size={12} />
               </button>
-              <button className="gp-btn save" onClick={handleCommit} title="Lưu tất cả thay đổi">
+              <button className="gp-btn save" onClick={handleCommit} title={t('dataGrid.saveTitle')}>
                 <Save size={12} />
-                <span>Lưu ({changeCount})</span>
+                <span>{t('dataGrid.saveButton', { n: changeCount })}</span>
               </button>
             </div>
           )}
@@ -1385,7 +1396,15 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
         {/* Middle section: Row Count */}
         {viewMode === 'data' && (
           <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>
-            <b>{(page - 1) * pageSize + 1}-{Math.min(page * pageSize, totalCount)}</b> of <b>{totalCount.toLocaleString('vi-VN')}</b> rows
+            <Trans
+              i18nKey="dataGrid.rowsRange"
+              values={{
+                from: (page - 1) * pageSize + 1,
+                to: Math.min(page * pageSize, totalCount),
+                total: fmtNum(totalCount),
+              }}
+              components={{ strong: <b /> }}
+            />
           </div>
         )}
 
@@ -1401,9 +1420,9 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
                   }
                   setShowColumnsPopover(!showColumnsPopover);
                 }}
-                title="Cấu hình hiển thị cột"
+                title={t('dataGrid.columnsTitle')}
               >
-                Columns
+                {t('dataGrid.columnsBtn')}
               </button>
 
               {showColumnsPopover && (
@@ -1419,7 +1438,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
                   gap: '10px'
                 }}>
                   <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)', marginBottom: '4px' }}>
-                    Hiển thị các cột
+                    {t('dataGrid.columnsHeading')}
                   </div>
 
                   <div>
@@ -1445,7 +1464,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
                         }
                       }}
                     >
-                      <option value="" disabled style={{ background: 'var(--win-bg-window)', color: 'var(--win-text-primary)' }}>Thêm cột hiển thị...</option>
+                      <option value="" disabled style={{ background: 'var(--win-bg-window)', color: 'var(--win-text-primary)' }}>{t('dataGrid.addColumnOption')}</option>
                       {columns.map(c => c.name)
                         .filter(name => !pendingVisibleColumns.includes(name))
                         .map(name => (
@@ -1468,7 +1487,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
                     alignContent: 'flex-start'
                   }}>
                     {pendingVisibleColumns.length === 0 ? (
-                      <span style={{ fontSize: '11px', color: 'var(--win-text-disabled)', fontStyle: 'italic' }}>Không có cột nào được hiển thị</span>
+                      <span style={{ fontSize: '11px', color: 'var(--win-text-disabled)', fontStyle: 'italic' }}>{t('dataGrid.noVisibleColumns')}</span>
                     ) : (
                       pendingVisibleColumns.map(colName => (
                         <div
@@ -1524,7 +1543,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
                         cursor: 'pointer'
                       }}
                     >
-                      Clear
+                      {t('dataGrid.clearBtn')}
                     </button>
                     <div style={{ display: 'flex', gap: '6px' }}>
                       <button
@@ -1541,7 +1560,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
                           cursor: 'pointer'
                         }}
                       >
-                        Hủy
+                        {t('common.cancel')}
                       </button>
                       <button
                         className="btn btn-primary"
@@ -1561,7 +1580,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
                           fontWeight: 600
                         }}
                       >
-                        Apply
+                        {t('dataGrid.applyBtn')}
                       </button>
                     </div>
                   </div>
@@ -1573,26 +1592,26 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
               className="gp-btn"
               onClick={handleImportClick}
               disabled={loading}
-              title="Nhập dữ liệu từ CSV/JSON/XLSX/SQL"
+              title={t('dataGrid.importTitle')}
             >
-              Import
+              {t('dataGrid.importBtn')}
             </button>
 
             <button
               className="gp-btn"
               onClick={() => setShowExportDialog(true)}
               disabled={loading}
-              title="Xuất dữ liệu ra CSV/JSON/SQL/XLSX"
+              title={t('dataGrid.exportTitle')}
             >
-              Export
+              {t('dataGrid.exportBtn')}
             </button>
 
             <button
               className={`gp-btn ${showFilterBar ? 'on' : ''}`}
               onClick={() => setShowFilterBar(!showFilterBar)}
-              title="Bật/Tắt bộ lọc dữ liệu"
+              title={t('dataGrid.filtersTitle')}
             >
-              Filters
+              {t('dataGrid.filtersBtn')}
             </button>
 
             <div className="gp-pager">
@@ -1600,7 +1619,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
                 className="gp-pager-btn"
                 onClick={() => setPage(p => Math.max(p - 1, 1))}
                 disabled={page === 1}
-                title="Trang trước"
+                title={t('dataGrid.prevPage')}
               >
                 <ChevronLeft size={14} />
               </button>
@@ -1614,7 +1633,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
                   setPageSize(parseInt(e.target.value));
                   setPage(1);
                 }}
-                title="Số dòng mỗi trang"
+                title={t('dataGrid.rowsPerPage')}
               >
                 <option value="50">50</option>
                 <option value="100">100</option>
@@ -1627,7 +1646,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
                 className="gp-pager-btn"
                 onClick={() => setPage(p => Math.min(p + 1, totalPages))}
                 disabled={page >= totalPages}
-                title="Trang sau"
+                title={t('dataGrid.nextPage')}
               >
                 <ChevronRight size={14} />
               </button>
@@ -1663,56 +1682,28 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
       />
 
       {showImportModal && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          width: '100%',
-          height: '100%',
-          background: 'rgba(0,0,0,0.6)',
-          zIndex: 9999,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          backdropFilter: 'blur(2px)'
-        }}>
-          <div style={{
-            width: '720px',
-            background: 'var(--win-bg-card)',
-            border: '1px solid var(--win-border-strong, var(--win-border))',
-            borderRadius: '6px',
-            boxShadow: '0 20px 40px rgba(0,0,0,0.4)',
-            display: 'flex',
-            flexDirection: 'column',
-            overflow: 'hidden'
-          }}>
-            <div style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              padding: '12px 16px',
-              borderBottom: '1px solid var(--win-border)',
-              background: 'var(--win-bg-tab-bar, rgba(0,0,0,0.15))'
-            }}>
-              <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--win-text-primary)' }}>
-                Xem trước dữ liệu Nhập (Import Preview) - Tệp: {importFileName}
-              </span>
-              <button
-                onClick={() => setShowImportModal(false)}
-                style={{ background: 'transparent', border: 'none', color: 'var(--win-text-secondary)', cursor: 'pointer', fontSize: '16px' }}
-              >
-                ×
-              </button>
-            </div>
-
-            <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        <Modal
+          title={t('dataGrid.importPreviewTitle', { file: importFileName })}
+          onClose={() => setShowImportModal(false)}
+          width="720px"
+          zIndex={9999}
+        >
+            <ModalBody style={{ gap: '12px' }}>
               <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>
                 {importFileType === 'sql' ? (
-                  <span>Định dạng SQL Script: Câu lệnh bên dưới sẽ được chạy trực tiếp trên database.</span>
+                  <span>{t('dataGrid.importSqlNote')}</span>
                 ) : (
                   <span>
-                    Định dạng {importFileType.toUpperCase()}: phát hiện <b>{importPendingRows.length} bản ghi</b>,
-                    {' '}<b>{importFileCols.length} cột</b> — sẽ nhập vào bảng <b style={{ fontFamily: 'monospace' }}>{tableName}</b>.
+                    <Trans
+                      i18nKey="dataGrid.importSummary"
+                      values={{
+                        format: importFileType.toUpperCase(),
+                        rows: importPendingRows.length,
+                        cols: importFileCols.length,
+                        table: tableName,
+                      }}
+                      components={{ strong: <b />, code: <b style={{ fontFamily: 'monospace' }} /> }}
+                    />
                   </span>
                 )}
               </div>
@@ -1720,7 +1711,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
               {importFileType === 'sql' ? (
                 <textarea
                   readOnly
-                  value={importSqlContent.slice(0, 5000) + (importSqlContent.length > 5000 ? '\n... (nội dung còn lại ẩn đi trong preview)' : '')}
+                  value={importSqlContent.slice(0, 5000) + (importSqlContent.length > 5000 ? t('dataGrid.importTruncated') : '')}
                   style={{
                     width: '100%',
                     height: '280px',
@@ -1740,24 +1731,24 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
                   {/* Tab: cấu trúc (cột trong tệp vs bảng đích) | dữ liệu (10 dòng đầu) */}
                   <div style={{ display: 'flex', gap: '4px' }}>
                     {([
-                      { id: 'structure', label: `Cấu trúc (${importFileCols.length} cột)` },
-                      { id: 'data', label: `Dữ liệu (${importPendingRows.length} dòng)` },
-                    ] as const).map(t => (
+                      { id: 'structure', label: t('dataGrid.importTabStructure', { n: importFileCols.length }) },
+                      { id: 'data', label: t('dataGrid.importTabData', { n: importPendingRows.length }) },
+                    ] as const).map(tab => (
                       <button
-                        key={t.id}
-                        onClick={() => setImportTab(t.id)}
+                        key={tab.id}
+                        onClick={() => setImportTab(tab.id)}
                         style={{
                           padding: '4px 12px',
                           fontSize: '11px',
                           borderRadius: '4px',
                           border: '1px solid var(--win-border)',
                           cursor: 'pointer',
-                          background: importTab === t.id ? 'var(--win-accent)' : 'transparent',
-                          color: importTab === t.id ? '#fff' : 'var(--win-text-secondary)',
+                          background: importTab === tab.id ? 'var(--win-accent)' : 'transparent',
+                          color: importTab === tab.id ? '#fff' : 'var(--win-text-secondary)',
                           fontWeight: 600
                         }}
                       >
-                        {t.label}
+                        {tab.label}
                       </button>
                     ))}
                   </div>
@@ -1772,8 +1763,15 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
                       padding: '8px 10px',
                       lineHeight: 1.5
                     }}>
-                      {importUnknownCols.length} cột trong tệp không có trong bảng
-                      {' '}<b style={{ fontFamily: 'monospace' }}>{tableName}</b>: {importUnknownCols.join(', ')} — các cột này sẽ khiến câu lệnh nhập lỗi.
+                      <Trans
+                        i18nKey="dataGrid.importUnknownCols"
+                        values={{
+                          n: importUnknownCols.length,
+                          table: tableName,
+                          cols: importUnknownCols.join(', '),
+                        }}
+                        components={{ code: <b style={{ fontFamily: 'monospace' }} /> }}
+                      />
                     </div>
                   )}
 
@@ -1785,12 +1783,12 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
                     background: 'var(--win-bg-window)'
                   }}>
                     {importPendingRows.length === 0 ? (
-                      <div style={{ padding: '20px', textAlign: 'center', color: 'var(--win-text-disabled)' }}>Không có bản ghi nào.</div>
+                      <div style={{ padding: '20px', textAlign: 'center', color: 'var(--win-text-disabled)' }}>{t('dataGrid.importNoRows')}</div>
                     ) : importTab === 'structure' ? (
                       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
                         <thead>
                           <tr style={{ background: 'var(--win-bg-hover)', borderBottom: '1px solid var(--win-border)' }}>
-                            {['Cột trong tệp', 'Kiểu suy ra', 'Cột ở bảng đích', 'Kiểu ở bảng đích'].map(h => (
+                            {[t('dataGrid.colInFile'), t('dataGrid.colInferredType'), t('dataGrid.colInTarget'), t('dataGrid.colTargetType')].map(h => (
                               <th key={h} style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 600, borderRight: '1px solid var(--win-border)' }}>{h}</th>
                             ))}
                           </tr>
@@ -1803,7 +1801,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
                                 <td style={{ padding: '6px 8px', borderRight: '1px solid var(--win-border)', fontFamily: 'monospace', color: 'var(--win-text-primary)' }}>{col}</td>
                                 <td style={{ padding: '6px 8px', borderRight: '1px solid var(--win-border)', color: 'var(--win-text-secondary)' }}>{inferColType(importPendingRows, col)}</td>
                                 <td style={{ padding: '6px 8px', borderRight: '1px solid var(--win-border)', color: target ? 'var(--win-text-primary)' : 'var(--st-warn, #d98600)' }}>
-                                  {target ? target.name : 'không có'}
+                                  {target ? target.name : t('dataGrid.colMissing')}
                                 </td>
                                 <td style={{ padding: '6px 8px', color: 'var(--win-text-secondary)', fontFamily: 'monospace' }}>{target?.type || '—'}</td>
                               </tr>
@@ -1840,33 +1838,25 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
                   </div>
                 </>
               )}
-            </div>
+            </ModalBody>
 
-            <div style={{
-              display: 'flex',
-              justifyContent: 'flex-end',
-              gap: '8px',
-              padding: '12px 16px',
-              borderTop: '1px solid var(--win-border)',
-              background: 'var(--win-bg-tab-bar, rgba(0,0,0,0.15))'
-            }}>
+            <ModalFooter>
               <button
                 className="btn btn-secondary"
                 onClick={() => setShowImportModal(false)}
                 style={{ padding: '0 12px' }}
               >
-                Hủy
+                {t('common.cancel')}
               </button>
               <button
                 className="btn btn-primary"
                 onClick={confirmImport}
                 style={{ padding: '0 16px', background: 'var(--win-accent)', color: '#fff', border: 'none' }}
               >
-                Xác nhận Import
+                {t('dataGrid.confirmImport')}
               </button>
-            </div>
-          </div>
-        </div>
+            </ModalFooter>
+        </Modal>
       )}
 
       {/* ─── Right-Click Context Menu ─── */}
@@ -1892,64 +1882,64 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
           }}
         >
           {/* Row actions */}
-          <div style={{ padding: '2px 8px 4px', color: 'var(--win-text-disabled)', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Dòng</div>
+          <div style={{ padding: '2px 8px 4px', color: 'var(--win-text-disabled)', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{t('dataGrid.ctxRow')}</div>
           <button className="context-menu-item" onClick={() => { setContextMenu(null); handleDuplicateRow(contextMenu.row); }}>
-            <span>📋</span> Nhân bản dòng (Duplicate)
+            <span>📋</span> {t('dataGrid.ctxDuplicate')}
           </button>
           <button className="context-menu-item" style={{ color: 'var(--st-danger)' }} onClick={() => { setContextMenu(null); handleDeleteRow(contextMenu.rowId); }}>
-            <span>🗑</span> Xóa dòng (Delete)
+            <span>🗑</span> {t('dataGrid.ctxDeleteRow')}
           </button>
 
           <div style={{ borderTop: '1px solid var(--win-border)', margin: '4px 0' }} />
 
           {/* Sort actions */}
-          <div style={{ padding: '2px 8px 4px', color: 'var(--win-text-disabled)', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Sắp xếp theo "{contextMenu.colName}"</div>
+          <div style={{ padding: '2px 8px 4px', color: 'var(--win-text-disabled)', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{t('dataGrid.ctxSortBy', { col: contextMenu.colName })}</div>
           <button className="context-menu-item" onClick={() => { setContextMenu(null); setSortBy(contextMenu.colName); setSortDir('asc'); setPage(1); }}>
-            <span>↑</span> Tăng dần (ASC)
+            <span>↑</span> {t('dataGrid.ctxAsc')}
           </button>
           <button className="context-menu-item" onClick={() => { setContextMenu(null); setSortBy(contextMenu.colName); setSortDir('desc'); setPage(1); }}>
-            <span>↓</span> Giảm dần (DESC)
+            <span>↓</span> {t('dataGrid.ctxDesc')}
           </button>
 
           <div style={{ borderTop: '1px solid var(--win-border)', margin: '4px 0' }} />
 
           {/* Copy cell */}
-          <div style={{ padding: '2px 8px 4px', color: 'var(--win-text-disabled)', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Ô "{contextMenu.colName}"</div>
+          <div style={{ padding: '2px 8px 4px', color: 'var(--win-text-disabled)', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{t('dataGrid.ctxCell', { col: contextMenu.colName })}</div>
           <button className="context-menu-item" onClick={() => {
             const cm = contextMenu;
             setContextMenu(null);
             startEdit(cm.rowId, cm.colName, cm.cellValue);
           }}>
-            <span>✏️</span> Sửa ô (Edit)
+            <span>✏️</span> {t('dataGrid.ctxEditCell')}
           </button>
           <button className="context-menu-item" onClick={() => {
             setContextMenu(null);
             copyToClipboard(contextMenu.cellValue === null ? '' : String(contextMenu.cellValue));
-            setSuccessMsg('Đã sao chép giá trị ô!'); setTimeout(() => setSuccessMsg(null), 2000);
+            setSuccessMsg(t('dataGrid.copiedCell')); setTimeout(() => setSuccessMsg(null), 2000);
           }}>
-            <span>📄</span> Sao chép giá trị ô
+            <span>📄</span> {t('dataGrid.ctxCopyCell')}
           </button>
           <button className="context-menu-item" onClick={() => {
             setContextMenu(null);
             const allVals = rows.map(r => r[contextMenu.colName]).filter(v => v !== null && v !== undefined).join('\n');
             copyToClipboard(allVals);
-            setSuccessMsg('Đã sao chép tất cả giá trị cột!'); setTimeout(() => setSuccessMsg(null), 2000);
+            setSuccessMsg(t('dataGrid.copiedColumn')); setTimeout(() => setSuccessMsg(null), 2000);
           }}>
-            <span>📋</span> Sao chép tất cả giá trị cột
+            <span>📋</span> {t('dataGrid.ctxCopyColumn')}
           </button>
           <button className="context-menu-item" onClick={() => { setContextMenu(null); setQuickLookCell({ colName: contextMenu.colName, value: contextMenu.cellValue }); }}>
-            <span>🔍</span> Quick Look
+            <span>🔍</span> {t('dataGrid.ctxQuickLook')}
           </button>
 
           <div style={{ borderTop: '1px solid var(--win-border)', margin: '4px 0' }} />
 
           {/* Copy row */}
-          <div style={{ padding: '2px 8px 4px', color: 'var(--win-text-disabled)', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Sao chép dòng dưới dạng</div>
+          <div style={{ padding: '2px 8px 4px', color: 'var(--win-text-disabled)', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{t('dataGrid.ctxCopyRowAs')}</div>
           <button className="context-menu-item" onClick={() => { setContextMenu(null); copyRowAsCSV(contextMenu.row, false); }}>
             <span>📊</span> CSV
           </button>
           <button className="context-menu-item" onClick={() => { setContextMenu(null); copyRowAsCSV(contextMenu.row, true); }}>
-            <span>📊</span> CSV (kèm tiêu đề)
+            <span>📊</span> {t('dataGrid.ctxCsvHeader')}
           </button>
           <button className="context-menu-item" onClick={() => { setContextMenu(null); copyRowAsSQL(contextMenu.row); }}>
             <span>🗄</span> SQL INSERT
@@ -1962,80 +1952,54 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
 
       {/* ─── Quick Look Modal ─── */}
       {quickLookCell && (
-        <div
-          style={{
-            position: 'fixed', inset: 0, zIndex: 99998,
-            background: 'rgba(0,0,0,0.6)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center'
-          }}
-          onClick={() => setQuickLookCell(null)}
+        <Modal
+          title={<>{t('dataGrid.quickLook')} — <span style={{ color: 'var(--win-accent)', fontFamily: 'var(--win-font-mono)' }}>{quickLookCell.colName}</span></>}
+          onClose={() => setQuickLookCell(null)}
+          width="700px"
+          maxHeight="70vh"
+          zIndex={99998}
         >
-          <div
-            style={{
-              background: 'var(--win-bg-card)',
-              border: '1px solid var(--win-border)',
-              borderRadius: '10px',
-              boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
-              padding: '0',
-              minWidth: '400px',
-              maxWidth: '700px',
-              maxHeight: '70vh',
-              display: 'flex',
-              flexDirection: 'column',
-              overflow: 'hidden'
-            }}
-            onClick={e => e.stopPropagation()}
-          >
-            <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--win-border)', fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>Quick Look — <span style={{ color: 'var(--win-accent)', fontFamily: 'var(--win-font-mono)' }}>{quickLookCell.colName}</span></span>
-              <button onClick={() => setQuickLookCell(null)} style={{ background: 'none', border: 'none', color: 'var(--win-text-secondary)', cursor: 'pointer', fontSize: '16px' }}>✕</button>
-            </div>
-            <div style={{ padding: '16px', flex: 1, overflowY: 'auto', background: 'var(--win-bg-window)', fontFamily: 'var(--win-font-mono)', fontSize: '13px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-              {quickLookCell.value === null
-                ? <span style={{ color: 'var(--win-text-disabled)', fontStyle: 'italic' }}>NULL</span>
-                : String(quickLookCell.value)
-              }
-            </div>
-            <div style={{ padding: '10px 16px', borderTop: '1px solid var(--win-border)', display: 'flex', justifyContent: 'flex-end', gap: '8px', background: 'var(--win-bg-card)' }}>
-              <button className="btn btn-secondary" onClick={() => { copyToClipboard(quickLookCell.value === null ? '' : String(quickLookCell.value)); }}>Sao chép</button>
-              <button className="btn btn-primary" style={{ background: 'var(--st-ok)', borderColor: 'var(--st-ok)' }} onClick={() => setQuickLookCell(null)}>Đóng</button>
-            </div>
-          </div>
-        </div>
+          <ModalBody style={{ gap: 0, flex: 1, background: 'var(--win-bg-window)', fontFamily: 'var(--win-font-mono)', fontSize: '13px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+            {quickLookCell.value === null
+              ? <span style={{ color: 'var(--win-text-disabled)', fontStyle: 'italic' }}>NULL</span>
+              : String(quickLookCell.value)
+            }
+          </ModalBody>
+          <ModalFooter>
+            <button className="btn btn-secondary" onClick={() => { copyToClipboard(quickLookCell.value === null ? '' : String(quickLookCell.value)); }}>{t('common.copy')}</button>
+            <button className="btn btn-primary" style={{ background: 'var(--st-ok)', borderColor: 'var(--st-ok)' }} onClick={() => setQuickLookCell(null)}>{t('common.close')}</button>
+          </ModalFooter>
+        </Modal>
       )}
 
       {/* ─── Transaction Preview Modal (xem trước SQL trước khi commit) ─── */}
       {commitPreview && (
-        <div
-          style={{ position: 'fixed', inset: 0, zIndex: 99999, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-          onClick={() => { setCommitPreview(null); setPendingChanges([]); }}
+        <Modal
+          title={t('dataGrid.commitPreviewTitle', { n: commitPreview.length })}
+          onClose={() => { setCommitPreview(null); setPendingChanges([]); }}
+          width="640px"
+          maxWidth="92%"
+          maxHeight="80vh"
+          zIndex={99999}
         >
-          <div
-            style={{ background: 'var(--win-bg-card)', border: '1px solid var(--win-border)', borderRadius: '8px', width: '640px', maxWidth: '92%', maxHeight: '80vh', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 32px rgba(0,0,0,0.5)', overflow: 'hidden' }}
-            onClick={e => e.stopPropagation()}
-          >
-            <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--win-border)', fontWeight: 600 }}>
-              Xem trước thay đổi — {commitPreview.length} câu lệnh sẽ chạy
-            </div>
-            <div style={{ padding: '16px', flex: 1, overflowY: 'auto', background: 'var(--win-bg-window)', fontFamily: 'var(--win-font-mono)', fontSize: '12px', color: 'var(--win-text-primary)' }}>
-              {commitPreview.length === 0 ? (
-                <div style={{ color: 'var(--win-text-disabled)' }}>Không có câu lệnh nào.</div>
-              ) : (
-                commitPreview.map((sql, idx) => (
-                  <pre key={idx} style={{ margin: '0 0 10px 0', whiteSpace: 'pre-wrap', wordBreak: 'break-all', paddingBottom: '8px', borderBottom: idx < commitPreview.length - 1 ? '1px dashed var(--win-border)' : 'none' }}>
-                    {sql};
-                  </pre>
-                ))
-              )}
-            </div>
-            <div style={{ padding: '12px 16px', borderTop: '1px solid var(--win-border)', display: 'flex', justifyContent: 'flex-end', gap: '8px', background: 'var(--win-bg-card)' }}>
-              <button className="btn btn-secondary" onClick={() => { setCommitPreview(null); setPendingChanges([]); }} disabled={loading}>Hủy</button>
-              <button className="btn btn-primary" onClick={handleConfirmCommit} disabled={loading || commitPreview.length === 0} style={{ background: 'var(--st-ok)', borderColor: 'var(--st-ok)' }}>
-                {loading ? 'Đang chạy...' : 'Xác nhận & Lưu'}
-              </button>
-            </div>
-          </div>
-        </div>
+          <ModalBody style={{ padding: '16px', gap: 0, background: 'var(--win-bg-window)', fontFamily: 'var(--win-font-mono)', fontSize: '12px', color: 'var(--win-text-primary)', flex: 1 }}>
+            {commitPreview.length === 0 ? (
+              <div style={{ color: 'var(--win-text-disabled)' }}>{t('dataGrid.commitPreviewEmpty')}</div>
+            ) : (
+              commitPreview.map((sql, idx) => (
+                <pre key={idx} style={{ margin: '0 0 10px 0', whiteSpace: 'pre-wrap', wordBreak: 'break-all', paddingBottom: '8px', borderBottom: idx < commitPreview.length - 1 ? '1px dashed var(--win-border)' : 'none' }}>
+                  {sql};
+                </pre>
+              ))
+            )}
+          </ModalBody>
+          <ModalFooter>
+            <button className="btn btn-secondary" onClick={() => { setCommitPreview(null); setPendingChanges([]); }} disabled={loading}>{t('common.cancel')}</button>
+            <button className="btn btn-primary" onClick={handleConfirmCommit} disabled={loading || commitPreview.length === 0} style={{ background: 'var(--st-ok)', borderColor: 'var(--st-ok)' }}>
+              {loading ? t('dataGrid.commitRunning') : t('dataGrid.commitConfirm')}
+            </button>
+          </ModalFooter>
+        </Modal>
       )}
     </div>
   );

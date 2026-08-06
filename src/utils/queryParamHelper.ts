@@ -128,6 +128,25 @@ export function maskCommentsAndStrings(sql: string): string {
 /**
  * Extracts parameter tokens from SQL string using active regex pattern
  */
+/**
+ * Identity of a positional (`?`) parameter.
+ *
+ * Deliberately NOT localized: this string is the key of the value map, and that map
+ * is persisted in localStorage (`sql_query_param_values`). If it followed the UI
+ * language, switching language would orphan every saved value and the extract and
+ * substitute passes could disagree. The human-readable label is produced at render
+ * time instead — see `positionalParamIndex()` and `queryParams.positionalParam`.
+ */
+export function positionalParamKey(index: number): string {
+  return `?#${index}`;
+}
+
+/** Index of a positional key, or null for a named parameter. Used to build its label. */
+export function positionalParamIndex(name: string): number | null {
+  const m = /^\?#(\d+)$/.exec(name);
+  return m ? Number(m[1]) : null;
+}
+
 export function extractQueryParams(sql: string, patternIndex: number): string[] {
   if (!sql.trim()) return [];
   const patternObj = QUERY_PARAM_PATTERNS[patternIndex] || QUERY_PARAM_PATTERNS[0];
@@ -141,7 +160,7 @@ export function extractQueryParams(sql: string, patternIndex: number): string[] 
     const re = new RegExp(patternObj.regex.source, 'g');
     while (re.exec(cleanSql) !== null) {
       count++;
-      matches.push(`Tham số ? #${count}`);
+      matches.push(positionalParamKey(count));
     }
     return matches;
   }
@@ -236,7 +255,7 @@ export function buildParameterizedSql(
     const outSql = sql.replace(/\?/g, (m, offset: number) => {
       if (isMasked(offset)) return m; // ? trong chuỗi/comment -> giữ nguyên
       index++;
-      return pushValue(`Tham số ? #${index}`);
+      return pushValue(positionalParamKey(index));
     });
     return { sql: outSql, values };
   }
@@ -270,7 +289,7 @@ export function substituteQueryParams(
     return sql.replace(/\?/g, (match, offset) => {
       if (isMasked(offset)) return match; // ? nằm trong chuỗi/comment -> giữ nguyên
       index++;
-      const key = `Tham số ? #${index}`;
+      const key = positionalParamKey(index);
       return valuesMap[key] !== undefined ? valuesMap[key] : '';
     });
   }

@@ -1,7 +1,7 @@
 {
   "name": "table",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.1",
   "main": "main.js",
   "scripts": {
     "dev": "tauri dev",

@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Play, X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { Play } from 'lucide-react';
+import { positionalParamIndex } from '../utils/queryParamHelper';
 import type { QueryParamType, TypedParamValue } from '../utils/queryParamHelper';
+import { Modal, ModalBody, ModalFooter } from './Modal';
 
 interface QueryParamsModalProps {
   params: string[];
@@ -23,7 +26,14 @@ export const QueryParamsModal: React.FC<QueryParamsModalProps> = ({
   onSubmit,
   onClose
 }) => {
+  const { t } = useTranslation();
   const [values, setValues] = useState<Record<string, TypedParamValue>>({});
+
+  // `p` is the stable map key (`?#1` for positional). Only the label is localized.
+  const paramLabel = (name: string) => {
+    const n = positionalParamIndex(name);
+    return n === null ? name : t('queryParams.positionalParam', { n });
+  };
 
   useEffect(() => {
     const stored = localStorage.getItem('sql_query_param_values');
@@ -69,44 +79,20 @@ export const QueryParamsModal: React.FC<QueryParamsModalProps> = ({
   };
 
   return (
-    <div style={{
-      position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.65)',
-      display: 'flex', justifyContent: 'center', alignItems: 'center',
-      zIndex: 10000, backdropFilter: 'blur(2px)'
-    }} onClick={onClose}>
+    <Modal
+      title={t('queryParams.title')}
+      icon={<Play size={14} style={{ color: 'var(--win-accent)', fill: 'var(--win-accent)', flexShrink: 0 }} />}
+      onClose={onClose}
+      width="460px"
+      maxWidth="90vw"
+      maxHeight="85vh"
+      zIndex={10000}
+    >
       <form
         onSubmit={handleSubmit}
-        style={{
-          background: 'var(--win-bg-card)',
-          border: '1px solid var(--win-border-strong, var(--win-border))',
-          borderRadius: '8px',
-          width: '460px',
-          maxWidth: '90vw',
-          maxHeight: '85vh',
-          boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
-          padding: '20px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '16px'
-        }}
-        onClick={(e) => e.stopPropagation()}
+        style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}
       >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Play size={16} style={{ color: 'var(--win-accent)', fill: 'var(--win-accent)' }} />
-            <h3 style={{ margin: 0, fontSize: '15px', color: 'var(--win-text-primary)' }}>
-              Nhập Tham số Truy vấn (Enter Query Parameters)
-            </h3>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            style={{ background: 'transparent', border: 'none', color: 'var(--win-text-secondary)', cursor: 'pointer' }}
-          >
-            <X size={16} />
-          </button>
-        </div>
-
+        <ModalBody>
         {/* SQL Preview Snippet */}
         <div style={{
           background: 'var(--win-bg-window)',
@@ -128,16 +114,13 @@ export const QueryParamsModal: React.FC<QueryParamsModalProps> = ({
         <div style={{
           display: 'flex',
           flexDirection: 'column',
-          gap: '12px',
-          maxHeight: '300px',
-          overflowY: 'auto',
-          paddingRight: '4px'
+          gap: '12px'
         }}>
           {params.map((p, idx) => (
             <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
               <label style={{ fontSize: '11.5px', fontWeight: 600, color: 'var(--win-text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <code style={{ background: 'rgba(255,255,255,0.08)', padding: '1px 5px', borderRadius: '3px', fontFamily: 'var(--win-font-mono)', color: 'var(--win-accent)' }}>
-                  {p}
+                  {paramLabel(p)}
                 </code>
               </label>
               <div style={{ display: 'flex', gap: '6px' }}>
@@ -147,7 +130,7 @@ export const QueryParamsModal: React.FC<QueryParamsModalProps> = ({
                   value={values[p]?.value ?? ''}
                   onChange={(e) => handleChangeValue(p, e.target.value)}
                   disabled={values[p]?.type === 'null'}
-                  placeholder={values[p]?.type === 'null' ? 'NULL' : `Nhập giá trị cho ${p}...`}
+                  placeholder={values[p]?.type === 'null' ? 'NULL' : t('queryParams.valuePlaceholder', { name: paramLabel(p) })}
                   style={{
                     flex: 1,
                     background: 'var(--win-bg-window)',
@@ -164,7 +147,7 @@ export const QueryParamsModal: React.FC<QueryParamsModalProps> = ({
                 <select
                   value={values[p]?.type ?? 'auto'}
                   onChange={(e) => handleChangeType(p, e.target.value as QueryParamType)}
-                  title="Kiểu dữ liệu bind ở tầng driver"
+                  title={t('queryParams.typeTitle')}
                   style={{
                     background: 'var(--win-bg-window)',
                     border: '1px solid var(--win-border)',
@@ -184,18 +167,20 @@ export const QueryParamsModal: React.FC<QueryParamsModalProps> = ({
             </div>
           ))}
         </div>
+        </ModalBody>
 
         {/* Action Buttons */}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '4px' }}>
+        <ModalFooter>
           <button type="button" className="btn btn-secondary" onClick={onClose} style={{ padding: '6px 16px' }}>
-            Hủy
+            {t('common.cancel')}
           </button>
           <button type="submit" className="btn btn-primary" style={{ padding: '6px 16px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <Play size={12} fill="#fff" />
-            <span>Chạy truy vấn</span>
+            {/* currentColor so the icon follows `.btn:disabled`'s text colour — see SqlEditor's Run button. */}
+            <Play size={12} fill="currentColor" />
+            <span>{t('queryParams.run')}</span>
           </button>
-        </div>
+        </ModalFooter>
       </form>
-    </div>
+    </Modal>
   );
 };

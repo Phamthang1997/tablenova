@@ -1,8 +1,10 @@
 // Premium Database Table Structure Viewer & Editor Component
 import React, { useState, useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { SchemaInfo, ColumnInfo } from '../utils/dbHelper';
 import { dbHelper } from '../utils/dbHelper';
 import { Save, Plus, Trash2, RotateCcw, AlertTriangle, CheckCircle2, Code } from 'lucide-react';
+import { Modal, ModalBody, ModalFooter } from './Modal';
 
 interface StructureViewerProps {
   tableName: string;
@@ -19,6 +21,8 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
   onSchemaChanged,
   readOnly = false,
 }) => {
+  const { t } = useTranslation();
+
   // Columns state
   const [cols, setCols] = useState<ColumnInfo[]>([]);
   const [deletedColNames, setDeletedColNames] = useState<string[]>([]);
@@ -173,7 +177,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
     setEditingFkCell(null);
 
     setErrorMsg(null);
-    setSuccessMsg('Đã khôi phục lại cấu trúc gốc.');
+    setSuccessMsg(t('structure.restored'));
     setTimeout(() => setSuccessMsg(null), 3000);
   };
 
@@ -446,7 +450,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
 
         if (typeChanged || nullabilityChanged || defaultChanged || autoIncrementChanged || commentChanged) {
           if (dbType === 'sqlite' && (typeChanged || nullabilityChanged || autoIncrementChanged || commentChanged)) {
-            warnings.push(`Cột "${col.name}": SQLite không hỗ trợ thay đổi trực tiếp thuộc tính này.`);
+            warnings.push(t('structure.errSqlitePerColumn', { col: col.name }));
           } else {
             modified.push({
               name: col.name,
@@ -543,7 +547,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
 
   const handleSaveStructure = async () => {
     if (readOnly) {
-      setErrorMsg('Đang ở chế độ Chỉ đọc: không thể thay đổi cấu trúc bảng.');
+      setErrorMsg(t('structure.errReadOnlyAlter'));
       return;
     }
     setLoading(true);
@@ -563,7 +567,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
       payload.addedIndexes.length === 0 && payload.droppedIndexes.length === 0 &&
       payload.addedFKs.length === 0 && payload.droppedFKs.length === 0
     ) {
-      setSuccessMsg('Không phát hiện thay đổi cấu trúc nào.');
+      setSuccessMsg(t('structure.noChanges'));
       setLoading(false);
       return;
     }
@@ -573,10 +577,10 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
       if (res.success && res.sqls) {
         setPreviewSqls(res.sqls);
       } else {
-        throw new Error(res.error || 'Lỗi lấy bản xem trước SQL.');
+        throw new Error(res.error || t('structure.errPreviewFailed'));
       }
     } catch (err: any) {
-      setErrorMsg(`Lỗi cập nhật cấu trúc: ${err.message}`);
+      setErrorMsg(t('structure.errAlter', { message: err.message }));
     } finally {
       setLoading(false);
     }
@@ -594,14 +598,14 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
     try {
       const res = await dbHelper.alterTableSchema(tableName, payload);
       if (res.success) {
-        setSuccessMsg(res.message || 'Thay đổi cấu trúc bảng thành công!');
+        setSuccessMsg(res.message || t('structure.alterSuccess'));
         setTimeout(() => setSuccessMsg(null), 3000);
         onSchemaChanged();
       } else {
-        throw new Error(res.error || 'Lỗi không xác định.');
+        throw new Error(res.error || t('structure.errUnknown'));
       }
     } catch (err: any) {
-      setErrorMsg(`Lỗi thực thi SQL: ${err.message}`);
+      setErrorMsg(t('structure.errExecuteSql', { message: err.message }));
     } finally {
       setLoading(false);
     }
@@ -613,7 +617,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
     if (res.success && res.sql) {
       setDefinitionSql(res.sql);
     } else {
-      setErrorMsg(res.error || 'Không lấy được định nghĩa bảng.');
+      setErrorMsg(res.error || t('structure.errNoDefinition'));
     }
   };
 
@@ -626,7 +630,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
 
   const copyText = (text: string, label: string) => {
     navigator.clipboard.writeText(text).catch(() => {});
-    setSuccessMsg(`Đã sao chép ${label}.`);
+    setSuccessMsg(t('structure.copied', { label }));
     setTimeout(() => setSuccessMsg(null), 2500);
   };
 
@@ -640,7 +644,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
       <div className="sql-toolbar" style={{ borderBottom: '1px solid var(--win-border)', padding: '8px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)' }}>Tên bảng:</span>
+            <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)' }}>{t('structure.tableNameLabel')}</span>
             <input
               type="text"
               key={tableName}
@@ -649,22 +653,22 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                 const newName = e.target.value.trim();
                 if (!newName || newName === tableName) return;
                 if (readOnly) {
-                  setErrorMsg('Đang ở chế độ Chỉ đọc: không thể đổi tên bảng.');
+                  setErrorMsg(t('structure.errReadOnlyRename'));
                   e.target.value = tableName;
                   return;
                 }
-                if (confirm(`Bạn có chắc muốn đổi tên bảng "${tableName}" thành "${newName}"?`)) {
+                if (confirm(t('structure.confirmRename', { from: tableName, to: newName }))) {
                   try {
                     const res = await dbHelper.renameTable(tableName, newName);
                     if (res.success) {
-                      alert('Đổi tên bảng thành công!');
+                      alert(t('structure.renameSuccess'));
                       window.dispatchEvent(new CustomEvent('table-renamed', { detail: { oldName: tableName, newName } }));
                     } else {
-                      alert('Lỗi đổi tên: ' + res.error);
+                      alert(t('structure.errRename', { message: res.error }));
                       e.target.value = tableName;
                     }
                   } catch (err: any) {
-                    alert('Lỗi kết nối: ' + err.message);
+                    alert(t('common.connectionError', { message: err.message }));
                     e.target.value = tableName;
                   }
                 } else {
@@ -694,7 +698,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
               style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
             >
               <Plus size={12} />
-              <span>Thêm cột</span>
+              <span>{t('structure.addColumn')}</span>
             </button>
             <button 
               className="btn btn-secondary" 
@@ -702,7 +706,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
               style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
             >
               <Plus size={12} />
-              <span>Thêm chỉ mục</span>
+              <span>{t('structure.addIndex')}</span>
             </button>
             <button
               className="btn btn-secondary"
@@ -710,16 +714,16 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
               style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
             >
               <Plus size={12} />
-              <span>Thêm khóa ngoại</span>
+              <span>{t('structure.addForeignKey')}</span>
             </button>
             <button
               className="btn btn-secondary"
               onClick={handleShowDefinition}
               style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
-              title="Xem câu lệnh CREATE TABLE và các dump script (CREATE/DROP/TRUNCATE)"
+              title={t('structure.definitionTitle')}
             >
               <Code size={12} />
-              <span>Definition</span>
+              <span>{t('structure.definition')}</span>
             </button>
           </div>
         </div>
@@ -733,7 +737,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
               style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
             >
               <RotateCcw size={12} />
-              <span>Hủy bỏ</span>
+              <span>{t('structure.discard')}</span>
             </button>
             <button 
               className="btn btn-primary" 
@@ -742,7 +746,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
               style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'var(--st-ok)', borderColor: 'var(--st-ok)' }}
             >
               <Save size={12} />
-              <span>{loading ? 'Đang lưu...' : 'Lưu cấu trúc'}</span>
+              <span>{loading ? t('structure.saving') : t('structure.saveStructure')}</span>
             </button>
           </div>
         )}
@@ -772,19 +776,19 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
         
         {/* COLUMNS SECTION */}
         <div className="structure-section" style={{ margin: 0 }}>
-          <h3>Cột Dữ Liệu</h3>
+          <h3>{t('structure.columnsSection')}</h3>
           <table className="structure-table">
             <thead>
               <tr>
                 <th style={{ width: '40px', textAlign: 'center' }}>#</th>
-                <th>Tên Cột</th>
-                <th>Kiểu Dữ Liệu</th>
-                <th>Cho phép Rỗng</th>
-                <th>Khóa Chính</th>
-                <th style={{ width: '80px', textAlign: 'center' }}>Tự tăng</th>
-                <th>Giá trị mặc định</th>
-                <th>Chú thích (Comment)</th>
-                <th style={{ width: '60px', textAlign: 'center' }}>Hành động</th>
+                <th>{t('structure.colName')}</th>
+                <th>{t('structure.colType')}</th>
+                <th>{t('structure.colNullable')}</th>
+                <th>{t('structure.colPrimaryKey')}</th>
+                <th style={{ width: '80px', textAlign: 'center' }}>{t('structure.colAutoIncrement')}</th>
+                <th>{t('structure.colDefault')}</th>
+                <th>{t('structure.colComment')}</th>
+                <th style={{ width: '60px', textAlign: 'center' }}>{t('structure.colActions')}</th>
               </tr>
             </thead>
             <tbody>
@@ -854,8 +858,8 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                           autoFocus
                           style={{ width: '100%', padding: '2px', fontSize: '12px', height: '24px' }}
                         >
-                          <option value="true">NULLABLE (NULL)</option>
-                          <option value="false">NOT NULL</option>
+                          <option value="true">{t('structure.optNullable')}</option>
+                          <option value="false">{t('structure.optNotNull')}</option>
                         </select>
                       ) : (
                         col.nullable ? (
@@ -870,7 +874,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                     <td 
                       onClick={() => handleTogglePrimaryKey(index)}
                       style={{ cursor: 'pointer', textAlign: 'center' }}
-                      title="Click để bật/tắt Khóa Chính"
+                      title={t('structure.togglePk')}
                     >
                       {col.isPrimaryKey ? (
                         <span className="badge-pk" style={{ userSelect: 'none', background: 'rgba(239, 68, 68, 0.12)', color: 'var(--st-danger)', borderColor: 'rgba(239, 68, 68, 0.25)' }}>PRIMARY KEY</span>
@@ -883,7 +887,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                     <td 
                       onClick={() => handleToggleAutoIncrement(index)}
                       style={{ cursor: 'pointer', textAlign: 'center' }}
-                      title="Click để bật/tắt Tự Tăng"
+                      title={t('structure.toggleAutoIncrement')}
                     >
                       {col.autoIncrement ? (
                         <span className="badge-pk" style={{ userSelect: 'none', background: 'rgba(77, 139, 244, 0.12)', color: 'var(--win-accent)', borderColor: 'rgba(77, 139, 244, 0.25)' }}>AUTO_INCREMENT</span>
@@ -908,7 +912,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                               saveEditCol(index, 'defaultValue');
                             } else if (val === 'CUSTOM') {
                               // Nếu chọn CUSTOM, cho phép người dùng tự gõ qua prompt
-                              const customVal = prompt('Nhập giá trị mặc định tùy chỉnh:', '');
+                              const customVal = prompt(t('structure.promptCustomDefault'), '');
                               if (customVal !== null) {
                                 setEditColValue(customVal);
                                 saveEditCol(index, 'defaultValue');
@@ -921,13 +925,13 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                           autoFocus
                           style={{ width: '100%', padding: '2px', fontSize: '12px', height: '24px' }}
                         >
-                          <option value="NULL">NULL (Mặc định trống)</option>
-                          <option value="CURRENT_TIMESTAMP">CURRENT_TIMESTAMP (Thời gian thực)</option>
-                          <option value="''">'' (Chuỗi rỗng)</option>
-                          <option value="0">0 (Số không)</option>
-                          <option value="false">FALSE (Boolean)</option>
-                          <option value="true">TRUE (Boolean)</option>
-                          <option value="CUSTOM">Tùy chỉnh khác...</option>
+                          <option value="NULL">{t('structure.optDefaultNull')}</option>
+                          <option value="CURRENT_TIMESTAMP">{t('structure.optDefaultNow')}</option>
+                          <option value="''">{t('structure.optDefaultEmptyString')}</option>
+                          <option value="0">{t('structure.optDefaultZero')}</option>
+                          <option value="false">{t('structure.optDefaultFalse')}</option>
+                          <option value="true">{t('structure.optDefaultTrue')}</option>
+                          <option value="CUSTOM">{t('structure.optDefaultCustom')}</option>
                         </select>
                       ) : (
                         col.defaultValue === null ? (
@@ -942,7 +946,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                     <td 
                       onDoubleClick={() => startEditCol(index, 'comment', col.comment)}
                       style={{ color: 'var(--win-text-secondary)', cursor: 'pointer' }}
-                      title="Double click để nhập chú thích"
+                      title={t('structure.commentHint')}
                     >
                       {isEditing && editingColCell?.field === 'comment' ? (
                         <input
@@ -953,7 +957,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                           onBlur={() => saveEditCol(index, 'comment')}
                           onKeyDown={e => e.key === 'Enter' && saveEditCol(index, 'comment')}
                           autoFocus
-                          placeholder="Nhập chú thích..."
+                          placeholder={t('structure.commentPlaceholder')}
                           style={{ width: '100%', padding: '2px 6px', fontSize: '12px' }}
                         />
                       ) : (
@@ -978,7 +982,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                           cursor: col.isPrimaryKey ? 'not-allowed' : 'pointer',
                           padding: '4px'
                         }}
-                        title={col.isPrimaryKey ? "Không thể xóa Khóa Chính" : "Xóa cột"}
+                        title={col.isPrimaryKey ? t('structure.cannotDropPk') : t('structure.dropColumn')}
                       >
                         <Trash2 size={14} />
                       </button>
@@ -992,14 +996,14 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
 
         {/* INDEXES SECTION */}
         <div className="structure-section" style={{ margin: 0 }}>
-          <h3>Chỉ Mục (Indexes)</h3>
+          <h3>{t('structure.indexesSection')}</h3>
           <table className="structure-table">
             <thead>
               <tr>
-                <th>Tên Chỉ Mục</th>
-                <th>Cột Áp Dụng</th>
-                <th>Loại Chỉ Mục (Type)</th>
-                <th style={{ width: '60px', textAlign: 'center' }}>Hành động</th>
+                <th>{t('structure.idxName')}</th>
+                <th>{t('structure.idxColumns')}</th>
+                <th>{t('structure.idxType')}</th>
+                <th style={{ width: '60px', textAlign: 'center' }}>{t('structure.colActions')}</th>
               </tr>
             </thead>
             <tbody>
@@ -1085,8 +1089,8 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                           autoFocus
                           style={{ width: '100%', padding: '2px', fontSize: '12px', height: '24px' }}
                         >
-                          <option value="INDEX">INDEX (Thường)</option>
-                          <option value="UNIQUE">UNIQUE (Duy nhất)</option>
+                          <option value="INDEX">{t('structure.optIndexPlain')}</option>
+                          <option value="UNIQUE">{t('structure.optIndexUnique')}</option>
                           {dbType === 'mysql' && <option value="FULLTEXT">FULLTEXT</option>}
                           {dbType === 'mysql' && <option value="SPATIAL">SPATIAL</option>}
                         </select>
@@ -1110,7 +1114,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                         className="btn-secondary"
                         onClick={() => handleDeleteIndex(idx.name, isNew)}
                         style={{ border: 'none', background: 'transparent', color: 'var(--st-danger)', cursor: 'pointer', padding: '4px' }}
-                        title="Xóa chỉ mục"
+                        title={t('structure.dropIndex')}
                       >
                         <Trash2 size={14} />
                       </button>
@@ -1121,7 +1125,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
               {idxs.length === 0 && (
                 <tr>
                   <td colSpan={5} style={{ textAlign: 'center', color: 'var(--win-text-secondary)', padding: '12px' }}>
-                    Không có chỉ mục nào được thiết lập.
+                    {t('structure.noIndexes')}
                   </td>
                 </tr>
               )}
@@ -1131,17 +1135,17 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
 
         {/* FOREIGN KEYS SECTION */}
         <div className="structure-section" style={{ margin: 0 }}>
-          <h3>Khóa Ngoại (Foreign Keys)</h3>
+          <h3>{t('structure.fkSection')}</h3>
           <table className="structure-table">
             <thead>
               <tr>
-                <th>Tên Khóa Ngoại</th>
-                <th>Cột Nguồn</th>
-                <th>Bảng Tham Chiếu</th>
-                <th>Cột Tham Chiếu</th>
+                <th>{t('structure.fkName')}</th>
+                <th>{t('structure.fkColumn')}</th>
+                <th>{t('structure.fkRefTable')}</th>
+                <th>{t('structure.fkRefColumn')}</th>
                 <th>On Update</th>
                 <th>On Delete</th>
-                <th style={{ width: '60px', textAlign: 'center' }}>Hành động</th>
+                <th style={{ width: '60px', textAlign: 'center' }}>{t('structure.colActions')}</th>
               </tr>
             </thead>
             <tbody>
@@ -1196,13 +1200,13 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                           autoFocus
                           style={{ width: '100%', padding: '2px', fontSize: '12px', height: '24px' }}
                         >
-                          <option value="">-- Chọn bảng --</option>
+                          <option value="">{t('structure.selectTable')}</option>
                           {allTables.map(tblName => (
                             <option key={tblName} value={tblName}>{tblName}</option>
                           ))}
                         </select>
                       ) : (
-                        <span>{fk.refTable || <span style={{ color: 'var(--win-text-disabled)', fontStyle: 'italic' }}>Chưa nhập</span>}</span>
+                        <span>{fk.refTable || <span style={{ color: 'var(--win-text-disabled)', fontStyle: 'italic' }}>{t('structure.fkNotSet')}</span>}</span>
                       )}
                     </td>
 
@@ -1224,13 +1228,13 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                         >
                           {/* Cho biết đang nạp, thay vì dropdown trống trơn khiến
                               người dùng tưởng bảng không có cột nào. */}
-                          <option value="">{loadingRefCols ? 'Đang nạp danh sách cột...' : '-- Chọn cột --'}</option>
+                          <option value="">{loadingRefCols ? t('structure.loadingColumns') : t('structure.selectColumn')}</option>
                           {refColumns.map(colName => (
                             <option key={colName} value={colName}>{colName}</option>
                           ))}
                         </select>
                       ) : (
-                        <span>{fk.refColumn || <span style={{ color: 'var(--win-text-disabled)', fontStyle: 'italic' }}>Chưa nhập</span>}</span>
+                        <span>{fk.refColumn || <span style={{ color: 'var(--win-text-disabled)', fontStyle: 'italic' }}>{t('structure.fkNotSet')}</span>}</span>
                       )}
                     </td>
 
@@ -1308,7 +1312,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                         className="btn-secondary"
                         onClick={() => handleDeleteFK(fk.name, isNew)}
                         style={{ border: 'none', background: 'transparent', color: 'var(--st-danger)', cursor: 'pointer', padding: '4px' }}
-                        title="Xóa khóa ngoại"
+                        title={t('structure.dropFk')}
                       >
                         <Trash2 size={14} />
                       </button>
@@ -1319,7 +1323,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
               {fks.length === 0 && (
                 <tr>
                   <td colSpan={7} style={{ textAlign: 'center', color: 'var(--win-text-secondary)', padding: '12px' }}>
-                    Không có khóa ngoại nào được thiết lập.
+                    {t('structure.noForeignKeys')}
                   </td>
                 </tr>
               )}
@@ -1331,80 +1335,57 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
 
       {/* SQL Preview Modal */}
       {previewSqls && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: 'rgba(0,0,0,0.4)',
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          zIndex: 9999,
-        }}>
-          <div style={{
-            background: 'var(--win-bg-card)',
-            border: '1px solid var(--win-border)',
-            borderRadius: '8px',
-            width: '600px',
-            maxWidth: '90%',
-            maxHeight: '80vh',
-            display: 'flex',
-            flexDirection: 'column',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-            overflow: 'hidden'
-          }}>
-            <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--win-border)', fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>Xem trước câu lệnh SQL trước khi thực thi</span>
-            </div>
-            <div style={{ padding: '16px', flex: 1, overflowY: 'auto', background: 'var(--win-bg-window)', fontFamily: 'var(--win-font-mono)', fontSize: '12px', color: 'var(--win-text-primary)' }}>
-              {previewSqls.length === 0 ? (
-                <div style={{ color: 'var(--win-text-disabled)' }}>Không phát hiện thay đổi SQL nào.</div>
-              ) : (
-                previewSqls.map((sql, idx) => (
-                  <pre key={idx} style={{ margin: '0 0 12px 0', whiteSpace: 'pre-wrap', wordBreak: 'break-all', paddingBottom: '8px', borderBottom: idx < previewSqls.length - 1 ? '1px dashed var(--win-border)' : 'none' }}>
-                    {sql}
-                  </pre>
-                ))
-              )}
-            </div>
-            <div style={{ padding: '12px 16px', borderTop: '1px solid var(--win-border)', display: 'flex', justifyContent: 'flex-end', gap: '8px', background: 'var(--win-bg-card)' }}>
-              <button className="btn btn-secondary" onClick={() => setPreviewSqls(null)} disabled={loading}>Hủy</button>
-              <button className="btn btn-primary" onClick={handleExecuteAlter} disabled={loading || previewSqls.length === 0} style={{ background: 'var(--st-ok)', borderColor: 'var(--st-ok)' }}>
-                {loading ? 'Đang thực thi...' : 'Xác nhận thực thi'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <Modal
+          title={t('structure.previewTitle')}
+          onClose={() => setPreviewSqls(null)}
+          closeDisabled={loading}
+          width="600px"
+          maxWidth="90%"
+          maxHeight="80vh"
+          zIndex={9999}
+        >
+          <ModalBody style={{ gap: 0, flex: 1, background: 'var(--win-bg-window)', fontFamily: 'var(--win-font-mono)', fontSize: '12px', color: 'var(--win-text-primary)' }}>
+            {previewSqls.length === 0 ? (
+              <div style={{ color: 'var(--win-text-disabled)' }}>{t('structure.previewEmpty')}</div>
+            ) : (
+              previewSqls.map((sql, idx) => (
+                <pre key={idx} style={{ margin: '0 0 12px 0', whiteSpace: 'pre-wrap', wordBreak: 'break-all', paddingBottom: '8px', borderBottom: idx < previewSqls.length - 1 ? '1px dashed var(--win-border)' : 'none' }}>
+                  {sql}
+                </pre>
+              ))
+            )}
+          </ModalBody>
+          <ModalFooter>
+            <button className="btn btn-secondary" onClick={() => setPreviewSqls(null)} disabled={loading}>{t('common.cancel')}</button>
+            <button className="btn btn-primary" onClick={handleExecuteAlter} disabled={loading || previewSqls.length === 0} style={{ background: 'var(--st-ok)', borderColor: 'var(--st-ok)' }}>
+              {loading ? t('structure.executing') : t('structure.confirmExecute')}
+            </button>
+          </ModalFooter>
+        </Modal>
       )}
 
       {/* Definition Modal — CREATE TABLE + dump scripts */}
       {definitionSql !== null && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}
-          onClick={() => setDefinitionSql(null)}
+        <Modal
+          title={<>{t('structure.definitionModalTitle')} — <span style={{ color: 'var(--win-accent)', fontFamily: 'var(--win-font-mono)' }}>{tableName}</span></>}
+          onClose={() => setDefinitionSql(null)}
+          width="680px"
+          maxWidth="92%"
+          maxHeight="82vh"
+          zIndex={9999}
         >
-          <div
-            style={{ background: 'var(--win-bg-card)', border: '1px solid var(--win-border)', borderRadius: '8px', width: '680px', maxWidth: '92%', maxHeight: '82vh', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 32px rgba(0,0,0,0.5)', overflow: 'hidden' }}
-            onClick={e => e.stopPropagation()}
-          >
-            <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--win-border)', fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>Định nghĩa bảng — <span style={{ color: 'var(--win-accent)', fontFamily: 'var(--win-font-mono)' }}>{tableName}</span></span>
-              <button onClick={() => setDefinitionSql(null)} style={{ background: 'none', border: 'none', color: 'var(--win-text-secondary)', cursor: 'pointer', fontSize: '16px' }}>✕</button>
-            </div>
-            <div style={{ padding: '16px', flex: 1, overflowY: 'auto', background: 'var(--win-bg-window)' }}>
-              <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all', fontFamily: 'var(--win-font-mono)', fontSize: '12px', color: 'var(--win-text-primary)' }}>
-                {definitionSql}
-              </pre>
-            </div>
-            <div style={{ padding: '12px 16px', borderTop: '1px solid var(--win-border)', display: 'flex', justifyContent: 'flex-end', gap: '8px', background: 'var(--win-bg-card)', flexWrap: 'wrap' }}>
-              <button className="btn btn-secondary" onClick={() => copyText(definitionSql, 'CREATE TABLE')}>Copy CREATE</button>
-              <button className="btn btn-secondary" onClick={() => copyText(dropScript, 'DROP TABLE')}>Copy DROP</button>
-              <button className="btn btn-secondary" onClick={() => copyText(truncateScript, 'TRUNCATE')}>Copy TRUNCATE</button>
-              <button className="btn btn-primary" onClick={() => setDefinitionSql(null)} style={{ background: 'var(--st-ok)', borderColor: 'var(--st-ok)' }}>Đóng</button>
-            </div>
-          </div>
-        </div>
+          <ModalBody style={{ gap: 0, flex: 1, background: 'var(--win-bg-window)' }}>
+            <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all', fontFamily: 'var(--win-font-mono)', fontSize: '12px', color: 'var(--win-text-primary)' }}>
+              {definitionSql}
+            </pre>
+          </ModalBody>
+          <ModalFooter style={{ flexWrap: 'wrap' }}>
+            <button className="btn btn-secondary" onClick={() => copyText(definitionSql, 'CREATE TABLE')}>{t('structure.copyCreate')}</button>
+            <button className="btn btn-secondary" onClick={() => copyText(dropScript, 'DROP TABLE')}>{t('structure.copyDrop')}</button>
+            <button className="btn btn-secondary" onClick={() => copyText(truncateScript, 'TRUNCATE')}>{t('structure.copyTruncate')}</button>
+            <button className="btn btn-primary" onClick={() => setDefinitionSql(null)} style={{ background: 'var(--st-ok)', borderColor: 'var(--st-ok)' }}>{t('common.close')}</button>
+          </ModalFooter>
+        </Modal>
       )}
     </div>
   );

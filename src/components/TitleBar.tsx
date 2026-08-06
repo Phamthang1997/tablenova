@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Minus, Square, X, Plus, Unplug, FileCode, HardDriveDownload, HardDriveUpload,
-  PanelLeft, SunMoon, RotateCw, Info, Keyboard,
+  PanelLeft, SunMoon, RotateCw, Info, Keyboard, Check,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import appIcon from '../assets/icon.png';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { SUPPORTED_LANGUAGES, currentLanguage } from '../i18n';
 
 interface TitleBarProps {
   hasConnection: boolean;
@@ -32,6 +34,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
   onShowShortcuts,
   onShowAbout,
 }) => {
+  const { t, i18n } = useTranslation();
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
 
   useEffect(() => {
@@ -97,38 +100,53 @@ export const TitleBar: React.FC<TitleBarProps> = ({
     shortcut?: string;
     /** Kẻ một đường phân cách phía trên mục này. */
     separatorBefore?: boolean;
+    /** Radio-style item (language pick): `false` keeps the icon slot for alignment. */
+    checked?: boolean;
   }
 
-  // Nhãn menu để tiếng Việt cho khớp với các mục con và phần còn lại của app.
+  const activeLang = currentLanguage();
+
   const menuCategories: { title: string; items: MenuItem[] }[] = [
     {
-      title: 'Kết nối',
+      title: t('titlebar.menuConnection'),
       items: [
-        { label: 'Kết nối mới...', Icon: Plus, onClick: onNewConnection },
-        { label: 'Đóng kết nối', Icon: Unplug, onClick: onDisconnect, danger: true, disabled: !hasConnection, separatorBefore: true },
+        { label: t('titlebar.newConnection'), Icon: Plus, onClick: onNewConnection },
+        { label: t('titlebar.disconnect'), Icon: Unplug, onClick: onDisconnect, danger: true, disabled: !hasConnection, separatorBefore: true },
       ],
     },
     {
-      title: 'Cơ sở dữ liệu',
+      title: t('titlebar.menuDatabase'),
       items: [
-        { label: 'Truy vấn SQL mới', Icon: FileCode, onClick: onNewQuery, shortcut: 'Ctrl+T', disabled: !hasConnection },
-        { label: 'Xuất Database...', Icon: HardDriveDownload, onClick: onExportDatabase, disabled: !hasConnection, separatorBefore: true },
-        { label: 'Nhập Database...', Icon: HardDriveUpload, onClick: onImportDatabase, disabled: !hasConnection },
+        { label: t('titlebar.newQuery'), Icon: FileCode, onClick: onNewQuery, shortcut: 'Ctrl+T', disabled: !hasConnection },
+        { label: t('titlebar.exportDatabase'), Icon: HardDriveDownload, onClick: onExportDatabase, disabled: !hasConnection, separatorBefore: true },
+        { label: t('titlebar.importDatabase'), Icon: HardDriveUpload, onClick: onImportDatabase, disabled: !hasConnection },
       ],
     },
     {
-      title: 'Hiển thị',
+      title: t('titlebar.menuView'),
       items: [
-        { label: 'Ẩn/hiện thanh bên', Icon: PanelLeft, onClick: onToggleSidebar, shortcut: 'Ctrl+P', disabled: !hasConnection },
-        { label: 'Đổi giao diện sáng/tối', Icon: SunMoon, onClick: onToggleTheme },
-        { label: 'Tải lại ứng dụng', Icon: RotateCw, onClick: () => window.location.reload(), separatorBefore: true },
+        { label: t('titlebar.toggleSidebar'), Icon: PanelLeft, onClick: onToggleSidebar, shortcut: 'Ctrl+P', disabled: !hasConnection },
+        { label: t('titlebar.toggleTheme'), Icon: SunMoon, onClick: onToggleTheme },
+        { label: t('titlebar.reload'), Icon: RotateCw, onClick: () => window.location.reload(), separatorBefore: true },
       ],
     },
     {
-      title: 'Trợ giúp',
+      // Language gets its own category rather than living under "View": a user
+      // stuck in a language they cannot read still has to find it, so the
+      // category label is bilingual and each item stays in its native script.
+      title: `${t('language.label')} / 言語`,
+      items: SUPPORTED_LANGUAGES.map((lang) => ({
+        label: `${lang.flag} ${t(lang.labelKey)}`,
+        Icon: Check,
+        checked: lang.code === activeLang,
+        onClick: () => { i18n.changeLanguage(lang.code); },
+      })),
+    },
+    {
+      title: t('titlebar.menuHelp'),
       items: [
-        { label: 'Phím tắt bàn phím...', Icon: Keyboard, onClick: onShowShortcuts },
-        { label: 'Về TableNova...', Icon: Info, onClick: onShowAbout, separatorBefore: true },
+        { label: t('titlebar.shortcuts'), Icon: Keyboard, onClick: onShowShortcuts },
+        { label: t('titlebar.about'), Icon: Info, onClick: onShowAbout, separatorBefore: true },
       ],
     },
   ];
@@ -140,9 +158,9 @@ export const TitleBar: React.FC<TitleBarProps> = ({
       <div className="title-bar-left">
         {isMac && (
           <div className="mac-traffic-lights" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginRight: '10px' }}>
-            <button className="mac-traffic-btn mac-close" onClick={handleClose} title="Đóng (Close)" />
-            <button className="mac-traffic-btn mac-minimize" onClick={handleMinimize} title="Thu nhỏ (Minimize)" />
-            <button className="mac-traffic-btn mac-maximize" onClick={handleMaximize} title="Phóng to (Maximize)" />
+            <button className="mac-traffic-btn mac-close" onClick={handleClose} title={t('titlebar.closeWindow')} />
+            <button className="mac-traffic-btn mac-minimize" onClick={handleMinimize} title={t('titlebar.minimize')} />
+            <button className="mac-traffic-btn mac-maximize" onClick={handleMaximize} title={t('titlebar.maximize')} />
           </div>
         )}
 
@@ -178,7 +196,11 @@ export const TitleBar: React.FC<TitleBarProps> = ({
                           setActiveCategory(null);
                         }}
                       >
-                        <item.Icon size={14} className="title-bar-dropdown-icon" />
+                        <item.Icon
+                          size={14}
+                          className="title-bar-dropdown-icon"
+                          style={item.checked === false ? { opacity: 0 } : undefined}
+                        />
                         <span className="title-bar-dropdown-label">{item.label}</span>
                         {item.shortcut && (
                           <span className="title-bar-dropdown-shortcut">{item.shortcut}</span>
@@ -195,13 +217,13 @@ export const TitleBar: React.FC<TitleBarProps> = ({
 
       {!isMac && (
         <div className="title-bar-right">
-          <button className="title-bar-btn" onClick={handleMinimize} title="Thu nhỏ" aria-label="Thu nhỏ">
+          <button className="title-bar-btn" onClick={handleMinimize} title={t('titlebar.minimize')} aria-label={t('titlebar.minimize')}>
             <Minus size={13} />
           </button>
-          <button className="title-bar-btn" onClick={handleMaximize} title="Phóng to / thu về" aria-label="Phóng to">
+          <button className="title-bar-btn" onClick={handleMaximize} title={t('titlebar.maximize')} aria-label={t('titlebar.maximize')}>
             <Square size={11} />
           </button>
-          <button className="title-bar-btn close" onClick={handleClose} title="Đóng" aria-label="Đóng">
+          <button className="title-bar-btn close" onClick={handleClose} title={t('titlebar.closeWindow')} aria-label={t('titlebar.closeWindow')}>
             <X size={13} />
           </button>
         </div>

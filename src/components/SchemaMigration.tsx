@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Camera, Trash2, GitCompare, Download, Upload, Copy, Loader } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { Camera, Trash2, GitCompare, Download, Upload, Copy, Loader } from 'lucide-react';
 import {
   listSnapshots,
   saveSnapshot,
@@ -10,6 +11,7 @@ import {
   type SchemaSnapshot,
   type SchemaDiff,
 } from '../utils/schemaSnapshot';
+import { Modal } from './Modal';
 
 interface SchemaMigrationProps {
   dbType: string;
@@ -18,9 +20,13 @@ interface SchemaMigrationProps {
 }
 
 export const SchemaMigration: React.FC<SchemaMigrationProps> = ({ dbType, database, onClose }) => {
+  const { t, i18n } = useTranslation();
   const [snapshots, setSnapshots] = useState<SchemaSnapshot[]>([]);
   const [snapName, setSnapName] = useState('');
   const [busy, setBusy] = useState<string>(''); // thông báo trạng thái đang xử lý
+  // Separate flag for "an operation is running". The spinner used to be driven by
+  // `busy.startsWith('Đang')`, which only worked while the message was Vietnamese.
+  const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [selected, setSelected] = useState<string | null>(null);
@@ -40,16 +46,19 @@ export const SchemaMigration: React.FC<SchemaMigrationProps> = ({ dbType, databa
   const handleCapture = async () => {
     setError(null);
     const name = (snapName.trim() || defaultName());
-    setBusy(`Đang chụp schema "${name}"...`);
+    setWorking(true);
+    setBusy(t('migration.capturing', { name }));
     try {
       const snap = await captureCurrentSchema(name, dbType, database);
       saveSnapshot(snap);
       setSnapName('');
       refresh();
-      setBusy(`Đã lưu snapshot "${name}" (${Object.keys(snap.tables).length} bảng).`);
+      setBusy(t('migration.captured', { name, n: Object.keys(snap.tables).length }));
     } catch (e: any) {
-      setError('Lỗi chụp schema: ' + (e?.message || e));
+      setError(t('migration.errCapture', { message: e?.message || e }));
       setBusy('');
+    } finally {
+      setWorking(false);
     }
   };
 
@@ -78,13 +87,13 @@ export const SchemaMigration: React.FC<SchemaMigrationProps> = ({ dbType, databa
     setError(null);
     try {
       const snap = JSON.parse(await file.text()) as SchemaSnapshot;
-      if (!snap || !snap.tables || typeof snap.tables !== 'object') throw new Error('File snapshot không hợp lệ.');
+      if (!snap || !snap.tables || typeof snap.tables !== 'object') throw new Error(t('migration.errInvalidSnapshot'));
       if (!snap.name) snap.name = file.name.replace(/\.schema\.json$|\.json$/i, '');
       saveSnapshot(snap);
       refresh();
-      setBusy(`Đã nhập snapshot "${snap.name}".`);
+      setBusy(t('migration.imported', { name: snap.name }));
     } catch (err: any) {
-      setError('Lỗi đọc file snapshot: ' + (err?.message || err));
+      setError(t('migration.errReadSnapshot', { message: err?.message || err }));
     }
   };
 
@@ -94,28 +103,31 @@ export const SchemaMigration: React.FC<SchemaMigrationProps> = ({ dbType, databa
     setDiff(null);
     setMigrationSql('');
     const baseline = listSnapshots().find((s) => s.name === name);
-    if (!baseline) { setError('Không tìm thấy snapshot.'); return; }
-    setBusy('Đang so sánh với schema hiện tại...');
+    if (!baseline) { setError(t('migration.errNoSnapshot')); return; }
+    setWorking(true);
+    setBusy(t('migration.comparing'));
     try {
       const current = await captureCurrentSchema('__current__', dbType, database);
       const d = diffSchemas(baseline, current);
       setDiff(d);
       if (d.identical) {
-        setMigrationSql('-- Không có khác biệt giữa snapshot và schema hiện tại.');
+        setMigrationSql(t('migration.noDifference'));
       } else {
         const sql = await buildMigrationSql(d, current, baseline, dbType);
         setMigrationSql(sql);
       }
       setBusy('');
     } catch (e: any) {
-      setError('Lỗi so sánh: ' + (e?.message || e));
+      setError(t('migration.errCompare', { message: e?.message || e }));
       setBusy('');
+    } finally {
+      setWorking(false);
     }
   };
 
   const copySql = () => {
     navigator.clipboard.writeText(migrationSql);
-    setBusy('Đã sao chép migration SQL.');
+    setBusy(t('migration.copiedSql'));
   };
 
   const downloadSql = () => {
@@ -133,29 +145,20 @@ export const SchemaMigration: React.FC<SchemaMigrationProps> = ({ dbType, databa
   const label = { fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)' } as React.CSSProperties;
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10000 }} onClick={onClose}>
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: '860px', maxWidth: '94vw', height: '80vh', background: 'var(--win-bg-card)',
-          border: '1px solid var(--win-border-strong, var(--win-border))', borderRadius: '8px',
-          display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
-        }}
-      >
-        {/* Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid var(--win-border)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <GitCompare size={16} style={{ color: 'var(--win-accent)' }} />
-            <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--win-text-primary)' }}>Diff Schema & Migration</span>
-          </div>
-          <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--win-text-secondary)', cursor: 'pointer' }}><X size={16} /></button>
-        </div>
-
+    <Modal
+      title="Diff Schema & Migration"
+      icon={<GitCompare size={14} style={{ color: 'var(--win-accent)', flexShrink: 0 }} />}
+      onClose={onClose}
+      width="860px"
+      maxWidth="94vw"
+      height="80vh"
+      zIndex={10000}
+    >
         <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
           {/* Cột trái: snapshots */}
           <div style={{ width: '300px', borderRight: '1px solid var(--win-border)', display: 'flex', flexDirection: 'column', padding: '12px', gap: '10px', overflow: 'hidden' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              <span style={label}>Chụp schema hiện tại</span>
+              <span style={label}>{t('migration.captureLabel')}</span>
               <input
                 type="text"
                 value={snapName}
@@ -164,19 +167,19 @@ export const SchemaMigration: React.FC<SchemaMigrationProps> = ({ dbType, databa
                 style={{ background: 'var(--win-bg-window)', border: '1px solid var(--win-border)', color: 'var(--win-text-primary)', borderRadius: '4px', padding: '6px 8px', fontSize: '12px', outline: 'none' }}
               />
               <div style={{ display: 'flex', gap: '6px' }}>
-                <button className="btn btn-primary" onClick={handleCapture} disabled={!!busy && busy.startsWith('Đang')} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
-                  <Camera size={13} /> Chụp
+                <button className="btn btn-primary" onClick={handleCapture} disabled={working} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
+                  <Camera size={13} /> {t('migration.capture')}
                 </button>
-                <button className="btn btn-secondary" title="Nhập snapshot từ file" onClick={() => fileInputRef.current?.click()} style={{ width: '34px', height: '28px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <button className="btn btn-secondary" title={t('migration.importSnapshotTitle')} onClick={() => fileInputRef.current?.click()} style={{ width: '34px', height: '28px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <Upload size={14} />
                 </button>
                 <input ref={fileInputRef} type="file" accept=".json" style={{ display: 'none' }} onChange={handleImportFile} />
               </div>
             </div>
 
-            <div style={{ ...label, borderTop: '1px solid var(--win-border)', paddingTop: '8px' }}>Snapshots đã lưu ({snapshots.length})</div>
+            <div style={{ ...label, borderTop: '1px solid var(--win-border)', paddingTop: '8px' }}>{t('migration.savedSnapshots', { n: snapshots.length })}</div>
             <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              {snapshots.length === 0 && <div style={{ fontSize: '11px', color: 'var(--win-text-disabled)' }}>Chưa có snapshot nào.</div>}
+              {snapshots.length === 0 && <div style={{ fontSize: '11px', color: 'var(--win-text-disabled)' }}>{t('migration.noSnapshots')}</div>}
               {snapshots.map((s) => (
                 <div
                   key={s.name}
@@ -187,14 +190,17 @@ export const SchemaMigration: React.FC<SchemaMigrationProps> = ({ dbType, databa
                 >
                   <div style={{ fontSize: '11.5px', fontWeight: 600, color: 'var(--win-text-primary)', wordBreak: 'break-all' }}>{s.name}</div>
                   <div style={{ fontSize: '10px', color: 'var(--win-text-disabled)', marginTop: '2px' }}>
-                    {Object.keys(s.tables || {}).length} bảng · {new Date(s.createdAt).toLocaleString('vi-VN')}
+                    {t('migration.snapshotMeta', {
+                      n: Object.keys(s.tables || {}).length,
+                      date: new Date(s.createdAt).toLocaleString(i18n.language),
+                    })}
                   </div>
                   <div style={{ display: 'flex', gap: '6px', marginTop: '6px' }}>
                     <button className="btn btn-primary" onClick={() => handleCompare(s.name)} style={{ flex: 1, height: '26px', fontSize: '11px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: '0 8px' }}>
-                      <GitCompare size={12} /> So sánh
+                      <GitCompare size={12} /> {t('migration.compare')}
                     </button>
-                    <button className="btn btn-secondary" title="Xuất file" onClick={() => handleExport(s)} style={{ width: '28px', height: '26px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Download size={13} /></button>
-                    <button className="btn btn-secondary" title="Xóa" onClick={() => handleDelete(s.name)} style={{ width: '28px', height: '26px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--st-danger)' }}><Trash2 size={13} /></button>
+                    <button className="btn btn-secondary" title={t('migration.exportFile')} onClick={() => handleExport(s)} style={{ width: '28px', height: '26px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Download size={13} /></button>
+                    <button className="btn btn-secondary" title={t('migration.deleteSnapshot')} onClick={() => handleDelete(s.name)} style={{ width: '28px', height: '26px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--st-danger)' }}><Trash2 size={13} /></button>
                   </div>
                 </div>
               ))}
@@ -208,26 +214,26 @@ export const SchemaMigration: React.FC<SchemaMigrationProps> = ({ dbType, databa
             )}
             {busy && !error && (
               <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                {busy.startsWith('Đang') && <Loader size={12} className="loading-spinner" />}{busy}
+                {working && <Loader size={12} className="loading-spinner" />}{busy}
               </div>
             )}
 
             {!selected && !busy && (
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--win-text-disabled)', fontSize: '12px', textAlign: 'center', padding: '0 24px' }}>
-                Chụp snapshot schema hiện tại, thay đổi cấu trúc DB, rồi bấm "So sánh" trên một snapshot để xem khác biệt và sinh script migration.
+                {t('migration.emptyHint')}
               </div>
             )}
 
             {diff && (
               <>
-                <div style={label}>Khác biệt (baseline "{selected}" → hiện tại)</div>
+                <div style={label}>{t('migration.diffTitle', { name: selected })}</div>
                 <div style={{ maxHeight: '180px', overflowY: 'auto', border: '1px solid var(--win-border)', borderRadius: '4px', padding: '8px', fontSize: '11.5px', background: 'var(--win-bg-window)' }}>
-                  {diff.identical && <div style={{ color: 'var(--win-text-secondary)' }}>Không có khác biệt.</div>}
-                  {diff.addedTables.map((t) => (
-                    <div key={'a' + t} style={{ color: 'var(--st-ok)' }}>+ Bảng mới: {t}</div>
+                  {diff.identical && <div style={{ color: 'var(--win-text-secondary)' }}>{t('migration.identical')}</div>}
+                  {diff.addedTables.map((name) => (
+                    <div key={'a' + name} style={{ color: 'var(--st-ok)' }}>{t('migration.tableAdded', { name })}</div>
                   ))}
-                  {diff.droppedTables.map((t) => (
-                    <div key={'d' + t} style={{ color: 'var(--st-danger)' }}>− Bảng bị xóa: {t}</div>
+                  {diff.droppedTables.map((name) => (
+                    <div key={'d' + name} style={{ color: 'var(--st-danger)' }}>{t('migration.tableDropped', { name })}</div>
                   ))}
                   {diff.changedTables.map((c) => (
                     <div key={'c' + c.table} style={{ color: 'var(--st-warn)' }}>~ {c.table}: {c.summary.join(', ')}</div>
@@ -237,8 +243,8 @@ export const SchemaMigration: React.FC<SchemaMigrationProps> = ({ dbType, databa
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span style={label}>Migration SQL</span>
                   <div style={{ display: 'flex', gap: '6px' }}>
-                    <button className="btn btn-secondary" onClick={copySql} disabled={!migrationSql} style={{ padding: '0 10px', display: 'flex', alignItems: 'center', gap: '4px' }}><Copy size={11} /> Sao chép</button>
-                    <button className="btn btn-secondary" onClick={downloadSql} disabled={!migrationSql} style={{ padding: '0 10px', display: 'flex', alignItems: 'center', gap: '4px' }}><Download size={11} /> Tải .sql</button>
+                    <button className="btn btn-secondary" onClick={copySql} disabled={!migrationSql} style={{ padding: '0 10px', display: 'flex', alignItems: 'center', gap: '4px' }}><Copy size={11} /> {t('migration.copySql')}</button>
+                    <button className="btn btn-secondary" onClick={downloadSql} disabled={!migrationSql} style={{ padding: '0 10px', display: 'flex', alignItems: 'center', gap: '4px' }}><Download size={11} /> {t('migration.downloadSql')}</button>
                   </div>
                 </div>
                 <textarea
@@ -250,7 +256,6 @@ export const SchemaMigration: React.FC<SchemaMigrationProps> = ({ dbType, databa
             )}
           </div>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 };

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Table, Terminal, TerminalSquare, X, Plus, Trash2, XCircle, ArrowRight, ChevronDown } from 'lucide-react';
 
 export interface TabInfo {
@@ -31,6 +32,7 @@ export const TabManager: React.FC<TabManagerProps> = ({
   onCloseAll,
   onNewQueryTab,
 }) => {
+  const { t } = useTranslation();
   const [contextMenu, setContextMenu] = useState<{
     visible: boolean;
     x: number;
@@ -113,7 +115,7 @@ export const TabManager: React.FC<TabManagerProps> = ({
       </div>
 
       <div className="tab-bar-controls">
-        <button className="tab-new-btn" onClick={onNewQueryTab} title="Mở tab viết SQL mới">
+        <button className="tab-new-btn" onClick={onNewQueryTab} title={t('tabs.newQueryTab')}>
           <Plus size={14} />
         </button>
         {tabs.length > 0 && (
@@ -124,7 +126,7 @@ export const TabManager: React.FC<TabManagerProps> = ({
               e.stopPropagation();
               setShowListDropdown((prev) => !prev);
             }}
-            title="Danh sách tất cả các tab đang mở"
+            title={t('tabs.listOpenTabs')}
           >
             <ChevronDown size={14} />
           </button>
@@ -134,7 +136,7 @@ export const TabManager: React.FC<TabManagerProps> = ({
       {showListDropdown && (
         <div className="tab-list-dropdown" onClick={(e) => e.stopPropagation()}>
           <div className="tab-list-dropdown-header">
-            <span>Các tab đang mở ({tabs.length})</span>
+            <span>{t('tabs.openTabs', { n: tabs.length })}</span>
             <button onClick={() => setShowListDropdown(false)}>×</button>
           </div>
           <div className="tab-list-dropdown-body">
@@ -190,7 +192,7 @@ export const TabManager: React.FC<TabManagerProps> = ({
             }}
           >
             <X size={13} style={{ flexShrink: 0 }} />
-            <span>Đóng tab này</span>
+            <span>{t('tabs.closeThis')}</span>
           </div>
           {onCloseOthers && (
             <div
@@ -201,7 +203,7 @@ export const TabManager: React.FC<TabManagerProps> = ({
               }}
             >
               <XCircle size={13} style={{ flexShrink: 0 }} />
-              <span>Đóng các tab khác</span>
+              <span>{t('tabs.closeOthers')}</span>
             </div>
           )}
           {onCloseTabsToRight && (
@@ -213,7 +215,7 @@ export const TabManager: React.FC<TabManagerProps> = ({
               }}
             >
               <ArrowRight size={13} style={{ flexShrink: 0 }} />
-              <span>Đóng các tab bên phải</span>
+              <span>{t('tabs.closeToRight')}</span>
             </div>
           )}
           {onCloseAll && (
@@ -228,7 +230,7 @@ export const TabManager: React.FC<TabManagerProps> = ({
                 style={{ color: 'var(--st-danger)' }}
               >
                 <Trash2 size={13} style={{ flexShrink: 0 }} />
-                <span>Đóng tất cả tab</span>
+                <span>{t('tabs.closeAll')}</span>
               </div>
             </>
           )}

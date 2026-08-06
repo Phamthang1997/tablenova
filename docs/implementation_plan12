@@ -1,74 +1,192 @@
-# Kế hoạch & Đánh giá Tối ưu hóa Hiệu năng Vite (Vite Performance Audit Plan)
+# Kế hoạch Tối ưu Cold Start của Frontend (Vite / Bundle Audit)
 
-Dựa trên tài liệu hướng dẫn chính thức [Vite Performance Guide](https://vite.dev/guide/performance), dưới đây là kết quả kiểm tra hiện trạng cấu hình Vite của dự án **TableNova** và kế hoạch đề xuất nâng cấp chi tiết.
+Bản này thay thế hoàn toàn phiên bản trước — phiên bản trước dựa trên [Vite Performance Guide](https://vite.dev/guide/performance) một cách chung chung và có 2 luận điểm sai với codebase thực tế (xem mục 4). Bản này chỉ giữ những gì đã được kiểm chứng trực tiếp trên `node_modules` và trên output build thật.
 
----
-
-## 1. Kết quả Đánh giá Hiện trạng (Audit Results)
-
-| Tiêu chí Tối ưu (Vite Guide) | Trạng thái Hiện tại | Đánh giá |
-| :--- | :--- | :--- |
-| **React Transform Plugin** | Đang dùng `@vitejs/plugin-react` (Babel-based) | ⚠️ **Chưa tối ưu**: Babel chậm hơn SWC. Hướng dẫn Vite khuyến nghị dùng SWC (`@vitejs/plugin-react-swc`) để tăng tốc HMR và build. |
-| **Code Splitting / Manual Chunks** | Chưa cấu hình `manualChunks` | ⚠️ **Chưa tối ưu**: Các thư viện nặng như `monaco-editor`, `@xterm/xterm`, `lucide-react` đang bị dồn chung vào 1 file bundle chính lớn. |
-| **Warmup Files (`server.warmup`)** | Chưa cấu hình | ⚠️ **Chưa tối ưu**: Dev server chưa được báo trước để pre-transform các file entrypoint chính (`src/main.tsx`, `src/App.tsx`). |
-| **Build Target** | Mặc định (`modules`) | ⚠️ **Chưa tối ưu**: App chạy trên Tauri (WebView2 / WebKit modern). Có thể đặt `build.target: 'esnext'` để loại bỏ polyfill/transpilation thừa. |
-| **Dependency Pre-bundling (`optimizeDeps`)** | Mặc định | ℹ️ Cần tinh chỉnh danh sách bao gồm/loại trừ để tránh re-bundling không cần thiết trong dev mode. |
-| **Watch Ignored Paths** | Đã cấu hình `*.db`, `*.sqlite`, `*.sql` | ✅ **Đã tối ưu**: Giúp dev server không bị restart thừa khi thao tác với file CSDL. |
+**Ngữ cảnh quan trọng:** TableNova là app Tauri. Asset được nạp từ local filesystem, **không** qua network. Vì vậy mọi tối ưu kiểu "giảm kích thước bundle đầu tiên để tải nhanh hơn" hay "tách vendor chunk để cache tốt hơn" đều **không có giá trị** ở đây. Thứ duy nhất còn ý nghĩa là: **giảm lượng JS mà WebView phải parse + execute lúc khởi động**.
 
 ---
 
-## 2. Kế hoạch Nâng cấp Đề xuất (Proposed Implementation Plan)
+## 1. Hiện trạng đã đo (Baseline)
 
-### Component: Package Dependencies
-#### [MODIFY] [package.json](file:///c:/workspace/table/package.json)
-- Thay thế `@vitejs/plugin-react` bằng `@vitejs/plugin-react-swc` trong `devDependencies`.
-- (Tùy chọn) Thêm `rollup-plugin-visualizer` làm devDependency để phân tích kích thước bundle khi build.
+Chạy `npx vite build` (Vite 8.2.0 + rolldown):
+
+| Chỉ số | Giá trị |
+| :--- | :--- |
+| Main chunk `dist/assets/index-*.js` | **5,016.52 kB** (gzip 1,294.33 kB) |
+| CSS | 233.16 kB (gzip 36.43 kB) |
+| Tổng số JS chunk | 99 |
+| Tổng `dist/` | 21 MB |
+| Thời gian build | ~5.5s |
+
+Build phát cảnh báo `Some chunks are larger than 500 kB`.
+
+Toàn bộ 5 MB đó nằm trong **một** chunk được nạp ngay khi app mở — kể cả khi người dùng chỉ đang mở Connection Manager hoặc browse table và chưa từng mở SQL editor.
 
 ---
 
-### Component: Vite Configuration
-#### [MODIFY] [vite.config.mts](file:///c:/workspace/table/vite.config.mts)
-1. **Chuyển sang SWC Plugin**:
+## 2. Nguyên nhân: đồ thị import của Monaco
+
+Monaco chỉ được chạm ở đúng 5 file:
+
+| File | Kiểu import |
+| :--- | :--- |
+| [SqlEditor.tsx](src/components/SqlEditor.tsx#L2) | `import * as monaco from 'monaco-editor'` (giá trị) |
+| [sql/sqlLanguage.ts](src/sql/sqlLanguage.ts#L4) | giá trị + 3 `*.contribution` của `monaco-sql-languages` |
+| [sql/intellisense.ts](src/sql/intellisense.ts#L3) | giá trị |
+| [sql/theme.ts](src/sql/theme.ts#L6) | giá trị |
+| [sql/editorOptions.ts](src/sql/editorOptions.ts#L3) | `import type` — bị xoá lúc compile, không tính |
+
+Và 4 file kia **chỉ** được import bởi `SqlEditor.tsx`. Các module `sql/` còn lại sạch Monaco: `statements.ts`, `format.ts`, `catalog.ts` (đúng như [CLAUDE.md](CLAUDE.md) đã ghi) — nên `ConnectionManager`/`ImportDatabaseDialog` (import `sql/statements`) và `App.tsx` (import `sql/catalog`) không kéo Monaco theo.
+
+Kết luận: **[App.tsx:10](src/App.tsx#L10) — `import { SqlEditor } from './components/SqlEditor'` — là điểm cắt duy nhất.** Chuyển đúng một dòng đó sang dynamic import sẽ đưa toàn bộ Monaco + `monaco-sql-languages` + `sql-formatter` ra khỏi chunk khởi động.
+
+Đây là lựa chọn tốt vì `SqlEditor` đã được render **có điều kiện** ([App.tsx:1054-1055](src/App.tsx#L1054-L1055)): chỉ khi `activeTab.type` là query. Người dùng phải kết nối DB rồi bấm "new query" mới cần đến nó.
+
+---
+
+## 3. Kế hoạch triển khai
+
+### Component: App shell
+
+#### [MODIFY] [src/App.tsx](src/App.tsx)
+
+1. Đổi static import thành `React.lazy`. `SqlEditor` là **named export** nên phải map lại:
+
    ```ts
-   import react from '@vitejs/plugin-react-swc'
+   const SqlEditor = React.lazy(() =>
+     import('./components/SqlEditor').then(m => ({ default: m.SqlEditor }))
+   );
    ```
-2. **Thêm Warmup Client Files**:
+
+2. Bọc chỗ render bằng `<Suspense>` với fallback nhẹ (giữ nguyên toàn bộ props hiện có):
+
+   ```tsx
+   <Suspense fallback={<div className="editor-loading">Đang tải trình soạn SQL…</div>}>
+     <SqlEditor key={activeTab.id} … />
+   </Suspense>
+   ```
+
+   Fallback nên dùng đúng background của theme hiện tại để không nháy trắng ở dark mode.
+
+3. **Preload chủ động** để lần mở đầu tiên không thấy fallback. Kích hoạt import khi người dùng có dấu hiệu sắp cần editor — hover/focus nút "new query" ở [Sidebar.tsx](src/components/Sidebar.tsx), hoặc ngay sau khi kết nối DB thành công:
+
    ```ts
-   server: {
-     warmup: {
-       clientFiles: ['./src/main.tsx', './src/App.tsx']
-     }
-   }
+   const preloadSqlEditor = () => { void import('./components/SqlEditor'); };
    ```
-3. **Cấu hình Target & Code Splitting (Rollup Manual Chunks)**:
-   - Tách biệt `monaco-editor`, `xterm`, `react-vendor` và `lucide-react` ra các chunk độc lập để giảm kích thước bundle ban đầu và cải thiện caching.
-   ```ts
-   build: {
-     target: 'esnext',
-     cssCodeSplit: true,
-     rollupOptions: {
-       output: {
-         manualChunks: {
-           'react-vendor': ['react', 'react-dom'],
-           'monaco-editor': ['monaco-editor', '@monaco-editor/react', 'monaco-sql-languages'],
-           'xterm-vendor': ['@xterm/xterm', '@xterm/addon-fit'],
-           'icons': ['lucide-react']
-         }
-       }
-     }
-   }
-   ```
-4. **Tối ưu hóa `optimizeDeps`**:
-   - Đưa các dependency nặng vào `optimizeDeps.include` để Vite pre-bundle ngay khi khởi động dev server.
+
+   Module đã nạp sẽ được cache, nên các lần mở tab query sau đó là tức thời (dù `key={activeTab.id}` có remount component).
+
+### Lưu ý khi chuyển: side effect ở module scope
+
+[SqlEditor.tsx](src/components/SqlEditor.tsx#L23-L58) chạy 4 việc ở **module scope**, hiện đang thực thi lúc app boot; sau khi lazy-load chúng sẽ chạy ở lần mở SQL tab đầu tiên:
+
+- gán `window.MonacoEnvironment.getWorker`
+- `setupSqlCompletion()`, `setupSqlHover()`, `defineSqlThemes()`
+- `document.fonts.ready.then(() => monaco.editor.remeasureFonts())`
+
+Cả 4 đều chỉ cần hoàn tất **trước khi một editor instance mount**, và đều nằm trong cùng module với editor đó, nên thứ tự vẫn đúng. Không có consumer nào ngoài `SqlEditor` phụ thuộc vào chúng (`App.tsx` chỉ nghe CustomEvent `open-table-tab`, không import `sql/intellisense`). **Vẫn phải xác minh bằng tay** hai điểm dễ hồi quy:
+
+- **Font remeasure:** trước đây `fonts.ready` gần như luôn resolve *sau* khi Monaco khởi tạo. Nếu editor giờ mount muộn hơn cả lúc font đã nạp xong, `fonts.ready` resolve ngay và `remeasureFonts()` có thể chạy *trước* khi editor tồn tại → con trỏ lệch khỏi chữ. Nếu gặp, gọi `remeasureFonts()` thêm một lần trong `onMount` của editor.
+- **Theme:** `defineSqlThemes()` phải chạy xong trước khi `<Editor theme={…}>` mount lần đầu, nếu không Monaco sẽ fallback về `vs`/`vs-dark`.
 
 ---
 
-## 3. Kế hoạch Kiểm thử & Xác minh (Verification Plan)
+## 4. Những gì cố tình KHÔNG làm (và lý do)
 
-### Automated Checks
-- Chạy lệnh build frontend: `cmd /c "npm run build-frontend"` để kiểm tra xem các vendor chunks (`monaco-editor`, `xterm-vendor`, `react-vendor`) có được tách rời hợp lệ hay không.
-- Chạy `cmd /c "npx oxlint"` và `cmd /c "npx tsc --noEmit"` để bảo đảm không có lỗi type hoặc lint.
+Ghi lại để không bị đề xuất lại.
 
-### Manual Verification
-- Kiểm tra tốc độ khởi động dev server (`npm run vite-dev`).
-- Kiểm tra hoạt động của giao diện ứng dụng (Monaco SQL Editor, SSH Terminal, Connection Manager) xem có bị ảnh hưởng bởi việc tách chunk hay không.
+### ❌ Đổi `@vitejs/plugin-react` → `@vitejs/plugin-react-swc`
+
+Luận điểm "plugin-react là Babel-based nên chậm" **sai** với dự án này. `@vitejs/plugin-react` **v6.0.5** trên Vite 8 có:
+
+```
+dependencies:                { "@rolldown/pluginutils": "^1.0.1" }
+peerDependencies (optional): { "@rolldown/plugin-babel", "babel-plugin-react-compiler" }
+```
+
+Babel là **optional peer dep**, chỉ được nạp khi opt-in `babel` options hoặc React Compiler. [vite.config.mts:7](vite.config.mts#L7) gọi `react({})` rỗng → transform JSX/Fast Refresh đã đi qua oxc (Rust). Đổi sang SWC là đi ngang hoặc lùi.
+
+### ❌ `rollupOptions.output.manualChunks` dạng object
+
+Snippet kiểu `{ 'react-vendor': ['react','react-dom'], … }` là **API Rollup cũ, không chạy trên Vite 8**. Trong rolldown, `manualChunks` chỉ nhận function và đã deprecated:
+
+```ts
+// node_modules/rolldown/dist/shared/define-config-*.d.mts:806
+manualChunks?: ManualChunksFunction;   // "Please use output.codeSplitting instead"
+```
+
+API đúng là `build.rolldownOptions.output.codeSplitting` (chính warning của build cũng chỉ sang đó).
+
+Nhưng **kể cả viết đúng API thì vẫn không nên làm**: chia 5 MB thành 4 file cùng tổng dung lượng không cải thiện gì cho app Tauri — không có network, không có HTTP cache; và vì tất cả vẫn là static import nên WebView vẫn nạp + parse đủ 5 MB lúc khởi động. Lazy-load ở mục 3 mới là thứ thực sự giảm khối lượng.
+
+### ❌ Đổi `monaco-editor` → `monaco-editor/esm/vs/editor/editor.api` (sẽ làm hỏng SQL worker)
+
+Ý tưởng này *nghe* hợp lý: entry `monaco-editor/esm/vs/editor/editor.main.js` static-import cả đống thứ app không dùng —
+
+```js
+import "../basic-languages/monaco.contribution.js";   // đăng ký 83 ngôn ngữ
+import "../language/css/monaco.contribution.js";
+import "../language/html/monaco.contribution.js";
+import "../language/json/monaco.contribution.js";
+import "../language/typescript/monaco.contribution.js";
+```
+
+(Đây chính là nguồn của các chunk `abap`, `clojure`, `ruby`, `solidity`, `perl`… trong `dist/`. App chỉ cần SQL, do `monaco-sql-languages` tự đăng ký `mysql`/`pgsql`/`genericsql`.)
+
+**Nhưng không được bỏ `editor.main.js`.** Chính file đó là nơi patch việc định tuyến worker qua `MonacoEnvironment`:
+
+```js
+// editor.main.js
+monaco.editor.createWebWorker = function(options) {
+  if (options.worker === undefined) { return createWebWorker(options); }  // ← đọc MonacoEnvironment.getWorker
+  return existingCreateWebWorker(options);
+};
+```
+
+Và `monaco-sql-languages` gọi `editor.createWebWorker({ moduleId, label, createData })` — **không** truyền `worker` — thông qua `esm/fillers/monaco-editor-core.js` (`export * from 'monaco-editor/esm/vs/editor/editor.api'`), tức nó phụ thuộc hoàn toàn vào patch trên.
+
+Nếu chuyển sang `editor.api`, patch không bao giờ được cài → `createWebWorker` không tìm thấy `options.worker` và ném lỗi → **completion/parser SQL chết**, trong khi editor vẫn render nên lỗi rất dễ bị bỏ sót. Muốn làm phải tự viết shim vào internal API của Monaco: fragile, và lợi ích chỉ là bỏ vài chunk vốn **đã** được lazy-load sẵn (không nằm trong 5 MB). Không đáng.
+
+*Có thể làm được và an toàn:* xoá 4 worker `json`/`css`/`html`/`ts` khỏi `MonacoEnvironment.getWorker` ([SqlEditor.tsx:6-10](src/components/SqlEditor.tsx#L6-L10), [:26-37](src/components/SqlEditor.tsx#L26-L37)) vì app không dùng các language service đó. Chỉ giảm dung lượng `dist/`, không ảnh hưởng cold start → ưu tiên thấp, làm sau và làm riêng.
+
+### ❌ `build.target: 'esnext'`
+
+Template chuẩn của Tauri set target theo platform (`chrome105` cho Windows / `safari13` cho macOS) vì WKWebView bị khoá theo phiên bản OS. `esnext` chạy được trên WebView2 nhưng là bug chờ sẵn nếu sau này build macOS. Đổi lại thu được gần như 0 (build đã 5.5s). Giữ mặc định.
+
+### ❌ `server.warmup` / tinh chỉnh `optimizeDeps`
+
+61 file / ~24k dòng source — dev server đã khởi động nhanh, `warmup` vô hại nhưng không đo được lợi. Đề xuất `optimizeDeps` ở bản cũ không có hành động cụ thể nào để thực thi. Bỏ.
+
+### ❌ `rollup-plugin-visualizer`
+
+Không tương thích trực tiếp với rolldown, và thành phần bundle ở đây đã xác định rõ bằng cách đọc đồ thị import (mục 2). Không cần thêm tool.
+
+---
+
+## 5. Kế hoạch Kiểm thử & Xác minh
+
+### Automated
+
+- `cmd /c "npx tsc --noEmit"` — `React.lazy` + named export dễ sai kiểu props, đây là chốt chính.
+- `cmd /c "npx oxlint"` — giữ output sạch (xem [CLAUDE.md](CLAUDE.md): oxlint chạy cả default set, không chỉ 2 rule error).
+- `cmd /c "npm test"` — `sql/statements.ts` và `sql/format.ts` không bị thay đổi nên phải pass y nguyên; nếu fail thì đã vô tình kéo Monaco vào đường import của test.
+- `cmd /c "npm run build-frontend"` rồi so với baseline ở mục 1.
+
+### Tiêu chí chấp nhận (đo được)
+
+1. Main chunk `dist/assets/index-*.js` **giảm rõ rệt** so với 5,016.52 kB, và Monaco + `monaco-sql-languages` xuất hiện trong một chunk **riêng**.
+2. Cảnh báo `chunks are larger than 500 kB` không còn trỏ vào chunk entry.
+3. Không có chunk nào mất đi so với 99 chunk baseline (dấu hiệu tree-shake quá tay làm mất language contribution).
+
+### Manual (bắt buộc — phần này không có test tự động)
+
+Chạy `npm run dev`, rồi:
+
+1. **Cold start:** app mở tới Connection Manager — cảm nhận nhanh hơn; DevTools Network cho thấy chunk Monaco **chưa** được nạp.
+2. Kết nối DB, browse table (`DataGrid`), mở `StructureViewer` — vẫn chưa nạp Monaco.
+3. Mở "new query" lần đầu → chunk Monaco nạp; editor render đúng **theme hiện tại** (thử cả light + dark).
+4. **Con trỏ có nằm đúng trên chữ không** (lỗi remeasure font ở mục 3) — gõ một câu SQL dài, kiểm tra caret ở cuối dòng.
+5. Completion + hover + Ctrl+Click mở table vẫn chạy → chứng tỏ SQL worker sống (đây là thứ mục 4 cảnh báo dễ chết).
+6. Thử cả 3 dialect (SQLite / Postgres / MySQL) vì mỗi dialect dùng một worker khác nhau.
+7. Ctrl+Enter chạy statement dưới con trỏ, Format/Minify, split pane, history/saved queries.
+8. Mở tab query thứ hai → phải tức thời, không thấy fallback.

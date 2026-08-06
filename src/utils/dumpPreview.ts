@@ -6,6 +6,8 @@
  * Chỉ phục vụ hiển thị — câu lệnh chạy thật do backend (split_sql_statements) xử lý.
  */
 
+import i18n from '../i18n';
+
 export interface DumpColumn {
   name: string;
   /** Phần kiểu + phần còn lại của định nghĩa cột, ví dụ "varchar(255) NOT NULL". */
@@ -268,7 +270,7 @@ export function buildDropStatements(objs: DumpObjects, dbType: string): string[]
 export function addExistsHint(error: string, overwriteAlreadyOn: boolean): string {
   const isExists = /already exists|1050|42P07/i.test(error);
   if (!isExists || overwriteAlreadyOn) return error;
-  return `${error}\n\nGợi ý: database đích đã có đối tượng trùng tên. Bật "Ghi đè đối tượng trùng tên" để xoá rồi tạo lại, hoặc chọn một database đích khác.`;
+  return i18n.t('errors.existsHint', { error });
 }
 
 /** Bỏ dấu nháy của một literal SQL để hiển thị (NULL giữ nguyên chữ NULL). */
