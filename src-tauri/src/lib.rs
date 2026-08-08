@@ -47,7 +47,7 @@ pub fn run() {
                 #[cfg(target_os = "macos")]
                 let _ = window_vibrancy::apply_vibrancy(
                     &window,
-                    window_vibrancy::NSVisualEffectMaterial::UnderWindow,
+                    window_vibrancy::NSVisualEffectMaterial::UnderWindowBackground,
                     // Active: giữ kính sáng đầy đủ cả khi cửa sổ mất focus (mặc định
                     // macOS sẽ làm xám đi). 12.0: bo góc khớp với CSS
                     // [data-os='macos'] #root vì decorations = false.
