@@ -52,6 +52,38 @@ export interface SshTerminalMessage {
   code?: number;
 }
 
+export interface TriggerInfo {
+  name: string;
+  timing: string;
+  event: string;
+  statement: string;
+}
+
+export interface SequenceInfo {
+  name: string;
+  dataType: string;
+  startValue: string;
+  minVal: string;
+  maxVal: string;
+  incrementBy: string;
+  cycle: boolean;
+}
+
+export interface PartitionInfo {
+  name: string;
+  method: string;
+  expression: string;
+  description: string;
+  tableRows: number;
+  dataLength: number;
+}
+
+export interface CheckConstraintInfo {
+  name: string;
+  expression: string;
+  enforced: boolean;
+}
+
 export interface DbConnectionConfig {
   type: 'sqlite' | 'postgres' | 'mysql' | 'redis';
   sqlitePath?: string;
@@ -85,6 +117,27 @@ export interface DbConnectionConfig {
   awsRegion?: string;
 }
 
+/**
+ * Trạng thái phiên kết nối hiện tại (`get_connection_status`).
+ *
+ * Mọi trường mô tả phiên đều "best effort" phía Rust: server cũ hoặc tài khoản
+ * thiếu quyền thì trả chuỗi rỗng chứ không báo lỗi, nên chỗ hiển thị phải tự
+ * xử lý giá trị rỗng. `cipher`/`tlsVersion` rỗng nghĩa là phiên không mã hoá.
+ */
+export interface ConnectionStatus {
+  isConnected: boolean;
+  dbType: string;
+  connType: 'loc' | 'ssh' | 'ssl' | 'rem';
+  host: string;
+  latencyMs: number;
+  serverVersion: string;
+  user: string;
+  database: string;
+  port: number;
+  cipher: string;
+  tlsVersion: string;
+}
+
 export interface TableItem {
   name: string;
   type: 'table' | 'view';
@@ -98,6 +151,9 @@ export interface ColumnInfo {
   defaultValue: string | null;
   autoIncrement?: boolean;
   comment?: string | null;
+  extra?: string | null;
+  characterSet?: string | null;
+  collation?: string | null;
 }
 
 export interface SchemaInfo {
@@ -126,6 +182,8 @@ export interface RedisValueDetail {
   type: string;
   ttl: number;
   memory: number | null;
+  /** Số phần tử của collection (HLEN/LLEN/SCARD/ZCARD/XLEN); null với string. */
+  length?: number | null;
   value: any; // shape tùy kind (xem redis_get_key backend)
   message?: string;
 }
@@ -144,6 +202,55 @@ export interface RedisEditResult {
 export interface RedisElement {
   value: string;
   binary?: boolean;
+  /** Identity of the element is itself binary (hash field, set/zset member) -> delete is unsafe too. */
+  binaryKey?: boolean;
+}
+
+/** What the connected server supports, probed once at connect (see `RedisCaps` in Rust). */
+export interface RedisCaps {
+  version: string;
+  major: number;
+  minor: number;
+  /** Lowercased module names; empty when `MODULE LIST` was refused by ACL. */
+  modules: string[];
+}
+
+/**
+ * One page of a collection. `nextCursor` is **opaque** — its meaning differs per type
+ * (SCAN cursor / rank / index / stream id) and only `redis_db.rs` knows which; pass it back
+ * unchanged.
+ */
+export interface RedisElementsPage {
+  success: boolean;
+  kind: string;
+  elements: any[];
+  nextCursor: string;
+  done: boolean;
+  error?: string;
+}
+
+export interface RedisSlowLogEntry {
+  id: number;
+  timestamp: number;
+  durationUs: number;
+  args: string[];
+  clientAddr: string;
+  clientName: string;
+}
+
+export interface RedisAnalysis {
+  success: boolean;
+  dbsize: number;
+  sampled: number;
+  sampledBytes: number;
+  estimatedBytes: number | null;
+  byType: { name: string; count: number; bytes: number }[];
+  byNamespace: { name: string; count: number; bytes: number }[];
+  ttlBuckets: { noExpiry: number; under1h: number; under1d: number; under7d: number; over7d: number };
+  topKeys: { key: string; bytes: number; type: string }[];
+  warnings?: string[];
+  cancelled?: boolean;
+  error?: string;
 }
 
 /**
@@ -232,13 +339,7 @@ export const dbHelper = {
     }
   },
 
-  async getConnectionStatus(): Promise<{
-    isConnected: boolean;
-    dbType: string;
-    connType: 'loc' | 'ssh' | 'ssl' | 'rem';
-    host: string;
-    latencyMs: number;
-  }> {
+  async getConnectionStatus(): Promise<ConnectionStatus> {
     try {
       const res: any = await invoke('get_connection_status');
       return {
@@ -247,6 +348,12 @@ export const dbHelper = {
         connType: res.conn_type || 'loc',
         host: res.host || '',
         latencyMs: res.latency_ms || 0,
+        serverVersion: res.server_version || '',
+        user: res.user || '',
+        database: res.database || '',
+        port: res.port || 0,
+        cipher: res.cipher || '',
+        tlsVersion: res.tls_version || '',
       };
     } catch {
       return {
@@ -255,6 +362,12 @@ export const dbHelper = {
         connType: 'loc',
         host: '',
         latencyMs: 0,
+        serverVersion: '',
+        user: '',
+        database: '',
+        port: 0,
+        cipher: '',
+        tlsVersion: '',
       };
     }
   },
@@ -320,10 +433,102 @@ export const dbHelper = {
     }
   },
 
+
+
   async getObjectDefinition(name: string, kind: 'view' | 'function' | 'procedure' | 'table'): Promise<{ success: boolean; sql?: string; error?: string }> {
     try {
       const res: any = await invoke('get_object_definition', { name, kind });
       return { success: !!res.success, sql: res.sql, error: res.message };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  async getTableTriggers(tableName: string): Promise<TriggerInfo[]> {
+    try {
+      const res: any = await invoke('get_table_triggers', { tableName });
+      return res.triggers || [];
+    } catch {
+      return [];
+    }
+  },
+
+  async saveTrigger(statementSql: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const res: any = await invoke('save_trigger', { statementSql });
+      return { success: !!res.success, error: res.message };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  async dropTrigger(triggerName: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const res: any = await invoke('drop_trigger', { triggerName });
+      return { success: !!res.success, error: res.message };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  async saveRoutineDefinition(routineSql: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const res: any = await invoke('save_routine_definition', { routineSql });
+      return { success: !!res.success, error: res.message };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  async getSequences(): Promise<SequenceInfo[]> {
+    try {
+      const res: any = await invoke('get_sequences');
+      return res.sequences || [];
+    } catch {
+      return [];
+    }
+  },
+
+  async alterSequence(sequenceSql: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const res: any = await invoke('alter_sequence', { sequenceSql });
+      return { success: !!res.success, error: res.message };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  async dropSequence(sequenceName: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const res: any = await invoke('drop_sequence', { sequenceName });
+      return { success: !!res.success, error: res.message };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  async getTablePartitions(tableName: string): Promise<PartitionInfo[]> {
+    try {
+      const res: any = await invoke('get_table_partitions', { tableName });
+      return res.partitions || [];
+    } catch {
+      return [];
+    }
+  },
+
+  async getCheckConstraints(tableName: string): Promise<CheckConstraintInfo[]> {
+    try {
+      const res: any = await invoke('get_check_constraints', { tableName });
+      return res.constraints || [];
+    } catch {
+      return [];
+    }
+  },
+
+  async saveViewDefinition(viewSql: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const res: any = await invoke('save_view_definition', { viewSql });
+      return { success: !!res.success, error: res.message };
     } catch (err: any) {
       return { success: false, error: err.toString() };
     }
@@ -687,9 +892,20 @@ export const dbHelper = {
     }
   },
 
-  async dropTable(name: string): Promise<{ success: boolean; error?: string }> {
+  // isView/cascade/ignoreFk là các tuỳ chọn của dialog Delete. Backend chạy cả cụm (tắt kiểm
+  // tra khóa ngoại -> DROP -> bật lại) trên MỘT connection; đừng tự phát lệnh SET ở đây vì mỗi
+  // executeQuery lấy một connection khác từ pool.
+  async dropTable(
+    name: string,
+    opts?: { isView?: boolean; cascade?: boolean; ignoreFk?: boolean }
+  ): Promise<{ success: boolean; error?: string }> {
     try {
-      const res: any = await invoke('drop_table', { name });
+      const res: any = await invoke('drop_table', {
+        name,
+        isView: opts?.isView ?? false,
+        cascade: opts?.cascade ?? false,
+        ignoreFk: opts?.ignoreFk ?? false,
+      });
       return { success: !!res.success, error: res.message };
     } catch (err: any) {
       return { success: false, error: err.toString() };
@@ -756,9 +972,18 @@ export const dbHelper = {
     }
   },
 
-  async truncateTable(name: string): Promise<{ success: boolean; error?: string }> {
+  // Xem ghi chú ở dropTable: restartIdentity/disableFk được backend xử lý trên một connection.
+  async truncateTable(
+    name: string,
+    opts?: { restartIdentity?: boolean; disableFk?: boolean; cascade?: boolean }
+  ): Promise<{ success: boolean; error?: string }> {
     try {
-      const res: any = await invoke('truncate_table', { name });
+      const res: any = await invoke('truncate_table', {
+        name,
+        restartIdentity: opts?.restartIdentity ?? false,
+        disableFk: opts?.disableFk ?? false,
+        cascade: opts?.cascade ?? false,
+      });
       return { success: !!res.success, error: res.message };
     } catch (err: any) {
       return { success: false, error: err.toString() };
@@ -912,12 +1137,20 @@ export const dbHelper = {
     }
   },
 
-  // Stream danh sách key: nhận batch qua Channel. Message: {type:'keys',keys[]} | {type:'done',total,cancelled} | {type:'error',message}.
+  // Stream danh sách key: nhận batch qua Channel.
+  // Message: {type:'keys',keys[],cursor} | {type:'done',total,cancelled} | {type:'error',message}.
+  // `cursor` đi kèm mỗi batch để UI dừng ở trần rồi nạp tiếp đúng chỗ (startCursor).
   // Dừng bằng cancelQuery(queryId).
-  async redisScanStream(pattern: string, count: number, queryId: string, onMessage: (msg: any) => void): Promise<void> {
+  async redisScanStream(
+    pattern: string,
+    count: number,
+    queryId: string,
+    onMessage: (msg: any) => void,
+    startCursor?: number
+  ): Promise<void> {
     const channel = new Channel<any>();
     channel.onmessage = onMessage;
-    await invoke('redis_scan_stream', { pattern, count, queryId, channel });
+    await invoke('redis_scan_stream', { pattern, count, queryId, channel, startCursor: startCursor ?? null });
   },
 
   async redisGetKey(key: string): Promise<RedisValueDetail> {
@@ -1090,12 +1323,273 @@ export const dbHelper = {
     }
   },
 
-  async redisExecuteCmd(command: string): Promise<{ success: boolean; result?: any; error?: string }> {
+  // `selectedDb` is set when the command was a `SELECT n`: the backend routed it through the
+  // same path as the database dropdown, so the UI must follow instead of drifting.
+  async redisExecuteCmd(
+    command: string
+  ): Promise<{ success: boolean; result?: any; selectedDb?: number; error?: string }> {
     try {
       const res: any = await invoke('redis_execute_cmd', { command });
-      return { success: !!res.success, result: res.result, error: res.message };
+      return { success: !!res.success, result: res.result, selectedDb: res.selectedDb, error: res.message };
     } catch (err: any) {
       return { success: false, error: err.toString() };
+    }
+  },
+
+  /** Mirrors the app's read-only toggle into the backend, which is where writes are refused. */
+  async redisSetReadOnly(flag: boolean): Promise<void> {
+    try { await invoke('redis_set_read_only', { flag }); } catch { /* bỏ qua */ }
+  },
+
+  async redisGetElements(
+    key: string,
+    kind: string,
+    cursor: string,
+    count?: number,
+    filter?: string
+  ): Promise<RedisElementsPage> {
+    try {
+      const res: any = await invoke('redis_get_elements', {
+        key, kind, cursor, count: count ?? null, filter: filter || null,
+      });
+      return {
+        success: !!res.success,
+        kind: res.kind ?? kind,
+        elements: res.elements || [],
+        nextCursor: res.nextCursor ?? '',
+        done: !!res.done,
+      };
+    } catch (err: any) {
+      return { success: false, kind, elements: [], nextCursor: cursor, done: true, error: err.toString() };
+    }
+  },
+
+  // Xoá theo pattern: {type:'progress',scanned,deleted} | {type:'done',...} | {type:'error',message}.
+  // Dừng bằng cancelQuery(queryId).
+  async redisDeleteByPattern(
+    pattern: string,
+    typeFilter: string | undefined,
+    queryId: string,
+    onMessage: (msg: any) => void
+  ): Promise<void> {
+    const channel = new Channel<any>();
+    channel.onmessage = onMessage;
+    await invoke('redis_delete_by_pattern', {
+      pattern, typeFilter: typeFilter || null, queryId, channel,
+    });
+  },
+
+  async redisSlowlogGet(count?: number): Promise<{
+    success: boolean;
+    entries: RedisSlowLogEntry[];
+    len: number;
+    thresholdUs?: string | null;
+    maxLen?: string | null;
+    error?: string;
+  }> {
+    try {
+      const res: any = await invoke('redis_slowlog_get', { count: count ?? null });
+      return {
+        success: !!res.success,
+        entries: res.entries || [],
+        len: res.len ?? 0,
+        thresholdUs: res.thresholdUs,
+        maxLen: res.maxLen,
+      };
+    } catch (err: any) {
+      return { success: false, entries: [], len: 0, error: err.toString() };
+    }
+  },
+
+  async redisSlowlogReset(): Promise<{ success: boolean; error?: string }> {
+    try {
+      const res: any = await invoke('redis_slowlog_reset');
+      return { success: !!res.success };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  async redisSlowlogConfig(
+    thresholdUs?: number,
+    maxLen?: number
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      const res: any = await invoke('redis_slowlog_config', {
+        thresholdUs: thresholdUs ?? null, maxLen: maxLen ?? null,
+      });
+      return { success: !!res.success };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  // Pub/Sub trên một kết nối RIÊNG ở Rust: {type:'message',channel,pattern,payload,binary} | {type:'stopped',total}.
+  async redisPubsubStart(
+    channels: string[],
+    patterns: string[],
+    queryId: string,
+    onMessage: (msg: any) => void
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      const channel = new Channel<any>();
+      channel.onmessage = onMessage;
+      await invoke('redis_pubsub_start', { channels, patterns, queryId, channel });
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  async redisPublish(
+    channelName: string,
+    payload: string
+  ): Promise<{ success: boolean; receivers?: number; error?: string }> {
+    try {
+      const res: any = await invoke('redis_publish', { channelName, payload });
+      return { success: !!res.success, receivers: res.receivers };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  // Profiler (MONITOR) — tự dừng theo giới hạn của backend: {type:'line',line} | {type:'stopped',reason,total}.
+  async redisMonitorStart(
+    queryId: string,
+    onMessage: (msg: any) => void
+  ): Promise<{ success: boolean; maxLines?: number; maxSecs?: number; error?: string }> {
+    try {
+      const channel = new Channel<any>();
+      channel.onmessage = onMessage;
+      const res: any = await invoke('redis_monitor_start', { queryId, channel });
+      return { success: true, maxLines: res?.maxLines, maxSecs: res?.maxSecs };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  async redisJsonGet(
+    key: string,
+    path?: string
+  ): Promise<{ success: boolean; path?: string; json?: string | null; error?: string }> {
+    try {
+      const res: any = await invoke('redis_json_get', { key, path: path || null });
+      return { success: !!res.success, path: res.path, json: res.json };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  async redisJsonSet(key: string, path: string, value: string): Promise<RedisEditResult> {
+    try {
+      const res: any = await invoke('redis_json_set', { key, path, value });
+      return { success: !!res.success };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  async redisJsonDel(key: string, path: string): Promise<RedisEditResult> {
+    try {
+      const res: any = await invoke('redis_json_del', { key, path });
+      return { success: !!res.success };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  /** Ghi giá trị string từ bytes thô — đường duy nhất sửa được giá trị nhị phân (HEX editor). */
+  async redisSetKeyBytes(key: string, bytes: number[]): Promise<RedisEditResult> {
+    try {
+      const res: any = await invoke('redis_set_key_bytes', { key, bytes });
+      return { success: !!res.success };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  async redisStreamGroups(key: string): Promise<{ success: boolean; groups: any[]; error?: string }> {
+    try {
+      const res: any = await invoke('redis_stream_groups', { key });
+      return { success: !!res.success, groups: res.groups || [] };
+    } catch (err: any) {
+      return { success: false, groups: [], error: err.toString() };
+    }
+  },
+
+  async redisStreamConsumers(
+    key: string,
+    group: string
+  ): Promise<{ success: boolean; consumers: any[]; error?: string }> {
+    try {
+      const res: any = await invoke('redis_stream_consumers', { key, group });
+      return { success: !!res.success, consumers: res.consumers || [] };
+    } catch (err: any) {
+      return { success: false, consumers: [], error: err.toString() };
+    }
+  },
+
+  async redisStreamPending(
+    key: string,
+    group: string,
+    count?: number
+  ): Promise<{ success: boolean; pending: any[]; error?: string }> {
+    try {
+      const res: any = await invoke('redis_stream_pending', { key, group, count: count ?? null });
+      return { success: !!res.success, pending: res.pending || [] };
+    } catch (err: any) {
+      return { success: false, pending: [], error: err.toString() };
+    }
+  },
+
+  async redisStreamAck(key: string, group: string, ids: string[]): Promise<RedisEditResult> {
+    try {
+      const res: any = await invoke('redis_stream_ack', { key, group, ids });
+      return { success: !!res.success };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  async redisStreamClaim(
+    key: string,
+    group: string,
+    consumer: string,
+    minIdleMs: number,
+    ids: string[]
+  ): Promise<RedisEditResult> {
+    try {
+      const res: any = await invoke('redis_stream_claim', { key, group, consumer, minIdleMs, ids });
+      return { success: !!res.success };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  // Phân tích DB: lấy mẫu ≤10k key. Progress qua Channel, huỷ bằng cancelQuery(queryId).
+  async redisAnalyzeDb(
+    sample: number | undefined,
+    queryId: string,
+    onMessage: (msg: any) => void
+  ): Promise<RedisAnalysis> {
+    try {
+      const channel = new Channel<any>();
+      channel.onmessage = onMessage;
+      const res: any = await invoke('redis_analyze_db', { sample: sample ?? null, queryId, channel });
+      return res as RedisAnalysis;
+    } catch (err: any) {
+      return {
+        success: false,
+        dbsize: 0,
+        sampled: 0,
+        sampledBytes: 0,
+        estimatedBytes: null,
+        byType: [],
+        byNamespace: [],
+        ttlBuckets: { noExpiry: 0, under1h: 0, under1d: 0, under7d: 0, over7d: 0 },
+        topKeys: [],
+        error: err.toString(),
+      };
     }
   },
 

@@ -1,0 +1,283 @@
+# Kế hoạch Thiết kế & Phát triển: Sửa dữ liệu ngay trên kết quả truy vấn (đối chiếu DataGrip)
+
+> **Trạng thái: Phase 1 đã làm xong** (2026-08-07) — `src/sql/editableResult.ts` (module thuần,
+> 22 unit test), badge "Sửa được / Chỉ đọc" + sửa ô + preview SQL + commit trong `SqlEditor.tsx`,
+> 24 key i18n × EN/VI/JA. `npx tsc -b` sạch, `npx oxlint` sạch, `npm test` 370/370, `vite build` OK.
+>
+> **Phase 0 đã chạy và pass** (2026-08-07). Kèm theo phát hiện 4 lỗi hiển thị, đã sửa cùng đợt —
+> 3 trong đó là lỗi **có sẵn** chứ không do Phase 1:
+> 1. Badge "Sửa được" dính vào nhóm Export → tách hai nhóm, thêm vách ngăn dọc.
+> 2. `Trang` tiếng Việt cứng ở nhãn phân trang → key `sqlEditor.pageLabel` (có sẵn).
+> 3. Nhãn tab hardcode `'vi-VN'` → `toLocaleString(locale)` (có sẵn).
+> 4. Thanh trạng thái báo "0 dòng" trong khi lưới có đủ dòng (có sẵn) — xem mục "Race của
+>    Tauri Channel" bên dưới.
+>
+> **Cần chạy lại Phase 0 ca 1–6 + một lần bấm Dừng + một câu SQL lỗi**, vì lỗi (4) sửa vào
+> đúng đường chạy truy vấn dùng chung cho mọi câu lệnh.
+>
+> Kế hoạch này thu hẹp khoảng cách với **DataGrip** ở đúng một điểm: DataGrip resolve được bảng gốc
+> từ câu `SELECT` và cho sửa kết quả tại chỗ, TableNova trước đây chỉ cho sửa ở tab bảng.
+
+Comment mới trong code viết **tiếng Anh**; message lỗi trả về từ Rust vẫn **tiếng Việt** rồi dịch ở
+`backendErrors.ts` (đúng luật CLAUDE.md — cặp twin Rust ↔ `backendErrors.ts` phải cập nhật cùng lúc).
+
+---
+
+## 🎯 Phạm vi
+
+### Có làm
+
+| DataGrip | TableNova | Phase |
+|---|---|---|
+| Nhận biết kết quả nào sửa được, nêu lý do khi không | ✅ | 1 |
+| Sửa ô + xem trước SQL + ghi xuống DB | ✅ | 1 |
+| Đặt NULL cho ô | ⬜ | 2 |
+| Thêm / xoá dòng ngay trên kết quả | ⬜ | 4 |
+| Undo/redo bộ đệm sửa | ⬜ | 4 |
+| Bảng khoá chính phức hợp | ⬜ | 5 |
+| Commit nguyên tử (một transaction) | ⬜ | 5 |
+
+### Không làm (nêu rõ để khỏi hỏi lại)
+
+- **Sửa kết quả có JOIN** (DataGrip cho sửa khi resolve được cột về bảng gốc). Ở đây `commit_changes`
+  nhận đúng một `tableName`; muốn làm phải nhóm thay đổi theo bảng và tự quyết định thứ tự ghi —
+  bằng một plan riêng, và giá trị thực tế thấp hơn nhiều so với Phase 2–5.
+- **Sửa kết quả của CTE / GROUP BY / UNION**: dòng trả về không ứng với dòng bảng nên không có
+  định nghĩa đúng cho phép ghi.
+- **Điều hướng theo khoá ngoại** (click ô FK → nhảy sang dòng cha): là mục riêng trong danh sách
+  đối chiếu DataGrip, không thuộc plan này.
+- **Chế độ transaction thủ công** (auto-commit off, isolation level): đụng `DatabaseManager` và
+  toàn bộ vòng đời connection, tách plan riêng.
+
+---
+
+## 🏗️ Quyết định kiến trúc (đọc trước khi code)
+
+### 1. Cổng kiểm tra là **whitelist**, không phải `collectTableRefs()`
+
+Trực giác đầu tiên là dùng lại [`collectTableRefs()`](../src/sql/statements.ts#L104) — sai. Nó là
+regex trên `from|join|update|into`, cố tình nông để còn đúng khi SQL đang gõ dở, và lớp ký tự
+định danh không khớp `(`. Hệ quả đo được:
+
+```
+SELECT * FROM (SELECT * FROM users) x   →  collectTableRefs trả về đúng 1 ref: "users"
+```
+
+Tức là nó sẽ bật đèn xanh cho việc sửa một derived table và ghi nhầm vào bảng gốc. Completion cần
+một bộ dò dễ dãi; chỗ này cần điều ngược lại — **từ chối mọi thứ không hiểu trọn vẹn**, vì cái giá
+của một false positive ở đây là một câu UPDATE sai. Chỉ dùng chung `maskForSplit`.
+
+`src/sql/editableResult.ts` vì thế tự parse: chặn CTE / JOIN / UNION / DISTINCT / GROUP BY / HAVING,
+mệnh đề FROM phải là **một** bảng đơn (không phẩy, không subquery), danh sách cột phải là identifier
+trần (biểu thức / hàm / alias đều từ chối), rồi mới tra khoá chính một cột và kiểm tra khoá đó có
+nằm trong kết quả.
+
+Subquery trong `WHERE` **được phép** — nó không đổi việc dòng trả về thuộc bảng nào.
+
+### 2. Trim câu lệnh: đầu câu theo chuỗi đã mask, cuối câu theo chuỗi gốc
+
+`maskForSplit` biến chuỗi/comment **và cả định danh có trích dẫn** thành khoảng trắng. Nếu trim đuôi
+theo bản mask thì `` SELECT * FROM `users` `` bị cắt mất chính tên bảng. Nên:
+
+- **Đầu câu** trim theo mask → bỏ được comment mở đầu; an toàn vì câu hợp lệ luôn bắt đầu bằng
+  `SELECT`/`WITH`, không bao giờ bằng một token bị mask.
+- **Cuối câu** trim theo chuỗi gốc (cộng dấu `;` thật) → giữ nguyên tên bảng có trích dẫn.
+- Comment cuối câu do đó lọt vào chuỗi gốc; `readTableRef()` xử lý bằng cách đọc định danh từ `sql`
+  rồi kiểm phần thừa còn lại trên `masked` (comment ở đó đã thành khoảng trắng).
+
+Bài học chung: **hai chuỗi bất đồng ý có chủ đích** — định danh trích dẫn là text thật trong `sql`
+nhưng trắng trong `masked`, comment thì ngược lại. Chọn nhầm nguồn là một lớp bug riêng.
+
+### 3. Khoá bộ đệm theo **giá trị khoá chính**, không theo chỉ số dòng
+
+Lưới kết quả phân trang phía client (`results.slice()`), nên chỉ số chỉ đúng trong trang hiện tại.
+Đổi lại, bộ đệm phải bị xoá ở **hai** chỗ, thiếu một là các ô sửa sẽ bám nhầm dòng:
+
+- `executeSql()` — chạy câu mới;
+- `handleTabChange()` — mỗi tab kết quả là một câu lệnh khác, có thể trên bảng khác.
+
+### 4. Sau khi commit thì **vá tại chỗ**, không chạy lại câu lệnh
+
+DataGrid gọi `fetchData()`; ở đây không. Giá trị vừa ghi đã biết chắc, còn chạy lại sẽ thêm một dòng
+lịch sử trùng cho cùng một câu và có thể rất tốn kém.
+
+**Đánh đổi phải biết**: bảng có trigger sửa giá trị khi UPDATE thì lưới không phản ánh — người dùng
+phải tự chạy lại. Nếu Phase 4 thêm insert (khoá tự tăng do DB sinh) thì đánh đổi này không còn giữ
+được cho dòng mới, xem Phase 4.
+
+### 5. Race của Tauri Channel: phải chờ message kết thúc, không chỉ chờ `invoke()`
+
+Triệu chứng: thanh trạng thái ghi `Executed successfully — 0 rows (execution 29ms, transfer 29ms)`
+trong khi nhãn tab ghi `(1.000)` và lưới có đủ 1000 dòng. Dấu hiệu quyết định là **execution bằng
+đúng transfer** — nghĩa là `tFirst` chưa từng được đặt, tức chưa một message `rows` nào được xử lý
+tại thời điểm tính tổng.
+
+Nguyên nhân: `channel.send()` phía Rust là "bắn rồi quên" (`let _ = ...`), nên message có thể còn
+xếp hàng khi promise của `invoke()` đã resolve. Đoạn tính `totalRows` chạy ngay sau `await invoke`
+nên đọc một `acc` còn rỗng; các batch `rows` đến sau đó vẫn đẩy vào **cùng một mảng** mà snapshot
+đang tham chiếu, nên lưới đầy lên bình thường — chỉ mỗi dòng trạng thái là sai.
+
+Cách sửa: `executeSql()` chờ thêm một promise chỉ resolve khi nhận `done` hoặc `error`.
+[`execute_query_stream`](../src-tauri/src/database.rs#L1548-L1556) luôn gửi đúng **một** message
+kết thúc trước khi return, và channel giữ nguyên thứ tự, nên chờ nó vừa đủ vừa không thể treo.
+Nếu `invoke()` reject thì `throw` xảy ra trước, không chạm tới chỗ chờ.
+
+**Đây là lỗi của toàn bộ đường chạy truy vấn, không riêng tính năng sửa kết quả** — mọi con số
+"N dòng" trong thanh trạng thái và trong lịch sử truy vấn (`recordHistoryResult`) đều từng có thể sai.
+
+### 6. Thông báo đi vào thanh trạng thái, **không** dùng `errorMsg`
+
+`errorMsg` thay toàn bộ lưới bằng khối báo lỗi → người dùng mất luôn các ô đang sửa. State riêng
+`editMsg` (kèm pane) hiển thị ở `sql-results-status`.
+
+---
+
+## 📦 Phase 0 — Xác minh Phase 1 (chưa làm, chặn mọi phase sau)
+
+Chạy `.\dev-start.bat`. Không có ca nào tự động hoá được vì đều cần DB thật + thao tác chuột.
+
+| # | Ca | Kỳ vọng |
+|---|---|---|
+| 1 | `SELECT * FROM <bảng có PK>` trên SQLite (`demo.db`) | Badge xanh "Sửa được: <bảng>" |
+| 2 | Nháy đúp một ô, sửa, Enter | Ô đổi màu `grid-cell-dirty`, nút "Lưu (1)" hiện ra |
+| 3 | Sửa rồi gõ lại đúng giá trị cũ | Bộ đệm rỗng, nút Lưu biến mất |
+| 4 | Bấm Lưu | Modal preview đúng câu `UPDATE … WHERE pk = …` |
+| 5 | Xác nhận | Thông báo xanh ở thanh trạng thái, giá trị mới nằm lại trên lưới |
+| 6 | Bấm Huỷ | Mọi ô về giá trị gốc |
+| 7 | `SELECT a.*, b.* FROM a JOIN b …` | Badge xám, hover ra "Câu lệnh đọc từ nhiều hơn một bảng" |
+| 8 | `SELECT id, name AS n FROM users` | Badge xám, lý do "…biểu thức, lời gọi hàm hoặc bí danh" |
+| 9 | `SELECT * FROM (SELECT * FROM users) x` | Badge xám, lý do "…truy vấn con, không phải một bảng" |
+| 10 | `SELECT name FROM users` (thiếu PK) | Badge xám, lý do "Khoá chính … không nằm trong các cột được chọn" |
+| 11 | Bảng không có PK / PK phức hợp | Badge xám, lý do "…không có khoá chính một cột" |
+| 12 | Sửa vài ô rồi **chạy câu khác** | Bộ đệm bị xoá, không còn ô nào dirty |
+| 13 | Sửa vài ô rồi **đổi tab kết quả** | Như trên |
+| 14 | Bật "Chỉ đọc" rồi bấm Lưu | Thông báo đỏ, **không** có modal, không ghi gì |
+| 15 | Chia đôi khung, sửa ở pane 1 và pane 2 | Hai bộ đệm độc lập, nút Lưu đếm riêng |
+| 16 | Sửa ô ở **trang 2** rồi Lưu | Đúng dòng được ghi (kiểm tra bằng cách chạy lại câu lệnh) |
+| 17 | Cột trùng tên do `uniquify_columns` (`SELECT id, id FROM t`) | Cột `id (2)` không sửa được, có tooltip |
+| 18 | Lặp ca 1–5 trên **MySQL** và **PostgreSQL** | Trích dẫn định danh đúng dialect trong preview |
+| 19 | Chạy câu lệnh, đợi cache catalog nguội (>15s), mở lại tab | Badge vẫn resolve đúng (hiệu ứng `schemaTick`) |
+| 20 | Giá trị có dấu nháy đơn (`O'Brien`) | Preview escape đúng `''`, ghi thành công |
+
+**Nếu ca 16 hoặc 20 fail thì dừng, đó là lỗi ghi sai dữ liệu.**
+
+---
+
+## 📦 Phase 2 — Đặt NULL cho ô
+
+Hiện `editValue` luôn là chuỗi, gõ rỗng ra `''` chứ không ra `NULL`. Đây là giới hạn **kế thừa
+nguyên** từ DataGrid, không phát sinh mới — nhưng ở lưới kết quả nó lộ rõ hơn vì người ta hay
+`SELECT` đúng vài cột để sửa.
+
+Phía Rust **đã sẵn sàng**: `commit_changes` xử lý `v.is_null()` → `NULL` ([database.rs:1948](../src-tauri/src/database.rs#L1948)).
+Chỉ thiếu đường đưa `null` (JSON) vào `newData` từ UI.
+
+- Menu chuột phải trên ô → "Đặt NULL" (key i18n mới), ghi `null` chứ không phải chuỗi `'NULL'`.
+- Ô đang giữ NULL hiển thị như ô NULL gốc (chữ nghiêng, màu mờ) nhưng vẫn có nền dirty.
+- Phân biệt "chưa sửa" với "sửa thành NULL": bộ đệm dùng `undefined` cho cái đầu, `null` cho cái sau —
+  `edited !== undefined` trong `SqlEditor.tsx` đã đúng sẵn cho việc này.
+- **Làm cùng lúc ở DataGrid** để hai lưới không lệch hành vi, hoặc để lại Phase 3 nếu tách hook trước.
+
+Ước lượng: nhỏ, ~1 buổi. Không có unit test tự động (đường đi qua UI + backend).
+
+---
+
+## 📦 Phase 3 — Tách `useGridEdits()` dùng chung
+
+Đây là phase **tốn công nhất và ít thấy được nhất**, nhưng mọi phase sau đều rẻ đi nhờ nó.
+
+Hiện trạng: toàn bộ trải nghiệm sửa nằm inline trong [`DataGrid.tsx`](../src/components/DataGrid.tsx) —
+12 state (`updates`/`deletes`/`inserts`/`nextTempId`/`editingCell`/`editValue`/`undoStack`/`redoStack`/
+`commitPreview`/`pendingChanges`/`selectedRowId`, [dòng 150-220](../src/components/DataGrid.tsx#L150-L220))
+và các handler ở [dòng 621-900](../src/components/DataGrid.tsx#L621-L900). `SqlEditor.tsx` hiện có
+một bản **rút gọn** riêng (chỉ update, không insert/delete/undo).
+
+Repo này đã có ba cặp phải đồng bộ tay — `split_sql_statements` ↔ `sql/statements.ts`, error literal
+Rust ↔ `backendErrors.ts`, `.ctm-*`/`.cm-modal*` ↔ `Modal.tsx`. **Không tạo cặp thứ tư.** Phase 3 tồn
+tại để trả món nợ mà Phase 1 vừa vay.
+
+- Hook mới `src/utils/useGridEdits.ts` (hoặc `src/components/useGridEdits.ts`): giữ bộ đệm, undo/redo,
+  dựng `GridChange[]`, gọi preview + commit. **Không** giữ việc fetch/phân trang/filter — đó là việc
+  riêng của từng lưới.
+- `DataGrid.tsx` chuyển sang dùng hook; giữ nguyên hành vi (đây là refactor, không thêm tính năng).
+- `SqlEditor.tsx` bỏ phần rút gọn, dùng chung hook.
+- Rủi ro: `DataGrid.tsx` 2000 dòng, undo/redo đan vào bộ đệm và cả `resetGridHistory()` sau commit.
+  Làm từng bước nhỏ, chạy `npm test` + Phase 0 ca 1–6 sau mỗi bước.
+
+Ước lượng: lớn, 2–3 buổi. **Không gộp với phase khác** — một refactor thuần dễ review hơn nhiều so
+với refactor lẫn tính năng mới.
+
+---
+
+## 📦 Phase 4 — Thêm / xoá dòng + undo/redo trên lưới kết quả
+
+Chỉ làm **sau** Phase 3, nếu không sẽ nhân đôi thêm ~400 dòng nữa.
+
+- Dòng mới render dưới cùng như DataGrid (`inserts` với `__tempId`), cột PK để trống thì bị loại khỏi
+  câu INSERT để DB tự sinh ([DataGrid.tsx:836](../src/components/DataGrid.tsx#L836)).
+- **Phá vỡ quyết định kiến trúc #4**: dòng vừa INSERT chưa biết khoá tự tăng, nên không vá tại chỗ
+  được. Hai lựa chọn, chọn một và ghi rõ vào code:
+  - chạy lại câu lệnh **chỉ khi** trong lô có insert (chấp nhận một dòng lịch sử), hoặc
+  - giữ dòng mới ở trạng thái "đã ghi, chưa biết khoá" và cấm sửa tiếp cho tới khi chạy lại.
+- Xoá dòng: đánh dấu gạch ngang rồi commit, giống DataGrid.
+- Undo/redo: đã có sẵn trong hook sau Phase 3, chỉ cần nối phím tắt.
+
+---
+
+## 📦 Phase 5 — Gỡ hai giới hạn ở `commit_changes` (Rust)
+
+Cả hai đều là **giới hạn có sẵn**, ảnh hưởng DataGrid ngang bằng lưới kết quả. Sửa ở đây là sửa cho
+cả hai.
+
+### 5.1 Khoá chính phức hợp
+
+[`commit_changes`](../src-tauri/src/database.rs#L1881) nhận `primaryKey: String` và dựng
+`WHERE \`pk\` = '<rowId>'` — một cột, một giá trị. Bảng như `order_items(order_id, line_no)` không
+sửa được ở bất kỳ đâu trong app.
+
+- Đổi payload: `primaryKey: Vec<String>`, `rowId` thành object `{col: value}`. Giữ tương thích ngược
+  bằng cách chấp nhận cả dạng cũ (frontend cũ / preview đã lưu).
+- `detect_primary_key()` phải trả về danh sách, không phải `Option<String>`.
+- Bỏ điều kiện `pks.length !== 1` trong `editableResult.ts` và cập nhật test tương ứng (ca
+  `noPrimaryKey` tách làm hai: không có khoá vs khoá phức hợp).
+- `dbHelper.commitChanges` đổi chữ ký → cập nhật cả hai call site.
+
+### 5.2 Commit không nguyên tử
+
+`commit_changes` chạy từng câu một qua `execute_raw_sql_generic` ([database.rs:1978](../src-tauri/src/database.rs#L1978)) —
+**không có transaction**. Lỗi ở câu thứ 3 để lại 2 câu đầu đã ghi, và modal preview vừa hứa với
+người dùng là "N câu lệnh sẽ chạy".
+
+- Không bọc transaction quanh `execute_raw_sql_generic` được: nó **lấy một connection mới từ pool
+  mỗi lần gọi**, nên `BEGIN` sẽ nằm ở session khác với các câu INSERT/UPDATE — đúng cái bẫy mà
+  `data_generator.rs` đã gặp và giải bằng struct `Exec` (một connection riêng cho cả lô).
+- Dùng lại đúng cách đó: một connection dành riêng, `BEGIN` → chạy hết → `COMMIT`, lỗi thì `ROLLBACK`.
+- Lưu ý MySQL **implicit commit khi gặp DDL** — ở đây chỉ có DML nên không vướng, nhưng ghi comment
+  để người sau không thêm DDL vào lô này.
+- Verify bằng thủ thuật `rustc` độc lập nếu tách được phần thuần; phần connection thì chỉ manual test
+  (cố tình cho câu thứ 2 vi phạm khoá ngoại, kiểm tra câu thứ 1 đã bị rollback).
+
+---
+
+## ✅ Định nghĩa "xong"
+
+- `npx tsc -b` sạch, `npx oxlint` sạch, `npm test` xanh.
+- Phase 0 chạy hết trên **cả ba** dialect (SQLite/MySQL/PostgreSQL).
+- Không sinh thêm cặp code phải đồng bộ tay nào (kiểm lại sau Phase 3).
+- Mọi chuỗi mới đều là key i18n × EN/VI/JA, không nội suy key động.
+
+---
+
+## 🔭 Ngoài phạm vi plan này (danh sách đối chiếu DataGrip còn lại)
+
+Xếp theo giá trị/công sức, mỗi mục là một plan riêng:
+
+| Mục | Ghi chú |
+|---|---|
+| Điều hướng theo khoá ngoại trong lưới | Catalog đã cache sẵn FK ([catalog.ts](../src/sql/catalog.ts)), chủ yếu là UI — rẻ nhất trong nhóm còn lại |
+| Nối AI Copilot vào model thật | UI đã xong, `ai_chat` đang là stub echo ([database.rs:1985](../src-tauri/src/database.rs#L1985)) |
+| ER diagram | Tái dùng được kinh nghiệm vẽ đồ thị từ `ExplainDiagramView` |
+| Nhiều connection mở song song | Refactor `DatabaseManager` từ single sang map — đụng gần hết `database.rs`; mở khoá cả "copy bảng giữa 2 data source" |
+| Chế độ transaction thủ công | Gắn liền với vòng đời connection ở trên |
+| Process list / kill session / quản lý user-role-grant | Nhóm admin, độc lập hoàn toàn |
+| SQL Server / Oracle / MongoDB | Mỗi driver một plan |

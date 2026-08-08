@@ -37,7 +37,7 @@ use serde_json::{json, Map, Value};
 use tauri::ipc::Channel;
 use tauri::State;
 
-use crate::database::{execute_raw_sql_generic, DbConnection};
+use crate::database::{execute_raw_sql_generic, DbConnection, Exec};
 use crate::datasets as ds;
 use crate::AppState;
 
@@ -2211,45 +2211,6 @@ pub async fn cancel_data_generation(state: State<'_, AppState>) -> Result<Value,
     Ok(json!({ "success": true }))
 }
 
-/// One statement target: a pooled connection (Postgres/MySQL) or the shared SQLite handle.
-///
-/// A dedicated connection is the point. `execute_raw_sql_generic` acquires a NEW connection from
-/// the pool per call, so `BEGIN` / `SET FOREIGN_KEY_CHECKS` issued through it would land on a
-/// different session than the INSERTs and quietly do nothing.
-enum Exec {
-    Sqlite(Arc<std::sync::Mutex<rusqlite::Connection>>),
-    Postgres(sqlx::pool::PoolConnection<sqlx::Postgres>),
-    Mysql(sqlx::pool::PoolConnection<sqlx::MySql>),
-}
-
-impl Exec {
-    async fn run(&mut self, sql: String) -> Result<(), String> {
-        match self {
-            Exec::Sqlite(arc) => {
-                let conn = arc.lock().map_err(|e| e.to_string())?;
-                conn.execute_batch(&sql).map_err(|e| e.to_string())
-            }
-            // raw_sql = text protocol. MySQL rejects some statements in the prepared protocol
-            // (error 1295) and the generated INSERT carries literals only, so nothing is gained
-            // by preparing it.
-            Exec::Postgres(c) => sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
-                .execute(&mut **c)
-                .await
-                .map(|_| ())
-                .map_err(|e| e.to_string()),
-            Exec::Mysql(c) => sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
-                .execute(&mut **c)
-                .await
-                .map(|_| ())
-                .map_err(|e| e.to_string()),
-        }
-    }
-
-    async fn try_run(&mut self, sql: &str) {
-        let _ = self.run(sql.to_string()).await;
-    }
-}
-
 /// Generates and inserts the data. Reports progress through `on_progress`:
 /// `{type:'start'|'table'|'progress'|'done'|'error', ...}`.
 #[tauri::command]
@@ -2378,13 +2339,7 @@ async fn run_generation(
     cancel: &Arc<AtomicBool>,
     warnings: &mut Vec<String>,
 ) -> Result<(HashMap<String, usize>, bool), String> {
-    let mut exec = match conn {
-        DbConnection::Sqlite(arc) => Exec::Sqlite(arc.clone()),
-        DbConnection::Postgres(pool) => {
-            Exec::Postgres(pool.acquire().await.map_err(|e| e.to_string())?)
-        }
-        DbConnection::Mysql(pool) => Exec::Mysql(pool.acquire().await.map_err(|e| e.to_string())?),
-    };
+    let mut exec = Exec::acquire(conn).await?;
 
     // Constraints off, then transaction open. The ORDER is dialect-specific and neither half is
     // interchangeable:

@@ -36,12 +36,19 @@ export const EXACT: Record<string, string> = {
   'Loại đối tượng không được hỗ trợ': 'backend.unsupportedObjectKind',
   'Lệnh rỗng': 'backend.emptyCommand',
   'Stream cần ít nhất một field': 'backend.streamNeedsField',
+  // redis_cmds.rs + redis_db.rs
+  'Lệnh không hợp lệ: thiếu dấu nháy đóng': 'backend.redisBadQuote',
+  'Chế độ chỉ đọc: không thể ghi vào Redis': 'backend.redisReadOnly',
+  'Server không có module RedisJSON': 'backend.redisNoJsonModule',
+  'Chưa có pattern để xoá': 'backend.redisNoPattern',
+  'Chưa chọn channel để nghe': 'backend.redisNoChannel',
   'IAM chỉ hỗ trợ postgres/mysql': 'backend.iamOnlyPgMysql',
   'MySQL không hỗ trợ đổi tên database.': 'backend.mysqlNoRenameDb',
   'SQLite không hỗ trợ đổi tên database.': 'backend.sqliteNoRenameDb',
   'SQLite không hỗ trợ xóa database': 'backend.sqliteNoDropDb',
   'SQLite không hỗ trợ tạo database (mỗi tệp là một database)': 'backend.sqliteNoCreateDb',
   'SQLite không hỗ trợ nhiều database trên một kết nối': 'backend.sqliteSingleDb',
+  'CASCADE chỉ được hỗ trợ trên PostgreSQL': 'backend.cascadeOnlyPostgres',
   'Phiên terminal đã đóng': 'backend.terminalClosed',
   'Tham số truy vấn chỉ hỗ trợ một câu lệnh. Vui lòng chạy từng câu lệnh riêng hoặc tắt Tham số Truy vấn.':
     'backend.paramsSingleStatement',
@@ -109,6 +116,15 @@ export const PATTERNS: { re: RegExp; key: string; nested?: boolean }[] = [
   { re: /^Lỗi đọc nội dung private key: ([\s\S]*)$/, key: 'backend.readPrivateKeyFailed' },
   { re: /^PING lỗi: ([\s\S]*)$/, key: 'backend.pingFailed' },
   { re: /^Không thể kết nối Redis: ([\s\S]*)$/, key: 'backend.redisConnectFailed' },
+  // redis_db.rs — chặn lệnh & phân trang
+  { re: /^Lệnh '([^']*)' bị chặn ở chế độ chỉ đọc$/, key: 'backend.redisReadOnlyCmd' },
+  {
+    re: /^Lệnh '([^']*)' cần kết nối riêng — dùng tab Pub\/Sub hoặc Profiler$/,
+    key: 'backend.redisBlockingCmd',
+  },
+  { re: /^Chưa hỗ trợ phân trang cho kiểu '([^']*)'$/, key: 'backend.redisNoPagingForType' },
+  { re: /^Không mở được kết nối riêng cho Redis: ([\s\S]*)$/, key: 'backend.redisPushConnFailed' },
+  { re: /^Chỉ phân tích ([\d]+) key lấy mẫu — số liệu là ước lượng\.$/, key: 'backend.redisAnalysisSampled' },
   { re: /^Không mở được kho bí mật của hệ điều hành: ([\s\S]*)$/, key: 'backend.secretStoreOpenFailed' },
   {
     re: /^Không lưu được '([^']*)' vào kho bí mật: ([\s\S]*)\. Bí mật quá dài \(private key lớn\) có thể vượt giới hạn của kho HĐH\.$/,

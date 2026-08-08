@@ -1,0 +1,316 @@
+# Kế hoạch Thiết kế & Phát triển: Redis parity (đối chiếu RedisInsight)
+
+> **Trạng thái: Phase 1–5 đã làm xong** (2026-08-07) — `redis_cmds.rs` (helper thuần + whitelist
+> read-only, ~90 assertion qua `rustc` độc lập), 20 command mới trong `redis_db.rs`, `redisKeyTree.ts`
+> + `redisDecode.ts` mở rộng (+34 unit test), `RedisBrowser.tsx` tách thành `src/components/redis/*`
+> (12 file), 173 key i18n × EN/VI/JA. `npx tsc -b` sạch cho phần Redis, `npx oxlint` sạch,
+> `npm test` 370/370.
+>
+> **Còn lại — xem mục "Chưa làm" ở cuối file**: cột kích thước key trong danh sách, xoá dead code
+> `redis_scan_keys`, lịch sử báo cáo Analysis, formatter msgpack/lz4/zstd/brotli (zlib **đã làm**),
+> và **toàn bộ 11 ca kiểm thử manual** (cần một server Redis thật) + `cargo build` để xác nhận
+> phần Rust biên dịch.
+>
+> Kế hoạch này thu hẹp khoảng cách với **RedisInsight**
+> (https://github.com/redis/redisinsight), theo thứ tự "sửa chỗ có thể làm treo app hoặc mất dữ
+> liệu trước, thêm tính năng sau".
+
+Comment mới trong code viết **tiếng Anh**; message lỗi/`warnings` trả về từ Rust vẫn **tiếng Việt** rồi
+dịch ở `backendErrors.ts` (đúng luật CLAUDE.md — cặp twin Rust ↔ `backendErrors.ts` phải cập nhật cùng lúc).
+
+---
+
+## 🎯 Phạm vi
+
+### Có làm (đối chiếu bản gốc)
+
+| RedisInsight | TableNova | Phase |
+|---|---|---|
+| Phân trang phần tử key lớn (HSCAN/SSCAN/ZSCAN, lô 500) | ✅ | 1 |
+| Chỉ đọc thật (không có ở bản gốc) | ✅ **chặn ở Rust**, không chỉ ở UI | 1 |
+| Kiểu chưa hỗ trợ hiển thị rõ ràng | ✅ | 1 |
+| Tree view nhóm key theo namespace | ✅ | 2 |
+| Bulk actions (xoá nhiều key theo pattern) | ✅ có progress + huỷ | 2 |
+| Auto-refresh danh sách key / giá trị | ✅ | 2 |
+| Slow Log (xem + reset + cấu hình ngưỡng) | ✅ | 3 |
+| Pub/Sub | ✅ | 3 |
+| Profiler (MONITOR realtime) | ✅ có giới hạn cứng | 3 |
+| CLI có help/auto-complete | ⚠️ help + auto-complete từ bảng lệnh nhúng (không có ANTLR như Workbench) | 3 |
+| CRUD JSON (ReJSON-RL) | ✅ | 4 |
+| Formatter chọn tay + HEX/Binary/ASCII, sửa được giá trị nhị phân | ✅ | 4 |
+| Stream consumer groups (XINFO/XPENDING/XACK/XCLAIM) | ✅ | 4 |
+| Database analysis (memory, top keys, top namespace, phân bố TTL) | ✅ (lấy mẫu 10k key như bản gốc) | 5 |
+
+### Không làm (nêu rõ để khỏi hỏi lại)
+
+- **Cluster / Sentinel**: cần feature `cluster-async` của crate `redis` + một kiểu connection khác
+  (`ClusterConnection`), tức là `RedisState` phải thành enum. Để riêng thành plan sau.
+- **Search workspace / FT.\*** (index, Query Library, Profile/Explain), **TimeSeries visualization**,
+  **vector set**: đây là hệ sinh thái module, mỗi cái là một feature bằng cả plan này.
+- **Redis Copilot / RDI / auto-discovery Cloud & Azure Entra ID / plugin system**: ngoài phạm vi sản phẩm.
+- **Nhiều kết nối mở song song**: `AppState` giữ *một* connection cho cả SQL và Redis; đổi việc này là
+  refactor xuyên cả `database.rs`, không gộp vào đây.
+- **Msgpack / Protobuf / Java serialized / Pickle formatter**: không có lib, tự viết decoder cho từng
+  định dạng là chi phí lớn hơn lợi ích. Phase 4 chỉ làm HEX/Binary/ASCII + giữ auto-detect
+  gzip/php-serialize/JSON đang có.
+
+---
+
+## 🏗️ Quyết định kiến trúc (đọc trước khi code)
+
+### 1. `redis_get_key` tách làm hai: metadata và **một trang** phần tử
+
+Hiện tại [redis_db.rs:294-328](../src-tauri/src/redis_db.rs#L294-L328) dùng `HGETALL`, `LRANGE 0 -1`,
+`SMEMBERS`, `ZRANGE 0 -1 WITHSCORES`, `XRANGE - +`. Ba hậu quả, không phải một: (1) các lệnh này là
+O(N) trên **single thread của Redis** → một hash 1M field làm block cả server, không chỉ app;
+(2) toàn bộ đi qua IPC dưới dạng JSON; (3) `CollectionTable` render đủ N `<tr>`.
+
+- `redis_get_key` trả về: `type`, `ttl`, `memory`, **`length`** (`HLEN`/`LLEN`/`SCARD`/`ZCARD`/`XLEN`)
+  và trang đầu. Không bao giờ trả cả key.
+- Lệnh mới `redis_get_elements { key, kind, cursor: String, count: usize, match: Option<String> }`
+  → `{ elements, nextCursor: String, done: bool }`.
+- **`cursor` là `String` opaque với frontend** — mỗi kiểu có ngữ nghĩa khác nhau và UI không được biết:
+
+  | kiểu | lệnh | cursor |
+  |---|---|---|
+  | hash | `HSCAN key cur MATCH m COUNT n` | cursor của SCAN family |
+  | set | `SSCAN` | cursor của SCAN family |
+  | zset | **`ZRANGE start stop WITHSCORES`** (theo rank) | rank kế tiếp |
+  | list | `LRANGE cur cur+n-1` | index kế tiếp |
+  | stream | `XRANGE (lastId + COUNT n` | id cuối đã đọc |
+
+  **zset cố tình không dùng ZSCAN**: ZSCAN trả thứ tự bất định, mà thứ tự theo score *là* ý nghĩa của
+  zset. Đánh đổi: rank-based paging có thể bỏ sót/lặp phần tử nếu người khác ghi giữa hai trang — chấp
+  nhận, refresh là hết (giống list).
+- **Stream cần Redis ≥ 6.2** cho cú pháp exclusive `(id`. Fallback: đọc `COUNT n+1` từ `lastId` rồi bỏ
+  phần tử đầu. Không được giả định phiên bản — KeyDB/Dragonfly cũng phải chạy (xem quyết định 6).
+- **Xoá/sửa phần tử list vẫn theo index tuyệt đối**: mẹo sentinel `LSET` + `LREM 1` ở
+  [redis_db.rs:466-479](../src-tauri/src/redis_db.rs#L466-L479) giữ nguyên, nhưng frontend phải cộng
+  offset của trang vào index — bug ở đây sẽ **xoá đúng một phần tử sai**, nên đây là ca test bắt buộc.
+- **Tìm trong phần tử**: chỉ hash/set có `MATCH` phía server. list/zset/stream lọc trong trang đã tải và
+  UI phải ghi rõ "lọc trong trang hiện tại", không được để người dùng tin là tìm toàn key.
+
+### 2. Chế độ chỉ đọc phải chặn ở **Rust**, whitelist chứ không blacklist
+
+`blockedByReadOnly()` phủ mọi nút sửa của UI, nhưng `RedisConsole` gọi thẳng
+`dbHelper.redisExecuteCmd` ([RedisBrowser.tsx:838](../src/components/RedisBrowser.tsx#L838)) → ở chế độ
+chỉ đọc vẫn gõ được `FLUSHALL`, `CONFIG SET`, `SHUTDOWN NOSAVE`. Chốt ở UI là chốt sai tầng.
+
+- `RedisState` thêm `read_only: AtomicBool`; `redis_connect` nhận cờ ban đầu, thêm command
+  `redis_set_read_only(flag)` gọi mỗi khi toggle của App đổi (toggle đổi được **sau** khi connect).
+- Helper thuần `is_read_only_cmd(tokens: &[String]) -> bool`, **whitelist**: blacklist sẽ bỏ sót lệnh
+  module (`JSON.SET`, `FT.DROPINDEX`, `TS.ADD`) và lệnh mới của server sau này. Phải xét cả subcommand:
+  `CONFIG GET` cho, `CONFIG SET/RESETSTAT/REWRITE` chặn; `EVAL_RO`/`FCALL_RO` cho, `EVAL`/`FCALL` chặn;
+  `XINFO`/`XRANGE` cho, `XGROUP`/`XADD` chặn; `OBJECT`/`MEMORY USAGE` cho, `MEMORY PURGE` chặn.
+- **Guard lệnh làm nghẽn connection** (không liên quan read-only, áp dụng cả khi được ghi):
+  `SUBSCRIBE`/`PSUBSCRIBE`/`SSUBSCRIBE`/`MONITOR`/`WAIT`/`BLPOP`/`BRPOP`/`BLMOVE`/`BLMPOP`/`BZPOPMIN`/
+  `BZPOPMAX`/`XREAD BLOCK`/`SHUTDOWN` gõ vào console hôm nay sẽ treo `MultiplexedConnection`
+  (nó là connection dùng chung, không có chế độ push cho pubsub). Trả lỗi rõ + trỏ sang tab Pub/Sub
+  hoặc Profiler (Phase 3).
+- **`SELECT n` trong console** hiện làm state `dbIndex` của UI lệch với connection thật. Chặn thì bất
+  tiện; giải pháp: console **bắt** `SELECT n` và đi qua đúng đường `redis_select_db`, rồi báo UI đổi
+  `dbIndex` (một `CustomEvent`, đúng pattern `table-renamed`/`database-restored` của App).
+- `tokenize()` ([redis_db.rs:78-94](../src-tauri/src/redis_db.rs#L78-L94)) chưa xử lý escape: `"a\"b"`
+  bị tách sai, `"\x41"` không giải. Vì cả read-only whitelist lẫn guard ở trên **đều dựa vào token đầu**,
+  tokenizer sai là lỗ bảo mật, không chỉ lỗi tiện dụng → sửa cùng lúc (hỗ trợ `\"`, `\\`, `\n`, `\r`,
+  `\t`, `\xNN` như `redis-cli`).
+
+### 3. Danh sách key phải có trần và cửa sổ render
+
+`redis_scan_stream` chạy tới khi cursor về 0, frontend `setKeys(prev => [...prev, ...filtered])`
+([RedisBrowser.tsx:115](../src/components/RedisBrowser.tsx#L115)) → 2M key = 2M object trong state + 2M
+DOM row.
+
+- Trần mặc định **100.000 key** đã nạp; đạt trần thì dừng scan, hiện băng "đã dừng ở 100k — thu hẹp
+  pattern hoặc bấm *Nạp tiếp*". **Không** im lặng cắt (luật "no silent caps").
+- Virtualize bằng tay, **không thêm dependency** (repo chưa có `react-window`; plan14 đã lập tiền lệ tự
+  viết thay vì thêm crate/lib). Phần toán là một hàm thuần `windowSlice(scrollTop, height, rowHeight, n)`
+  → `{ start, end, padTop, padBottom }`, có unit test; component chỉ render slice.
+- Lọc theo kiểu vẫn **client-side** (comment ở [redis_db.rs:179](../src-tauri/src/redis_db.rs#L179) giải
+  thích lý do: `SCAN TYPE` không có trên KeyDB/Dragonfly). Nhưng phải nói rõ trên UI rằng con số hiển
+  thị là "khớp trong số đã quét", vì lọc `stream` trên 2M key vẫn kéo về cả 2M.
+- `redis_scan_keys` (bản không stream) hiện **không có ai gọi** — chỉ còn `dbHelper.redisScanKeys`. Xoá
+  cả hai, hoặc dùng nó cho "Nạp tiếp" (nó nhận `cursor` sẵn). Chọn phương án hai: giữ và dùng lại.
+
+### 4. Pub/Sub và Profiler cần **connection riêng**, không dùng `MultiplexedConnection`
+
+Cả `SUBSCRIBE` và `MONITOR` chuyển connection sang chế độ push; connection dùng chung sẽ hỏng cho mọi
+lệnh khác. `RedisState` thêm slot riêng (`push_tasks: Mutex<HashMap<String, ...>>`), mỗi phiên là một
+`client.get_async_pubsub()` / connection riêng, đẩy message qua `Channel` và dừng bằng `cancel_flags`
+đang có (đúng pattern `redis_scan_stream`).
+
+Giới hạn cứng, vì cả hai đều có thể sinh hàng chục nghìn message/giây: ring buffer **5.000 dòng** ở
+frontend + tự dừng Profiler sau **60 giây** hoặc **50.000 message** (báo rõ lý do dừng). MONITOR làm chậm
+server thật → dialog xác nhận nêu rõ điều đó trước khi bật.
+
+### 5. Kiểu chưa hỗ trợ phải nói ra
+
+[redis_db.rs:329](../src-tauri/src/redis_db.rs#L329) `other => json!({ "kind": other })` khiến key
+`ReJSON-RL` (module phổ biến nhất), `TSDB-TYPE`, `vectorset`, `MBbloom--` mở ra **trống trơn, không lỗi**.
+Trả `{ kind: "unsupported", redisType: t }` và UI hiện "Kiểu `ReJSON-RL` chưa hỗ trợ — dùng CLI console",
+kèm gợi ý lệnh đọc tương ứng. Phase 4 thay ReJSON bằng CRUD thật.
+
+### 6. Không giả định phiên bản/bản phân phối server
+
+App phải chạy với Redis 6/7/8, KeyDB, Dragonfly, Valkey. Ở `redis_connect` đọc một lần
+`INFO server` (`redis_version`) + `MODULE LIST` (bọc `unwrap_or_default` — nhiều server chặn lệnh này
+bằng ACL) và cache vào `RedisState.caps`. Mọi tính năng phụ thuộc phiên bản/module (`(id` của XRANGE,
+`JSON.*`, `OBJECT FREQ`, `SLOWLOG`) đọc từ đó, **không** thử rồi bắt lỗi ở mỗi lần gọi.
+
+---
+
+## 🔌 Backend — `src-tauri/src/redis_db.rs`
+
+### [MODIFY] [redis_db.rs](../src-tauri/src/redis_db.rs) — command mới
+
+| Command | Phase | Vai trò |
+|---|---|---|
+| `redis_get_elements` | 1 | Một trang phần tử (quyết định 1) |
+| `redis_set_read_only` | 1 | Đồng bộ toggle chỉ đọc của App vào `RedisState` |
+| `redis_delete_by_pattern` | 2 | SCAN + `UNLINK` theo lô 500, progress + huỷ qua `Channel`/`cancel_flags` |
+| `redis_slowlog_get` / `redis_slowlog_reset` / `redis_slowlog_config` | 3 | `SLOWLOG GET/RESET/LEN` + `CONFIG GET|SET slowlog-log-slower-than\|slowlog-max-len` (SET là ghi → chịu read-only) |
+| `redis_pubsub_start` / `redis_pubsub_stop` / `redis_publish` | 3 | Connection riêng (quyết định 4) |
+| `redis_monitor_start` / `redis_monitor_stop` | 3 | Connection riêng + giới hạn cứng |
+| `redis_json_get` / `redis_json_set` / `redis_json_del` | 4 | `JSON.GET/SET/DEL` theo path, chỉ bật khi `caps` thấy module |
+| `redis_set_key_bytes` | 4 | `SET` từ `Vec<u8>` — điều kiện để **sửa được** giá trị nhị phân qua HEX editor |
+| `redis_stream_groups` / `redis_stream_pending` / `redis_stream_ack` / `redis_stream_claim` | 4 | `XINFO GROUPS/CONSUMERS`, `XPENDING`, `XACK`, `XCLAIM` |
+| `redis_analyze_db` | 5 | Lấy mẫu ≤10k key (SCAN) + `MEMORY USAGE`/`TYPE`/`TTL` qua pipeline → tổng hợp theo kiểu, namespace, phân bố TTL; ngoại suy khi vượt mẫu và **ghi rõ là ngoại suy** |
+
+Sửa hàm sẵn có: `redis_get_key` (trả `length` + trang đầu + `unsupported`), `tokenize` (escape),
+`redis_execute_cmd` (whitelist + guard + bắt `SELECT`), `redis_connect` (đọc `caps`, nhận `readOnly`).
+
+### [MODIFY] [lib.rs](../src-tauri/src/lib.rs)
+`invoke_handler!` hiện có 24 command redis (dòng 160-183). Thiếu đăng ký = runtime "unknown command".
+
+---
+
+## 🖥️ Frontend
+
+### [MODIFY] [dbHelper.ts](../src/utils/dbHelper.ts)
+Wrapper cho từng command mới + type `RedisElementsPage`, `RedisCaps`, `RedisSlowLogEntry`,
+`RedisAnalysis`. `redisScanKeys` được dùng lại cho "Nạp tiếp" thay vì xoá.
+
+### [NEW] `src/utils/redisKeyTree.ts` — phần thuần, có test
+`buildKeyTree(keys, delimiter)` → cây namespace + số key mỗi nhánh; `windowSlice(...)` cho virtualize
+(hoặc tách `src/utils/virtualWindow.ts` nếu muốn dùng lại cho `DataGrid`). Delimiter mặc định `:`, lưu
+theo **`connKey`** (`tf_redis_delim`) — không key theo `dbName` (luật `utils/connKey.ts`).
+
+### [MODIFY] [redisDecode.ts](../src/utils/redisDecode.ts)
+Thêm format chọn tay: `auto | raw | json | php | hex | binary | ascii`. `hex` render 16 byte/dòng có
+offset + cột ASCII; parse ngược từ hex về `Uint8Array` cho `redis_set_key_bytes`. Giữ auto-detect hiện
+tại làm mặc định. Format đang chọn lưu theo `connKey`.
+
+### [MODIFY] [RedisBrowser.tsx](../src/components/RedisBrowser.tsx) (942 dòng — **tách file**)
+File đã dài; mỗi tab mới sẽ đẩy nó qua 2.000 dòng. Tách theo đúng cách `sql/` được tách khỏi
+`SqlEditor.tsx`: `redis/KeyList.tsx` (tree + virtualize + bulk), `redis/ValuePanel.tsx`,
+`redis/CollectionTable.tsx` (thêm phân trang), `redis/StreamPanel.tsx`, `redis/Console.tsx`,
+`redis/Dashboard.tsx`, `redis/SlowLog.tsx`, `redis/PubSub.tsx`, `redis/Profiler.tsx`,
+`redis/Analysis.tsx`. `RedisBrowser.tsx` chỉ còn layout + state chung.
+
+Ngoài ra: dialog xác nhận dùng `Modal`/`ConfirmDialog` — hiện đang dùng `confirm()`/`prompt()` của
+browser (7 chỗ: xoá key, FLUSHDB, xoá phần tử, tạo key, rename, TTL), trái với luật "mọi dialog dựng từ
+`Modal.tsx`" và không dịch được. Đổi luôn trong Phase 2.
+
+### [MODIFY] [i18n](../src/i18n/locales/en.ts)
+Namespace `redis.*` hiện ~60 key; thêm ~80 key (phân trang, tree, bulk, slowlog, pubsub, profiler,
+formatter, analysis, kiểu chưa hỗ trợ). `vi.ts`/`ja.ts` là `typeof en` → thiếu key là **compile error**.
+Placeholder `{{n}}`, **không** `{{count}}`.
+
+### [MODIFY] [backendErrors.ts](../src/utils/backendErrors.ts)
+Hiện chỉ có 3 entry redis (`Chưa kết nối Redis`, `PING lỗi: …`, `Không thể kết nối Redis: …`). Thêm
+message mới của các command trên + case round-trip trong `__tests__/backendErrors.test.ts`.
+
+---
+
+## 🚦 Thứ tự triển khai
+
+| Phase | Nội dung | Định nghĩa "xong" |
+|---|---|---|
+| **1** | Phân trang phần tử; trần + virtualize danh sách key; read-only chặn ở Rust + guard lệnh blocking + tokenizer escape; `caps`; kiểu chưa hỗ trợ | Hash 1M field mở tức thì và server không bị block; 2M key không làm app đứng; ở chế độ chỉ đọc, `FLUSHALL` trong console bị từ chối |
+| **2** | Tree view namespace; bulk delete theo pattern (progress + huỷ); auto-refresh; cột kích thước key; thay `confirm()`/`prompt()` bằng `Modal` | Xoá 500k key theo `cache:*` có tiến trình, huỷ được, số liệu báo đúng |
+| **3** | Slow Log; Pub/Sub; Profiler (giới hạn cứng); CLI help + auto-complete | Profiler chạy 60s trên server có tải mà app không phình RAM |
+| **4** | ReJSON CRUD; formatter chọn tay + HEX editor (sửa được giá trị nhị phân); consumer groups | Sửa được một key nhị phân qua HEX mà bytes không đổi ngoài phần đã sửa |
+| **5** | Database analysis (memory/top keys/top namespace/TTL) | Báo cáo trên DB 1M key xong dưới 30s, nói rõ phần nào là ngoại suy |
+
+Mỗi phase là một PR độc lập chạy được.
+
+---
+
+## 📋 Kế hoạch kiểm thử
+
+### Rust (không cần cargo — cách đã dùng cho `split_sql_statements`)
+Trích ra file `.rs` độc lập + `fn main()` assert, `rustc --edition 2024 -o check.exe check.rs` (cần
+MinGW64 `bin` trong PATH từ `dev-start.bat`). Ca bắt buộc:
+- `is_read_only_cmd`: `GET`/`SCAN`/`INFO`/`CONFIG GET`/`EVAL_RO`/`XINFO` → true; `SET`/`DEL`/`FLUSHALL`/
+  `CONFIG SET`/`EVAL`/`JSON.SET`/`FT.DROPINDEX`/`XGROUP CREATE`/`MEMORY PURGE`/`SHUTDOWN` → false;
+  lệnh lạ không có trong bảng → **false** (an toàn mặc định).
+- `tokenize`: `"a b"`, `'a b'`, `"a\"b"`, `"a\\b"`, `"\x41"`, chuỗi lẻ dấu nháy, khoảng trắng liên tiếp,
+  tab, UTF-8.
+- Cursor encode/decode từng kiểu + fallback `XRANGE` cho server < 6.2.
+- Parser reply của `SLOWLOG GET` (mảng lồng, có/không `client-addr`, `client-name`).
+
+### TS (`npm test`)
+`redisKeyTree.test.ts` (delimiter lạ, key rỗng, key toàn dấu `:`, một cấp, 10k key),
+`virtualWindow.test.ts` (biên: scrollTop 0, cuối danh sách, danh sách ngắn hơn viewport),
+`redisDecode.test.ts` (mở rộng: hex round-trip, format override, byte không phải UTF-8),
+`locales.test.ts`, `backendErrors.test.ts`. Rồi `cmd /c "npx tsc -b"` và `cmd /c "npx oxlint"` — giữ
+output sạch (oxlint chạy cả default set).
+
+### Manual (bắt buộc)
+1. Hash 1M field, list 1M phần tử, zset 500k: mở, cuộn, sửa **phần tử ở trang 3** → đúng phần tử.
+2. Xoá phần tử list ở trang 2 → đúng index tuyệt đối (ca dễ sai nhất của Phase 1).
+3. 2M key, pattern `*`: chạm trần 100k, có băng cảnh báo, "Nạp tiếp" tiếp đúng chỗ.
+4. Chế độ chỉ đọc: mọi nút bị chặn **và** console từ chối `SET`/`FLUSHALL`/`CONFIG SET`; `GET`/`INFO` chạy.
+5. Console: `SUBSCRIBE ch` bị từ chối kèm gợi ý (không treo); `SELECT 3` đổi cả state UI.
+6. KeyDB + Dragonfly + Valkey + Redis 6.0: scan, phân trang, stream `(id` fallback, `MODULE LIST` bị ACL chặn.
+7. TLS (`rediss`) tới một server có cert thật.
+8. Bulk delete `test:*` giữa 500k key → huỷ giữa đường, số đã xoá khớp thực tế trong DB.
+9. Profiler trên server đang có tải → dừng đúng ngưỡng, RAM WebView phẳng.
+10. Giá trị nhị phân: sửa 1 byte qua HEX → `MEMORY USAGE`/`STRLEN` không đổi, các byte khác nguyên vẹn.
+11. Đổi ngôn ngữ EN/VI/JA khi đang mở tab Redis → nhãn đổi (lưu ý: text đã in vào console/profiler
+    **không** dịch lại — cùng tính chất với `TerminalPanel.tsx`).
+
+---
+
+## ⚠️ Rủi ro
+
+| Rủi ro | Xử lý |
+|---|---|
+| Whitelist read-only bỏ sót lệnh ghi mới/module | Mặc định **từ chối** lệnh không có trong bảng; bảng chia theo prefix module (`JSON.`, `FT.`, `TS.`) |
+| Rank-based paging của zset lệch khi có ghi đồng thời | Chấp nhận + nút refresh; ghi rõ trong tooltip, không giả vờ là snapshot |
+| `MEMORY USAGE` trên 10k key làm chậm server | Pipeline theo lô + `SCAN COUNT` nhỏ + nút huỷ; cảnh báo trước khi chạy như bản gốc |
+| MONITOR làm chậm server production | Dialog xác nhận nêu rõ, tự dừng 60s/50k message, không tự bật lại |
+| Tách `RedisBrowser.tsx` thành 10 file làm hồi quy phần đang chạy tốt | Tách **trước** khi thêm tab mới (đầu Phase 2), một PR chỉ di chuyển code, không đổi hành vi |
+| Kiểu `unsupported` vẫn còn (vector set, TSDB) sau Phase 4 | Có thông báo rõ + gợi ý lệnh CLI — vẫn tốt hơn hiện trạng "trống trơn" |
+| Trần 100k key bị coi là "app không xem được DB lớn" | Băng cảnh báo nói rõ lý do + "Nạp tiếp"; tree view làm việc điều hướng bớt phụ thuộc vào danh sách phẳng |
+
+---
+
+## ✅ Đã làm khác kế hoạch (ghi lại để khỏi tra lại)
+
+| Kế hoạch | Thực tế | Lý do |
+|---|---|---|
+| `redis_pubsub_stop` / `redis_monitor_stop` | Dùng lại `cancel_query(query_id)` | Cùng cơ chế `cancel_flags` đã có cho scan; hai command nữa chỉ để làm việc y hệt |
+| "Nạp tiếp" dùng `redis_scan_keys` | `redis_scan_stream` + tham số `start_cursor`, cursor đi kèm mỗi batch | Nạp tiếp vẫn cần streaming; dùng bản không stream sẽ phải tự vòng lặp ở frontend |
+| Sau khi sửa phần tử thì nạp lại key | Patch tại chỗ dòng vừa ghi | Nạp lại đẩy người dùng về trang 1. Ngoại lệ: **xoá phần tử của list** vẫn đọc lại các trang đã nạp, vì index của mọi phần tử sau đó dịch đi |
+| Tách file ở đầu Phase 2 | Tách cùng lúc với việc thêm tab | Diff to hơn dự tính, nhưng tránh viết tab mới vào file 942 dòng rồi tách lại |
+| — | Thêm `KEEPTTL` cho `SET` (Redis ≥ 6.0) | Bug sẵn có: sửa giá trị string làm mất TTL của key mà không báo gì |
+| — | Chuỗi > 1 MB chỉ đọc + băng cảnh báo | `redis_get_key` cắt ở 1 MB; nếu vẫn cho Lưu thì phần còn lại của giá trị bị xoá |
+| Tier A+B formatter để "Không làm" | **zlib/deflate đã làm** (`DecompressionStream('deflate')`) | Đây là định dạng PHP `gzcompress` — đang hiện ra như rác, tức là bug chứ không phải tính năng. Không cần crate/lib mới. msgpack/lz4/zstd/brotli vẫn chưa làm |
+
+## ⛔ Chưa làm
+
+**Trong phạm vi plan:**
+1. **Cột kích thước key ở danh sách** (Phase 2). Cần `MEMORY USAGE` cho từng key đang hiển thị → thêm một command batch + một pipeline mỗi lần cuộn. Kích thước vẫn hiện ở panel chi tiết và ở tab Analysis.
+2. **Xoá dead code**: `redis_scan_keys` (Rust) + `dbHelper.redisScanKeys` giờ không còn ai gọi (xem bảng trên).
+3. **Analysis chưa có lịch sử báo cáo** và **recommendations** như bản gốc — chỉ có báo cáo tại thời điểm chạy.
+4. **`cargo build` chưa chạy** (theo quy ước của repo: máy này `cargo` từng crash trong build script Tauri, Rust do người dùng tự verify). Helper thuần đã verify bằng `rustc` độc lập; phần dùng driver (`redis::aio::PubSub`/`Monitor`, `redis::Value` variants) đã đối chiếu tay với source crate 1.4.1 trong registry.
+5. **11 ca kiểm thử manual** trong mục "Manual (bắt buộc)" — chưa chạy ca nào, cần server Redis thật (và KeyDB/Dragonfly/Valkey/Redis 6.0 cho ca tương thích).
+
+**Ngoài phạm vi plan (vẫn thiếu so với RedisInsight), xếp theo mức quan trọng:**
+
+1. **SSH tunnel + TLS cert/CA cho Redis** — `build_redis_url` bỏ qua hoàn toàn phần SSH và TLS chỉ là bật/tắt `rediss`. Nghĩa là ElastiCache/Memorystore sau bastion, hoặc Redis bắt client cert, **không kết nối được**. Đây là thứ quyết định *ai* dùng được app, nên nó quan trọng hơn mọi tab đã thêm; `russh` và các field SSH trong UI đã có sẵn (dùng cho SQL), phần thiếu là wiring.
+2. **Cluster / Sentinel** — cùng loại lý do nhưng đắt hơn: `RedisState` phải thành enum + feature `cluster-async`.
+3. Formatter msgpack/protobuf/Java serialized/pickle + decompression lz4/zstd/brotli (tier B cần crate pure-Rust `ruzstd`/`lz4_flex`/`brotli`; tier C `protobuf` không có `.proto` thì chỉ dump được wire format).
+4. Search workspace (`FT.*`), Workbench visualization + tutorial, editor cho vector set/TimeSeries.
+5. Copilot, RDI, auto-discovery Cloud/Azure, plugin system, nhiều kết nối song song, bulk upload từ file.

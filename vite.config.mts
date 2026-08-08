@@ -11,11 +11,36 @@ export default defineConfig({
     }
   },
   clearScreen: false,
+  optimizeDeps: {
+    include: [
+      'react',
+      'react-dom',
+      '@monaco-editor/react',
+      'monaco-editor',
+      'monaco-sql-languages',
+      'lucide-react',
+      'sql-formatter',
+      '@xterm/xterm',
+      '@xterm/addon-fit'
+    ]
+  },
   server: {
     port: 5173,
     strictPort: true,
+    host: '127.0.0.1',
+    warmup: {
+      clientFiles: ['./src/main.tsx', './src/App.tsx', './src/index.css']
+    },
     watch: {
-      ignored: ['**/*.db', '**/*.sqlite', '**/*.dump', '**/*.gz', '**/*.sql']
+      ignored: [
+        '**/src-tauri/target/**',
+        '**/src-tauri/gen/**',
+        '**/*.db*',
+        '**/*.sqlite*',
+        '**/*.dump',
+        '**/*.gz',
+        '**/*.sql'
+      ]
     }
   },
   envPrefix: ['VITE_', 'TAURI_'],
