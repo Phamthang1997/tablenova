@@ -33,7 +33,7 @@ sqlx-mysql = { version = "0.9.0", default-features = false, features = [
 ] }
 bigdecimal = "0.4"
 uuid = "1"
-russh = "0.62.2"
+russh = "0.62.5"
 portable-pty = "0.8"
 flate2 = "1.0.35"
 zip = "8.6.0"
@@ -60,4 +60,6 @@ keyring = { version = "4.1.5", features = ["windows-native-keyring-store"] }
 keyring = { version = "4.1.5", features = ["apple-native-keyring-store"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-keyring = { version = "4.1.5", features = ["zbus-secret-service-keyring-store"] }
+keyring = { version = "4.1.5", features = [
+    "zbus-secret-service-keyring-store",
+] }

@@ -30,7 +30,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis", "app", "dmg"],
     "publisher": "TableNova Team",
     "copyright": "Copyright © 2026 TableNova. All rights reserved.",
     "licenseFile": "installer/LICENSE.txt",
