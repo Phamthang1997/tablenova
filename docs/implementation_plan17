@@ -1,0 +1,369 @@
+# Kế hoạch Thiết kế & Phát triển: Chế độ transaction thủ công (đối chiếu DataGrip)
+
+> Mục này được [plan16](implementation_plan16) đẩy ra ngoài phạm vi với ghi chú *"Gắn liền với vòng
+> đời connection"*. Plan này gỡ đúng chỗ đó — nhưng **không** chờ refactor `DatabaseManager` thành
+> map nhiều connection (xem quyết định kiến trúc #1).
+
+Comment mới trong code viết **tiếng Anh**; message lỗi trả về từ Rust vẫn **tiếng Việt** rồi dịch ở
+[backendErrors.ts](../src/utils/backendErrors.ts) (cặp twin bắt buộc cập nhật cùng lúc).
+
+---
+
+## 🔍 Hiện trạng (đo, không đoán)
+
+| Điều người dùng mong đợi | Thực tế trong code |
+|---|---|
+| Bật/tắt auto-commit | Không có. Mọi câu lệnh chạy ở chế độ auto-commit của server. |
+| Đặt isolation level | Không có, không có chỗ nào phát `SET TRANSACTION`. |
+| Tự gõ `BEGIN` / `ROLLBACK` trong SQL Editor | **Chạy nhưng vô nghĩa trên Postgres/MySQL** — xem bên dưới. |
+| Commit của lưới là một transaction đóng kín | **Sai — hiện không có transaction nào cả.** |
+
+Hai phát hiện đáng kể:
+
+**1. `commit_changes` không hề mở transaction.** [database.rs:1985](../src-tauri/src/database.rs#L1985)
+lặp `execute_raw_sql_generic(&conn_type, sql).await?` cho từng câu. Lỗi ở câu thứ 3 để lại 2 câu đầu
+đã ghi xuống DB, trong khi modal preview vừa hứa "N câu lệnh sẽ chạy". Đây đúng là mục 5.2 của
+plan16, chưa làm. Ảnh hưởng cả `DataGrid` ([DataGrid.tsx:923](../src/components/DataGrid.tsx#L923))
+lẫn lưới kết quả SQL ([SqlEditor.tsx:2068](../src/components/SqlEditor.tsx#L2068)).
+
+**2. Người dùng gõ `BEGIN;` trong SQL Editor thì trên Postgres/MySQL nó rơi vào một session ngẫu nhiên.**
+`PgPool::connect` ([database.rs:348](../src-tauri/src/database.rs#L348)) dùng pool mặc định của sqlx
+(10 connection) và mọi đường chạy đều `pool.acquire()` **mỗi câu một lần**. Nên `BEGIN` nằm ở
+connection A, `UPDATE` kế tiếp ở connection B, `COMMIT` ở connection C — không câu nào thuộc
+transaction nào. Tệ hơn: connection A quay về pool trong trạng thái *idle in transaction*, giữ khoá
+trên server cho đến khi pool tái sử dụng nó (sqlx chỉ theo dõi transaction do API `begin()` của nó mở,
+không biết gì về `BEGIN` gửi dạng text). Trên SQLite thì ngược lại — chỉ có **một**
+`Arc<Mutex<Connection>>` ([database.rs:136](../src-tauri/src/database.rs#L136)) nên `BEGIN` gõ tay lại
+chạy đúng. Ba dialect đang có ba hành vi khác nhau và không cái nào được nói ra với người dùng.
+
+Cái bẫy ở (2) đã được nhận diện một lần rồi và giải bằng struct `Exec`
+([database.rs:3082](../src-tauri/src/database.rs#L3082)) cho Data Generator/restore. Plan này là mở
+rộng đúng ý tưởng đó thành một session sống lâu.
+
+---
+
+## 🎯 Phạm vi
+
+### Có làm
+
+| DataGrip | TableNova | Phase |
+|---|---|---|
+| Commit của lưới là một transaction nguyên tử | ⬜ | 0 |
+| Auto-commit ON/OFF | ⬜ | 1–2 |
+| Nút Commit / Rollback + số câu lệnh đang treo | ⬜ | 2 |
+| Trạng thái transaction hiện trên thanh tiêu đề | ⬜ | 2 |
+| Chặn/hỏi lại khi đóng app, ngắt kết nối, đổi database lúc còn tx mở | ⬜ | 2 |
+| Chọn isolation level (theo dialect) | ⬜ | 3 |
+| Transaction chỉ đọc (`READ ONLY`) | ⬜ | 3 |
+| Savepoint (đặt / rollback về) | ⬜ | 4 |
+| Cảnh báo tx bị abort (Postgres) và tx tự commit (MySQL DDL) | ⬜ | 4 |
+
+### Không làm (nêu rõ để khỏi hỏi lại)
+
+- **Transaction riêng cho từng tab.** Cần `DatabaseManager` nhiều connection — xem quyết định #1.
+- **Auto-commit theo từng câu lệnh trong lô** (`;`-separated chạy nửa auto nửa manual): mơ hồ, DataGrip
+  cũng không có.
+- **Transaction phân tán / XA / two-phase commit.**
+- **Redis `MULTI`/`EXEC`**: khác hẳn về ngữ nghĩa (queue lệnh, không có rollback), tách plan riêng nếu cần.
+- **Đổi `commit_changes` sang khoá chính phức hợp** — vẫn là mục 5.1 của plan16, độc lập với plan này.
+
+---
+
+## 🏗️ Quyết định kiến trúc (đọc trước khi code)
+
+### 1. Transaction thuộc về **kết nối**, không thuộc về tab
+
+Trực giác đầu tiên là làm giống DataGrip: mỗi console một session, mỗi session một transaction. Ở đây
+thì không được — `DatabaseManager` giữ **đúng một** `DbConnection` cho cả app
+([database.rs:141](../src-tauri/src/database.rs#L141)), và mọi command đều clone handle đó ra. Muốn
+tx theo tab thì phải:
+
+- đổi `DatabaseManager.connection` thành map, sửa ~55 chỗ gọi `execute_raw_sql_generic` để biết mình
+  thuộc session nào, và
+- ghim một `PoolConnection` cho mỗi tab đang mở tx. Pool mặc định của sqlx là **10** connection — mở
+  10 tab manual-commit là mọi command còn lại của app treo ở `acquire()`.
+
+Nên: **một transaction cho cả kết nối**, hiển thị ở thanh tiêu đề (nơi đã có
+[`DbConnectionStatusPill`](../src/components/TitleBar.tsx#L627)), không phải ở toolbar từng tab. Đây là
+mô hình *trung thực* với kiến trúc hiện có: app vốn chỉ có một connection, nói rằng hai tab có hai
+transaction là nói dối. Khi nào `DatabaseManager` thành map (mục "Nhiều connection mở song song" của
+plan16) thì nâng lên per-tab là chuyện của plan đó.
+
+### 2. Auto-commit OFF = **BEGIN ngầm phía client**, không dùng cờ autocommit của server
+
+Cách "đúng theo dialect" không tồn tại: MySQL có `SET autocommit=0`, Postgres **không có** (autocommit
+của psql là hành vi client), SQLite cũng không. Nếu đi theo cờ server thì mỗi dialect một ngữ nghĩa
+khác nhau và trạng thái ở Rust không thể suy ra được.
+
+Làm như JDBC/DataGrip: giữ cờ `autocommit` ở phía Rust; khi nó OFF và một câu lệnh sắp chạy mà **chưa**
+có transaction mở, phát `BEGIN` (`START TRANSACTION` cho MySQL) trước rồi mới chạy câu lệnh. Một đường
+đi, ba dialect, và trạng thái luôn do ta biết chứ không phải hỏi server.
+
+### 3. Session đã ghim thì **mọi** đường chạy SQL phải đi qua nó
+
+Nếu chỉ route câu lệnh của SQL Editor mà để Sidebar/`get_table_data`/catalog chạy qua pool như cũ, thì
+sau một `UPDATE` chưa commit người dùng bấm refresh lưới sẽ thấy **dữ liệu cũ** — connection khác không
+nhìn thấy phần chưa commit. Đó là lỗi rất khó chịu và rất dễ bị hiểu là "app mất dữ liệu".
+
+Có bốn đường chạy SQL, phải sửa cả bốn:
+
+| Đường | Vị trí | Ghi chú |
+|---|---|---|
+| `execute_raw_sql_generic` | [database.rs:2957](../src-tauri/src/database.rs#L2957) | Phễu chính, ~55 chỗ gọi trong `database.rs` + 3 ở `data_generator.rs` + 3 ở `db_compare.rs` |
+| `run_bound_query` | [database.rs:3140](../src-tauri/src/database.rs#L3140) | Truy vấn có tham số |
+| `stream_one_statement` | [database.rs:1607](../src-tauri/src/database.rs#L1607) | Đường của SQL Editor |
+| `Exec` | [database.rs:3082](../src-tauri/src/database.rs#L3082) | Data Generator, restore — xem #8 |
+
+Không sửa chữ ký của 55 chỗ gọi. Session sống trong một `static` cấp module cạnh `DatabaseManager`
+(vốn cũng đã là singleton), và `execute_raw_sql_generic` **tự hỏi** session trước khi `acquire()` từ
+pool. Đây là global state, chấp nhận có ý thức: app chỉ có một connection nên chỉ có một session, và
+phương án còn lại là sửa hàng trăm chữ ký để truyền một thứ luôn duy nhất.
+
+Để làm được vậy, phần decode dòng trong `execute_raw_sql_generic` phải tách ra thành hàm generic theo
+`sqlx::Executor` — cả `&PgPool` lẫn `&mut PgConnection` đều impl trait đó, nên một thân hàm dùng chung
+cho hai chế độ, không nhân đôi code decode (nhắc lại: decode **theo chỉ số**, và `uniquify_columns`
+trước khi dựng dòng — luật ở CLAUDE.md, phần refactor này không được làm hỏng).
+
+### 4. Rust là nguồn sự thật của trạng thái tx; đẩy về UI cùng kết quả
+
+Không sinh thêm cặp twin phải đồng bộ tay (điều kiện "xong" của plan16). Frontend **không** phân tích
+SQL để đoán tx đang mở hay không. Mỗi lệnh chạy xong, Rust trả kèm
+
+```jsonc
+{ "tx": { "autocommit": false, "open": true, "statements": 3, "sinceMs": 74210, "aborted": false } }
+```
+
+và `execute_query_stream` gửi khối này trong message `done`/`error`. UI chỉ hiển thị.
+
+### 5. Câu lệnh **tự** đóng transaction phải được phân loại ở Rust
+
+Trạng thái sẽ nói dối nếu bỏ qua hai nhóm:
+
+- Người dùng tự gõ `COMMIT;` / `ROLLBACK;` / `BEGIN;` trong SQL Editor.
+- MySQL **implicit commit khi gặp DDL** (`CREATE`/`ALTER`/`DROP`/`TRUNCATE`/`RENAME`, `LOCK TABLES`,
+  `START TRANSACTION`, …) — CLAUDE.md đã ghi cái bẫy này ở mục restore.
+
+Một helper thuần `fn tx_effect(dialect: &str, stmt: &str) -> TxEffect` (`None | Begin | Commit |
+Rollback | Savepoint(name) | ReleaseSavepoint | ImplicitCommit`) chạy trên text đã đi qua
+`strip_leading_comments` ([database.rs:1289](../src-tauri/src/database.rs#L1289) — dùng lại, đừng viết
+bộ phân loại thứ hai). Thuần, verify bằng thủ thuật `rustc` độc lập.
+
+### 6. Postgres: transaction bị **abort** là một trạng thái riêng
+
+Một câu lỗi trong tx của Postgres làm mọi câu sau lỗi `25P02 current transaction is aborted` cho đến
+khi `ROLLBACK`. Nếu UI vẫn hiện "3 câu đang treo, bấm Commit" thì người dùng bấm Commit và mất hết —
+đúng ra phải hiện "transaction đã hỏng, chỉ còn Rollback (hoặc rollback về savepoint)".
+
+Ta chỉ có message dạng chuỗi từ sqlx, nên nhận diện bằng chuỗi và **giữ việc đó ở Rust**, trả ra
+`aborted: bool`. Không để frontend so chuỗi (CLAUDE.md: không rẽ nhánh theo text hiển thị).
+
+### 7. SQLite không có isolation level — có mức khoá
+
+`SET TRANSACTION ISOLATION LEVEL` không tồn tại ở SQLite. Thứ tương ứng là `BEGIN
+DEFERRED|IMMEDIATE|EXCLUSIVE`. Vậy danh sách tuỳ chọn ở UI **theo dialect**, không phải một danh sách
+chung bị disable bớt:
+
+| Dialect | Tuỳ chọn |
+|---|---|
+| Postgres | `READ COMMITTED` (mặc định), `REPEATABLE READ`, `SERIALIZABLE`, + `READ ONLY` |
+| MySQL | `READ UNCOMMITTED`, `READ COMMITTED`, `REPEATABLE READ` (mặc định), `SERIALIZABLE`, + `READ ONLY` |
+| SQLite | `DEFERRED` (mặc định), `IMMEDIATE`, `EXCLUSIVE` |
+
+Thêm nữa, tx ghi trên SQLite **khoá cả file** — mà app chỉ có một handle nên chính app tự chặn mình,
+không phải chặn tiến trình khác. Đặt `busy_timeout` và nói rõ trong tooltip.
+
+### 8. Vòng đời: chỗ nào transaction phải chết một cách rõ ràng
+
+Mỗi chỗ dưới đây, im lặng là sai — hoặc rollback rồi báo, hoặc chặn lại và hỏi:
+
+| Sự kiện | Xử lý |
+|---|---|
+| `disconnect_db` ([database.rs:379](../src-tauri/src/database.rs#L379)) | ROLLBACK trước khi thả connection, báo cho UI |
+| `switch_database` ([database.rs:3335](../src-tauri/src/database.rs#L3335)) | Chặn nếu tx đang mở — pool bị thay, tx sẽ chết âm thầm |
+| `connect_db` sang kết nối khác | Như trên |
+| Đóng cửa sổ app | Hỏi lại (Commit / Rollback / Huỷ) — Tauri `onCloseRequested` |
+| Refresh token IAM thay pool ([database.rs:305](../src-tauri/src/database.rs#L305)) | Không thay pool khi tx đang mở; hoãn đến khi đóng tx |
+| Data Generator / `restore_backup` | Chặn khi tx đang mở: chúng tự `Exec::acquire` một connection khác nên sẽ **kẹt khoá** với tx của người dùng, chứ không hỏng dữ liệu |
+
+### 9. Ghim connection = độ song song về 1
+
+Khi tx mở, mọi câu lệnh xếp hàng qua một `tokio::Mutex<Exec>`. Một `SELECT` nặng sẽ chặn Sidebar refresh.
+Đây là ngữ nghĩa đúng của "một session", không phải bug — nhưng phải cho **huỷ** được (`cancel_query`
+đã có) và không bao giờ giữ `MutexGuard` qua `.await` của registry ngoài (lấy `Arc` ra rồi thả khoá —
+đúng khuôn mẫu CLAUDE.md).
+
+---
+
+## 📦 Phase 0 — `commit_changes` thành transaction thật (chặn mọi phase sau)
+
+Trước khi cho người dùng điều khiển transaction, cái transaction mà app **tự** chạy phải tồn tại đã.
+Đây là mục 5.2 của plan16, làm ở đây vì Phase 1 dùng lại đúng hạ tầng đó.
+
+- `commit_changes` ([database.rs:1888](../src-tauri/src/database.rs#L1888)): thay vòng lặp
+  `execute_raw_sql_generic` bằng `Exec::acquire` → `BEGIN` → chạy hết → `COMMIT`, lỗi thì `ROLLBACK`
+  rồi trả lỗi câu nào hỏng (giữ nguyên message tiếng Việt để `backendErrors.ts` khớp).
+- Comment tại chỗ: lô này **chỉ DML** — thêm DDL vào đây thì MySQL implicit-commit, rollback mất tác dụng.
+- Khi Phase 1 xong: nếu người dùng đang ở manual-commit, `commit_changes` **không** tự BEGIN/COMMIT nữa
+  mà nhập vào tx đang mở (nếu không thì bấm "Lưu" ở lưới sẽ commit lén phần SQL Editor đang treo).
+- Test: manual, cố tình cho câu thứ 2 vi phạm khoá ngoại → câu 1 phải biến mất. Ba dialect.
+
+## 📦 Phase 1 — Hạ tầng session (Rust)
+
+**[NEW] `src-tauri/src/tx_session.rs`**
+
+```rust
+pub struct TxSession {
+    exec: Arc<tokio::Mutex<Exec>>,   // connection đã ghim
+    autocommit: bool,
+    open: bool,                      // đã phát BEGIN chưa
+    aborted: bool,                   // Postgres 25P02
+    statements: usize,
+    started_at: Option<Instant>,
+    isolation: Option<String>,
+    read_only: bool,
+    generation: u64,                 // khớp AppState.conn_generation -> phát hiện pool đã bị thay
+}
+```
+
+- `ensure_open()` — phát `BEGIN`/`START TRANSACTION` (kèm `SET TRANSACTION …` của Phase 3) nếu cần.
+- `run_through(sql)` — chạy trên connection đã ghim, cập nhật `statements`/`aborted` theo `tx_effect()`.
+- `commit()` / `rollback()` / `status()`.
+- `tx_effect()` + bảng DDL tự commit của MySQL — hàm thuần, có test `rustc`.
+
+**[MODIFY] [database.rs](../src-tauri/src/database.rs)**
+
+- Tách phần decode dòng của `execute_raw_sql_generic` thành hàm generic theo `sqlx::Executor` (xem #3),
+  rồi cho `execute_raw_sql_generic` / `run_bound_query` / `stream_one_statement` hỏi session trước khi
+  `acquire()`.
+- `disconnect_db` / `switch_database` / IAM refresh: theo bảng ở #8.
+
+**[MODIFY] [lib.rs](../src-tauri/src/lib.rs)** — `AppState` thêm `tx: tx_session::TxState`; đăng ký 5
+command mới vào `invoke_handler!` (thiếu bước này là lỗi "unknown command" lúc chạy):
+`tx_set_autocommit`, `tx_commit`, `tx_rollback`, `tx_status`, `tx_set_isolation`.
+
+**[MODIFY] [backendErrors.ts](../src/utils/backendErrors.ts)** — các literal tiếng Việt mới:
+"Không có transaction nào đang mở", "Transaction đang mở — hãy commit hoặc rollback trước khi đổi
+database", "Transaction đã bị huỷ do lỗi trước đó, chỉ có thể rollback", …
+
+## 📦 Phase 2 — UI
+
+**[MODIFY] [dbHelper.ts](../src/utils/dbHelper.ts)** — 5 method tương ứng + type `TxStatus`; các method
+trả kết quả truy vấn kèm `tx` được mở rộng kiểu trả về.
+
+**[NEW] `src/components/TxControl.tsx`** — đặt cạnh `DbConnectionStatusPill` trên
+[TitleBar](../src/components/TitleBar.tsx#L627):
+
+```
+[ Auto ▾ ]                          <- auto-commit ON, không có gì khác hiện
+[ Manual ▾ ]  ● 3 câu · 1m14s  [Commit] [Rollback]
+[ Manual ▾ ]  ⚠ tx đã huỷ            [Rollback]      <- Postgres aborted
+```
+
+- Dựng từ [`Modal.tsx`](../src/components/Modal.tsx) nếu cần dialog (không tự chế overlay); nút dùng
+  **cả hai** class `btn btn-secondary` / `btn btn-primary`.
+- Phím tắt: Ctrl+Shift+Enter = Commit, Ctrl+Shift+Backspace = Rollback (chỉ khi manual).
+- Hỏi lại khi đóng app / ngắt kết nối / đổi database (ConfirmDialog: Commit / Rollback / Huỷ).
+- `SqlEditor` + `DataGrid`: khi manual-commit, nhãn nút "Lưu" đổi thành "Ghi vào transaction" và có
+  gợi ý rằng còn phải Commit — không đổi hành vi, chỉ đổi lời.
+- Trạng thái tx **không** vào localStorage: nó chết cùng process, ghi lại là mời gọi hiển thị sai sau
+  khi mở lại app.
+
+**[MODIFY] [i18n](../src/i18n/locales/en.ts)** — nhánh `tx.*` (~20 key) × EN/VI/JA. Không nội suy key
+động; placeholder `{{n}}`, không dùng `{{count}}`.
+
+## 📦 Phase 3 — Isolation level & read-only
+
+- Select theo dialect (bảng ở #7), lưu trong `TxSession`, áp vào lần `BEGIN` **kế tiếp** (không đổi
+  được giữa chừng — nói rõ ở tooltip thay vì âm thầm bỏ qua).
+- Postgres/MySQL: `SET TRANSACTION ISOLATION LEVEL x [READ ONLY]`; SQLite: đổi từ khoá của `BEGIN`.
+- Ghi nhớ lựa chọn theo **server** qua [`connKey()`](../src/utils/connKey.ts), không theo `dbName`.
+
+## 📦 Phase 4 — Savepoint & cảnh báo
+
+- `tx_savepoint(name)` / `tx_rollback_to(name)`; danh sách savepoint hiện trong `TxControl`.
+- Postgres: sau khi `aborted`, cho rollback về savepoint gần nhất để cứu phần trước đó.
+- Cảnh báo tx mở quá lâu (mốc mềm 5 phút) — long transaction giữ khoá và làm phình undo log/WAL.
+- MySQL: khi `tx_effect` trả `ImplicitCommit`, hiện thông báo một lần "câu lệnh DDL vừa rồi đã tự
+  commit transaction" thay vì để bộ đếm tụt về 0 không lý do.
+
+---
+
+## 🚦 Thứ tự triển khai
+
+1. Phase 0 (độc lập, giá trị ngay, không đụng UI).
+2. Refactor decode theo `Executor` — **không đổi hành vi**, chạy lại toàn bộ manual test hiện có trước
+   khi đi tiếp. Đây là bước rủi ro nhất của plan (chạm phễu mà cả app dùng).
+3. `tx_session.rs` + 5 command + vòng đời (#8).
+4. UI + i18n.
+5. Phase 3, rồi Phase 4.
+
+---
+
+## 📋 Kế hoạch kiểm thử
+
+### Rust (không cần cargo — cách đã dùng cho `split_sql_statements`)
+
+Tách phần thuần ra file tạm + `fn main()` với assert, `rustc --edition 2024`:
+
+- `tx_effect()`: `BEGIN`/`begin work`/`START TRANSACTION`/`COMMIT`/`ROLLBACK`/`SAVEPOINT s1`/
+  `ROLLBACK TO s1`/`RELEASE s1`, có comment dẫn đầu, `DELIMITER`, chữ hoa-thường lẫn lộn.
+- Bảng DDL tự commit của MySQL: `CREATE TABLE`, `ALTER`, `DROP`, `TRUNCATE`, `RENAME`, `LOCK TABLES`,
+  và các ca **âm** (`CREATE TEMPORARY TABLE` không implicit-commit ở MySQL, `SELECT ... FOR UPDATE` không).
+- Bộ sinh câu `BEGIN` theo dialect + isolation + read-only.
+- Nhận diện `aborted` của Postgres.
+
+### TS (`npm test`)
+
+- `tsc -b` sạch, `oxlint` sạch.
+- Không thêm test cho logic tx ở TS — cố tình: trạng thái do Rust đẩy sang, viết test TS ở đây là dựng
+  một twin mà plan này đang tránh.
+- `locales.test.ts` tự bắt key/placeholder thiếu.
+
+### Manual (bắt buộc, **cả ba** dialect)
+
+1. Manual-commit → `UPDATE` → refresh lưới ở tab khác → **phải thấy** giá trị chưa commit (kiểm tra #3).
+2. Rollback → refresh → giá trị cũ trở lại.
+3. Commit → mở client ngoài (psql/mysql/DB Browser) → thấy giá trị mới.
+4. Manual-commit → sửa ô trong `DataGrid` → Lưu → chưa Commit thì client ngoài **không** thấy.
+5. Postgres: câu lỗi giữa tx → câu sau báo abort → UI chỉ còn Rollback → Rollback xong chạy lại được.
+6. MySQL: `CREATE TABLE` giữa tx → thông báo implicit-commit, bộ đếm về 0, Rollback không khôi phục bảng.
+7. SQLite: tx ghi mở → thao tác khác của app vẫn chạy (đúng một handle), không `SQLITE_BUSY`.
+8. Đóng app / ngắt kết nối / đổi database khi tx mở → đúng hộp thoại, đúng kết quả cho từng lựa chọn.
+9. Mở Data Generator khi tx đang mở → bị chặn, message rõ ràng.
+10. Auto-commit ON: tất cả hành vi **giống hệt** hôm nay (regression).
+11. Ngôn ngữ: chuyển VI/JA khi tx đang mở → nhãn đổi, bộ đếm/đồng hồ không reset.
+
+---
+
+## ⚠️ Rủi ro
+
+| Rủi ro | Giảm thiểu |
+|---|---|
+| Refactor phễu `execute_raw_sql_generic` làm hỏng decode (cột trùng tên, decode theo chỉ số) | Bước 2 tách riêng, không đổi hành vi, chạy lại manual test trước khi làm tiếp |
+| Ghim connection làm cạn pool khi có tác vụ nền | Chỉ **một** session cho cả app (#1); các tác vụ lô bị chặn khi tx mở (#8) |
+| Người dùng để tx mở rồi quên → khoá bảng trên server production | Đồng hồ + cảnh báo 5 phút (Phase 4), trạng thái luôn hiện ở thanh tiêu đề |
+| `aborted` nhận diện bằng chuỗi, đổi theo phiên bản/locale của Postgres | Bắt cả SQLSTATE `25P02` lẫn chuỗi; sai sót chỉ làm mất cảnh báo, không làm mất dữ liệu |
+| Người dùng tự gõ `COMMIT` trong SQL Editor lệch với bộ đếm | `tx_effect()` chạy trên **mọi** câu đi qua session, không chỉ nút bấm |
+| Auto-commit OFF làm chậm app (mọi thứ qua một connection) | Nêu ở tooltip; mặc định vẫn là ON |
+
+---
+
+## ✅ Định nghĩa "xong"
+
+- `npx tsc -b` sạch, `npx oxlint` sạch, `npm test` xanh.
+- Manual test chạy hết trên **cả ba** dialect.
+- Auto-commit ON không đổi một hành vi nào so với hiện tại.
+- Không sinh thêm cặp code phải đồng bộ tay (`tx_effect` chỉ tồn tại ở Rust).
+- Mọi chuỗi mới là key i18n × EN/VI/JA; literal lỗi mới của Rust đã có trong `backendErrors.ts`.
+- CLAUDE.md được cập nhật: mô hình transaction, và luật "mọi đường chạy SQL mới phải hỏi session".
+
+---
+
+## 🔭 Ngoài phạm vi plan này
+
+| Mục | Ghi chú |
+|---|---|
+| Transaction riêng theo tab | Cần `DatabaseManager` nhiều connection — plan riêng, mở khoá luôn "copy bảng giữa 2 data source" |
+| Khoá chính phức hợp ở `commit_changes` | plan16 mục 5.1, độc lập |
+| Xem khoá đang giữ / process list / kill session | Nhóm admin |
+| Redis `MULTI`/`EXEC` | Ngữ nghĩa khác hẳn, không có rollback |

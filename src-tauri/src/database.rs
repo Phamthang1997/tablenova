@@ -472,7 +472,15 @@ pub async fn get_full_catalog(state: tauri::State<'_, crate::AppState>) -> Resul
             }
         }
     } else if db_type == "postgres" {
-        let col_sql = "SELECT table_name AS t, column_name AS c, data_type AS ty FROM information_schema.columns WHERE table_schema = 'public' ORDER BY table_name, ordinal_position".to_string();
+        // format_type() so hover/completion shows `varchar(45)` like the MySQL branch
+        // above (COLUMN_TYPE) instead of information_schema's bare `character varying`.
+        let col_sql = "SELECT cl.relname::text AS t, a.attname::text AS c, format_type(a.atttypid, a.atttypmod) AS ty \
+                       FROM pg_attribute a \
+                       JOIN pg_class cl ON cl.oid = a.attrelid \
+                       JOIN pg_namespace n ON n.oid = cl.relnamespace \
+                       WHERE n.nspname = 'public' AND cl.relkind IN ('r','v','m','p','f') \
+                         AND a.attnum > 0 AND NOT a.attisdropped \
+                       ORDER BY cl.relname, a.attnum".to_string();
         for row in rows_of(&execute_raw_sql_generic(&conn_type, col_sql).await?) {
             let t = cell(&row, "t").to_string();
             let entry = columns_map.entry(t).or_insert_with(|| Value::Array(vec![]));
@@ -787,11 +795,21 @@ pub async fn get_table_schema(state: tauri::State<'_, crate::AppState>, name: St
             }
         }
         DbConnection::Postgres(pool) => {
+            // format_type() instead of information_schema.data_type: the latter drops
+            // length/precision (`character varying`, `numeric`) so the structure editor
+            // could neither show `varchar(45)` nor round-trip it into ALTER TABLE.
             let sql = format!(
-                "SELECT column_name, data_type, is_nullable, column_default 
-                 FROM information_schema.columns 
-                 WHERE table_name = '{}' AND table_schema = 'public'
-                 ORDER BY ordinal_position", name
+                "SELECT a.attname::text AS column_name,
+                        format_type(a.atttypid, a.atttypmod) AS data_type,
+                        CASE WHEN a.attnotnull THEN 'NO' ELSE 'YES' END AS is_nullable,
+                        pg_get_expr(d.adbin, d.adrelid) AS column_default
+                 FROM pg_attribute a
+                 JOIN pg_class c ON c.oid = a.attrelid
+                 JOIN pg_namespace n ON n.oid = c.relnamespace
+                 LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+                 WHERE n.nspname = 'public' AND c.relname = '{}'
+                   AND a.attnum > 0 AND NOT a.attisdropped
+                 ORDER BY a.attnum", name.replace('\'', "''")
             );
             let rows = sqlx::query(sqlx::AssertSqlSafe(sql.clone())).fetch_all(pool).await.map_err(|e| e.to_string())?;
             for r in rows {
@@ -807,13 +825,14 @@ pub async fn get_table_schema(state: tauri::State<'_, crate::AppState>, name: St
                     "nullable": is_nullable == "YES",
                     "isPrimaryKey": is_pk,
                     "defaultValue": column_default,
-                    "autoIncrement": column_default.as_ref().map(|d| d.contains("nextval")).unwrap_or(false)
+                    "autoIncrement": column_default.as_ref().map(|d| d.contains("nextval")).unwrap_or(false),
+                    "extra": serde_json::Value::Null
                 }));
             }
 
             // Lấy danh sách Indexes của Postgres
             let idx_sql = format!(
-                "SELECT i.relname AS index_name, ix.indisunique AS is_unique, am.amname AS index_method, pg_get_indexdef(ix.indexrelid) AS index_def
+                "SELECT i.relname AS index_name, ix.indisunique AS is_unique, ix.indisprimary AS is_primary, am.amname AS index_method, pg_get_indexdef(ix.indexrelid) AS index_def
                  FROM pg_class t
                  JOIN pg_index ix ON t.oid = ix.indrelid
                  JOIN pg_class i ON i.oid = ix.indexrelid
@@ -824,8 +843,9 @@ pub async fn get_table_schema(state: tauri::State<'_, crate::AppState>, name: St
                 for r in idx_rows {
                     let idx_name: String = r.get(0);
                     let unique: bool = r.get(1);
-                    let method: String = r.get(2);
-                    let index_def: String = r.get(3);
+                    let is_primary: bool = r.get(2);
+                    let method: String = r.get(3);
+                    let index_def: String = r.get(4);
                     
                     let columns_str = if let Some(start) = index_def.rfind('(') {
                         if let Some(end) = index_def.rfind(')') {
@@ -840,8 +860,8 @@ pub async fn get_table_schema(state: tauri::State<'_, crate::AppState>, name: St
                     indexes.push(json!({
                         "name": idx_name,
                         "columns": columns_str,
-                        "unique": unique,
-                        "type": if unique { "UNIQUE" } else { "INDEX" },
+                        "unique": unique || is_primary,
+                        "type": if is_primary { "PRIMARY" } else if unique { "UNIQUE" } else { "INDEX" },
                         "method": method.to_uppercase()
                     }));
                 }
@@ -871,9 +891,12 @@ pub async fn get_table_schema(state: tauri::State<'_, crate::AppState>, name: St
             }
         }
         DbConnection::Mysql(pool) => {
+            // COLUMN_TYPE, not DATA_TYPE: the former carries length/precision and the
+            // unsigned/zerofill flags (`varchar(45)`, `int(10) unsigned`, `enum('a','b')`),
+            // which the structure editor both displays and feeds back into MODIFY COLUMN.
             let sql = format!(
-                "SELECT column_name, data_type, is_nullable, column_default, extra 
-                 FROM information_schema.columns 
+                "SELECT column_name, column_type, is_nullable, column_default, extra, character_set_name, collation_name
+                 FROM information_schema.columns
                  WHERE table_name = '{}' AND table_schema = DATABASE()
                  ORDER BY ordinal_position", name
             );
@@ -884,6 +907,8 @@ pub async fn get_table_schema(state: tauri::State<'_, crate::AppState>, name: St
                 let is_nullable: String = r.get(2);
                 let column_default: Option<String> = r.try_get(3).ok();
                 let extra: String = r.get(4);
+                let char_set: Option<String> = r.try_get(5).ok();
+                let collation: Option<String> = r.try_get(6).ok();
                 let is_pk = pk_cols.iter().any(|c| c == &col_name);
 
                 columns.push(json!({
@@ -892,7 +917,10 @@ pub async fn get_table_schema(state: tauri::State<'_, crate::AppState>, name: St
                     "nullable": is_nullable == "YES",
                     "isPrimaryKey": is_pk,
                     "defaultValue": column_default,
-                    "autoIncrement": extra.contains("auto_increment")
+                    "autoIncrement": extra.contains("auto_increment"),
+                    "extra": if extra.trim().is_empty() { serde_json::Value::Null } else { serde_json::Value::String(extra.clone()) },
+                    "characterSet": char_set,
+                    "collation": collation
                 }));
             }
 
@@ -903,7 +931,6 @@ pub async fn get_table_schema(state: tauri::State<'_, crate::AppState>, name: St
                 let mut idx_map: HashMap<String, (Vec<String>, bool, String)> = HashMap::new();
                 for r in idx_rows {
                     let key_name: String = r.try_get("Key_name").or_else(|_| r.try_get("KEY_NAME")).unwrap_or_default();
-                    if key_name == "PRIMARY" { continue; }
                     let col_name: String = r.try_get("Column_name").or_else(|_| r.try_get("COLUMN_NAME")).unwrap_or_default();
                     let non_unique: i64 = r.try_get::<i64, _>("Non_unique")
                         .or_else(|_| r.try_get::<i64, _>("NON_UNIQUE"))
@@ -917,11 +944,12 @@ pub async fn get_table_schema(state: tauri::State<'_, crate::AppState>, name: St
                     entry.0.push(col_name);
                 }
                 for (idx_name, (cols, unique, method)) in idx_map {
+                    let is_primary = idx_name == "PRIMARY";
                     indexes.push(json!({
                         "name": idx_name,
                         "columns": cols.join(", "),
-                        "unique": unique,
-                        "type": if unique { "UNIQUE" } else { "INDEX" },
+                        "unique": unique || is_primary,
+                        "type": if is_primary { "PRIMARY" } else if unique { "UNIQUE" } else { "INDEX" },
                         "method": method.to_uppercase()
                     }));
                 }
@@ -2030,9 +2058,18 @@ pub async fn export_multi_tables(state: tauri::State<'_, crate::AppState>, paylo
                 DbConnection::Postgres(pool) => {
                     // Đơn giản hóa đối với Postgres bằng cách dựng câu lệnh thô cơ bản
                     sql_out.push_str(&format!("CREATE TABLE \"{}\" (\n", table_name));
+                    // format_type() keeps length/precision — see get_table_schema for why.
                     let info_sql = format!(
-                        "SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_name = '{}'",
-                        table_name
+                        "SELECT a.attname::text AS column_name, \
+                                format_type(a.atttypid, a.atttypmod) AS data_type, \
+                                CASE WHEN a.attnotnull THEN 'NO' ELSE 'YES' END AS is_nullable \
+                         FROM pg_attribute a \
+                         JOIN pg_class c ON c.oid = a.attrelid \
+                         JOIN pg_namespace n ON n.oid = c.relnamespace \
+                         WHERE n.nspname = 'public' AND c.relname = '{}' \
+                           AND a.attnum > 0 AND NOT a.attisdropped \
+                         ORDER BY a.attnum",
+                        table_name.replace('\'', "''")
                     );
                     if let Ok(rows) = sqlx::query(sqlx::AssertSqlSafe(info_sql)).fetch_all(pool).await {
                         let mut cols_defs = Vec::new();
@@ -2554,8 +2591,45 @@ pub async fn create_table(state: tauri::State<'_, crate::AppState>, payload: Val
     Ok(json!({ "success": true }))
 }
 
+// Bọc định danh theo dialect (MySQL backtick, còn lại double quote), nhân đôi ký tự đóng.
+fn quote_ident(conn: &DbConnection, name: &str) -> String {
+    match conn {
+        DbConnection::Mysql(_) => format!("`{}`", name.replace('`', "``")),
+        _ => format!("\"{}\"", name.replace('"', "\"\"")),
+    }
+}
+
+// Bật/tắt kiểm tra khóa ngoại ở MỨC SESSION. Chỉ đúng khi mọi lệnh dùng chung một `Exec`.
+// Dùng try_run: server từ chối (Postgres `session_replication_role` cần superuser) thì lệnh
+// chính vẫn phải chạy, và lệnh khôi phục vẫn phải thử dù lệnh chính đã lỗi.
+async fn set_fk_checks(exec: &mut Exec, conn: &DbConnection, on: bool) {
+    match conn {
+        DbConnection::Mysql(_) => {
+            exec.try_run(if on { "SET FOREIGN_KEY_CHECKS = 1" } else { "SET FOREIGN_KEY_CHECKS = 0" }).await
+        }
+        DbConnection::Postgres(_) => {
+            exec.try_run(if on {
+                "SET session_replication_role = 'origin'"
+            } else {
+                "SET session_replication_role = 'replica'"
+            })
+            .await
+        }
+        DbConnection::Sqlite(_) => {
+            exec.try_run(if on { "PRAGMA foreign_keys = ON" } else { "PRAGMA foreign_keys = OFF" }).await
+        }
+    }
+}
+
+// Xóa bảng/view. `cascade` và `ignore_fk` là 2 tuỳ chọn của dialog Delete ở sidebar.
 #[tauri::command]
-pub async fn drop_table(state: tauri::State<'_, crate::AppState>, name: String) -> Result<Value, String> {
+pub async fn drop_table(
+    state: tauri::State<'_, crate::AppState>,
+    name: String,
+    is_view: Option<bool>,
+    cascade: Option<bool>,
+    ignore_fk: Option<bool>,
+) -> Result<Value, String> {
     let conn_type = {
         let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
         match manager.connection.as_ref() {
@@ -2565,19 +2639,64 @@ pub async fn drop_table(state: tauri::State<'_, crate::AppState>, name: String) 
             None => return Err("Chưa kết nối CSDL".to_string()),
         }
     };
-    
-    let sql = match &conn_type {
-        DbConnection::Mysql(_) => format!("DROP TABLE `{}`", name),
-        _ => format!("DROP TABLE \"{}\"", name),
-    };
-    execute_raw_sql_generic(&conn_type, sql.clone()).await?;
+    let is_view = is_view.unwrap_or(false);
+    let cascade = cascade.unwrap_or(false);
+    // Bỏ qua khóa ngoại không có nghĩa với view: view không nằm trong ràng buộc FK nào.
+    let ignore_fk = ignore_fk.unwrap_or(false) && !is_view;
+
+    // CASCADE chỉ Postgres mới thực thi thật: SQLite báo lỗi cú pháp, MySQL chấp nhận từ khóa
+    // rồi bỏ qua -> người dùng tưởng đã xóa lan mà thực tế không. Từ chối còn hơn im lặng.
+    if cascade && !matches!(conn_type, DbConnection::Postgres(_)) {
+        return Err("CASCADE chỉ được hỗ trợ trên PostgreSQL".to_string());
+    }
+
+    let keyword = if is_view { "DROP VIEW" } else { "DROP TABLE" };
+    let sql = format!(
+        "{} {}{}",
+        keyword,
+        quote_ident(&conn_type, &name),
+        if cascade { " CASCADE" } else { "" }
+    );
+
+    let mut exec = Exec::acquire(&conn_type).await?;
+    if ignore_fk {
+        set_fk_checks(&mut exec, &conn_type, false).await;
+    }
+    let result = exec.run(sql).await;
+    // Khôi phục kể cả khi lỗi: connection quay lại pool (hoặc là handle SQLite dùng chung),
+    // nếu không lệnh sau sẽ chạy trên session còn tắt kiểm tra khóa ngoại.
+    if ignore_fk {
+        set_fk_checks(&mut exec, &conn_type, true).await;
+    }
+    result?;
 
     Ok(json!({ "success": true }))
 }
 
-// Xóa sạch dữ liệu nhưng giữ cấu trúc bảng
+// Giá trị AUTO_INCREMENT kế tiếp của một bảng MySQL, None nếu bảng không có cột tự tăng.
+// Chỉ đọc (SELECT) nên chạy qua execute_raw_sql_generic được, không cần chung session với TRUNCATE.
+async fn mysql_next_auto_increment(conn: &DbConnection, name: &str) -> Option<u64> {
+    let sql = format!(
+        "SELECT AUTO_INCREMENT AS ai FROM information_schema.TABLES \
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{}'",
+        name.replace('\'', "''")
+    );
+    let results = execute_raw_sql_generic(conn, sql).await.ok()?;
+    let cell = results.first()?.get("data")?.as_array()?.first()?.get("ai")?;
+    // decode_mysql_cell! trả u64 thành số, nhưng nhận cả chuỗi cho chắc.
+    cell.as_u64().or_else(|| cell.as_str()?.parse().ok())
+}
+
+// Xóa sạch dữ liệu nhưng giữ cấu trúc bảng.
+// `restart_identity` / `disable_fk` / `cascade` là 3 tuỳ chọn của dialog Truncate ở sidebar.
 #[tauri::command]
-pub async fn truncate_table(state: tauri::State<'_, crate::AppState>, name: String) -> Result<Value, String> {
+pub async fn truncate_table(
+    state: tauri::State<'_, crate::AppState>,
+    name: String,
+    restart_identity: Option<bool>,
+    disable_fk: Option<bool>,
+    cascade: Option<bool>,
+) -> Result<Value, String> {
     let conn_type = {
         let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
         match manager.connection.as_ref() {
@@ -2587,14 +2706,72 @@ pub async fn truncate_table(state: tauri::State<'_, crate::AppState>, name: Stri
             None => return Err("Chưa kết nối CSDL".to_string()),
         }
     };
+    let restart_identity = restart_identity.unwrap_or(false);
+    let disable_fk = disable_fk.unwrap_or(false);
+    let cascade = cascade.unwrap_or(false);
+    let quoted = quote_ident(&conn_type, &name);
 
-    // SQLite không có TRUNCATE -> dùng DELETE FROM
-    let sql = match &conn_type {
-        DbConnection::Mysql(_) => format!("TRUNCATE TABLE `{}`", name),
-        DbConnection::Postgres(_) => format!("TRUNCATE TABLE \"{}\"", name),
-        DbConnection::Sqlite(_) => format!("DELETE FROM \"{}\"", name),
+    // Như DROP: chỉ Postgres có TRUNCATE ... CASCADE.
+    if cascade && !matches!(conn_type, DbConnection::Postgres(_)) {
+        return Err("CASCADE chỉ được hỗ trợ trên PostgreSQL".to_string());
+    }
+
+    // MySQL luôn reset bộ đếm tự tăng bên trong TRUNCATE và không có cách tắt, nên "giữ nguyên
+    // bộ đếm" phải làm thủ công: đọc giá trị trước, đặt lại sau. Đọc TRƯỚC khi truncate.
+    let keep_auto_inc = match (&conn_type, restart_identity) {
+        (DbConnection::Mysql(_), false) => mysql_next_auto_increment(&conn_type, &name).await,
+        _ => None,
     };
-    execute_raw_sql_generic(&conn_type, sql).await?;
+
+    // Câu lệnh bắt buộc + câu lệnh "cố gắng" chạy sau (lỗi không tính là thất bại).
+    let (sql, optional): (String, Option<String>) = match &conn_type {
+        DbConnection::Mysql(_) => (
+            format!("TRUNCATE TABLE {}", quoted),
+            match (restart_identity, keep_auto_inc) {
+                // InnoDB đã reset sẵn; vẫn phát lệnh để ý định rõ ràng và các engine khác hành xử
+                // giống nhau. Bảng không có cột tự tăng -> bỏ qua lỗi.
+                (true, _) => Some(format!("ALTER TABLE {} AUTO_INCREMENT = 1", quoted)),
+                // Đặt lại giá trị cũ để id mới không dùng lại id đã xóa.
+                (false, Some(v)) if v > 1 => {
+                    Some(format!("ALTER TABLE {} AUTO_INCREMENT = {}", quoted, v))
+                }
+                _ => None,
+            },
+        ),
+        DbConnection::Postgres(_) => (
+            format!(
+                "TRUNCATE TABLE {}{}{}",
+                quoted,
+                if restart_identity { " RESTART IDENTITY" } else { "" },
+                if cascade { " CASCADE" } else { "" }
+            ),
+            None,
+        ),
+        // SQLite không có TRUNCATE -> DELETE FROM, và bộ đếm tự tăng nằm ở bảng phụ
+        // sqlite_sequence mà DELETE không đụng tới. Bảng này chỉ tồn tại khi CSDL có
+        // ít nhất một cột AUTOINCREMENT -> bỏ qua lỗi "no such table".
+        DbConnection::Sqlite(_) => (
+            format!("DELETE FROM {}", quoted),
+            restart_identity.then(|| {
+                format!("DELETE FROM sqlite_sequence WHERE name = '{}'", name.replace('\'', "''"))
+            }),
+        ),
+    };
+
+    let mut exec = Exec::acquire(&conn_type).await?;
+    if disable_fk {
+        set_fk_checks(&mut exec, &conn_type, false).await;
+    }
+    let result = exec.run(sql).await;
+    if result.is_ok() {
+        if let Some(extra) = optional {
+            exec.try_run(&extra).await;
+        }
+    }
+    if disable_fk {
+        set_fk_checks(&mut exec, &conn_type, true).await;
+    }
+    result?;
 
     Ok(json!({ "success": true }))
 }
@@ -2635,11 +2812,19 @@ pub async fn get_table_definition(state: tauri::State<'_, crate::AppState>, name
         DbConnection::Postgres(_) => {
             // Postgres không có SHOW CREATE TABLE -> dựng lại từ metadata (cột + NOT NULL + DEFAULT + PRIMARY KEY)
             let pk_cols = get_primary_key_columns(&conn_type, &name).await;
+            // format_type() keeps length/precision — see get_table_schema for why.
             let sql = format!(
-                "SELECT column_name, data_type, is_nullable, column_default \
-                 FROM information_schema.columns \
-                 WHERE table_name = '{}' AND table_schema = 'public' \
-                 ORDER BY ordinal_position",
+                "SELECT a.attname::text AS column_name, \
+                        format_type(a.atttypid, a.atttypmod) AS data_type, \
+                        CASE WHEN a.attnotnull THEN 'NO' ELSE 'YES' END AS is_nullable, \
+                        pg_get_expr(d.adbin, d.adrelid) AS column_default \
+                 FROM pg_attribute a \
+                 JOIN pg_class c ON c.oid = a.attrelid \
+                 JOIN pg_namespace n ON n.oid = c.relnamespace \
+                 LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum \
+                 WHERE n.nspname = 'public' AND c.relname = '{}' \
+                   AND a.attnum > 0 AND NOT a.attisdropped \
+                 ORDER BY a.attnum",
                 name.replace('\'', "''")
             );
             let results = execute_raw_sql_generic(&conn_type, sql).await?;
@@ -2892,6 +3077,61 @@ pub(crate) async fn execute_raw_sql_generic(conn: &DbConnection, sql: String) ->
         }
     }
     Ok(results)
+}
+
+/// One statement target: a pooled connection (Postgres/MySQL) or the shared SQLite handle.
+///
+/// A dedicated connection is the point. `execute_raw_sql_generic` acquires a NEW connection from
+/// the pool per call, so `BEGIN` / `SET FOREIGN_KEY_CHECKS` / `SET session_replication_role` /
+/// `PRAGMA foreign_keys` issued through it would land on a different session than the statements
+/// they are meant to wrap, and quietly do nothing.
+pub(crate) enum Exec {
+    Sqlite(Arc<Mutex<SqliteConnection>>),
+    Postgres(sqlx::pool::PoolConnection<sqlx::Postgres>),
+    Mysql(sqlx::pool::PoolConnection<sqlx::MySql>),
+}
+
+impl Exec {
+    /// Takes one connection out of the pool and holds it for the caller's whole sequence.
+    pub(crate) async fn acquire(conn: &DbConnection) -> Result<Exec, String> {
+        Ok(match conn {
+            DbConnection::Sqlite(arc) => Exec::Sqlite(arc.clone()),
+            DbConnection::Postgres(pool) => {
+                Exec::Postgres(pool.acquire().await.map_err(|e| e.to_string())?)
+            }
+            DbConnection::Mysql(pool) => {
+                Exec::Mysql(pool.acquire().await.map_err(|e| e.to_string())?)
+            }
+        })
+    }
+
+    pub(crate) async fn run(&mut self, sql: String) -> Result<(), String> {
+        match self {
+            Exec::Sqlite(arc) => {
+                let conn = arc.lock().map_err(|e| e.to_string())?;
+                conn.execute_batch(&sql).map_err(|e| e.to_string())
+            }
+            // raw_sql = text protocol. MySQL rejects some statements in the prepared protocol
+            // (error 1295) and these statements carry literals only, so nothing is gained
+            // by preparing them.
+            Exec::Postgres(c) => sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
+                .execute(&mut **c)
+                .await
+                .map(|_| ())
+                .map_err(|e| e.to_string()),
+            Exec::Mysql(c) => sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
+                .execute(&mut **c)
+                .await
+                .map(|_| ())
+                .map_err(|e| e.to_string()),
+        }
+    }
+
+    /// For statements whose failure must not abort the caller (a session flag the server refuses,
+    /// an optional catalog table that does not exist).
+    pub(crate) async fn try_run(&mut self, sql: &str) {
+        let _ = self.run(sql.to_string()).await;
+    }
 }
 
 // Như execute_raw_sql_generic nhưng bind tham số ở tầng driver (parameterized query).
@@ -3484,6 +3724,55 @@ pub struct ConnectionStatusInfo {
     pub conn_type: String,
     pub host: String,
     pub latency_ms: u64,
+    /// Server version as the server reports it ("8.4.3", "16.2 (Debian…)"), empty when unreadable.
+    pub server_version: String,
+    /// Account the session is authenticated as. Empty for SQLite (there is none).
+    pub user: String,
+    /// Database the session is currently using.
+    pub database: String,
+    /// TCP port. 0 for SQLite.
+    pub port: u16,
+    /// Negotiated TLS cipher suite. Empty when the session is not encrypted.
+    pub cipher: String,
+    /// Negotiated TLS protocol version. Empty when the session is not encrypted.
+    pub tls_version: String,
+}
+
+impl ConnectionStatusInfo {
+    fn disconnected() -> Self {
+        ConnectionStatusInfo {
+            is_connected: false,
+            db_type: String::new(),
+            conn_type: "loc".to_string(),
+            host: String::new(),
+            latency_ms: 0,
+            server_version: String::new(),
+            user: String::new(),
+            database: String::new(),
+            port: 0,
+            cipher: String::new(),
+            tls_version: String::new(),
+        }
+    }
+}
+
+/// Giá trị của một biến trạng thái MySQL (`SHOW SESSION STATUS LIKE …`).
+///
+/// Nhận nguyên câu lệnh dạng literal chứ không ghép tên biến vào chuỗi: sqlx 0.9
+/// chỉ cài `SqlSafeStr` cho `&'static str`, và ở đây cũng chẳng có gì động —
+/// tên biến luôn là hằng, nên không cần tới `AssertSqlSafe` như các chỗ dựng SQL
+/// từ tên bảng/cột trong file này.
+///
+/// Chạy trên một connection khác trong pool vẫn cho kết quả đúng: cấu hình TLS
+/// là của cả pool nên mọi session đều thương lượng ra cùng cipher/version.
+/// MySQL trả `Ssl_cipher` là chuỗi rỗng khi phiên không mã hoá.
+async fn mysql_status_var(pool: &sqlx::MySqlPool, sql: &'static str) -> String {
+    match sqlx::query(sql).fetch_optional(pool).await {
+        // Cột 1 là `Value`; lấy theo chỉ số chứ không theo tên cho khớp quy ước
+        // chống trùng tên cột của file này.
+        Ok(Some(row)) => row.try_get::<String, _>(1).unwrap_or_default(),
+        _ => String::new(),
+    }
 }
 
 /// Trả về trạng thái kết nối DB hiện tại, loại kết nối (loc/ssh/ssl/rem) và độ trễ ping (ms).
@@ -3498,15 +3787,7 @@ pub async fn get_connection_status(
         let mgr = state.db_manager.lock().map_err(|e| e.to_string())?;
         let conn = match &mgr.connection {
             Some(c) => c.clone(),
-            None => {
-                return Ok(ConnectionStatusInfo {
-                    is_connected: false,
-                    db_type: String::new(),
-                    conn_type: "loc".to_string(),
-                    host: String::new(),
-                    latency_ms: 0,
-                })
-            }
+            None => return Ok(ConnectionStatusInfo::disconnected()),
         };
         (
             conn,
@@ -3530,6 +3811,73 @@ pub async fn get_connection_status(
         }
     }
     let latency_ms = start.elapsed().as_millis() as u64;
+
+    // Thông tin phiên hiển thị trong popover kết nối. Mọi truy vấn ở đây đều
+    // "best effort": lỗi thì để trống chứ không làm hỏng cả status pill.
+    // Phần TLS tách khỏi phần version/user vì `pg_stat_ssl` không tồn tại trên
+    // Postgres cũ — gộp chung thì một server cũ mất luôn cả version lẫn user.
+    let (server_version, session_user, session_db, cipher, tls_version) = match &conn {
+        DbConnection::Sqlite(arc) => {
+            let version = arc
+                .lock()
+                .ok()
+                .and_then(|c| {
+                    c.query_row("SELECT sqlite_version()", [], |r| r.get::<_, String>(0))
+                        .ok()
+                })
+                .unwrap_or_default();
+            (version, String::new(), String::new(), String::new(), String::new())
+        }
+        DbConnection::Postgres(pool) => {
+            // `current_user`/`current_database()` có kiểu `name`, sqlx không giải mã
+            // thẳng sang String được nên phải ép ::text.
+            let (version, user, db) = match sqlx::query(
+                "SELECT current_setting('server_version'), current_user::text, current_database()::text",
+            )
+            .fetch_optional(pool)
+            .await
+            {
+                Ok(Some(r)) => (
+                    r.try_get::<String, _>(0).unwrap_or_default(),
+                    r.try_get::<String, _>(1).unwrap_or_default(),
+                    r.try_get::<String, _>(2).unwrap_or_default(),
+                ),
+                _ => (String::new(), String::new(), String::new()),
+            };
+            let (cipher, tls) = match sqlx::query(
+                "SELECT COALESCE(cipher, ''), COALESCE(version, '') \
+                 FROM pg_stat_ssl WHERE pid = pg_backend_pid()",
+            )
+            .fetch_optional(pool)
+            .await
+            {
+                Ok(Some(r)) => (
+                    r.try_get::<String, _>(0).unwrap_or_default(),
+                    r.try_get::<String, _>(1).unwrap_or_default(),
+                ),
+                _ => (String::new(), String::new()),
+            };
+            (version, user, db, cipher, tls)
+        }
+        DbConnection::Mysql(pool) => {
+            let (version, user, db) = match sqlx::query(
+                "SELECT VERSION(), CURRENT_USER(), COALESCE(DATABASE(), '')",
+            )
+            .fetch_optional(pool)
+            .await
+            {
+                Ok(Some(r)) => (
+                    r.try_get::<String, _>(0).unwrap_or_default(),
+                    r.try_get::<String, _>(1).unwrap_or_default(),
+                    r.try_get::<String, _>(2).unwrap_or_default(),
+                ),
+                _ => (String::new(), String::new(), String::new()),
+            };
+            let cipher = mysql_status_var(pool, "SHOW SESSION STATUS LIKE 'Ssl_cipher'").await;
+            let tls = mysql_status_var(pool, "SHOW SESSION STATUS LIKE 'Ssl_version'").await;
+            (version, user, db, cipher, tls)
+        }
+    };
 
     let host = config
         .as_ref()
@@ -3571,13 +3919,300 @@ pub async fn get_connection_status(
         "rem".to_string()
     };
 
+    let port = config
+        .as_ref()
+        .and_then(|c| c.get("port"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u16;
+
+    // SQLite không có khái niệm "database đang dùng" — hiển thị đường dẫn file thay vào đó.
+    let database = if session_db.is_empty() {
+        config
+            .as_ref()
+            .and_then(|c| c.get("database").or_else(|| c.get("sqlitePath")))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    } else {
+        session_db
+    };
+
     Ok(ConnectionStatusInfo {
         is_connected: true,
         db_type,
         conn_type,
         host,
         latency_ms,
+        server_version,
+        user: session_user,
+        database,
+        port,
+        cipher,
+        tls_version,
     })
+}
+
+// -------------------------------------------------------------
+// ADVANCED SCHEMA & OBJECT MANAGEMENT (Triggers, Sequences, Partitions, Check Constraints, Routines, Views)
+// -------------------------------------------------------------
+
+#[tauri::command]
+pub async fn get_table_triggers(state: tauri::State<'_, crate::AppState>, table_name: String) -> Result<Value, String> {
+    let conn_type = {
+        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
+        match manager.connection.as_ref() {
+            Some(c) => c.clone(),
+            None => return Err("Chưa kết nối CSDL".to_string()),
+        }
+    };
+
+    let sql = match &conn_type {
+        DbConnection::Mysql(_) => format!(
+            "SELECT TRIGGER_NAME as name, ACTION_TIMING as timing, EVENT_MANIPULATION as event, ACTION_STATEMENT as statement FROM INFORMATION_SCHEMA.TRIGGERS WHERE EVENT_OBJECT_TABLE = '{}' AND TRIGGER_SCHEMA = DATABASE()",
+            table_name.replace('\'', "''")
+        ),
+        DbConnection::Postgres(_) => format!(
+            "SELECT tr.tgname AS name, CASE WHEN tr.tgtype & 2 = 2 THEN 'BEFORE' WHEN tr.tgtype & 64 = 64 THEN 'INSTEAD OF' ELSE 'AFTER' END AS timing, CASE WHEN tr.tgtype & 4 = 4 THEN 'INSERT' WHEN tr.tgtype & 8 = 8 THEN 'DELETE' WHEN tr.tgtype & 16 = 16 THEN 'UPDATE' ELSE 'MANIPULATION' END AS event, pg_get_triggerdef(tr.oid) AS statement FROM pg_trigger tr JOIN pg_class c ON c.oid = tr.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relname = '{}' AND n.nspname = 'public' AND NOT tr.tgisinternal",
+            table_name.replace('\'', "''")
+        ),
+        DbConnection::Sqlite(_) => format!(
+            "SELECT name, 'BEFORE' as timing, 'MANIPULATION' as event, sql as statement FROM sqlite_master WHERE type = 'trigger' AND tbl_name = '{}'",
+            table_name.replace('\'', "''")
+        ),
+    };
+
+    let results = execute_raw_sql_generic(&conn_type, sql).await?;
+    let mut triggers: Vec<Value> = Vec::new();
+    if let Some(data) = results.get(0).and_then(|r| r.get("data")).and_then(|d| d.as_array()) {
+        for row in data {
+            if let Some(arr) = row.as_array() {
+                let name = arr.get(0).and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let timing = arr.get(1).and_then(|v| v.as_str()).unwrap_or("AFTER").to_string();
+                let event = arr.get(2).and_then(|v| v.as_str()).unwrap_or("INSERT").to_string();
+                let statement = arr.get(3).and_then(|v| v.as_str()).unwrap_or("").to_string();
+                triggers.push(json!({
+                    "name": name,
+                    "timing": timing,
+                    "event": event,
+                    "statement": statement
+                }));
+            }
+        }
+    }
+
+    Ok(json!({ "success": true, "triggers": triggers }))
+}
+
+#[tauri::command]
+pub async fn save_trigger(state: tauri::State<'_, crate::AppState>, statement_sql: String) -> Result<Value, String> {
+    let conn_type = {
+        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
+        match manager.connection.as_ref() {
+            Some(c) => c.clone(),
+            None => return Err("Chưa kết nối CSDL".to_string()),
+        }
+    };
+
+    execute_raw_sql_generic(&conn_type, statement_sql).await?;
+    Ok(json!({ "success": true, "message": "Đã lưu Trigger thành công" }))
+}
+
+#[tauri::command]
+pub async fn drop_trigger(state: tauri::State<'_, crate::AppState>, trigger_name: String) -> Result<Value, String> {
+    let conn_type = {
+        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
+        match manager.connection.as_ref() {
+            Some(c) => c.clone(),
+            None => return Err("Chưa kết nối CSDL".to_string()),
+        }
+    };
+
+    let sql = match &conn_type {
+        DbConnection::Mysql(_) => format!("DROP TRIGGER `{}`", trigger_name),
+        _ => format!("DROP TRIGGER IF EXISTS \"{}\"", trigger_name),
+    };
+
+    execute_raw_sql_generic(&conn_type, sql).await?;
+    Ok(json!({ "success": true, "message": "Đã xóa Trigger thành công" }))
+}
+
+#[tauri::command]
+pub async fn save_routine_definition(state: tauri::State<'_, crate::AppState>, routine_sql: String) -> Result<Value, String> {
+    let conn_type = {
+        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
+        match manager.connection.as_ref() {
+            Some(c) => c.clone(),
+            None => return Err("Chưa kết nối CSDL".to_string()),
+        }
+    };
+
+    execute_raw_sql_generic(&conn_type, routine_sql).await?;
+    Ok(json!({ "success": true, "message": "Đã lưu Procedure/Function thành công" }))
+}
+
+#[tauri::command]
+pub async fn get_sequences(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
+    let conn_type = {
+        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
+        match manager.connection.as_ref() {
+            Some(c) => c.clone(),
+            None => return Err("Chưa kết nối CSDL".to_string()),
+        }
+    };
+
+    let sql = match &conn_type {
+        DbConnection::Postgres(_) => "SELECT sequence_name as name, data_type, start_value, minimum_value as min_val, maximum_value as max_val, increment, cycle_option as cycle FROM information_schema.sequences WHERE sequence_schema = 'public'".to_string(),
+        DbConnection::Mysql(_) => "SELECT table_name as name, 'bigint' as data_type, '1' as start_value, '1' as min_val, '9223372036854775807' as max_val, '1' as increment, 'NO' as cycle FROM information_schema.tables WHERE table_type = 'SEQUENCE' AND table_schema = DATABASE()".to_string(),
+        _ => return Ok(json!({ "success": true, "sequences": [] })),
+    };
+
+    let results = execute_raw_sql_generic(&conn_type, sql).await?;
+    let mut sequences: Vec<Value> = Vec::new();
+    if let Some(data) = results.get(0).and_then(|r| r.get("data")).and_then(|d| d.as_array()) {
+        for row in data {
+            if let Some(arr) = row.as_array() {
+                sequences.push(json!({
+                    "name": arr.get(0).and_then(|v| v.as_str()).unwrap_or(""),
+                    "dataType": arr.get(1).and_then(|v| v.as_str()).unwrap_or("bigint"),
+                    "startValue": arr.get(2).and_then(|v| v.as_str()).unwrap_or("1"),
+                    "minVal": arr.get(3).and_then(|v| v.as_str()).unwrap_or("1"),
+                    "maxVal": arr.get(4).and_then(|v| v.as_str()).unwrap_or(""),
+                    "incrementBy": arr.get(5).and_then(|v| v.as_str()).unwrap_or("1"),
+                    "cycle": arr.get(6).and_then(|v| v.as_str()).map(|c| c == "YES").unwrap_or(false)
+                }));
+            }
+        }
+    }
+
+    Ok(json!({ "success": true, "sequences": sequences }))
+}
+
+#[tauri::command]
+pub async fn alter_sequence(state: tauri::State<'_, crate::AppState>, sequence_sql: String) -> Result<Value, String> {
+    let conn_type = {
+        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
+        match manager.connection.as_ref() {
+            Some(c) => c.clone(),
+            None => return Err("Chưa kết nối CSDL".to_string()),
+        }
+    };
+
+    execute_raw_sql_generic(&conn_type, sequence_sql).await?;
+    Ok(json!({ "success": true, "message": "Đã cập nhật Sequence thành công" }))
+}
+
+#[tauri::command]
+pub async fn drop_sequence(state: tauri::State<'_, crate::AppState>, sequence_name: String) -> Result<Value, String> {
+    let conn_type = {
+        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
+        match manager.connection.as_ref() {
+            Some(c) => c.clone(),
+            None => return Err("Chưa kết nối CSDL".to_string()),
+        }
+    };
+
+    let sql = match &conn_type {
+        DbConnection::Mysql(_) => format!("DROP SEQUENCE IF EXISTS `{}`", sequence_name),
+        _ => format!("DROP SEQUENCE IF EXISTS \"{}\"", sequence_name),
+    };
+
+    execute_raw_sql_generic(&conn_type, sql).await?;
+    Ok(json!({ "success": true, "message": "Đã xóa Sequence thành công" }))
+}
+
+#[tauri::command]
+pub async fn get_table_partitions(state: tauri::State<'_, crate::AppState>, table_name: String) -> Result<Value, String> {
+    let conn_type = {
+        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
+        match manager.connection.as_ref() {
+            Some(c) => c.clone(),
+            None => return Err("Chưa kết nối CSDL".to_string()),
+        }
+    };
+
+    let sql = match &conn_type {
+        DbConnection::Mysql(_) => format!(
+            "SELECT PARTITION_NAME as name, PARTITION_METHOD as method, PARTITION_EXPRESSION as expression, PARTITION_DESCRIPTION as description, TABLE_ROWS as table_rows, DATA_LENGTH as data_length FROM INFORMATION_SCHEMA.PARTITIONS WHERE TABLE_NAME = '{}' AND TABLE_SCHEMA = DATABASE() AND PARTITION_NAME IS NOT NULL",
+            table_name.replace('\'', "''")
+        ),
+        DbConnection::Postgres(_) => format!(
+            "SELECT c.relname AS name, 'PARTITION' AS method, pg_get_expr(c.relpartbound, c.oid) AS expression, '' AS description, c.reltuples::bigint AS table_rows, 0 AS data_length FROM pg_class c JOIN pg_inherits i ON i.inhrelid = c.oid JOIN pg_class parent ON parent.oid = i.inhparent WHERE parent.relname = '{}'",
+            table_name.replace('\'', "''")
+        ),
+        _ => return Ok(json!({ "success": true, "partitions": [] })),
+    };
+
+    let results = execute_raw_sql_generic(&conn_type, sql).await?;
+    let mut partitions: Vec<Value> = Vec::new();
+    if let Some(data) = results.get(0).and_then(|r| r.get("data")).and_then(|d| d.as_array()) {
+        for row in data {
+            if let Some(arr) = row.as_array() {
+                partitions.push(json!({
+                    "name": arr.get(0).and_then(|v| v.as_str()).unwrap_or(""),
+                    "method": arr.get(1).and_then(|v| v.as_str()).unwrap_or(""),
+                    "expression": arr.get(2).and_then(|v| v.as_str()).unwrap_or(""),
+                    "description": arr.get(3).and_then(|v| v.as_str()).unwrap_or(""),
+                    "tableRows": arr.get(4).and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))).unwrap_or(0),
+                    "dataLength": arr.get(5).and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))).unwrap_or(0)
+                }));
+            }
+        }
+    }
+
+    Ok(json!({ "success": true, "partitions": partitions }))
+}
+
+#[tauri::command]
+pub async fn get_check_constraints(state: tauri::State<'_, crate::AppState>, table_name: String) -> Result<Value, String> {
+    let conn_type = {
+        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
+        match manager.connection.as_ref() {
+            Some(c) => c.clone(),
+            None => return Err("Chưa kết nối CSDL".to_string()),
+        }
+    };
+
+    let sql = match &conn_type {
+        DbConnection::Mysql(_) => format!(
+            "SELECT tc.CONSTRAINT_NAME as name, cc.CHECK_CLAUSE as expression, 'YES' as enforced FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc JOIN INFORMATION_SCHEMA.CHECK_CONSTRAINTS cc ON tc.CONSTRAINT_NAME = cc.CONSTRAINT_NAME AND tc.CONSTRAINT_SCHEMA = cc.CONSTRAINT_SCHEMA WHERE tc.TABLE_NAME = '{}' AND tc.TABLE_SCHEMA = DATABASE() AND tc.CONSTRAINT_TYPE = 'CHECK'",
+            table_name.replace('\'', "''")
+        ),
+        DbConnection::Postgres(_) => format!(
+            "SELECT conname AS name, pg_get_constraintdef(c.oid) AS expression, 'YES' AS enforced FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace WHERE t.relname = '{}' AND n.nspname = 'public' AND c.contype = 'c'",
+            table_name.replace('\'', "''")
+        ),
+        _ => return Ok(json!({ "success": true, "constraints": [] })),
+    };
+
+    let results = execute_raw_sql_generic(&conn_type, sql).await?;
+    let mut constraints: Vec<Value> = Vec::new();
+    if let Some(data) = results.get(0).and_then(|r| r.get("data")).and_then(|d| d.as_array()) {
+        for row in data {
+            if let Some(arr) = row.as_array() {
+                constraints.push(json!({
+                    "name": arr.get(0).and_then(|v| v.as_str()).unwrap_or(""),
+                    "expression": arr.get(1).and_then(|v| v.as_str()).unwrap_or(""),
+                    "enforced": arr.get(2).and_then(|v| v.as_str()).map(|s| s == "YES").unwrap_or(true)
+                }));
+            }
+        }
+    }
+
+    Ok(json!({ "success": true, "constraints": constraints }))
+}
+
+#[tauri::command]
+pub async fn save_view_definition(state: tauri::State<'_, crate::AppState>, view_sql: String) -> Result<Value, String> {
+    let conn_type = {
+        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
+        match manager.connection.as_ref() {
+            Some(c) => c.clone(),
+            None => return Err("Chưa kết nối CSDL".to_string()),
+        }
+    };
+
+    execute_raw_sql_generic(&conn_type, view_sql).await?;
+    Ok(json!({ "success": true, "message": "Đã lưu View thành công" }))
 }
 
 #[cfg(test)]

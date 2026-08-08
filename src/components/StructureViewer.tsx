@@ -1,10 +1,17 @@
-// Premium Database Table Structure Viewer & Editor Component
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import type { SchemaInfo, ColumnInfo } from '../utils/dbHelper';
+import type { SchemaInfo, ColumnInfo, TriggerInfo, PartitionInfo, CheckConstraintInfo } from '../utils/dbHelper';
 import { dbHelper } from '../utils/dbHelper';
-import { Save, Plus, Trash2, RotateCcw, AlertTriangle, CheckCircle2, Code } from 'lucide-react';
+import { Save, Plus, Trash2, RotateCcw, AlertTriangle, CheckCircle2, Key, Search, X, Table2, ArrowRight, Copy } from 'lucide-react';
 import { Modal, ModalBody, ModalFooter } from './Modal';
+import { splitType, joinType, typeBase } from '../utils/columnType';
+
+type StructureSection = 'columns' | 'indexes' | 'fks' | 'check_constraints' | 'triggers' | 'partitions' | 'ddl';
+
+// Sentinel option value of the data-type dropdown — a type the dialect list does not
+// carry is still reachable, the same escape hatch the default-value cell uses.
+const CUSTOM_TYPE = '__custom_type__';
 
 interface StructureViewerProps {
   tableName: string;
@@ -12,6 +19,8 @@ interface StructureViewerProps {
   dbType: 'sqlite' | 'postgres' | 'mysql';
   onSchemaChanged: () => void;
   readOnly?: boolean;
+  activeSection?: StructureSection;
+  onSectionChange?: (sec: StructureSection) => void;
 }
 
 export const StructureViewer: React.FC<StructureViewerProps> = ({
@@ -20,13 +29,15 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
   dbType,
   onSchemaChanged,
   readOnly = false,
+  activeSection,
+  onSectionChange,
 }) => {
   const { t } = useTranslation();
 
   // Columns state
   const [cols, setCols] = useState<ColumnInfo[]>([]);
   const [deletedColNames, setDeletedColNames] = useState<string[]>([]);
-  const [editingColCell, setEditingColCell] = useState<{ rowIndex: number; field: 'name' | 'type' | 'nullable' | 'defaultValue' | 'comment' } | null>(null);
+  const [editingColCell, setEditingColCell] = useState<{ rowIndex: number; field: 'name' | 'type' | 'length' | 'nullable' | 'defaultValue' | 'comment' } | null>(null);
   const [editColValue, setEditColValue] = useState<string>('');
 
   // Indexes state
@@ -41,12 +52,93 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
   const [editingFkCell, setEditingFkCell] = useState<{ rowIndex: number; field: 'column' | 'refTable' | 'refColumn' } | null>(null);
   const [editFkValue, setEditFkValue] = useState<string>('');
 
+  // Triggers, Partitions, Check Constraints state
+  const [triggers, setTriggers] = useState<TriggerInfo[]>([]);
+  const [showAddTriggerModal, setShowAddTriggerModal] = useState<boolean>(false);
+  const [newTrigger, setNewTrigger] = useState<{ name: string; timing: string; event: string; body: string }>({ name: '', timing: 'BEFORE', event: 'INSERT', body: '' });
+
+  const [partitions, setPartitions] = useState<PartitionInfo[]>([]);
+  const [showAddPartitionModal, setShowAddPartitionModal] = useState<boolean>(false);
+  const [newPartition, setNewPartition] = useState<{ name: string; valClause: string }>({ name: '', valClause: '' });
+
+  const [constraints, setConstraints] = useState<CheckConstraintInfo[]>([]);
+  const [showAddCheckModal, setShowAddCheckModal] = useState<boolean>(false);
+  const [newCheck, setNewCheck] = useState<{ name: string; expression: string }>({ name: '', expression: '' });
+
+  // Active pane + controlled sync
+  const [internalSection, setInternalSection] = useState<StructureSection>('columns');
+  const section = activeSection ?? internalSection;
+  const setSection = (sec: StructureSection) => {
+    setInternalSection(sec);
+    onSectionChange?.(sec);
+  };
+
+  const [filter, setFilter] = useState('');
+
+  // FK Popover & Modal state
+  const [fkPopoverCol, setFkPopoverCol] = useState<string | null>(null);
+  const [fkPopoverPos, setFkPopoverPos] = useState<{ top: number; left: number } | null>(null);
+
+  // Structure Viewer Context Menu state
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    type: 'column' | 'index' | 'fk';
+    rowIndex: number;
+    name: string;
+  } | null>(null);
+
+  const handleRowContextMenu = (e: React.MouseEvent, type: 'column' | 'index' | 'fk', rowIndex: number, name: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const menuWidth = 180;
+    const menuHeight = 180;
+    const x = Math.min(e.clientX, window.innerWidth - menuWidth - 10);
+    const y = Math.min(e.clientY, window.innerHeight - menuHeight - 10);
+    setContextMenu({ x, y, type, rowIndex, name });
+  };
+
+  useEffect(() => {
+    const closeMenu = () => setContextMenu(null);
+    window.addEventListener('click', closeMenu);
+    window.addEventListener('scroll', closeMenu, true);
+    return () => {
+      window.removeEventListener('click', closeMenu);
+      window.removeEventListener('scroll', closeMenu, true);
+    };
+  }, []);
+
+  interface FkModalState {
+    name?: string;
+    column: string;
+    refTable: string;
+    refColumn: string;
+    onUpdate: string;
+    onDelete: string;
+    isNew: boolean;
+    origName?: string;
+  }
+  const [fkModalData, setFkModalData] = useState<FkModalState | null>(null);
+
+  // Automatically fetch referenced table columns whenever fkModalData refTable changes or modal opens
+  useEffect(() => {
+    if (fkModalData?.refTable) {
+      void getColumnsOf(fkModalData.refTable).then(cols => {
+        setRefColumns(cols);
+      });
+    } else {
+      setRefColumns([]);
+    }
+  }, [fkModalData?.refTable]);
+
   // Status messages
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [previewSqls, setPreviewSqls] = useState<string[] | null>(null);
   const [definitionSql, setDefinitionSql] = useState<string | null>(null);
+  const [alterPreview, setAlterPreview] = useState<string[] | null>(null);
+  const [ddlLoading, setDdlLoading] = useState(false);
   const [allTables, setAllTables] = useState<string[]>([]);
   const [refColumns, setRefColumns] = useState<string[]>([]);
 
@@ -63,31 +155,54 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
     fetchAllTables();
   }, []);
 
-  // Database specific type lists
+  // Database specific type lists. Base types WITHOUT a sample length — the length is
+  // its own cell now, so an option like `VARCHAR(255)` would fight with it.
   const getTypesForDb = () => {
     switch (dbType) {
       case 'postgres':
         return [
-          'INTEGER', 'BIGINT', 'SMALLINT', 'VARCHAR(255)', 'CHAR(10)', 'TEXT', 
-          'BOOLEAN', 'NUMERIC(10,2)', 'REAL', 'DOUBLE PRECISION', 'DATE', 
-          'TIME', 'TIMESTAMP', 'UUID', 'JSONB', 'BYTEA'
+          'INTEGER', 'BIGINT', 'SMALLINT', 'VARCHAR', 'CHAR', 'TEXT',
+          'BOOLEAN', 'NUMERIC', 'REAL', 'DOUBLE PRECISION', 'DATE',
+          'TIME', 'TIMESTAMP', 'TIMESTAMPTZ', 'INTERVAL', 'UUID', 'JSON', 'JSONB', 'BYTEA'
         ];
       case 'mysql':
         return [
-          'INT', 'BIGINT', 'TINYINT', 'SMALLINT', 'DECIMAL(10,2)', 'FLOAT', 
-          'DOUBLE', 'VARCHAR(255)', 'CHAR(10)', 'TEXT', 'LONGTEXT', 'BLOB', 
-          'DATE', 'TIME', 'DATETIME', 'TIMESTAMP', 'JSON'
+          'BIGINT', 'BINARY', 'BIT', 'BLOB', 'BOOLEAN', 'CHAR', 'DATE', 'DATETIME',
+          'DECIMAL', 'DOUBLE', 'ENUM', 'FLOAT', 'GEOMETRY', 'GEOMETRYCOLLECTION',
+          'INT', 'JSON', 'LINESTRING', 'LONGBLOB', 'LONGTEXT', 'MEDIUMBLOB',
+          'MEDIUMINT', 'MEDIUMTEXT', 'MULTILINESTRING', 'MULTIPOINT', 'MULTIPOLYGON',
+          'POINT', 'POLYGON', 'SET', 'SMALLINT', 'TINYBLOB', 'TINYINT', 'TINYTEXT',
+          'VARCHAR', 'YEAR'
         ];
       case 'sqlite':
       default:
-        return ['INTEGER', 'TEXT', 'REAL', 'BLOB', 'NUMERIC', 'VARCHAR(255)', 'BOOLEAN', 'TIMESTAMP'];
+        return ['INTEGER', 'TEXT', 'REAL', 'BLOB', 'NUMERIC', 'VARCHAR', 'BOOLEAN', 'DATE', 'TIMESTAMP'];
     }
   };
 
   const dbTypes = getTypesForDb();
 
+
+
+  const applyTypePick = (rowIndex: number, picked: string) => {
+    const raw = cols[rowIndex]?.type || '';
+    if (picked === CUSTOM_TYPE) {
+      const custom = prompt(t('structure.promptCustomType'), raw);
+      if (custom !== null && custom.trim()) setColField(rowIndex, 'type', custom.trim());
+    } else if (picked.toLowerCase() !== typeBase(raw).toLowerCase()) {
+      // A different base type drops the old length on purpose: carrying `255` over from
+      // varchar to text would build `text(255)`. Re-picking the same type keeps it.
+      setColField(rowIndex, 'type', picked);
+    }
+    setEditingColCell(null);
+  };
+
+  // Table Name state
+  const [pendingTableName, setPendingTableName] = useState<string>(tableName);
+
   // Initialize from schema
   useEffect(() => {
+    setPendingTableName(tableName);
     setCols(schema.columns.map(c => ({ ...c })));
     setDeletedColNames([]);
     setEditingColCell(null);
@@ -104,14 +219,20 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
     })));
     setDeletedFkNames([]);
     setEditingFkCell(null);
-    // tableName được dùng bên trong effect để đặt tên khóa ngoại chưa có tên
-    // (`fk_${tableName}_col_...`), nên phải nằm trong deps. Thực tế đổi bảng thì
-    // schema cũng được nạp lại nên effect vẫn chạy, nhưng khai đủ deps mới đúng ý
-    // định và bỏ được cảnh báo exhaustive-deps.
+
+    setDefinitionSql(null);
+    setAlterPreview(null);
+
+    if (tableName) {
+      dbHelper.getTableTriggers(tableName).then(setTriggers);
+      dbHelper.getTablePartitions(tableName).then(setPartitions);
+      dbHelper.getCheckConstraints(tableName).then(setConstraints);
+    }
   }, [schema, tableName]);
 
   // Track pending changes
   const hasChanges = () => {
+    if (pendingTableName.trim() && pendingTableName.trim() !== tableName) return true;
     if (deletedColNames.length > 0 || deletedIdxNames.length > 0 || deletedFkNames.length > 0) return true;
     if (cols.length !== schema.columns.length) return true;
     if (idxs.length !== (schema.indexes || []).length) return true;
@@ -159,6 +280,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
   };
 
   const handleDiscard = () => {
+    setPendingTableName(tableName);
     setCols(schema.columns.map(c => ({ ...c })));
     setDeletedColNames([]);
     setEditingColCell(null);
@@ -211,15 +333,42 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
     }
   };
 
-  const startEditCol = (rowIndex: number, field: 'name' | 'type' | 'nullable' | 'defaultValue' | 'comment', val: any) => {
+  const handleDuplicateColumn = (colIndex: number) => {
+    const target = cols[colIndex];
+    if (!target) return;
+    let newName = `${target.name}_copy`;
+    let c = 1;
+    while (cols.some(col => col.name === newName)) {
+      newName = `${target.name}_copy${c++}`;
+    }
+    const dup: ColumnInfo = {
+      ...target,
+      name: newName,
+      isPrimaryKey: false,
+    };
+    setCols([...cols, dup]);
+    setContextMenu(null);
+  };
+
+  // Cells open on a single click now, so the click that lands INSIDE an already-open
+  // editor bubbles up to the cell as well — without this guard it would re-seed the
+  // buffer from the stored value and wipe whatever was being typed.
+  const startEditCol = (rowIndex: number, field: 'name' | 'type' | 'length' | 'nullable' | 'defaultValue' | 'comment', val: any) => {
+    if (editingColCell?.rowIndex === rowIndex && editingColCell?.field === field) return;
     setEditingColCell({ rowIndex, field });
     setEditColValue(val === null ? '' : String(val));
   };
 
-  const saveEditCol = (rowIndex: number, field: 'name' | 'type' | 'nullable' | 'defaultValue' | 'comment') => {
+  const saveEditCol = (rowIndex: number, field: 'name' | 'type' | 'length' | 'nullable' | 'defaultValue' | 'comment') => {
     if (!editingColCell) return;
     setCols(prev => prev.map((col, idx) => {
       if (idx === rowIndex) {
+        // "length" is not a field of its own — it is the parenthesised part of `type`,
+        // put back where the paren was so `int(10) unsigned` keeps its modifier.
+        if (field === 'length') {
+          const { head, tail } = splitType(col.type);
+          return { ...col, type: joinType(head, editColValue, tail) };
+        }
         let updatedVal: any = editColValue;
         if (field === 'nullable') {
           updatedVal = editColValue === 'true';
@@ -235,22 +384,14 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
     setEditingColCell(null);
   };
 
-  const handleTogglePrimaryKey = (rowIndex: number) => {
-    setCols(prev => prev.map((col, idx) => {
-      if (idx === rowIndex) {
-        return { ...col, isPrimaryKey: !col.isPrimaryKey };
-      }
-      return col;
-    }));
+  // Direct writes from the controls that are not double-click-to-edit cells
+  // (the PK key icon and the two checkboxes).
+  const setColField = (rowIndex: number, field: keyof ColumnInfo, value: any) => {
+    setCols(prev => prev.map((col, idx) => (idx === rowIndex ? { ...col, [field]: value } : col)));
   };
 
-  const handleToggleAutoIncrement = (rowIndex: number) => {
-    setCols(prev => prev.map((col, idx) => {
-      if (idx === rowIndex) {
-        return { ...col, autoIncrement: !col.autoIncrement };
-      }
-      return col;
-    }));
+  const handleTogglePrimaryKey = (rowIndex: number) => {
+    setColField(rowIndex, 'isPrimaryKey', !cols[rowIndex]?.isPrimaryKey);
   };
 
   // -------------------------------------------------------------
@@ -284,6 +425,8 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
   };
 
   const startEditIdx = (rowIndex: number, field: 'name' | 'columns' | 'unique', val: any) => {
+    // See startEditCol: a click inside the open editor must not restart it.
+    if (editingIdxCell?.rowIndex === rowIndex && editingIdxCell?.field === field) return;
     setEditingIdxCell({ rowIndex, field });
     setEditIdxValue(String(val));
   };
@@ -368,6 +511,8 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
   };
 
   const startEditFk = async (rowIndex: number, field: 'column' | 'refTable' | 'refColumn', val: any) => {
+    // See startEditCol: a click inside the open editor must not restart it.
+    if (editingFkCell?.rowIndex === rowIndex && editingFkCell?.field === field) return;
     setEditingFkCell({ rowIndex, field });
     setEditFkValue(String(val));
 
@@ -554,6 +699,8 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
     setErrorMsg(null);
     setSuccessMsg(null);
 
+    const isRename = pendingTableName.trim() && pendingTableName.trim() !== tableName;
+    const newTableName = pendingTableName.trim();
     const { payload, warnings } = buildPayload();
 
     if (warnings.length > 0) {
@@ -562,26 +709,37 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
       return;
     }
 
-    if (
-      payload.added.length === 0 && payload.dropped.length === 0 && payload.renamed.length === 0 && payload.modified.length === 0 &&
-      payload.addedIndexes.length === 0 && payload.droppedIndexes.length === 0 &&
-      payload.addedFKs.length === 0 && payload.droppedFKs.length === 0
-    ) {
+    const hasSchemaChanges = (
+      payload.added.length > 0 || payload.dropped.length > 0 || payload.renamed.length > 0 || payload.modified.length > 0 ||
+      payload.addedIndexes.length > 0 || payload.droppedIndexes.length > 0 ||
+      payload.addedFKs.length > 0 || payload.droppedFKs.length > 0
+    );
+
+    if (!hasSchemaChanges && !isRename) {
       setSuccessMsg(t('structure.noChanges'));
       setLoading(false);
       return;
     }
 
-    try {
-      const res = await dbHelper.previewAlterTableSchema(tableName, payload);
-      if (res.success && res.sqls) {
-        setPreviewSqls(res.sqls);
-      } else {
-        throw new Error(res.error || t('structure.errPreviewFailed'));
+    if (hasSchemaChanges) {
+      try {
+        const res = await dbHelper.previewAlterTableSchema(tableName, payload);
+        if (res.success && res.sqls) {
+          let sqls = [...res.sqls];
+          if (isRename) {
+            sqls.push(`RENAME TABLE \`${tableName}\` TO \`${newTableName}\`;`);
+          }
+          setPreviewSqls(sqls);
+        } else {
+          throw new Error(res.error || t('structure.errPreviewFailed'));
+        }
+      } catch (err: any) {
+        setErrorMsg(t('structure.errAlter', { message: err.message }));
+      } finally {
+        setLoading(false);
       }
-    } catch (err: any) {
-      setErrorMsg(t('structure.errAlter', { message: err.message }));
-    } finally {
+    } else if (isRename) {
+      setPreviewSqls([`RENAME TABLE \`${tableName}\` TO \`${newTableName}\`;`]);
       setLoading(false);
     }
   };
@@ -593,17 +751,35 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
     setSuccessMsg(null);
     setPreviewSqls(null);
 
+    const isRename = pendingTableName.trim() && pendingTableName.trim() !== tableName;
+    const newTableName = pendingTableName.trim();
     const { payload } = buildPayload();
 
+    const hasSchemaChanges = (
+      payload.added.length > 0 || payload.dropped.length > 0 || payload.renamed.length > 0 || payload.modified.length > 0 ||
+      payload.addedIndexes.length > 0 || payload.droppedIndexes.length > 0 ||
+      payload.addedFKs.length > 0 || payload.droppedFKs.length > 0
+    );
+
     try {
-      const res = await dbHelper.alterTableSchema(tableName, payload);
-      if (res.success) {
-        setSuccessMsg(res.message || t('structure.alterSuccess'));
-        setTimeout(() => setSuccessMsg(null), 3000);
-        onSchemaChanged();
-      } else {
-        throw new Error(res.error || t('structure.errUnknown'));
+      if (hasSchemaChanges) {
+        const res = await dbHelper.alterTableSchema(tableName, payload);
+        if (!res.success) {
+          throw new Error(res.error || t('structure.errUnknown'));
+        }
       }
+
+      if (isRename) {
+        const renameRes = await dbHelper.renameTable(tableName, newTableName);
+        if (!renameRes.success) {
+          throw new Error(renameRes.error || t('structure.errRename', { message: '' }));
+        }
+        window.dispatchEvent(new CustomEvent('table-renamed', { detail: { oldName: tableName, newName: newTableName } }));
+      }
+
+      setSuccessMsg(t('structure.alterSuccess'));
+      setTimeout(() => setSuccessMsg(null), 3000);
+      onSchemaChanged();
     } catch (err: any) {
       setErrorMsg(t('structure.errExecuteSql', { message: err.message }));
     } finally {
@@ -611,17 +787,47 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
     }
   };
 
-  const handleShowDefinition = async () => {
-    setErrorMsg(null);
-    const res = await dbHelper.getTableDefinition(tableName);
-    if (res.success && res.sql) {
-      setDefinitionSql(res.sql);
-    } else {
-      setErrorMsg(res.error || t('structure.errNoDefinition'));
-    }
-  };
+  // The DDL pane is both "show me the CREATE TABLE" and a live preview of what Save
+  // would run: with pending edits it renders the ALTER statements from the same
+  // preview_alter_schema call the confirm dialog uses, so the two can never disagree.
+  // Edits are committed on blur, not per keystroke, so this fires once per change.
+  useEffect(() => {
+    if (section !== 'ddl') return;
+    let cancelled = false;
 
-  // Dựng các dump script theo dialect (dùng trong modal Definition)
+    const load = async () => {
+      setDdlLoading(true);
+      try {
+        if (hasChanges()) {
+          const { payload } = buildPayload();
+          const res = await dbHelper.previewAlterTableSchema(tableName, payload);
+          if (!cancelled) setAlterPreview(res.success && res.sqls ? res.sqls : []);
+        } else {
+          if (cancelled) return;
+          setAlterPreview(null);
+          if (definitionSql === null) {
+            const res = await dbHelper.getTableDefinition(tableName);
+            if (cancelled) return;
+            if (res.success && res.sql) setDefinitionSql(res.sql);
+            else setErrorMsg(res.error || t('structure.errNoDefinition'));
+          }
+        }
+      } catch {
+        if (!cancelled) setErrorMsg(t('structure.errPreviewFailed'));
+      } finally {
+        if (!cancelled) setDdlLoading(false);
+      }
+    };
+
+    void load();
+    return () => { cancelled = true; };
+    // hasChanges/buildPayload/t are re-created on every render; the real inputs are the
+    // edit buffers listed here. definitionSql is read as a cache probe, not tracked —
+    // adding it would re-run the effect with the value it just wrote.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [section, tableName, schema, cols, idxs, fks, deletedColNames, deletedIdxNames, deletedFkNames]);
+
+  // Dựng các dump script theo dialect (dùng trong pane DDL)
   const q = dbType === 'mysql' ? '`' : '"';
   const dropScript = `DROP TABLE ${q}${tableName}${q};`;
   const truncateScript = dbType === 'sqlite'
@@ -638,123 +844,266 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
   const isOriginalIndex = (idxName: string) => (schema.indexes || []).some(i => i.name === idxName);
   const isOriginalFk = (fkName: string) => (schema.foreignKeys || []).some((f, idx) => (f.name || `fk_${tableName}_col_${f.column}_${idx}`) === fkName);
 
+  const changed = hasChanges();
+
+  const handleAddCheckConstraint = async () => {
+    setShowAddCheckModal(true);
+  };
+
+  const handleSaveCheckConstraint = async () => {
+    if (!newCheck.expression.trim()) return;
+    const name = newCheck.name.trim() || `chk_${tableName}_${Date.now()}`;
+    const sql = `ALTER TABLE ${tableName} ADD CONSTRAINT ${name} CHECK (${newCheck.expression.trim()});`;
+    const res = await dbHelper.executeQuery(sql);
+    if (res.success) {
+      setSuccessMsg('Đã thêm Check Constraint thành công');
+      setShowAddCheckModal(false);
+      setNewCheck({ name: '', expression: '' });
+      dbHelper.getCheckConstraints(tableName).then(setConstraints);
+      setTimeout(() => setSuccessMsg(null), 3000);
+    } else {
+      setErrorMsg(res.error || 'Lỗi khi thêm Check Constraint');
+    }
+  };
+
+  const handleDropCheckConstraint = async (name: string) => {
+    if (!window.confirm(`Bạn có chắc muốn xóa Check constraint "${name}"?`)) return;
+    const sql = dbType === 'mysql'
+      ? `ALTER TABLE ${tableName} DROP CHECK \`${name}\`;`
+      : `ALTER TABLE ${tableName} DROP CONSTRAINT "${name}";`;
+    const res = await dbHelper.executeQuery(sql);
+    if (res.success) {
+      setSuccessMsg(`Đã xóa Check constraint ${name}`);
+      dbHelper.getCheckConstraints(tableName).then(setConstraints);
+      setTimeout(() => setSuccessMsg(null), 3000);
+    } else {
+      setErrorMsg(res.error || 'Lỗi khi xóa Check constraint');
+    }
+  };
+
+  const handleAddTrigger = () => {
+    setShowAddTriggerModal(true);
+  };
+
+  const handleSaveTrigger = async () => {
+    if (!newTrigger.name.trim() || !newTrigger.body.trim()) return;
+    const triggerSql = dbType === 'mysql'
+      ? `CREATE TRIGGER \`${newTrigger.name.trim()}\` ${newTrigger.timing} ${newTrigger.event} ON \`${tableName}\` FOR EACH ROW ${newTrigger.body.trim()}`
+      : `CREATE TRIGGER "${newTrigger.name.trim()}" ${newTrigger.timing} ${newTrigger.event} ON "${tableName}" FOR EACH ROW ${newTrigger.body.trim()};`;
+    
+    const res = await dbHelper.saveTrigger(triggerSql);
+    if (res.success) {
+      setSuccessMsg('Đã thêm Trigger thành công');
+      setShowAddTriggerModal(false);
+      setNewTrigger({ name: '', timing: 'BEFORE', event: 'INSERT', body: '' });
+      dbHelper.getTableTriggers(tableName).then(setTriggers);
+      setTimeout(() => setSuccessMsg(null), 3000);
+    } else {
+      setErrorMsg(res.error || 'Lỗi khi tạo Trigger');
+    }
+  };
+
+  const handleDropTrigger = async (triggerName: string) => {
+    if (!window.confirm(`Bạn có chắc muốn xóa Trigger "${triggerName}"?`)) return;
+    const res = await dbHelper.dropTrigger(triggerName);
+    if (res.success) {
+      setSuccessMsg(`Đã xóa Trigger ${triggerName}`);
+      dbHelper.getTableTriggers(tableName).then(setTriggers);
+      setTimeout(() => setSuccessMsg(null), 3000);
+    } else {
+      setErrorMsg(res.error || 'Lỗi khi xóa Trigger');
+    }
+  };
+
+  const handleAddPartition = () => {
+    setShowAddPartitionModal(true);
+  };
+
+  const handleSavePartition = async () => {
+    if (!newPartition.name.trim()) return;
+    const sql = `ALTER TABLE ${tableName} ADD PARTITION (PARTITION ${newPartition.name.trim()} VALUES ${newPartition.valClause.trim() || 'LESS THAN MAXVALUE'});`;
+    const res = await dbHelper.executeQuery(sql);
+    if (res.success) {
+      setSuccessMsg('Đã thêm Partition thành công');
+      setShowAddPartitionModal(false);
+      setNewPartition({ name: '', valClause: '' });
+      dbHelper.getTablePartitions(tableName).then(setPartitions);
+      setTimeout(() => setSuccessMsg(null), 3000);
+    } else {
+      setErrorMsg(res.error || 'Lỗi khi thêm Partition');
+    }
+  };
+
+  const handleDropPartition = async (partitionName: string) => {
+    if (!window.confirm(`Bạn có chắc muốn xóa Partition "${partitionName}"? (Dữ liệu thuộc partition này sẽ bị xóa)`)) return;
+    const sql = `ALTER TABLE ${tableName} DROP PARTITION ${partitionName};`;
+    const res = await dbHelper.executeQuery(sql);
+    if (res.success) {
+      setSuccessMsg(`Đã xóa Partition ${partitionName}`);
+      dbHelper.getTablePartitions(tableName).then(setPartitions);
+      setTimeout(() => setSuccessMsg(null), 3000);
+    } else {
+      setErrorMsg(res.error || 'Lỗi khi xóa Partition');
+    }
+  };
+
+  const sections: { id: StructureSection; label: string; count?: number }[] = [
+    { id: 'columns', label: t('structure.columnsSection'), count: cols.length },
+    { id: 'indexes', label: t('structure.indexesSection'), count: idxs.length },
+    { id: 'fks', label: t('structure.fkSection'), count: fks.length },
+    { id: 'check_constraints', label: 'Check Constraints', count: constraints.length },
+    { id: 'triggers', label: 'Triggers', count: triggers.length },
+    { id: 'partitions', label: 'Partitions', count: partitions.length },
+    { id: 'ddl', label: t('structure.ddlSection') },
+  ];
+
+  // One "Add" button that follows the active pane, instead of three permanent ones.
+  const addAction =
+    section === 'columns' ? { onClick: handleAddColumn, label: t('structure.addColumn') } :
+    section === 'indexes' ? { onClick: handleAddIndex, label: t('structure.addIndex') } :
+    section === 'fks' ? { onClick: handleAddFK, label: t('structure.addForeignKey') } :
+    section === 'check_constraints' ? { onClick: handleAddCheckConstraint, label: 'Thêm Check Constraint' } :
+    section === 'triggers' ? { onClick: handleAddTrigger, label: 'Thêm Trigger' } :
+    section === 'partitions' ? { onClick: handleAddPartition, label: 'Thêm Partition' } :
+    null;
+
+  const ddlText = changed
+    ? (alterPreview || []).map(s => (s.trim().endsWith(';') ? s : `${s};`)).join('\n\n')
+    : (definitionSql || '');
+
+  // The filter keeps each row's ORIGINAL index: every edit handler addresses a row by
+  // its position in cols/idxs/fks, so mapping over a filtered array would write to the
+  // wrong row (and the "#" column would lie about the ordinal).
+  const needle = filter.trim().toLowerCase();
+  const hit = (...fields: (string | null | undefined)[]) =>
+    !needle || fields.some(f => (f || '').toLowerCase().includes(needle));
+
+  const visibleCols = cols
+    .map((col, index) => ({ col, index }))
+    .filter(({ col }) => hit(col.name, col.type, col.comment, col.defaultValue == null ? null : String(col.defaultValue)));
+
+  const visibleIdxs = idxs
+    .map((idx, index) => ({ idx, index }))
+    .filter(({ idx }) => hit(idx.name, idx.columns, (idx as any).type));
+
+  const visibleFks = fks
+    .map((fk, index) => ({ fk, index }))
+    .filter(({ fk }) => hit(fk.name, fk.column, fk.refTable, fk.refColumn));
+
   return (
-    <div className="structure-view-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+    // padding/gap 0: .structure-view-container's own 24px inset pushed the toolbar off
+    // the edges, so its bottom border stopped short of the pane on both sides.
+    <div className="structure-view-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', padding: 0, gap: 0 }}>
       {/* Header Toolbar */}
-      <div className="sql-toolbar" style={{ borderBottom: '1px solid var(--win-border)', padding: '8px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)' }}>{t('structure.tableNameLabel')}</span>
+      <div className="sql-toolbar st-toolbar">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'nowrap', flexShrink: 0 }}>
+          <div className="st-table-name-wrapper" title="Table Name">
+            <Table2 size={13} className="st-table-icon" />
+            <span className="st-toolbar-label">{t('structure.tableNameLabel')}</span>
             <input
               type="text"
-              key={tableName}
-              defaultValue={tableName}
-              onBlur={async (e) => {
-                const newName = e.target.value.trim();
-                if (!newName || newName === tableName) return;
-                if (readOnly) {
-                  setErrorMsg(t('structure.errReadOnlyRename'));
-                  e.target.value = tableName;
-                  return;
-                }
-                if (confirm(t('structure.confirmRename', { from: tableName, to: newName }))) {
-                  try {
-                    const res = await dbHelper.renameTable(tableName, newName);
-                    if (res.success) {
-                      alert(t('structure.renameSuccess'));
-                      window.dispatchEvent(new CustomEvent('table-renamed', { detail: { oldName: tableName, newName } }));
-                    } else {
-                      alert(t('structure.errRename', { message: res.error }));
-                      e.target.value = tableName;
-                    }
-                  } catch (err: any) {
-                    alert(t('common.connectionError', { message: err.message }));
-                    e.target.value = tableName;
-                  }
-                } else {
-                  e.target.value = tableName;
-                }
-              }}
-              style={{
-                fontSize: '11px',
-                fontWeight: 600,
-                padding: '2px 8px',
-                borderRadius: '4px',
-                border: '1px solid var(--win-border)',
-                background: 'var(--win-bg-input)',
-                color: 'var(--win-text-primary)',
-                width: '140px',
-                height: '24px',
-                cursor: 'text'
-              }}
+              className="st-tablename-input"
+              value={pendingTableName}
+              onChange={(e) => setPendingTableName(e.target.value)}
+              placeholder={tableName}
+              title={t('structure.tableNameLabel')}
             />
           </div>
-          <div style={{ width: '1px', height: '16px', background: 'var(--win-border)' }} />
-
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button 
-              className="btn btn-secondary" 
-              onClick={handleAddColumn}
-              style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
-            >
-              <Plus size={12} />
-              <span>{t('structure.addColumn')}</span>
-            </button>
-            <button 
-              className="btn btn-secondary" 
-              onClick={handleAddIndex}
-              style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
-            >
-              <Plus size={12} />
-              <span>{t('structure.addIndex')}</span>
-            </button>
-            <button
-              className="btn btn-secondary"
-              onClick={handleAddFK}
-              style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
-            >
-              <Plus size={12} />
-              <span>{t('structure.addForeignKey')}</span>
-            </button>
-            <button
-              className="btn btn-secondary"
-              onClick={handleShowDefinition}
-              style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
-              title={t('structure.definitionTitle')}
-            >
-              <Code size={12} />
-              <span>{t('structure.definition')}</span>
-            </button>
+          <div className="st-pk-summary-badge" title="Primary key columns">
+            <Key size={11} className="st-pk-badge-icon" />
+            <span className="st-pk-badge-label">Primary:</span>
+            <span className="st-pk-badge-val">{cols.filter(c => c.isPrimaryKey).map(c => c.name).join(', ') || 'none'}</span>
           </div>
+          <div className="st-divider" />
+
+          {!activeSection && (
+            <div className="segmented-control">
+              {sections.map(s => (
+                <button
+                  key={s.id}
+                  className={`segment-btn${section === s.id ? ' active' : ''}`}
+                  onClick={() => { setSection(s.id); setFilter(''); }}
+                >
+                  {s.label}
+                  {s.count !== undefined && <span className="st-seg-count">{s.count}</span>}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {section !== 'ddl' && (
+            <div className="st-filter">
+              <Search size={12} style={{ opacity: 0.7 }} />
+              <input
+                type="text"
+                value={filter}
+                onChange={e => setFilter(e.target.value)}
+                onKeyDown={e => e.key === 'Escape' && setFilter('')}
+                placeholder={t('structure.filterPlaceholder')}
+              />
+              {filter && (
+                <button type="button" onClick={() => setFilter('')} title={t('structure.filterClear')}>
+                  <X size={11} />
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
-        {hasChanges() && (
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button 
-              className="btn btn-secondary" 
-              onClick={handleDiscard}
-              disabled={loading}
-              style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
+        {/* Action buttons aligned right */}
+        <div style={{ display: 'flex', gap: '5px', alignItems: 'center', flexWrap: 'nowrap', flexShrink: 0, marginLeft: 'auto' }}>
+          {changed && (
+            <span className="st-dirty" style={{ fontSize: '11px', padding: '2px 6px', whiteSpace: 'nowrap' }}>
+              <span className="st-dirty-dot" />
+              {t('structure.unsavedChanges')}
+            </span>
+          )}
+          {addAction && (
+            <button
+              className="btn btn-secondary"
+              onClick={addAction.onClick}
+              style={{ display: 'flex', alignItems: 'center', gap: '4px', borderRadius: '5px', height: '26px', padding: '0 8px', fontSize: '11px', whiteSpace: 'nowrap' }}
             >
-              <RotateCcw size={12} />
-              <span>{t('structure.discard')}</span>
+              <Plus size={12} />
+              <span>{addAction.label}</span>
             </button>
-            <button 
-              className="btn btn-primary" 
-              onClick={handleSaveStructure}
-              disabled={loading}
-              style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'var(--st-ok)', borderColor: 'var(--st-ok)' }}
-            >
-              <Save size={12} />
-              <span>{loading ? t('structure.saving') : t('structure.saveStructure')}</span>
-            </button>
-          </div>
-        )}
+          )}
+          <button
+            className="btn btn-secondary"
+            onClick={handleDiscard}
+            disabled={loading || !changed}
+            style={{ display: 'flex', alignItems: 'center', gap: '4px', borderRadius: '5px', height: '26px', padding: '0 8px', fontSize: '11px', whiteSpace: 'nowrap' }}
+          >
+            <RotateCcw size={12} />
+            <span>{t('structure.discard')}</span>
+          </button>
+          <button
+            className="btn btn-primary"
+            onClick={handleSaveStructure}
+            disabled={loading || !changed}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              borderRadius: '5px',
+              height: '26px',
+              padding: '0 10px',
+              fontSize: '11px',
+              whiteSpace: 'nowrap',
+              background: 'var(--st-ok, #10b981)',
+              borderColor: 'var(--st-ok, #10b981)',
+              boxShadow: changed ? '0 2px 6px rgba(16, 185, 129, 0.3)' : 'none'
+            }}
+          >
+            <Save size={13} />
+            <span>{loading ? t('structure.saving') : t('structure.saveStructure')}</span>
+          </button>
+        </div>
       </div>
 
       {/* Messages */}
       {successMsg && (
-        <div className="info-bar" style={{ background: 'rgba(16, 185, 129, 0.1)', borderLeftColor: 'var(--st-ok)', margin: '8px 16px', flexShrink: 0 }}>
+        <div className="info-bar" style={{ background: 'rgba(16, 185, 129, 0.1)', borderLeftColor: 'var(--st-ok)', margin: '8px 12px 0', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <CheckCircle2 size={16} style={{ color: 'var(--st-ok)' }} />
             <span>{successMsg}</span>
@@ -763,7 +1112,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
       )}
 
       {errorMsg && (
-        <div className="info-bar" style={{ background: 'rgba(239, 68, 68, 0.1)', borderLeftColor: 'var(--st-danger)', margin: '8px 16px', flexShrink: 0 }}>
+        <div className="info-bar" style={{ background: 'rgba(239, 68, 68, 0.1)', borderLeftColor: 'var(--st-danger)', margin: '8px 12px 0', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <AlertTriangle size={16} style={{ color: 'var(--st-danger)' }} />
             <span style={{ whiteSpace: 'pre-line' }}>{errorMsg}</span>
@@ -771,159 +1120,151 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
         </div>
       )}
 
-      {/* Grid Content */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
-        
-        {/* COLUMNS SECTION */}
-        <div className="structure-section" style={{ margin: 0 }}>
-          <h3>{t('structure.columnsSection')}</h3>
-          <table className="structure-table">
-            <thead>
-              <tr>
-                <th style={{ width: '40px', textAlign: 'center' }}>#</th>
-                <th>{t('structure.colName')}</th>
-                <th>{t('structure.colType')}</th>
-                <th>{t('structure.colNullable')}</th>
-                <th>{t('structure.colPrimaryKey')}</th>
-                <th style={{ width: '80px', textAlign: 'center' }}>{t('structure.colAutoIncrement')}</th>
-                <th>{t('structure.colDefault')}</th>
-                <th>{t('structure.colComment')}</th>
-                <th style={{ width: '60px', textAlign: 'center' }}>{t('structure.colActions')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {cols.map((col, index) => {
-                const isNew = !isOriginalColumn(col.name);
-                const isEditing = editingColCell?.rowIndex === index;
+      {/* Active pane — grid panes run edge to edge under a sticky header, like the
+          Data tab; only the DDL pane is inset (see .st-pane in index.css). */}
+      <div className={`st-pane${section === 'ddl' ? ' st-pane-ddl' : ''}`}>
 
-                return (
-                  <tr key={col.name + '_' + index} className={isNew ? 'structure-row-new' : ''}>
-                    <td style={{ textAlign: 'center', color: 'var(--win-text-secondary)', fontWeight: 600 }}>{index + 1}</td>
-                    
-                    {/* Column Name */}
-                    <td 
-                      onDoubleClick={() => startEditCol(index, 'name', col.name)}
-                      style={{ fontWeight: 600, color: 'var(--win-text-primary)', cursor: 'pointer' }}
-                    >
-                      {isEditing && editingColCell?.field === 'name' ? (
-                        <input
-                          type="text"
-                          className="form-input"
-                          value={editColValue}
-                          onChange={e => setEditColValue(e.target.value)}
-                          onBlur={() => saveEditCol(index, 'name')}
-                          onKeyDown={e => e.key === 'Enter' && saveEditCol(index, 'name')}
-                          autoFocus
-                          style={{ width: '100%', padding: '2px 6px', fontSize: '12px' }}
-                        />
-                      ) : (
-                        <span>{col.name}</span>
-                      )}
-                    </td>
+        {/* COLUMNS */}
+        {section === 'columns' && (
+          <>
+            <table className="structure-table">
+              <thead>
+                <tr>
+                  <th style={{ width: '56px', textAlign: 'center' }} title={t('structure.togglePk')}>#</th>
+                  <th style={{ minWidth: '150px', whiteSpace: 'nowrap' }}>{t('structure.colName')}</th>
+                  <th style={{ minWidth: '160px', whiteSpace: 'nowrap' }}>data_type</th>
+                  <th style={{ minWidth: '130px', whiteSpace: 'nowrap' }}>character_set</th>
+                  <th style={{ minWidth: '180px', whiteSpace: 'nowrap' }}>collation</th>
+                  <th style={{ width: '56px', textAlign: 'center' }} title={t('structure.colNullable')}>{t('structure.colNullShort')}</th>
+                  <th style={{ width: '76px', textAlign: 'center' }} title={t('structure.colAutoIncrement')}>{t('structure.colAutoIncShort')}</th>
+                  <th style={{ minWidth: '160px', whiteSpace: 'nowrap' }}>{t('structure.colDefault')}</th>
+                  <th style={{ minWidth: '220px', whiteSpace: 'nowrap' }}>extra</th>
+                  <th style={{ minWidth: '150px', whiteSpace: 'nowrap' }}>foreign_key</th>
+                  <th style={{ minWidth: '120px', whiteSpace: 'nowrap' }}>{t('structure.colComment')}</th>
+                  <th style={{ width: '40px', textAlign: 'center' }} aria-label={t('structure.colActions')} />
+                </tr>
+              </thead>
+              <tbody>
+                {visibleCols.map(({ col, index }) => {
+                  const isNew = !isOriginalColumn(col.name);
+                  const isEditing = editingColCell?.rowIndex === index;
 
-                    {/* Data Type */}
-                    <td 
-                      onDoubleClick={() => startEditCol(index, 'type', col.type)}
-                      style={{ fontFamily: 'var(--win-font-mono)', color: 'var(--win-accent)', fontWeight: 600, cursor: 'pointer' }}
+                  return (
+                    <tr
+                      key={col.name + '_' + index}
+                      className={isNew ? 'structure-row-new' : ''}
+                      onContextMenu={(e) => handleRowContextMenu(e, 'column', index, col.name)}
                     >
-                      {isEditing && editingColCell?.field === 'type' ? (
-                        <select
-                          className="form-input"
-                          value={editColValue.toUpperCase()}
-                          onChange={e => setEditColValue(e.target.value)}
-                          onBlur={() => saveEditCol(index, 'type')}
-                          autoFocus
-                          style={{ width: '100%', padding: '2px', fontSize: '12px', height: '24px' }}
+                      {/* Ordinal + primary key toggle */}
+                      <td className="st-gutter">
+                        <span className="st-ord">{index + 1}</span>
+                        <button
+                          type="button"
+                          className={`st-pk-btn${col.isPrimaryKey ? ' on' : ''}`}
+                          onClick={() => handleTogglePrimaryKey(index)}
+                          title={t('structure.togglePk')}
                         >
-                          {dbTypes.map(t => (
-                            <option key={t} value={t}>{t}</option>
-                          ))}
-                        </select>
-                      ) : (
-                        <span>{col.type.toUpperCase()}</span>
-                      )}
-                    </td>
+                          <Key size={12} />
+                        </button>
+                      </td>
 
-                    {/* Nullable */}
-                    <td 
-                      onDoubleClick={() => startEditCol(index, 'nullable', col.nullable)}
-                      style={{ cursor: 'pointer' }}
-                    >
-                      {isEditing && editingColCell?.field === 'nullable' ? (
-                        <select
-                          className="form-input"
-                          value={editColValue}
-                          onChange={e => setEditColValue(e.target.value)}
-                          onBlur={() => saveEditCol(index, 'nullable')}
-                          autoFocus
-                          style={{ width: '100%', padding: '2px', fontSize: '12px', height: '24px' }}
-                        >
-                          <option value="true">{t('structure.optNullable')}</option>
-                          <option value="false">{t('structure.optNotNull')}</option>
-                        </select>
-                      ) : (
-                        col.nullable ? (
-                          <span className="badge-nullable">NULLABLE</span>
+                      {/* Column Name */}
+                      <td
+                        className="st-edit"
+                        onClick={() => startEditCol(index, 'name', col.name)}
+                        title={t('structure.editHint')}
+                        style={{ fontWeight: 600, color: 'var(--win-text-primary)', whiteSpace: 'nowrap' }}
+                      >
+                        {isEditing && editingColCell?.field === 'name' ? (
+                          <input
+                            type="text"
+                            className="form-input st-cell-input"
+                            value={editColValue}
+                            onChange={e => setEditColValue(e.target.value)}
+                            onBlur={() => saveEditCol(index, 'name')}
+                            onKeyDown={e => e.key === 'Enter' && saveEditCol(index, 'name')}
+                            ref={el => { if (el) { el.focus(); el.select(); } }}
+                          />
                         ) : (
-                          <span className="badge-not-nullable">NOT NULL</span>
-                        )
-                      )}
-                    </td>
+                          <span>{col.name}</span>
+                        )}
+                      </td>
 
-                    {/* Primary Key Status */}
-                    <td 
-                      onClick={() => handleTogglePrimaryKey(index)}
-                      style={{ cursor: 'pointer', textAlign: 'center' }}
-                      title={t('structure.togglePk')}
-                    >
-                      {col.isPrimaryKey ? (
-                        <span className="badge-pk" style={{ userSelect: 'none', background: 'rgba(239, 68, 68, 0.12)', color: 'var(--st-danger)', borderColor: 'rgba(239, 68, 68, 0.25)' }}>PRIMARY KEY</span>
-                      ) : (
-                        <span style={{ color: 'var(--win-text-disabled)', userSelect: 'none' }}>-</span>
-                      )}
-                    </td>
-
-                    {/* Auto Increment */}
-                    <td 
-                      onClick={() => handleToggleAutoIncrement(index)}
-                      style={{ cursor: 'pointer', textAlign: 'center' }}
-                      title={t('structure.toggleAutoIncrement')}
-                    >
-                      {col.autoIncrement ? (
-                        <span className="badge-pk" style={{ userSelect: 'none', background: 'rgba(77, 139, 244, 0.12)', color: 'var(--win-accent)', borderColor: 'rgba(77, 139, 244, 0.25)' }}>AUTO_INCREMENT</span>
-                      ) : (
-                        <span style={{ color: 'var(--win-text-disabled)', userSelect: 'none' }}>-</span>
-                      )}
-                    </td>
-
-                    {/* Default Value */}
-                    <td 
-                      onDoubleClick={() => startEditCol(index, 'defaultValue', col.defaultValue)}
-                      style={{ color: 'var(--win-text-secondary)', fontFamily: 'var(--win-font-mono)', cursor: 'pointer' }}
-                    >
-                      {isEditing && editingColCell?.field === 'defaultValue' ? (
+                      {/* Data Type — Direct select showing full data_type */}
+                      <td style={{ padding: '2px 4px', verticalAlign: 'middle', whiteSpace: 'nowrap' }}>
                         <select
-                          className="form-input"
-                          value={editColValue === null || editColValue === '' ? 'NULL' : editColValue}
+                          className="st-select st-select-type"
+                          value={col.type}
+                          onChange={e => applyTypePick(index, e.target.value)}
+                        >
+                          {!dbTypes.includes(col.type) && (
+                            <option value={col.type}>{col.type}</option>
+                          )}
+                          {dbTypes.map(ty => (
+                            <option key={ty} value={ty}>{ty}</option>
+                          ))}
+                          <option value={CUSTOM_TYPE}>{t('structure.optTypeCustom')}</option>
+                        </select>
+                      </td>
+
+                      {/* character_set */}
+                      <td style={{ whiteSpace: 'nowrap', fontFamily: 'var(--win-font-mono)', fontSize: '12px' }}>
+                        {col.characterSet ? (
+                          <span>{col.characterSet}</span>
+                        ) : (
+                          <span className="st-empty-dash" style={{ fontStyle: 'normal' }}>NULL</span>
+                        )}
+                      </td>
+
+                      {/* collation */}
+                      <td style={{ whiteSpace: 'nowrap', fontFamily: 'var(--win-font-mono)', fontSize: '12px' }}>
+                        {col.collation ? (
+                          <span>{col.collation}</span>
+                        ) : (
+                          <span className="st-empty-dash" style={{ fontStyle: 'normal' }}>NULL</span>
+                        )}
+                      </td>
+
+                      {/* Nullable */}
+                      <td style={{ textAlign: 'center' }}>
+                        <input
+                          type="checkbox"
+                          className="st-check"
+                          checked={!!col.nullable}
+                          onChange={e => setColField(index, 'nullable', e.target.checked)}
+                          title={t('structure.toggleNullable')}
+                        />
+                      </td>
+
+                      {/* Auto increment */}
+                      <td style={{ textAlign: 'center' }}>
+                        <input
+                          type="checkbox"
+                          className="st-check"
+                          checked={!!col.autoIncrement}
+                          onChange={e => setColField(index, 'autoIncrement', e.target.checked)}
+                          title={t('structure.toggleAutoIncrement')}
+                        />
+                      </td>
+
+                      {/* Default Value — Direct 1-click select */}
+                      <td style={{ padding: '2px 4px', verticalAlign: 'middle' }}>
+                        <select
+                          className={`st-select st-select-default ${col.defaultValue === null ? 'is-null' : ''}`}
+                          value={col.defaultValue === null ? 'NULL' : String(col.defaultValue)}
                           onChange={e => {
                             const val = e.target.value;
                             if (val === 'NULL') {
-                              setEditColValue('');
-                              saveEditCol(index, 'defaultValue');
+                              setColField(index, 'defaultValue', null);
                             } else if (val === 'CUSTOM') {
-                              // Nếu chọn CUSTOM, cho phép người dùng tự gõ qua prompt
                               const customVal = prompt(t('structure.promptCustomDefault'), '');
                               if (customVal !== null) {
-                                setEditColValue(customVal);
-                                saveEditCol(index, 'defaultValue');
+                                setColField(index, 'defaultValue', customVal);
                               }
                             } else {
-                              setEditColValue(val);
-                              saveEditCol(index, 'defaultValue');
+                              setColField(index, 'defaultValue', val);
                             }
                           }}
-                          autoFocus
-                          style={{ width: '100%', padding: '2px', fontSize: '12px', height: '24px' }}
                         >
                           <option value="NULL">{t('structure.optDefaultNull')}</option>
                           <option value="CURRENT_TIMESTAMP">{t('structure.optDefaultNow')}</option>
@@ -931,94 +1272,132 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                           <option value="0">{t('structure.optDefaultZero')}</option>
                           <option value="false">{t('structure.optDefaultFalse')}</option>
                           <option value="true">{t('structure.optDefaultTrue')}</option>
+                          {col.defaultValue !== null && !['CURRENT_TIMESTAMP', "''", '0', 'false', 'true'].includes(String(col.defaultValue)) && (
+                            <option value={String(col.defaultValue)}>{String(col.defaultValue)}</option>
+                          )}
                           <option value="CUSTOM">{t('structure.optDefaultCustom')}</option>
                         </select>
-                      ) : (
-                        col.defaultValue === null ? (
-                          <span style={{ color: 'var(--win-text-disabled)', fontStyle: 'italic' }}>NULL</span>
-                        ) : (
-                          <span>{String(col.defaultValue)}</span>
-                        )
-                      )}
-                    </td>
+                      </td>
 
-                    {/* Comment */}
-                    <td 
-                      onDoubleClick={() => startEditCol(index, 'comment', col.comment)}
-                      style={{ color: 'var(--win-text-secondary)', cursor: 'pointer' }}
-                      title={t('structure.commentHint')}
-                    >
-                      {isEditing && editingColCell?.field === 'comment' ? (
-                        <input
-                          type="text"
-                          className="form-input"
-                          value={editColValue}
-                          onChange={e => setEditColValue(e.target.value)}
-                          onBlur={() => saveEditCol(index, 'comment')}
-                          onKeyDown={e => e.key === 'Enter' && saveEditCol(index, 'comment')}
-                          autoFocus
-                          placeholder={t('structure.commentPlaceholder')}
-                          style={{ width: '100%', padding: '2px 6px', fontSize: '12px' }}
-                        />
-                      ) : (
-                        col.comment ? (
-                          <span>{col.comment}</span>
+                      {/* extra */}
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        {col.extra ? (
+                          <span className="st-badge-extra">{col.extra}</span>
+                        ) : col.autoIncrement ? (
+                          <span className="st-badge-extra">auto_increment</span>
                         ) : (
-                          <span style={{ color: 'var(--win-text-disabled)', fontStyle: 'italic' }}>-</span>
-                        )
-                      )}
-                    </td>
+                          <span className="st-empty-dash">-</span>
+                        )}
+                      </td>
 
-                    {/* Delete Column Action */}
-                    <td style={{ textAlign: 'center' }}>
-                      <button
-                        className="btn-secondary"
-                        onClick={() => handleDeleteColumn(col.name, isNew)}
-                        disabled={col.isPrimaryKey}
-                        style={{
-                          border: 'none',
-                          background: 'transparent',
-                          color: col.isPrimaryKey ? 'var(--win-text-disabled)' : 'var(--st-danger)',
-                          cursor: col.isPrimaryKey ? 'not-allowed' : 'pointer',
-                          padding: '4px'
-                        }}
-                        title={col.isPrimaryKey ? t('structure.cannotDropPk') : t('structure.dropColumn')}
+                      {/* foreign_key */}
+                      {(() => {
+                        const matchingFk = fks.find(f => f.column === col.name);
+                        return (
+                          <td
+                            onClick={(e) => {
+                              const rect = e.currentTarget.getBoundingClientRect();
+                              setFkPopoverCol(col.name);
+                              const topPos = Math.min(window.innerHeight - 100, rect.bottom + 2);
+                              setFkPopoverPos({ top: topPos, left: Math.max(8, rect.left) });
+                            }}
+                            title="Click to view/manage Foreign Key"
+                          >
+                            {matchingFk ? (
+                              <div className="st-fk-chip active">
+                                <span>{`${matchingFk.refTable}(${matchingFk.refColumn})`}</span>
+                                <ArrowRight size={11} className="st-fk-arrow" />
+                              </div>
+                            ) : (
+                              <div className="st-fk-chip empty">
+                                <span className="st-empty-dash">-</span>
+                              </div>
+                            )}
+                          </td>
+                        );
+                      })()}
+
+                      {/* Comment */}
+                      <td
+                        className="st-edit"
+                        onClick={() => startEditCol(index, 'comment', col.comment)}
+                        style={{ color: 'var(--win-text-secondary)' }}
+                        title={t('structure.commentHint')}
                       >
-                        <Trash2 size={14} />
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                        {isEditing && editingColCell?.field === 'comment' ? (
+                          <input
+                            type="text"
+                            className="form-input st-cell-input"
+                            value={editColValue}
+                            onChange={e => setEditColValue(e.target.value)}
+                            onBlur={() => saveEditCol(index, 'comment')}
+                            onKeyDown={e => e.key === 'Enter' && saveEditCol(index, 'comment')}
+                            autoFocus
+                            placeholder={t('structure.commentPlaceholder')}
+                          />
+                        ) : (
+                          col.comment ? (
+                            <span>{col.comment}</span>
+                          ) : (
+                            <span className="st-empty-dash">-</span>
+                          )
+                        )}
+                      </td>
 
-        {/* INDEXES SECTION */}
-        <div className="structure-section" style={{ margin: 0 }}>
-          <h3>{t('structure.indexesSection')}</h3>
+                      {/* Delete Column Action */}
+                      <td style={{ textAlign: 'center' }}>
+                        <button
+                          className="st-row-del"
+                          onClick={() => handleDeleteColumn(col.name, isNew)}
+                          disabled={col.isPrimaryKey}
+                          title={col.isPrimaryKey ? t('structure.cannotDropPk') : t('structure.dropColumn')}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {visibleCols.length === 0 && (
+                  <tr><td colSpan={11} className="st-empty">
+                    {cols.length === 0 ? t('structure.noColumns') : t('structure.filterNoMatch')}
+                  </td></tr>
+                )}
+              </tbody>
+            </table>
+          </>
+        )}
+
+        {/* INDEXES */}
+        {section === 'indexes' && (
           <table className="structure-table">
             <thead>
               <tr>
                 <th>{t('structure.idxName')}</th>
                 <th>{t('structure.idxColumns')}</th>
                 <th>{t('structure.idxType')}</th>
-                <th style={{ width: '60px', textAlign: 'center' }}>{t('structure.colActions')}</th>
+                <th style={{ width: '36px' }} aria-label={t('structure.colActions')} />
               </tr>
             </thead>
             <tbody>
-              {idxs.map((idx, index) => {
+              {visibleIdxs.map(({ idx, index }) => {
                 const isNew = !isOriginalIndex(idx.name);
                 const isEditing = editingIdxCell?.rowIndex === index;
                 // Add default type/method properties if missing
                 const idxType = (idx as any).type || (idx.unique ? 'UNIQUE' : 'INDEX');
 
                 return (
-                  <tr key={idx.name + '_' + index} className={isNew ? 'structure-row-new' : ''}>
+                  <tr
+                    key={idx.name + '_' + index}
+                    className={isNew ? 'structure-row-new' : ''}
+                    onContextMenu={(e) => handleRowContextMenu(e, 'index', index, idx.name)}
+                  >
                     {/* Index Name */}
-                    <td 
-                      onDoubleClick={() => startEditIdx(index, 'name', idx.name)}
-                      style={{ fontWeight: 600, color: 'var(--st-warn)', cursor: 'pointer' }}
+                    <td
+                      className="st-edit"
+                      onClick={() => startEditIdx(index, 'name', idx.name)}
+                      title={t('structure.editHint')}
+                      style={{ fontWeight: 600, color: idxType === 'PRIMARY' ? '#f59e0b' : 'var(--st-warn)' }}
                     >
                       {isEditing && editingIdxCell?.field === 'name' ? (
                         <input
@@ -1037,9 +1416,11 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                     </td>
 
                     {/* Target Columns */}
-                    <td 
-                      onDoubleClick={() => startEditIdx(index, 'columns', idx.columns)}
-                      style={{ fontFamily: 'var(--win-font-mono)', cursor: 'pointer' }}
+                    <td
+                      className="st-edit st-edit-select"
+                      onClick={() => startEditIdx(index, 'columns', idx.columns)}
+                      title={t('structure.editHint')}
+                      style={{ fontFamily: 'var(--win-font-mono)' }}
                     >
                       {isEditing && editingIdxCell?.field === 'columns' ? (
                         <select
@@ -1060,9 +1441,10 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                     </td>
 
                     {/* Index Type */}
-                    <td 
-                      onDoubleClick={() => startEditIdx(index, 'unique', idxType)}
-                      style={{ cursor: 'pointer' }}
+                    <td
+                      className="st-edit st-edit-select"
+                      onClick={() => idxType !== 'PRIMARY' && startEditIdx(index, 'unique', idxType)}
+                      title={t('structure.editHint')}
                     >
                       {isEditing && editingIdxCell?.field === 'unique' ? (
                         <select
@@ -1095,12 +1477,12 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                           {dbType === 'mysql' && <option value="SPATIAL">SPATIAL</option>}
                         </select>
                       ) : (
-                        <span 
-                          className="badge-pk" 
-                          style={{ 
-                            background: idxType === 'UNIQUE' ? 'rgba(16, 185, 129, 0.12)' : 'rgba(245, 158, 11, 0.12)', 
-                            color: idxType === 'UNIQUE' ? '#10b981' : 'var(--st-warn)', 
-                            borderColor: idxType === 'UNIQUE' ? 'rgba(16, 185, 129, 0.25)' : 'rgba(245, 158, 11, 0.25)' 
+                        <span
+                          className="badge-pk"
+                          style={{
+                            background: idxType === 'PRIMARY' ? 'rgba(245, 158, 11, 0.15)' : idxType === 'UNIQUE' ? 'rgba(16, 185, 129, 0.12)' : 'rgba(59, 130, 246, 0.12)',
+                            color: idxType === 'PRIMARY' ? '#f59e0b' : idxType === 'UNIQUE' ? '#10b981' : 'var(--win-accent)',
+                            borderColor: idxType === 'PRIMARY' ? 'rgba(245, 158, 11, 0.3)' : idxType === 'UNIQUE' ? 'rgba(16, 185, 129, 0.25)' : 'rgba(59, 130, 246, 0.25)'
                           }}
                         >
                           {idxType}
@@ -1111,10 +1493,10 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                     {/* Actions */}
                     <td style={{ textAlign: 'center' }}>
                       <button
-                        className="btn-secondary"
+                        className="st-row-del"
                         onClick={() => handleDeleteIndex(idx.name, isNew)}
-                        style={{ border: 'none', background: 'transparent', color: 'var(--st-danger)', cursor: 'pointer', padding: '4px' }}
-                        title={t('structure.dropIndex')}
+                        disabled={idx.name === 'PRIMARY'}
+                        title={idx.name === 'PRIMARY' ? 'Cannot drop primary key index' : t('structure.dropIndex')}
                       >
                         <Trash2 size={14} />
                       </button>
@@ -1122,20 +1504,17 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                   </tr>
                 );
               })}
-              {idxs.length === 0 && (
-                <tr>
-                  <td colSpan={5} style={{ textAlign: 'center', color: 'var(--win-text-secondary)', padding: '12px' }}>
-                    {t('structure.noIndexes')}
-                  </td>
-                </tr>
+              {visibleIdxs.length === 0 && (
+                <tr><td colSpan={4} className="st-empty">
+                  {idxs.length === 0 ? t('structure.noIndexes') : t('structure.filterNoMatch')}
+                </td></tr>
               )}
             </tbody>
           </table>
-        </div>
+        )}
 
-        {/* FOREIGN KEYS SECTION */}
-        <div className="structure-section" style={{ margin: 0 }}>
-          <h3>{t('structure.fkSection')}</h3>
+        {/* FOREIGN KEYS */}
+        {section === 'fks' && (
           <table className="structure-table">
             <thead>
               <tr>
@@ -1145,11 +1524,11 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                 <th>{t('structure.fkRefColumn')}</th>
                 <th>On Update</th>
                 <th>On Delete</th>
-                <th style={{ width: '60px', textAlign: 'center' }}>{t('structure.colActions')}</th>
+                <th style={{ width: '36px' }} aria-label={t('structure.colActions')} />
               </tr>
             </thead>
             <tbody>
-              {fks.map((fk, index) => {
+              {visibleFks.map(({ fk, index }) => {
                 const isNew = !isOriginalFk(fk.name);
                 const isEditing = editingFkCell?.rowIndex === index;
                 // Default actions if missing
@@ -1157,14 +1536,20 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                 const onDeleteAct = (fk as any).onDelete || 'NO ACTION';
 
                 return (
-                  <tr key={fk.name + '_' + index} className={isNew ? 'structure-row-new' : ''}>
+                  <tr
+                    key={fk.name + '_' + index}
+                    className={isNew ? 'structure-row-new' : ''}
+                    onContextMenu={(e) => handleRowContextMenu(e, 'fk', index, fk.name)}
+                  >
                     {/* FK Name */}
                     <td style={{ fontWeight: 600, color: 'var(--win-text-secondary)' }}>{fk.name}</td>
 
                     {/* Local Source Column */}
-                    <td 
-                      onDoubleClick={() => startEditFk(index, 'column', fk.column)}
-                      style={{ fontWeight: 600, cursor: 'pointer' }}
+                    <td
+                      className="st-edit st-edit-select"
+                      onClick={() => startEditFk(index, 'column', fk.column)}
+                      title={t('structure.editHint')}
+                      style={{ fontWeight: 600 }}
                     >
                       {isEditing && editingFkCell?.field === 'column' ? (
                         <select
@@ -1185,9 +1570,11 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                     </td>
 
                     {/* Referenced Table */}
-                    <td 
-                      onDoubleClick={() => startEditFk(index, 'refTable', fk.refTable)}
-                      style={{ color: 'var(--win-accent)', fontWeight: 600, cursor: 'pointer' }}
+                    <td
+                      className="st-edit st-edit-select"
+                      onClick={() => startEditFk(index, 'refTable', fk.refTable)}
+                      title={t('structure.editHint')}
+                      style={{ color: 'var(--win-accent)', fontWeight: 600 }}
                     >
                       {isEditing && editingFkCell?.field === 'refTable' ? (
                         <select
@@ -1211,9 +1598,11 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                     </td>
 
                     {/* Referenced Column */}
-                    <td 
-                      onDoubleClick={() => startEditFk(index, 'refColumn', fk.refColumn)}
-                      style={{ fontFamily: 'var(--win-font-mono)', cursor: 'pointer' }}
+                    <td
+                      className="st-edit st-edit-select"
+                      onClick={() => startEditFk(index, 'refColumn', fk.refColumn)}
+                      title={t('structure.editHint')}
+                      style={{ fontFamily: 'var(--win-font-mono)' }}
                     >
                       {isEditing && editingFkCell?.field === 'refColumn' ? (
                         <select
@@ -1239,9 +1628,11 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                     </td>
 
                     {/* On Update Action */}
-                    <td 
-                      onDoubleClick={() => startEditFk(index, 'onUpdate' as any, onUpdateAct)}
-                      style={{ cursor: 'pointer', fontSize: '11px' }}
+                    <td
+                      className="st-edit st-edit-select"
+                      onClick={() => startEditFk(index, 'onUpdate' as any, onUpdateAct)}
+                      title={t('structure.editHint')}
+                      style={{ fontSize: '11px' }}
                     >
                       {isEditing && editingFkCell?.field === ('onUpdate' as any) ? (
                         <select
@@ -1273,9 +1664,11 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                     </td>
 
                     {/* On Delete Action */}
-                    <td 
-                      onDoubleClick={() => startEditFk(index, 'onDelete' as any, onDeleteAct)}
-                      style={{ cursor: 'pointer', fontSize: '11px' }}
+                    <td
+                      className="st-edit st-edit-select"
+                      onClick={() => startEditFk(index, 'onDelete' as any, onDeleteAct)}
+                      title={t('structure.editHint')}
+                      style={{ fontSize: '11px' }}
                     >
                       {isEditing && editingFkCell?.field === ('onDelete' as any) ? (
                         <select
@@ -1309,9 +1702,8 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                     {/* Actions */}
                     <td style={{ textAlign: 'center' }}>
                       <button
-                        className="btn-secondary"
+                        className="st-row-del"
                         onClick={() => handleDeleteFK(fk.name, isNew)}
-                        style={{ border: 'none', background: 'transparent', color: 'var(--st-danger)', cursor: 'pointer', padding: '4px' }}
                         title={t('structure.dropFk')}
                       >
                         <Trash2 size={14} />
@@ -1320,16 +1712,159 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                   </tr>
                 );
               })}
-              {fks.length === 0 && (
-                <tr>
-                  <td colSpan={7} style={{ textAlign: 'center', color: 'var(--win-text-secondary)', padding: '12px' }}>
-                    {t('structure.noForeignKeys')}
-                  </td>
-                </tr>
+              {visibleFks.length === 0 && (
+                <tr><td colSpan={7} className="st-empty">
+                  {fks.length === 0 ? t('structure.noForeignKeys') : t('structure.filterNoMatch')}
+                </td></tr>
               )}
             </tbody>
           </table>
-        </div>
+        )}
+
+        {section === 'check_constraints' && (
+          <table className="structure-table">
+            <thead>
+              <tr>
+                <th style={{ width: '40px' }}>#</th>
+                <th>Tên Constraint</th>
+                <th>Biểu thức Check</th>
+                <th style={{ width: '100px' }}>Thực thi</th>
+                <th style={{ width: '70px', textAlign: 'center' }}>Thao tác</th>
+              </tr>
+            </thead>
+            <tbody>
+              {constraints.map((c, idx) => (
+                <tr key={c.name || idx}>
+                  <td style={{ textAlign: 'center', color: 'var(--win-text-disabled)' }}>{idx + 1}</td>
+                  <td style={{ fontWeight: 600, color: 'var(--win-accent)', fontFamily: 'var(--win-font-mono)' }}>{c.name}</td>
+                  <td style={{ fontFamily: 'var(--win-font-mono)', color: 'var(--win-text-primary)' }}>{c.expression}</td>
+                  <td><span className={`st-badge ${c.enforced ? 'st-badge-enforced' : 'st-badge-warn'}`}>{c.enforced ? 'ENFORCED' : 'DISABLED'}</span></td>
+                  <td style={{ textAlign: 'center' }}>
+                    <button className="st-row-del" onClick={() => handleDropCheckConstraint(c.name)} title="Xóa Check Constraint">
+                      <Trash2 size={14} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {constraints.length === 0 && (
+                <tr><td colSpan={5} className="st-empty">Không có Check Constraint nào cho bảng này.</td></tr>
+              )}
+            </tbody>
+          </table>
+        )}
+
+        {section === 'triggers' && (
+          <table className="structure-table">
+            <thead>
+              <tr>
+                <th style={{ width: '40px' }}>#</th>
+                <th>Tên Trigger</th>
+                <th style={{ width: '100px' }}>Thời điểm</th>
+                <th style={{ width: '100px' }}>Sự kiện</th>
+                <th>Nội dung Trigger Body</th>
+                <th style={{ width: '70px', textAlign: 'center' }}>Thao tác</th>
+              </tr>
+            </thead>
+            <tbody>
+              {triggers.map((trg, idx) => (
+                <tr key={trg.name || idx}>
+                  <td style={{ textAlign: 'center', color: 'var(--win-text-disabled)' }}>{idx + 1}</td>
+                  <td style={{ fontWeight: 600, color: 'var(--win-accent)', fontFamily: 'var(--win-font-mono)' }}>{trg.name}</td>
+                  <td><span style={{ fontWeight: 600, color: '#60a5fa' }}>{trg.timing}</span></td>
+                  <td><span style={{ fontWeight: 600, color: '#f59e0b' }}>{trg.event}</span></td>
+                  <td style={{ fontFamily: 'var(--win-font-mono)', fontSize: '11px', whiteSpace: 'pre-wrap', color: 'var(--win-text-primary)' }}>{trg.statement}</td>
+                  <td style={{ textAlign: 'center' }}>
+                    <button className="st-row-del" onClick={() => handleDropTrigger(trg.name)} title="Xóa Trigger">
+                      <Trash2 size={14} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {triggers.length === 0 && (
+                <tr><td colSpan={6} className="st-empty">Không có Trigger nào được kích hoạt trên bảng này.</td></tr>
+              )}
+            </tbody>
+          </table>
+        )}
+
+        {section === 'partitions' && (
+          <table className="structure-table">
+            <thead>
+              <tr>
+                <th style={{ width: '40px' }}>#</th>
+                <th>Tên Partition</th>
+                <th>Phương thức</th>
+                <th>Biểu thức / Điều kiện</th>
+                <th>Mô tả giới hạn</th>
+                <th>Ước tính dòng</th>
+                <th style={{ width: '70px', textAlign: 'center' }}>Thao tác</th>
+              </tr>
+            </thead>
+            <tbody>
+              {partitions.map((pt, idx) => (
+                <tr key={pt.name || idx}>
+                  <td style={{ textAlign: 'center', color: 'var(--win-text-disabled)' }}>{idx + 1}</td>
+                  <td style={{ fontWeight: 600, color: 'var(--win-accent)', fontFamily: 'var(--win-font-mono)' }}>{pt.name}</td>
+                  <td><span className="st-badge st-badge-info">{pt.method}</span></td>
+                  <td style={{ fontFamily: 'var(--win-font-mono)' }}>{pt.expression || 'N/A'}</td>
+                  <td style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>{pt.description || 'N/A'}</td>
+                  <td>{pt.tableRows.toLocaleString()} dòng</td>
+                  <td style={{ textAlign: 'center' }}>
+                    <button className="st-row-del" onClick={() => handleDropPartition(pt.name)} title="Xóa Partition">
+                      <Trash2 size={14} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {partitions.length === 0 && (
+                <tr><td colSpan={7} className="st-empty">Bảng này không phân vùng (Non-partitioned Table).</td></tr>
+              )}
+            </tbody>
+          </table>
+        )}
+
+        {/* DDL — current definition, or the SQL that Save is about to run */}
+        {section === 'ddl' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+              <span style={{
+                fontSize: '11px',
+                fontWeight: 600,
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px',
+                color: changed ? 'var(--st-warn)' : 'var(--win-text-secondary)'
+              }}>
+                {changed
+                  ? t('structure.ddlPending', { n: alterPreview?.length ?? 0 })
+                  : t('structure.ddlCurrent')}
+              </span>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                {changed ? (
+                  <button className="btn btn-secondary" onClick={() => copyText(ddlText, 'ALTER TABLE')} disabled={!ddlText}>
+                    {t('common.copy')}
+                  </button>
+                ) : (
+                  <>
+                    <button className="btn btn-secondary" onClick={() => copyText(ddlText, 'CREATE TABLE')} disabled={!ddlText}>
+                      {t('structure.copyCreate')}
+                    </button>
+                    <button className="btn btn-secondary" onClick={() => copyText(dropScript, 'DROP TABLE')}>
+                      {t('structure.copyDrop')}
+                    </button>
+                    <button className="btn btn-secondary" onClick={() => copyText(truncateScript, 'TRUNCATE')}>
+                      {t('structure.copyTruncate')}
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+            <pre className="st-ddl">
+              {ddlLoading
+                ? t('structure.ddlLoading')
+                : (ddlText || t('structure.previewEmpty'))}
+            </pre>
+          </div>
+        )}
 
       </div>
 
@@ -1364,28 +1899,411 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
         </Modal>
       )}
 
-      {/* Definition Modal — CREATE TABLE + dump scripts */}
-      {definitionSql !== null && (
+      {/* Foreign Key Popover Menu */}
+      {fkPopoverCol && fkPopoverPos && createPortal(
+        <>
+          <div
+            style={{ position: 'fixed', inset: 0, zIndex: 99990 }}
+            onClick={() => { setFkPopoverCol(null); setFkPopoverPos(null); }}
+          />
+          <div
+            className="st-fk-popover"
+            style={{
+              position: 'fixed',
+              top: `${fkPopoverPos.top}px`,
+              left: `${fkPopoverPos.left}px`,
+              zIndex: 99991,
+            }}
+          >
+            {(() => {
+              const existingFk = fks.find(f => f.column === fkPopoverCol);
+              return existingFk ? (
+                <>
+                  <div
+                    className="st-popover-item"
+                    style={{ fontWeight: 600, color: 'var(--win-accent)' }}
+                    onClick={() => {
+                      const fkRow = existingFk;
+                      setFkModalData({
+                        name: fkRow.name,
+                        origName: fkRow.name,
+                        column: fkRow.column,
+                        refTable: fkRow.refTable,
+                        refColumn: fkRow.refColumn,
+                        onUpdate: (fkRow as any).onUpdate || 'NO ACTION',
+                        onDelete: (fkRow as any).onDelete || 'NO ACTION',
+                        isNew: false
+                      });
+                      setFkPopoverCol(null);
+                      setFkPopoverPos(null);
+                    }}
+                  >
+                    {`${existingFk.refTable}(${existingFk.refColumn})`}
+                  </div>
+                  <div style={{ height: '1px', background: 'var(--win-border)', margin: '4px 6px', opacity: 0.5 }} />
+                </>
+              ) : null;
+            })()}
+
+            <div
+              className="st-popover-item"
+              style={{ color: 'var(--win-text-primary)' }}
+              onClick={() => {
+                setFkModalData({
+                  column: fkPopoverCol,
+                  refTable: '',
+                  refColumn: '',
+                  onUpdate: 'NO ACTION',
+                  onDelete: 'NO ACTION',
+                  isNew: true
+                });
+                setFkPopoverCol(null);
+                setFkPopoverPos(null);
+              }}
+            >
+              {`Create a new foreign key on ${fkPopoverCol}`}
+            </div>
+          </div>
+        </>,
+        document.body
+      )}
+
+      {/* Foreign Key Window Modal */}
+      {fkModalData && (
         <Modal
-          title={<>{t('structure.definitionModalTitle')} — <span style={{ color: 'var(--win-accent)', fontFamily: 'var(--win-font-mono)' }}>{tableName}</span></>}
-          onClose={() => setDefinitionSql(null)}
-          width="680px"
-          maxWidth="92%"
-          maxHeight="82vh"
+          title="Foreign Key Window"
+          onClose={() => setFkModalData(null)}
+          width="500px"
           zIndex={9999}
         >
-          <ModalBody style={{ gap: 0, flex: 1, background: 'var(--win-bg-window)' }}>
-            <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all', fontFamily: 'var(--win-font-mono)', fontSize: '12px', color: 'var(--win-text-primary)' }}>
-              {definitionSql}
-            </pre>
+          <ModalBody style={{ display: 'flex', flexDirection: 'column', gap: '14px', padding: '16px 20px', fontSize: '12px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', alignItems: 'center', gap: '12px' }}>
+              <span style={{ fontWeight: 600, color: 'var(--win-text-secondary)', textAlign: 'right' }}>Table</span>
+              <select className="form-input" value={tableName} disabled style={{ width: '100%', padding: '4px 8px', height: '30px' }}>
+                <option value={tableName}>{tableName}</option>
+              </select>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', alignItems: 'center', gap: '12px' }}>
+              <span style={{ fontWeight: 600, color: 'var(--win-text-secondary)', textAlign: 'right' }}>Columns</span>
+              <div style={{ padding: '4px 8px', border: '1px solid var(--win-border)', borderRadius: '6px', background: 'var(--win-bg-input)', display: 'flex', alignItems: 'center' }}>
+                <span style={{ background: 'rgba(59, 130, 246, 0.15)', color: 'var(--win-accent)', padding: '2px 8px', borderRadius: '4px', fontWeight: 600 }}>
+                  {fkModalData.column}
+                </span>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', alignItems: 'center', gap: '12px' }}>
+              <span style={{ fontWeight: 600, color: 'var(--win-text-secondary)', textAlign: 'right' }}>Referenced Table</span>
+              <select
+                className="form-input"
+                value={fkModalData.refTable}
+                onChange={async (e) => {
+                  const newTbl = e.target.value;
+                  setFkModalData({ ...fkModalData, refTable: newTbl, refColumn: '' });
+                  if (newTbl) {
+                    setRefColumns(await getColumnsOf(newTbl));
+                  }
+                }}
+                style={{ width: '100%', padding: '4px 8px', height: '30px' }}
+              >
+                <option value="">Select a table...</option>
+                {allTables.map(tbl => (
+                  <option key={tbl} value={tbl}>{tbl}</option>
+                ))}
+              </select>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', alignItems: 'center', gap: '12px' }}>
+              <span style={{ fontWeight: 600, color: 'var(--win-text-secondary)', textAlign: 'right' }}>Referenced Columns</span>
+              <select
+                className="form-input"
+                value={fkModalData.refColumn}
+                onChange={e => setFkModalData({ ...fkModalData, refColumn: e.target.value })}
+                disabled={!fkModalData.refTable}
+                style={{ width: '100%', padding: '4px 8px', height: '30px' }}
+              >
+                <option value="">{loadingRefCols ? t('structure.loadingColumns') : (fkModalData.refTable ? 'Select column...' : 'Select a table first...')}</option>
+                {/* Fallback option for current value if refColumns hasn't loaded yet */}
+                {fkModalData.refColumn && !refColumns.includes(fkModalData.refColumn) && (
+                  <option value={fkModalData.refColumn}>{fkModalData.refColumn}</option>
+                )}
+                {refColumns.map(col => (
+                  <option key={col} value={col}>{col}</option>
+                ))}
+              </select>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', alignItems: 'center', gap: '12px' }}>
+              <span style={{ fontWeight: 600, color: 'var(--win-text-secondary)', textAlign: 'right' }}>On Update</span>
+              <select
+                className="form-input"
+                value={fkModalData.onUpdate}
+                onChange={e => setFkModalData({ ...fkModalData, onUpdate: e.target.value })}
+                style={{ width: '100%', padding: '4px 8px', height: '30px' }}
+              >
+                <option value="NO ACTION">NO ACTION</option>
+                <option value="RESTRICT">RESTRICT</option>
+                <option value="CASCADE">CASCADE</option>
+                <option value="SET NULL">SET NULL</option>
+                <option value="SET DEFAULT">SET DEFAULT</option>
+              </select>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', alignItems: 'center', gap: '12px' }}>
+              <span style={{ fontWeight: 600, color: 'var(--win-text-secondary)', textAlign: 'right' }}>On Delete</span>
+              <select
+                className="form-input"
+                value={fkModalData.onDelete}
+                onChange={e => setFkModalData({ ...fkModalData, onDelete: e.target.value })}
+                style={{ width: '100%', padding: '4px 8px', height: '30px' }}
+              >
+                <option value="NO ACTION">NO ACTION</option>
+                <option value="RESTRICT">RESTRICT</option>
+                <option value="CASCADE">CASCADE</option>
+                <option value="SET NULL">SET NULL</option>
+                <option value="SET DEFAULT">SET DEFAULT</option>
+              </select>
+            </div>
           </ModalBody>
-          <ModalFooter style={{ flexWrap: 'wrap' }}>
-            <button className="btn btn-secondary" onClick={() => copyText(definitionSql, 'CREATE TABLE')}>{t('structure.copyCreate')}</button>
-            <button className="btn btn-secondary" onClick={() => copyText(dropScript, 'DROP TABLE')}>{t('structure.copyDrop')}</button>
-            <button className="btn btn-secondary" onClick={() => copyText(truncateScript, 'TRUNCATE')}>{t('structure.copyTruncate')}</button>
-            <button className="btn btn-primary" onClick={() => setDefinitionSql(null)} style={{ background: 'var(--st-ok)', borderColor: 'var(--st-ok)' }}>{t('common.close')}</button>
+          <ModalFooter style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', padding: '12px 20px' }}>
+            {!fkModalData.isNew && (
+              <button
+                className="btn btn-secondary"
+                style={{ color: 'var(--st-danger)', borderColor: 'rgba(239, 68, 68, 0.3)' }}
+                onClick={() => {
+                  if (fkModalData.origName) {
+                    handleDeleteFK(fkModalData.origName, false);
+                  }
+                  setFkModalData(null);
+                }}
+              >
+                Delete
+              </button>
+            )}
+            <button
+              className="btn btn-primary"
+              disabled={!fkModalData.refTable || !fkModalData.refColumn}
+              onClick={() => {
+                if (fkModalData.isNew) {
+                  let baseName = `fk_${tableName}_col_${fkModalData.column}`;
+                  let counter = 1;
+                  while (fks.some(f => f.name === `${baseName}_${counter}`)) counter++;
+                  setFks(prev => [
+                    ...prev,
+                    {
+                      name: `${baseName}_${counter}`,
+                      column: fkModalData.column,
+                      refTable: fkModalData.refTable,
+                      refColumn: fkModalData.refColumn,
+                      onUpdate: fkModalData.onUpdate,
+                      onDelete: fkModalData.onDelete
+                    } as any
+                  ]);
+                } else {
+                  setFks(prev => prev.map(f => {
+                    if (f.name === fkModalData.origName || f.column === fkModalData.column) {
+                      return {
+                        ...f,
+                        refTable: fkModalData.refTable,
+                        refColumn: fkModalData.refColumn,
+                        onUpdate: fkModalData.onUpdate,
+                        onDelete: fkModalData.onDelete
+                      } as any;
+                    }
+                    return f;
+                  }));
+                }
+                setFkModalData(null);
+              }}
+            >
+              OK
+            </button>
           </ModalFooter>
         </Modal>
+      )}
+      {/* Add Check Constraint Modal */}
+      {showAddCheckModal && (
+        <Modal title="Thêm Check Constraint" onClose={() => setShowAddCheckModal(false)} width="480px" zIndex={999999}>
+          <ModalBody style={{ gap: '12px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <label style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>Tên Constraint (tùy chọn):</label>
+              <input type="text" placeholder={`chk_${tableName}_...`} value={newCheck.name} onChange={e => setNewCheck({ ...newCheck, name: e.target.value })} style={{ padding: '6px 10px', fontSize: '12px', borderRadius: '4px', border: '1px solid var(--win-border)', background: 'var(--win-bg-input)', color: 'var(--win-text-primary)' }} />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <label style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>Biểu thức Check (Expression):</label>
+              <input type="text" placeholder="vd: amount > 0 AND status <> 'CANCELLED'" value={newCheck.expression} onChange={e => setNewCheck({ ...newCheck, expression: e.target.value })} style={{ padding: '6px 10px', fontSize: '12px', borderRadius: '4px', border: '1px solid var(--win-border)', background: 'var(--win-bg-input)', color: 'var(--win-text-primary)' }} />
+            </div>
+          </ModalBody>
+          <ModalFooter>
+            <button className="btn btn-secondary" onClick={() => setShowAddCheckModal(false)}>Hủy</button>
+            <button className="btn btn-primary" onClick={handleSaveCheckConstraint} style={{ background: 'var(--win-accent)', color: '#fff', border: 'none' }}>Tạo Constraint</button>
+          </ModalFooter>
+        </Modal>
+      )}
+
+      {/* Add Trigger Modal */}
+      {showAddTriggerModal && (
+        <Modal title="Thêm Trigger Mới" onClose={() => setShowAddTriggerModal(false)} width="560px" zIndex={999999}>
+          <ModalBody style={{ gap: '12px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <label style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>Tên Trigger:</label>
+              <input type="text" placeholder="vd: trg_update_timestamp" value={newTrigger.name} onChange={e => setNewTrigger({ ...newTrigger, name: e.target.value })} style={{ padding: '6px 10px', fontSize: '12px', borderRadius: '4px', border: '1px solid var(--win-border)', background: 'var(--win-bg-input)', color: 'var(--win-text-primary)' }} />
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <label style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>Thời điểm (Timing):</label>
+                <select value={newTrigger.timing} onChange={e => setNewTrigger({ ...newTrigger, timing: e.target.value })} style={{ padding: '6px 10px', fontSize: '12px', borderRadius: '4px', border: '1px solid var(--win-border)', background: 'var(--win-bg-input)', color: 'var(--win-text-primary)' }}>
+                  <option value="BEFORE">BEFORE</option>
+                  <option value="AFTER">AFTER</option>
+                  <option value="INSTEAD OF">INSTEAD OF</option>
+                </select>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <label style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>Sự kiện (Event):</label>
+                <select value={newTrigger.event} onChange={e => setNewTrigger({ ...newTrigger, event: e.target.value })} style={{ padding: '6px 10px', fontSize: '12px', borderRadius: '4px', border: '1px solid var(--win-border)', background: 'var(--win-bg-input)', color: 'var(--win-text-primary)' }}>
+                  <option value="INSERT">INSERT</option>
+                  <option value="UPDATE">UPDATE</option>
+                  <option value="DELETE">DELETE</option>
+                </select>
+              </div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <label style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>Thân Trigger (Action Statement):</label>
+              <textarea rows={5} placeholder="BEGIN SET NEW.updated_at = NOW(); END;" value={newTrigger.body} onChange={e => setNewTrigger({ ...newTrigger, body: e.target.value })} style={{ padding: '8px 10px', fontSize: '12px', fontFamily: 'var(--win-font-mono)', borderRadius: '4px', border: '1px solid var(--win-border)', background: 'var(--win-bg-input)', color: 'var(--win-text-primary)' }} />
+            </div>
+          </ModalBody>
+          <ModalFooter>
+            <button className="btn btn-secondary" onClick={() => setShowAddTriggerModal(false)}>Hủy</button>
+            <button className="btn btn-primary" onClick={handleSaveTrigger} style={{ background: 'var(--win-accent)', color: '#fff', border: 'none' }}>Tạo Trigger</button>
+          </ModalFooter>
+        </Modal>
+      )}
+
+      {/* Add Partition Modal */}
+      {showAddPartitionModal && (
+        <Modal title="Thêm Partition Mới" onClose={() => setShowAddPartitionModal(false)} width="480px" zIndex={999999}>
+          <ModalBody style={{ gap: '12px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <label style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>Tên Partition:</label>
+              <input type="text" placeholder="vd: p2026" value={newPartition.name} onChange={e => setNewPartition({ ...newPartition, name: e.target.value })} style={{ padding: '6px 10px', fontSize: '12px', borderRadius: '4px', border: '1px solid var(--win-border)', background: 'var(--win-bg-input)', color: 'var(--win-text-primary)' }} />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <label style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>Điều kiện giá trị (VALUES Clause):</label>
+              <input type="text" placeholder="vd: LESS THAN (2027) hoặc IN ('HN', 'HCM')" value={newPartition.valClause} onChange={e => setNewPartition({ ...newPartition, valClause: e.target.value })} style={{ padding: '6px 10px', fontSize: '12px', borderRadius: '4px', border: '1px solid var(--win-border)', background: 'var(--win-bg-input)', color: 'var(--win-text-primary)' }} />
+            </div>
+          </ModalBody>
+          <ModalFooter>
+            <button className="btn btn-secondary" onClick={() => setShowAddPartitionModal(false)}>Hủy</button>
+            <button className="btn btn-primary" onClick={handleSavePartition} style={{ background: 'var(--win-accent)', color: '#fff', border: 'none' }}>Tạo Partition</button>
+          </ModalFooter>
+        </Modal>
+      )}
+
+      {/* Right-click Context Menu */}
+      {contextMenu && createPortal(
+        <div
+          className="st-context-menu"
+          style={{
+            top: contextMenu.y,
+            left: contextMenu.x,
+          }}
+        >
+          {contextMenu.type === 'column' && (
+            <>
+              <div
+                className="st-context-menu-item"
+                onClick={() => { handleAddColumn(); setContextMenu(null); }}
+              >
+                <Plus size={13} />
+                <span>{t('structure.addColumn')}</span>
+              </div>
+              <div
+                className="st-context-menu-item"
+                onClick={() => handleDuplicateColumn(contextMenu.rowIndex)}
+              >
+                <Copy size={13} />
+                <span>Duplicate column</span>
+              </div>
+              <div
+                className="st-context-menu-item"
+                onClick={() => { handleTogglePrimaryKey(contextMenu.rowIndex); setContextMenu(null); }}
+              >
+                <Key size={13} style={{ color: '#f59e0b' }} />
+                <span>Toggle Primary Key</span>
+              </div>
+              <div style={{ height: '1px', background: 'var(--win-border, rgba(255,255,255,0.1))', margin: '2px 0' }} />
+              <div
+                className="st-context-menu-item"
+                onClick={() => { navigator.clipboard.writeText(contextMenu.name); setContextMenu(null); }}
+              >
+                <Copy size={13} />
+                <span>Copy column name</span>
+              </div>
+              <div style={{ height: '1px', background: 'var(--win-border, rgba(255,255,255,0.1))', margin: '2px 0' }} />
+              <div
+                className="st-context-menu-item danger"
+                onClick={() => { handleDeleteColumn(contextMenu.name, !isOriginalColumn(contextMenu.name)); setContextMenu(null); }}
+              >
+                <Trash2 size={13} />
+                <span>Drop column</span>
+              </div>
+            </>
+          )}
+          {contextMenu.type === 'index' && (
+            <>
+              <div
+                className="st-context-menu-item"
+                onClick={() => { handleAddIndex(); setContextMenu(null); }}
+              >
+                <Plus size={13} />
+                <span>{t('structure.addIndex')}</span>
+              </div>
+              <div
+                className="st-context-menu-item"
+                onClick={() => { navigator.clipboard.writeText(contextMenu.name); setContextMenu(null); }}
+              >
+                <Copy size={13} />
+                <span>Copy index name</span>
+              </div>
+              {contextMenu.name !== 'PRIMARY' && (
+                <div
+                  className="st-context-menu-item danger"
+                  onClick={() => { handleDeleteIndex(contextMenu.name, !isOriginalIndex(contextMenu.name)); setContextMenu(null); }}
+                >
+                  <Trash2 size={13} />
+                  <span>Drop index</span>
+                </div>
+              )}
+            </>
+          )}
+          {contextMenu.type === 'fk' && (
+            <>
+              <div
+                className="st-context-menu-item"
+                onClick={() => { handleAddFK(); setContextMenu(null); }}
+              >
+                <Plus size={13} />
+                <span>Add Foreign Key</span>
+              </div>
+              <div
+                className="st-context-menu-item"
+                onClick={() => { navigator.clipboard.writeText(contextMenu.name); setContextMenu(null); }}
+              >
+                <Copy size={13} />
+                <span>Copy FK name</span>
+              </div>
+              <div
+                className="st-context-menu-item danger"
+                onClick={() => { handleDeleteFK(contextMenu.name, !isOriginalFk(contextMenu.name)); setContextMenu(null); }}
+              >
+                <Trash2 size={13} />
+                <span>Drop Foreign Key</span>
+              </div>
+            </>
+          )}
+        </div>,
+        document.body
       )}
     </div>
   );

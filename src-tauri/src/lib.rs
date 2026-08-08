@@ -3,6 +3,7 @@ pub mod database;
 pub mod datasets;
 pub mod db_compare;
 pub mod db_stats;
+pub mod redis_cmds;
 pub mod redis_db;
 pub mod ssh_tunnel;
 pub mod ssh_terminal;
@@ -139,6 +140,16 @@ pub fn run() {
             database::get_db_charsets,
             database::get_database_objects,
             database::get_object_definition,
+            database::get_table_triggers,
+            database::save_trigger,
+            database::drop_trigger,
+            database::save_routine_definition,
+            database::get_sequences,
+            database::alter_sequence,
+            database::drop_sequence,
+            database::get_table_partitions,
+            database::get_check_constraints,
+            database::save_view_definition,
             database::open_url,
             database::set_app_window_size,
             secret_store::secret_set,
@@ -180,7 +191,26 @@ pub fn run() {
             redis_db::redis_rename_key,
             redis_db::redis_flush_db,
             redis_db::redis_info,
-            redis_db::redis_execute_cmd
+            redis_db::redis_execute_cmd,
+            redis_db::redis_set_read_only,
+            redis_db::redis_get_elements,
+            redis_db::redis_delete_by_pattern,
+            redis_db::redis_slowlog_get,
+            redis_db::redis_slowlog_reset,
+            redis_db::redis_slowlog_config,
+            redis_db::redis_pubsub_start,
+            redis_db::redis_publish,
+            redis_db::redis_monitor_start,
+            redis_db::redis_json_get,
+            redis_db::redis_json_set,
+            redis_db::redis_json_del,
+            redis_db::redis_set_key_bytes,
+            redis_db::redis_stream_groups,
+            redis_db::redis_stream_consumers,
+            redis_db::redis_stream_pending,
+            redis_db::redis_stream_ack,
+            redis_db::redis_stream_claim,
+            redis_db::redis_analyze_db
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

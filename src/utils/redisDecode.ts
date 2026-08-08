@@ -1,5 +1,5 @@
 // Giải mã value chuỗi của Redis để hiển thị đẹp:
-//   1) Nếu gzip (magic 1f 8b) -> giải nén bằng DecompressionStream('gzip') native.
+//   1) Nếu gzip (magic 1f 8b) hoặc zlib (PHP gzcompress) -> giải nén bằng DecompressionStream native.
 //   2) Nếu là PHP serialize (Laravel cache/model, Neos Flow VariableFrontend) -> unserialize -> JSON.
 //   3) Nếu là JSON -> format.
 //   4) Còn lại -> text thô.
@@ -7,18 +7,36 @@
 
 import i18n from '../i18n';
 
-async function gunzipIfNeeded(bytes: Uint8Array): Promise<{ bytes: Uint8Array; gz: boolean }> {
-  if (bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) {
-    try {
-      const ds = new DecompressionStream('gzip');
-      const stream = new Response(bytes as any).body!.pipeThrough(ds);
-      const out = new Uint8Array(await new Response(stream).arrayBuffer());
-      return { bytes: out, gz: true };
-    } catch {
-      return { bytes, gz: false };
-    }
+/**
+ * zlib stream (RFC 1950) — what PHP's `gzcompress` produces, and a very common way to store a
+ * serialized cache entry in Redis. There is no magic number: the check is the one from the
+ * spec (low nibble of CMF is 8 for deflate, and CMF/FLG together are a multiple of 31).
+ */
+function isZlib(bytes: Uint8Array): boolean {
+  if (bytes.length < 2) return false;
+  return (bytes[0] & 0x0f) === 8 && ((bytes[0] << 8) | bytes[1]) % 31 === 0;
+}
+
+/**
+ * Decompresses gzip and zlib transparently. `'deflate'` is the zlib-wrapped variant in the
+ * Compression Streams spec (raw deflate would be `'deflate-raw'`), so it is the right one for
+ * `gzcompress`. Failure falls back to the original bytes — a value that merely looks like a
+ * zlib header must still be displayable.
+ */
+async function decompressIfNeeded(
+  bytes: Uint8Array,
+): Promise<{ bytes: Uint8Array; algo: '' | 'gzip' | 'zlib' }> {
+  const isGzip = bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
+  if (!isGzip && !isZlib(bytes)) return { bytes, algo: '' };
+  const format = isGzip ? 'gzip' : 'deflate';
+  try {
+    const ds = new DecompressionStream(format);
+    const stream = new Response(bytes as any).body!.pipeThrough(ds);
+    const out = new Uint8Array(await new Response(stream).arrayBuffer());
+    return { bytes: out, algo: isGzip ? 'gzip' : 'zlib' };
+  } catch {
+    return { bytes, algo: '' };
   }
-  return { bytes, gz: false };
 }
 
 // Tách tên prop PHP: protected/private có dạng <NUL>*<NUL>name hoặc <NUL>Class<NUL>name.
@@ -110,12 +128,132 @@ export interface DecodedRedis {
   text: string;
 }
 
-export async function decodeRedisValue(input: number[] | Uint8Array): Promise<DecodedRedis> {
+/**
+ * View a value can be shown in. `auto` keeps the original behaviour (sniff gzip, then PHP
+ * serialize, then JSON); the rest are explicit choices, because the formats that matter most
+ * cannot be sniffed reliably — a picked format must therefore be honoured even if the guess
+ * would have said otherwise.
+ */
+export type RedisFormat = 'auto' | 'raw' | 'json' | 'php' | 'hex' | 'ascii' | 'binary';
+
+export const REDIS_FORMATS: RedisFormat[] = ['auto', 'raw', 'json', 'php', 'hex', 'ascii', 'binary'];
+
+const HEX = '0123456789abcdef';
+
+function hex2(b: number): string {
+  return HEX[(b >> 4) & 0xf] + HEX[b & 0xf];
+}
+
+/** `00000000  68 65 6c 6c 6f …  |hello…|` — 16 bytes per line, offset and ASCII gutter. */
+export function toHexDump(bytes: Uint8Array): string {
+  const lines: string[] = [];
+  for (let off = 0; off < bytes.length; off += 16) {
+    const chunk = bytes.subarray(off, off + 16);
+    const hexPart: string[] = [];
+    let ascii = '';
+    for (let i = 0; i < 16; i++) {
+      if (i < chunk.length) {
+        hexPart.push(hex2(chunk[i]));
+        const c = chunk[i];
+        ascii += c >= 0x20 && c <= 0x7e ? String.fromCharCode(c) : '.';
+      } else {
+        hexPart.push('  ');
+      }
+    }
+    const offset = off.toString(16).padStart(8, '0');
+    lines.push(`${offset}  ${hexPart.join(' ')}  |${ascii}|`);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Inverse of `toHexDump`, and also accepts bare hex (`48 65 6c` or `48656c`) so a value can be
+ * pasted from `redis-cli` or a hex editor. This is what allows a **binary** value to be edited
+ * and written back byte-exactly instead of being read-only.
+ */
+export function parseHexDump(text: string): Uint8Array {
+  const digits: string[] = [];
+  for (const rawLine of text.split(/\r?\n/)) {
+    let line = rawLine;
+    // Drop the ASCII gutter first: it can contain characters that look like hex.
+    const bar = line.indexOf('|');
+    if (bar >= 0) line = line.slice(0, bar);
+    // Drop a leading offset column ("00000010  " / "00000010: ").
+    line = line.replace(/^\s*[0-9a-fA-F]{4,8}\s*:?\s{2,}/, '');
+    for (const tok of line.trim().split(/\s+/)) {
+      if (!tok) continue;
+      if (!/^[0-9a-fA-F]+$/.test(tok)) {
+        throw new Error(i18n.t('errors.hexInvalidToken', { token: tok.slice(0, 12) }));
+      }
+      if (tok.length % 2 !== 0) {
+        throw new Error(i18n.t('errors.hexOddLength', { token: tok.slice(0, 12) }));
+      }
+      for (let i = 0; i < tok.length; i += 2) digits.push(tok.slice(i, i + 2));
+    }
+  }
+  const out = new Uint8Array(digits.length);
+  for (let i = 0; i < digits.length; i++) out[i] = parseInt(digits[i], 16);
+  return out;
+}
+
+/** Printable ASCII kept, everything else a dot. */
+export function toAsciiView(bytes: Uint8Array): string {
+  let out = '';
+  for (const b of bytes) out += b >= 0x20 && b <= 0x7e ? String.fromCharCode(b) : '.';
+  return out;
+}
+
+/** `redis-cli`-style: printable kept, other bytes as `\xNN`. */
+export function toBinaryView(bytes: Uint8Array): string {
+  let out = '';
+  for (const b of bytes) {
+    out += b >= 0x20 && b <= 0x7e && b !== 0x5c ? String.fromCharCode(b) : `\\x${hex2(b)}`;
+  }
+  return out;
+}
+
+export async function decodeRedisValue(
+  input: number[] | Uint8Array,
+  format: RedisFormat = 'auto',
+): Promise<DecodedRedis> {
   const raw = input instanceof Uint8Array ? input : new Uint8Array(input);
-  const { bytes, gz } = await gunzipIfNeeded(raw);
-  const prefix = gz ? 'gzip + ' : '';
+
+  // Byte views work on the value exactly as stored — decompressing first would show bytes the
+  // key does not contain, which defeats the point of looking at it in hex.
+  if (format === 'hex') return { ok: true, format: 'hex', text: toHexDump(raw) };
+  if (format === 'ascii') return { ok: true, format: 'ascii', text: toAsciiView(raw) };
+  if (format === 'binary') return { ok: true, format: 'binary', text: toBinaryView(raw) };
+
+  const { bytes, algo } = await decompressIfNeeded(raw);
+  const prefix = algo ? `${algo} + ` : '';
+  // Compressed but not something we recognise inside -> say so, rather than labelling it 'raw'
+  // when the bytes on the server are not what is on screen.
+  const plainFormat = algo ? `${algo} (text)` : 'raw';
   const text = new TextDecoder().decode(bytes);
   const trimmed = text.replace(/^\s+/, '');
+
+  if (format === 'raw') return { ok: true, format: plainFormat, text };
+
+  // An explicitly picked format reports failure instead of silently falling back to raw: the
+  // user asked for that format, so "this is not JSON" is the useful answer.
+  if (format === 'json') {
+    try {
+      return { ok: true, format: prefix + 'json', text: JSON.stringify(JSON.parse(text), null, 2) };
+    } catch {
+      return { ok: false, format: prefix + 'json', text };
+    }
+  }
+  if (format === 'php') {
+    try {
+      return {
+        ok: true,
+        format: prefix + 'php-serialize',
+        text: JSON.stringify(phpUnserialize(bytes), null, 2),
+      };
+    } catch {
+      return { ok: false, format: prefix + 'php-serialize', text };
+    }
+  }
 
   if (/^(N;|[abisdO]:)/.test(trimmed)) {
     try {
@@ -133,5 +271,5 @@ export async function decodeRedisValue(input: number[] | Uint8Array): Promise<De
       /* rơi xuống raw */
     }
   }
-  return { ok: true, format: gz ? 'gzip (text)' : 'raw', text };
+  return { ok: true, format: plainFormat, text };
 }

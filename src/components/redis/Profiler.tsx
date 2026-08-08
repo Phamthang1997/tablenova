@@ -1,0 +1,163 @@
+import React, { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { Activity, AlertTriangle, Play, Square, Trash2 } from 'lucide-react';
+import { dbHelper } from '../../utils/dbHelper';
+import { ConfirmDialog } from '../ConfirmDialog';
+import { logBox } from './shared';
+
+interface ProfilerProps {
+  onError: (msg: string) => void;
+}
+
+/** Ring buffer for the WebView; the backend has its own hard limit on top of this. */
+const LINE_CAP = 5000;
+
+/**
+ * Real-time command stream (MONITOR).
+ *
+ * MONITOR makes the server echo **every** command it executes, which measurably slows a busy
+ * instance down — so it is behind a confirmation, runs on its own connection, and stops itself
+ * after the backend's limit (60s / 50k lines). The stop reason is reported instead of the
+ * stream just going quiet.
+ */
+export const Profiler: React.FC<ProfilerProps> = ({ onError }) => {
+  const { t } = useTranslation();
+  const [running, setRunning] = useState(false);
+  const [lines, setLines] = useState<string[]>([]);
+  const [dropped, setDropped] = useState(0);
+  const [stopReason, setStopReason] = useState<string | null>(null);
+  const [confirmStart, setConfirmStart] = useState(false);
+  const [filter, setFilter] = useState('');
+
+  const idRef = useRef('');
+  const logRef = useRef<HTMLDivElement>(null);
+  const followRef = useRef(true);
+
+  useEffect(() => {
+    if (followRef.current && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [lines]);
+
+  // Never leave MONITOR running on the server because the user switched tabs.
+  useEffect(() => () => { if (idRef.current) dbHelper.cancelQuery(idRef.current); }, []);
+
+  const start = async () => {
+    setConfirmStart(false);
+    const id = `rmon_${crypto.randomUUID()}`;
+    idRef.current = id;
+    setRunning(true);
+    setStopReason(null);
+    const res = await dbHelper.redisMonitorStart(id, (msg: any) => {
+      if (idRef.current !== id) return;
+      if (msg.type === 'line') {
+        setLines((prev) => {
+          const next = prev.concat(String(msg.line));
+          if (next.length > LINE_CAP) {
+            setDropped((d) => d + (next.length - LINE_CAP));
+            return next.slice(-LINE_CAP);
+          }
+          return next;
+        });
+      } else if (msg.type === 'stopped') {
+        setRunning(false);
+        setStopReason(String(msg.reason || ''));
+      }
+    });
+    if (!res.success) {
+      setRunning(false);
+      onError(res.error || t('redis.errProfiler'));
+    }
+  };
+
+  const stop = () => {
+    if (idRef.current) dbHelper.cancelQuery(idRef.current);
+    setRunning(false);
+  };
+
+  const reasonText = (reason: string): string => {
+    // A switch of literal keys — never a computed key (i18n rule in CLAUDE.md).
+    switch (reason) {
+      case 'cancelled': return t('redis.profilerStoppedCancelled');
+      case 'limit': return t('redis.profilerStoppedLimit');
+      case 'timeout': return t('redis.profilerStoppedTimeout');
+      case 'closed': return t('redis.profilerStoppedClosed');
+      default: return t('redis.profilerStopped');
+    }
+  };
+
+  const shown = filter
+    ? lines.filter((l) => l.toLowerCase().includes(filter.toLowerCase()))
+    : lines;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '8px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--win-text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <Activity size={14} /> {t('redis.profilerTitle')}
+        </span>
+        {running ? (
+          <button className="btn btn-secondary" onClick={stop} style={{ padding: '0 12px', display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--st-danger)' }}>
+            <Square size={10} /> {t('redis.profilerStop')}
+          </button>
+        ) : (
+          <button className="btn btn-primary" onClick={() => setConfirmStart(true)} style={{ padding: '0 12px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <Play size={11} /> {t('redis.profilerStart')}
+          </button>
+        )}
+        <input
+          type="text"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder={t('redis.profilerFilter')}
+          spellCheck={false}
+          style={{ width: '160px', background: 'var(--win-bg-window)', border: '1px solid var(--win-border)', color: 'var(--win-text-primary)', borderRadius: '4px', fontSize: '11px', fontFamily: 'var(--win-font-mono)', padding: '4px 8px', outline: 'none' }}
+        />
+        <label style={{ fontSize: '10px', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: 'var(--win-text-secondary)' }}>
+          <input type="checkbox" defaultChecked onChange={(e) => { followRef.current = e.target.checked; }} />
+          {t('redis.followTail')}
+        </label>
+        <div style={{ flex: 1 }} />
+        <span style={{ fontSize: '10px', color: 'var(--win-text-disabled)' }}>
+          {t('redis.profilerLineCount', { n: lines.length.toLocaleString() })}
+          {dropped > 0 ? ` · ${t('redis.messagesDropped', { n: dropped.toLocaleString() })}` : ''}
+        </span>
+        <button
+          onClick={() => { setLines([]); setDropped(0); }}
+          disabled={lines.length === 0}
+          style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '4px', border: '1px solid var(--win-border)', background: 'transparent', color: 'var(--win-text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+        >
+          <Trash2 size={10} /> {t('redis.clearLog')}
+        </button>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '10px', color: '#f59e0b' }}>
+        <AlertTriangle size={12} /> {t('redis.profilerCostNote')}
+      </div>
+
+      {stopReason && (
+        <div style={{ fontSize: '10px', color: 'var(--win-text-secondary)' }}>{reasonText(stopReason)}</div>
+      )}
+
+      <div ref={logRef} style={logBox}>
+        {shown.length === 0 && (
+          <div style={{ color: 'var(--win-text-disabled)' }}>
+            {running ? t('redis.profilerWaiting') : t('redis.profilerHint')}
+          </div>
+        )}
+        {shown.map((l, i) => (
+          <div key={i} style={{ whiteSpace: 'pre-wrap', color: 'var(--win-text-primary)' }}>{l}</div>
+        ))}
+      </div>
+
+      <ConfirmDialog
+        open={confirmStart}
+        title={t('redis.profilerConfirmTitle')}
+        message={t('redis.profilerConfirmMessage')}
+        note={t('redis.profilerConfirmNote')}
+        tone="info"
+        confirmLabel={t('redis.profilerStart')}
+        onConfirm={start}
+        onCancel={() => setConfirmStart(false)}
+      />
+    </div>
+  );
+};

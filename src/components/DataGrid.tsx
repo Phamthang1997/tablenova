@@ -48,11 +48,26 @@ const LoadingSpinner: React.FC<{ size?: number; style?: React.CSSProperties }> =
   </svg>
 );
 
+const getInitialFilterClause = (filterObj?: { column: string; value: any }, type?: string) => {
+  if (!filterObj || !filterObj.column) return '';
+  const qc = type === 'mysql' ? '`' : '"';
+  const val = String(filterObj.value).replace(/'/g, "''");
+  const col = `${qc}${filterObj.column}${qc}`;
+  return `${col} = '${val}'`;
+};
+
 interface DataGridProps {
   tableName: string;
   dbType: 'sqlite' | 'postgres' | 'mysql';
   initialViewMode?: 'data' | 'structure';
+  initialFilter?: { column: string; value: any };
   readOnly?: boolean;
+  /**
+   * Còn sửa đổi chưa commit hay không. App dùng để chấm dấu "chưa lưu" lên tab
+   * và để hỏi xác nhận khi rời đi — thay cho cờ toàn cục `window.__gridDirty`
+   * trước đây, vốn không kéo theo render nào nên thanh tab không thể phản ứng.
+   */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 interface FilterRow {
@@ -114,7 +129,7 @@ function parseCSV(text: string): string[][] {
   return result;
 }
 
-export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialViewMode = 'data', readOnly = false }) => {
+export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialViewMode = 'data', initialFilter, readOnly = false, onDirtyChange }) => {
   const { t, i18n } = useTranslation();
   // Thousands separators follow the active UI language instead of a hardcoded locale.
   const fmtNum = (n: number) => n.toLocaleString(i18n.language);
@@ -123,6 +138,13 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
   // not re-run fetchSchema — that effect clears the unsaved edit buffer.
   const tRef = useRef(t);
   tRef.current = t;
+
+  // Cùng lý do: App truyền một arrow inline nên callback đổi identity mỗi lần
+  // render. Để thẳng vào deps của effect theo dõi changeCount thì effect chạy
+  // lại liên tục, và mỗi lần chạy lại hàm dọn dẹp bắn `false` -> dấu chưa lưu
+  // trên tab nhấp nháy.
+  const onDirtyChangeRef = useRef(onDirtyChange);
+  onDirtyChangeRef.current = onDirtyChange;
 
   const [columns, setColumns] = useState<ColumnInfo[]>([]);
   const [schema, setSchema] = useState<SchemaInfo | null>(null);
@@ -139,8 +161,12 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
   const totalPages = Math.ceil(totalCount / pageSize) || 1;
   const [sortBy, setSortBy] = useState<string | undefined>(undefined);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
-  const [filterText, setFilterText] = useState('');
-  const [activeFilter, setActiveFilter] = useState('');
+  const [filterText, setFilterText] = useState<string>(() =>
+    getInitialFilterClause(initialFilter, dbType)
+  );
+  const [activeFilter, setActiveFilter] = useState<string>(() =>
+    getInitialFilterClause(initialFilter, dbType)
+  );
 
   // Advanced Filter Builder State
   const [filterMode, setFilterMode] = useState<'visual' | 'sql'>('visual');
@@ -246,7 +272,10 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
 
   // Schema View Toggle
   const [viewMode, setViewMode] = useState<'data' | 'structure'>(initialViewMode);
-  const [showFilterBar, setShowFilterBar] = useState(false);
+  const [structSection, setStructSection] = useState<'columns' | 'indexes' | 'fks' | 'check_constraints' | 'triggers' | 'partitions' | 'ddl'>('columns');
+  const [showFilterBar, setShowFilterBar] = useState<boolean>(() =>
+    !!(initialFilter && initialFilter.column)
+  );
 
   // Columns Visibility State
   const [visibleColumns, setVisibleColumns] = useState<string[]>([]);
@@ -366,7 +395,8 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
 
     try {
       if (importFileType === 'sql') {
-        const res = await dbHelper.executeQuery(importSqlContent);
+        // Xem ghi chú ở App.tsx: tệp .sql có nhiều câu lệnh nên phải qua executeQueryMulti.
+        const res = await dbHelper.executeQueryMulti(importSqlContent);
         setImportProgress(null);
         setLoading(false);
         if (res.success) {
@@ -459,13 +489,19 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
   // Sync columns with filter builder
   useEffect(() => {
     if (columns.length > 0) {
-      setFilterRows([
-        { id: '1', active: true, column: columns[0].name, operator: 'Contains', value: '' }
-      ]);
+      if (initialFilter && initialFilter.column) {
+        setFilterRows([
+          { id: '1', active: true, column: initialFilter.column, operator: '=', value: String(initialFilter.value) }
+        ]);
+      } else {
+        setFilterRows([
+          { id: '1', active: true, column: columns[0].name, operator: 'Contains', value: '' }
+        ]);
+      }
     } else {
       setFilterRows([]);
     }
-  }, [columns]);
+  }, [columns, initialFilter]);
 
   // Filter Row Mutations
   const addFilterRow = useCallback((afterId?: string) => {
@@ -522,7 +558,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
         setShowFilterBar(prev => !prev);
         return;
       }
-      
+
       // 2. Insert new row (Ctrl/Cmd + I, hoặc Ctrl/Cmd + Shift + N cho khớp doc)
       if ((e.metaKey || e.ctrlKey) && (e.key.toLowerCase() === 'i' || (e.shiftKey && e.key.toLowerCase() === 'n'))) {
         e.preventDefault();
@@ -554,8 +590,8 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedRowId !== null) {
         const activeEl = document.activeElement;
         const isEditingText = activeEl && (
-          activeEl.tagName === 'INPUT' || 
-          activeEl.tagName === 'TEXTAREA' || 
+          activeEl.tagName === 'INPUT' ||
+          activeEl.tagName === 'TEXTAREA' ||
           activeEl.getAttribute('contenteditable') === 'true'
         );
         if (!isEditingText) {
@@ -595,10 +631,14 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
       setSelectedRowId(null);
       setPage(1);
       setSortBy(undefined);
-      setActiveFilter('');
-      setFilterText('');
+      const clause = getInitialFilterClause(initialFilter, dbType);
+      setActiveFilter(clause);
+      setFilterText(clause);
+      if (clause) {
+        setShowFilterBar(true);
+      }
     });
-  }, [tableName, fetchSchema, initialViewMode]);
+  }, [tableName, fetchSchema, initialViewMode, initialFilter, dbType]);
 
   useEffect(() => {
     if (columns.length > 0) {
@@ -908,16 +948,23 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
       const val = r.value.replace(/'/g, "''");
       switch (r.operator) {
         case '=': return `${col} = '${val}'`;
-        case '!=': return `${col} != '${val}'`;
-        case '>': return `${col} > '${val}'`;
-        case '>=': return `${col} >= '${val}'`;
+        case '!=':
+        case '<>': return `${col} != '${val}'`;
         case '<': return `${col} < '${val}'`;
+        case '>': return `${col} > '${val}'`;
         case '<=': return `${col} <= '${val}'`;
-        case 'Contains': return `${col} LIKE '%${val}%'`;
-        case 'Starts with': return `${col} LIKE '${val}%'`;
-        case 'Ends with': return `${col} LIKE '%${val}'`;
+        case '>=': return `${col} >= '${val}'`;
+        case 'IN': return `${col} IN (${r.value.trim()})`;
+        case 'NOT IN': return `${col} NOT IN (${r.value.trim()})`;
         case 'IS NULL': return `${col} IS NULL`;
         case 'IS NOT NULL': return `${col} IS NOT NULL`;
+        case 'BETWEEN': return `${col} BETWEEN ${r.value.trim()}`;
+        case 'NOT BETWEEN': return `${col} NOT BETWEEN ${r.value.trim()}`;
+        case 'LIKE': return `${col} LIKE '${val}'`;
+        case 'Contains': return `${col} LIKE '%${val}%'`;
+        case 'Not contains': return `${col} NOT LIKE '%${val}%'`;
+        case 'Starts with': return `${col} LIKE '${val}%'`;
+        case 'Ends with': return `${col} LIKE '%${val}'`;
         default: return `${col} = '${val}'`;
       }
     }).join(' AND ');
@@ -997,16 +1044,20 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
 
   // Guard rời đi khi còn thay đổi chưa lưu:
   //  - beforeunload: cảnh báo khi reload/đóng app.
-  //  - window.__gridDirty: cờ để App hỏi xác nhận khi đổi tab/bảng/ngắt kết nối.
+  //  - onDirtyChange: báo lên App để hỏi xác nhận khi đổi tab/bảng/ngắt kết nối,
+  //    đồng thời chấm dấu "chưa lưu" lên tab.
+  //
+  // Hàm dọn dẹp báo `false`: lúc đó tab đã đổi rồi, và App luôn xoá cờ chứ không
+  // gán theo tab nào, nên grid cũ tháo đi không thể để lại dấu trên tab mới.
   useEffect(() => {
-    (window as any).__gridDirty = changeCount > 0;
+    onDirtyChangeRef.current?.(changeCount > 0);
     const handler = (e: BeforeUnloadEvent) => {
       if (changeCount > 0) { e.preventDefault(); e.returnValue = ''; }
     };
     window.addEventListener('beforeunload', handler);
     return () => {
       window.removeEventListener('beforeunload', handler);
-      (window as any).__gridDirty = false;
+      onDirtyChangeRef.current?.(false);
     };
   }, [changeCount]);
 
@@ -1088,17 +1139,31 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
                     value={row.operator}
                     onChange={(e) => updateFilterRow(row.id, { operator: e.target.value })}
                   >
-                    <option value="Contains">{t('dataGrid.opContains')}</option>
                     <option value="=">=</option>
-                    <option value="!=">≠</option>
-                    <option value=">">&gt;</option>
-                    <option value=">=">≥</option>
+                    <option value="!=">&lt;&gt;</option>
                     <option value="<">&lt;</option>
-                    <option value="<=">≤</option>
-                    <option value="Starts with">{t('dataGrid.opStartsWith')}</option>
-                    <option value="Ends with">{t('dataGrid.opEndsWith')}</option>
-                    <option value="IS NULL">{t('dataGrid.opIsNull')}</option>
-                    <option value="IS NOT NULL">{t('dataGrid.opIsNotNull')}</option>
+                    <option value=">">&gt;</option>
+                    <option value="<=">&lt;=</option>
+                    <option value=">=">&gt;=</option>
+                    <optgroup label="────────────">
+                      <option value="IN">IN</option>
+                      <option value="NOT IN">NOT IN</option>
+                    </optgroup>
+                    <optgroup label="────────────">
+                      <option value="IS NULL">IS NULL</option>
+                      <option value="IS NOT NULL">IS NOT NULL</option>
+                    </optgroup>
+                    <optgroup label="────────────">
+                      <option value="BETWEEN">BETWEEN</option>
+                      <option value="NOT BETWEEN">NOT BETWEEN</option>
+                    </optgroup>
+                    <optgroup label="────────────">
+                      <option value="LIKE">LIKE</option>
+                      <option value="Contains">{t('dataGrid.opContains', 'Contains')}</option>
+                      <option value="Not contains">Not contains</option>
+                      <option value="Starts with">{t('dataGrid.opStartsWith', 'Starts with')}</option>
+                      <option value="Ends with">{t('dataGrid.opEndsWith', 'Ends with')}</option>
+                    </optgroup>
                   </select>
                   <input
                     type="text"
@@ -1108,6 +1173,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
                     disabled={row.operator === 'IS NULL' || row.operator === 'IS NOT NULL'}
                     onChange={(e) => updateFilterRow(row.id, { value: e.target.value })}
                     onKeyDown={(e) => e.key === 'Enter' && triggerFilter()}
+                    style={{ flex: 1, minWidth: '220px' }}
                   />
                   <button className="visual-filter-btn-apply" onClick={() => applySingleFilterRow(row.id)} title={t('dataGrid.applyRowTitle')}>
                     {t('dataGrid.applyRow')}
@@ -1182,6 +1248,8 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
           dbType={dbType}
           onSchemaChanged={fetchSchema}
           readOnly={readOnly}
+          activeSection={structSection}
+          onSectionChange={setStructSection}
         />
       ) : (
         <div className="grid-table-container">
@@ -1352,12 +1420,60 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
             >
               {t('dataGrid.dataTab')}
             </button>
-            <button
-              className={`segment-btn ${viewMode === 'structure' ? 'active' : ''}`}
-              onClick={() => setViewMode('structure')}
-            >
-              {t('dataGrid.structureTab')}
-            </button>
+
+            {viewMode === 'data' ? (
+              <button
+                className="segment-btn"
+                onClick={() => { setViewMode('structure'); setStructSection('columns'); }}
+              >
+                {t('dataGrid.structureTab')}
+              </button>
+            ) : (
+              <>
+                <button
+                  className={`segment-btn ${structSection === 'columns' ? 'active' : ''}`}
+                  onClick={() => setStructSection('columns')}
+                >
+                  Columns {schema?.columns?.length !== undefined ? <span className="st-seg-count">{schema.columns.length}</span> : null}
+                </button>
+                <button
+                  className={`segment-btn ${structSection === 'indexes' ? 'active' : ''}`}
+                  onClick={() => setStructSection('indexes')}
+                >
+                  Indexes {schema?.indexes?.length !== undefined ? <span className="st-seg-count">{schema.indexes.length}</span> : null}
+                </button>
+                <button
+                  className={`segment-btn ${structSection === 'fks' ? 'active' : ''}`}
+                  onClick={() => setStructSection('fks')}
+                >
+                  Foreign keys {schema?.foreignKeys?.length !== undefined ? <span className="st-seg-count">{schema.foreignKeys.length}</span> : null}
+                </button>
+                <button
+                  className={`segment-btn ${structSection === 'check_constraints' ? 'active' : ''}`}
+                  onClick={() => setStructSection('check_constraints')}
+                >
+                  Check Constraints
+                </button>
+                <button
+                  className={`segment-btn ${structSection === 'triggers' ? 'active' : ''}`}
+                  onClick={() => setStructSection('triggers')}
+                >
+                  Triggers
+                </button>
+                <button
+                  className={`segment-btn ${structSection === 'partitions' ? 'active' : ''}`}
+                  onClick={() => setStructSection('partitions')}
+                >
+                  Partitions
+                </button>
+                <button
+                  className={`segment-btn ${structSection === 'ddl' ? 'active' : ''}`}
+                  onClick={() => setStructSection('ddl')}
+                >
+                  DDL
+                </button>
+              </>
+            )}
           </div>
 
           {viewMode === 'data' && (
@@ -1688,174 +1804,174 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
           width="720px"
           zIndex={9999}
         >
-            <ModalBody style={{ gap: '12px' }}>
-              <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>
-                {importFileType === 'sql' ? (
-                  <span>{t('dataGrid.importSqlNote')}</span>
-                ) : (
-                  <span>
-                    <Trans
-                      i18nKey="dataGrid.importSummary"
-                      values={{
-                        format: importFileType.toUpperCase(),
-                        rows: importPendingRows.length,
-                        cols: importFileCols.length,
-                        table: tableName,
-                      }}
-                      components={{ strong: <b />, code: <b style={{ fontFamily: 'monospace' }} /> }}
-                    />
-                  </span>
-                )}
-              </div>
-
+          <ModalBody style={{ gap: '12px' }}>
+            <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>
               {importFileType === 'sql' ? (
-                <textarea
-                  readOnly
-                  value={importSqlContent.slice(0, 5000) + (importSqlContent.length > 5000 ? t('dataGrid.importTruncated') : '')}
-                  style={{
-                    width: '100%',
-                    height: '280px',
-                    background: 'var(--win-bg-window)',
-                    border: '1px solid var(--win-border)',
-                    color: 'var(--win-text-primary)',
-                    fontFamily: 'monospace',
-                    fontSize: '11px',
-                    padding: '10px',
-                    borderRadius: '4px',
-                    resize: 'none',
-                    outline: 'none'
-                  }}
-                />
+                <span>{t('dataGrid.importSqlNote')}</span>
               ) : (
-                <>
-                  {/* Tab: cấu trúc (cột trong tệp vs bảng đích) | dữ liệu (10 dòng đầu) */}
-                  <div style={{ display: 'flex', gap: '4px' }}>
-                    {([
-                      { id: 'structure', label: t('dataGrid.importTabStructure', { n: importFileCols.length }) },
-                      { id: 'data', label: t('dataGrid.importTabData', { n: importPendingRows.length }) },
-                    ] as const).map(tab => (
-                      <button
-                        key={tab.id}
-                        onClick={() => setImportTab(tab.id)}
-                        style={{
-                          padding: '4px 12px',
-                          fontSize: '11px',
-                          borderRadius: '4px',
-                          border: '1px solid var(--win-border)',
-                          cursor: 'pointer',
-                          background: importTab === tab.id ? 'var(--win-accent)' : 'transparent',
-                          color: importTab === tab.id ? '#fff' : 'var(--win-text-secondary)',
-                          fontWeight: 600
-                        }}
-                      >
-                        {tab.label}
-                      </button>
-                    ))}
-                  </div>
-
-                  {importUnknownCols.length > 0 && (
-                    <div style={{
-                      fontSize: '11px',
-                      color: 'var(--st-warn, #d98600)',
-                      background: 'rgba(255,170,0,0.08)',
-                      border: '1px solid rgba(255,170,0,0.35)',
-                      borderRadius: '4px',
-                      padding: '8px 10px',
-                      lineHeight: 1.5
-                    }}>
-                      <Trans
-                        i18nKey="dataGrid.importUnknownCols"
-                        values={{
-                          n: importUnknownCols.length,
-                          table: tableName,
-                          cols: importUnknownCols.join(', '),
-                        }}
-                        components={{ code: <b style={{ fontFamily: 'monospace' }} /> }}
-                      />
-                    </div>
-                  )}
-
-                  <div style={{
-                    height: '280px',
-                    overflow: 'auto',
-                    border: '1px solid var(--win-border)',
-                    borderRadius: '4px',
-                    background: 'var(--win-bg-window)'
-                  }}>
-                    {importPendingRows.length === 0 ? (
-                      <div style={{ padding: '20px', textAlign: 'center', color: 'var(--win-text-disabled)' }}>{t('dataGrid.importNoRows')}</div>
-                    ) : importTab === 'structure' ? (
-                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
-                        <thead>
-                          <tr style={{ background: 'var(--win-bg-hover)', borderBottom: '1px solid var(--win-border)' }}>
-                            {[t('dataGrid.colInFile'), t('dataGrid.colInferredType'), t('dataGrid.colInTarget'), t('dataGrid.colTargetType')].map(h => (
-                              <th key={h} style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 600, borderRight: '1px solid var(--win-border)' }}>{h}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {importFileCols.map(col => {
-                            const target = columns.find(c => c.name.toLowerCase() === col.toLowerCase());
-                            return (
-                              <tr key={col} style={{ borderBottom: '1px solid var(--win-border)' }}>
-                                <td style={{ padding: '6px 8px', borderRight: '1px solid var(--win-border)', fontFamily: 'monospace', color: 'var(--win-text-primary)' }}>{col}</td>
-                                <td style={{ padding: '6px 8px', borderRight: '1px solid var(--win-border)', color: 'var(--win-text-secondary)' }}>{inferColType(importPendingRows, col)}</td>
-                                <td style={{ padding: '6px 8px', borderRight: '1px solid var(--win-border)', color: target ? 'var(--win-text-primary)' : 'var(--st-warn, #d98600)' }}>
-                                  {target ? target.name : t('dataGrid.colMissing')}
-                                </td>
-                                <td style={{ padding: '6px 8px', color: 'var(--win-text-secondary)', fontFamily: 'monospace' }}>{target?.type || '—'}</td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    ) : (
-                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
-                        <thead>
-                          <tr style={{ background: 'var(--win-bg-hover)', borderBottom: '1px solid var(--win-border)' }}>
-                            {importFileCols.map(col => (
-                              <th key={col} style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 600, borderRight: '1px solid var(--win-border)' }}>
-                                {col}
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {importPendingRows.slice(0, 10).map((row, rIdx) => (
-                            <tr key={rIdx} style={{ borderBottom: '1px solid var(--win-border)' }}>
-                              {importFileCols.map(col => (
-                                <td key={col} style={{ padding: '6px 8px', color: 'var(--win-text-primary)', borderRight: '1px solid var(--win-border)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '180px' }}>
-                                  {row[col] === null || row[col] === undefined
-                                    ? <span style={{ color: 'var(--win-text-disabled)', fontStyle: 'italic' }}>NULL</span>
-                                    : String(row[col])}
-                                </td>
-                              ))}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
-                  </div>
-                </>
+                <span>
+                  <Trans
+                    i18nKey="dataGrid.importSummary"
+                    values={{
+                      format: importFileType.toUpperCase(),
+                      rows: importPendingRows.length,
+                      cols: importFileCols.length,
+                      table: tableName,
+                    }}
+                    components={{ strong: <b />, code: <b style={{ fontFamily: 'monospace' }} /> }}
+                  />
+                </span>
               )}
-            </ModalBody>
+            </div>
 
-            <ModalFooter>
-              <button
-                className="btn btn-secondary"
-                onClick={() => setShowImportModal(false)}
-                style={{ padding: '0 12px' }}
-              >
-                {t('common.cancel')}
-              </button>
-              <button
-                className="btn btn-primary"
-                onClick={confirmImport}
-                style={{ padding: '0 16px', background: 'var(--win-accent)', color: '#fff', border: 'none' }}
-              >
-                {t('dataGrid.confirmImport')}
-              </button>
-            </ModalFooter>
+            {importFileType === 'sql' ? (
+              <textarea
+                readOnly
+                value={importSqlContent.slice(0, 5000) + (importSqlContent.length > 5000 ? t('dataGrid.importTruncated') : '')}
+                style={{
+                  width: '100%',
+                  height: '280px',
+                  background: 'var(--win-bg-window)',
+                  border: '1px solid var(--win-border)',
+                  color: 'var(--win-text-primary)',
+                  fontFamily: 'monospace',
+                  fontSize: '11px',
+                  padding: '10px',
+                  borderRadius: '4px',
+                  resize: 'none',
+                  outline: 'none'
+                }}
+              />
+            ) : (
+              <>
+                {/* Tab: cấu trúc (cột trong tệp vs bảng đích) | dữ liệu (10 dòng đầu) */}
+                <div style={{ display: 'flex', gap: '4px' }}>
+                  {([
+                    { id: 'structure', label: t('dataGrid.importTabStructure', { n: importFileCols.length }) },
+                    { id: 'data', label: t('dataGrid.importTabData', { n: importPendingRows.length }) },
+                  ] as const).map(tab => (
+                    <button
+                      key={tab.id}
+                      onClick={() => setImportTab(tab.id)}
+                      style={{
+                        padding: '4px 12px',
+                        fontSize: '11px',
+                        borderRadius: '4px',
+                        border: '1px solid var(--win-border)',
+                        cursor: 'pointer',
+                        background: importTab === tab.id ? 'var(--win-accent)' : 'transparent',
+                        color: importTab === tab.id ? '#fff' : 'var(--win-text-secondary)',
+                        fontWeight: 600
+                      }}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+
+                {importUnknownCols.length > 0 && (
+                  <div style={{
+                    fontSize: '11px',
+                    color: 'var(--st-warn, #d98600)',
+                    background: 'rgba(255,170,0,0.08)',
+                    border: '1px solid rgba(255,170,0,0.35)',
+                    borderRadius: '4px',
+                    padding: '8px 10px',
+                    lineHeight: 1.5
+                  }}>
+                    <Trans
+                      i18nKey="dataGrid.importUnknownCols"
+                      values={{
+                        n: importUnknownCols.length,
+                        table: tableName,
+                        cols: importUnknownCols.join(', '),
+                      }}
+                      components={{ code: <b style={{ fontFamily: 'monospace' }} /> }}
+                    />
+                  </div>
+                )}
+
+                <div style={{
+                  height: '280px',
+                  overflow: 'auto',
+                  border: '1px solid var(--win-border)',
+                  borderRadius: '4px',
+                  background: 'var(--win-bg-window)'
+                }}>
+                  {importPendingRows.length === 0 ? (
+                    <div style={{ padding: '20px', textAlign: 'center', color: 'var(--win-text-disabled)' }}>{t('dataGrid.importNoRows')}</div>
+                  ) : importTab === 'structure' ? (
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
+                      <thead>
+                        <tr style={{ background: 'var(--win-bg-hover)', borderBottom: '1px solid var(--win-border)' }}>
+                          {[t('dataGrid.colInFile'), t('dataGrid.colInferredType'), t('dataGrid.colInTarget'), t('dataGrid.colTargetType')].map(h => (
+                            <th key={h} style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 600, borderRight: '1px solid var(--win-border)' }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importFileCols.map(col => {
+                          const target = columns.find(c => c.name.toLowerCase() === col.toLowerCase());
+                          return (
+                            <tr key={col} style={{ borderBottom: '1px solid var(--win-border)' }}>
+                              <td style={{ padding: '6px 8px', borderRight: '1px solid var(--win-border)', fontFamily: 'monospace', color: 'var(--win-text-primary)' }}>{col}</td>
+                              <td style={{ padding: '6px 8px', borderRight: '1px solid var(--win-border)', color: 'var(--win-text-secondary)' }}>{inferColType(importPendingRows, col)}</td>
+                              <td style={{ padding: '6px 8px', borderRight: '1px solid var(--win-border)', color: target ? 'var(--win-text-primary)' : 'var(--st-warn, #d98600)' }}>
+                                {target ? target.name : t('dataGrid.colMissing')}
+                              </td>
+                              <td style={{ padding: '6px 8px', color: 'var(--win-text-secondary)', fontFamily: 'monospace' }}>{target?.type || '—'}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
+                      <thead>
+                        <tr style={{ background: 'var(--win-bg-hover)', borderBottom: '1px solid var(--win-border)' }}>
+                          {importFileCols.map(col => (
+                            <th key={col} style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 600, borderRight: '1px solid var(--win-border)' }}>
+                              {col}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importPendingRows.slice(0, 10).map((row, rIdx) => (
+                          <tr key={rIdx} style={{ borderBottom: '1px solid var(--win-border)' }}>
+                            {importFileCols.map(col => (
+                              <td key={col} style={{ padding: '6px 8px', color: 'var(--win-text-primary)', borderRight: '1px solid var(--win-border)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '180px' }}>
+                                {row[col] === null || row[col] === undefined
+                                  ? <span style={{ color: 'var(--win-text-disabled)', fontStyle: 'italic' }}>NULL</span>
+                                  : String(row[col])}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </>
+            )}
+          </ModalBody>
+
+          <ModalFooter>
+            <button
+              className="btn btn-secondary"
+              onClick={() => setShowImportModal(false)}
+              style={{ padding: '0 12px' }}
+            >
+              {t('common.cancel')}
+            </button>
+            <button
+              className="btn btn-primary"
+              onClick={confirmImport}
+              style={{ padding: '0 16px', background: 'var(--win-accent)', color: '#fff', border: 'none' }}
+            >
+              {t('dataGrid.confirmImport')}
+            </button>
+          </ModalFooter>
         </Modal>
       )}
 

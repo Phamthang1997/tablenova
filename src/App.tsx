@@ -7,10 +7,13 @@ import { Sidebar } from './components/Sidebar';
 import { DatabaseInfoModal } from './components/DatabaseInfoModal';
 import { TabManager } from './components/TabManager';
 import type { TabInfo } from './components/TabManager';
+import { TAB_GROUP_COLORS, moveGroup, moveTabIntoGroup, reorderTabs, type TabGroup } from './utils/tabGroups';
 import { DataGrid } from './components/DataGrid';
 import { SqlEditor } from './components/SqlEditor';
 import { AiAssistant } from './components/AiAssistant';
 import { TerminalPanel } from './components/TerminalPanel';
+import { RoutineEditorModal } from './components/RoutineEditorModal';
+import { ViewEditorModal } from './components/ViewEditorModal';
 import { SchemaMigration } from './components/SchemaMigration';
 import { DbCompareDialog } from './components/DbCompareDialog';
 import { DataGeneratorDialog } from './components/DataGeneratorDialog';
@@ -20,14 +23,16 @@ import { ExportTableDialog } from './components/ExportTableDialog';
 import { ExportDatabaseDialog } from './components/ExportDatabaseDialog';
 import type { DatabaseExportOptions } from './components/ExportDatabaseDialog';
 import { ImportDatabaseDialog } from './components/ImportDatabaseDialog';
-import { DbConnectionStatusPill } from './components/DbConnectionStatusPill';
-import { Bot, Lock, LockOpen, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { getVersion } from '@tauri-apps/api/app';
 import { PostgresIcon, MySqlIcon, RedisIcon, SqliteIcon } from './components/DbIcons';
 import { dbHelper } from './utils/dbHelper';
 import type { DbConnectionConfig } from './utils/dbHelper';
 import { invalidateCatalog } from './sql/catalog';
-import { connKey, legacyTabsStorageKey, tabsStorageKey } from './utils/connKey';
+import { splitStatements } from './sql/statements';
+import { connKey, legacyTabsStorageKey, scopeKey, tabsStorageKey } from './utils/connKey';
+import { updateProfileDisplay } from './utils/connectionProfiles';
+import { applyProgressStyle, getProgressStyle } from './utils/progressStyle';
 import { parseXlsx } from './utils/xlsxReader';
 import { collectColumns, inferColType } from './utils/importPreview';
 import { addExistsHint } from './utils/dumpPreview';
@@ -38,6 +43,66 @@ import { ConfirmDialog } from './components/ConfirmDialog';
 import { Modal, ModalBody, ModalFooter } from './components/Modal';
 import type { XlsxSheet } from './utils/xlsxWriter';
 import appIcon from './assets/icon.png';
+
+/**
+ * One query tab, wrapped so it can stay mounted while another tab is on screen — a `SqlEditor`
+ * that unmounts loses everything the run produced (results, columns, EXPLAIN plan, paging,
+ * Monaco's undo stack); only the SQL text survives, because that one is lifted into `tabs[].sql`.
+ *
+ * Memoized, and the write path is a single stable `onPatch` rather than three inline closures:
+ * every mounted tab would otherwise re-render on each debounced keystroke of the active one.
+ * `tab` is a fresh object only for the tab being edited (`tabs.map` keeps the others), so this
+ * narrows the re-render down to the tab the user is actually typing in.
+ */
+interface QueryTabPanelProps {
+  tab: TabInfo;
+  active: boolean;
+  dbType?: string;
+  connKey: string;
+  dbName: string;
+  theme: 'dark' | 'light';
+  readOnly: boolean;
+  onPatch: (id: string, patch: Partial<TabInfo>) => void;
+}
+
+const QueryTabPanel = React.memo(function QueryTabPanel(props: QueryTabPanelProps) {
+  const { tab, active, onPatch } = props;
+  return (
+    // Ẩn bằng visibility + position:absolute chứ không phải display:none như TerminalPanel:
+    // display:none huỷ hộp bố cục, nên trình duyệt đặt lại scrollTop của lưới kết quả về 0 và
+    // Monaco đo được 0x0 rồi phải bố trí lại lúc hiện ra. Cách này giữ nguyên kích thước và vị
+    // trí cuộn; absolute để tab ẩn không chiếm chỗ trong flex của .active-panel-container
+    // (đã là position:relative).
+    <div
+      style={
+        active
+          ? { flex: 1, display: 'flex', overflow: 'hidden' }
+          : {
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              overflow: 'hidden',
+              visibility: 'hidden',
+              pointerEvents: 'none',
+            }
+      }
+    >
+      <SqlEditor
+        dbType={props.dbType}
+        connKey={props.connKey}
+        dbName={props.dbName}
+        initialSql={(tab as any).sql || ''}
+        initialSql2={(tab as any).sql2 || ''}
+        initialSplitMode={(tab as any).splitMode || 'none'}
+        theme={props.theme}
+        readOnly={props.readOnly}
+        onSqlChange={(val) => onPatch(tab.id, { sql: val } as any)}
+        onSql2Change={(val) => onPatch(tab.id, { sql2: val } as any)}
+        onSplitModeChange={(val) => onPatch(tab.id, { splitMode: val } as any)}
+      />
+    </div>
+  );
+});
 
 /** Số dòng mỗi lô khi nhập dữ liệu vào bảng có sẵn (để báo được tiến độ). */
 const IMPORT_BATCH_SIZE = 500;
@@ -115,6 +180,13 @@ export const App: React.FC = () => {
   // Chế độ chỉ đọc: chặn mọi thao tác ghi. Nhớ qua các lần mở app (quy ước tf_*) — một công tắc
   // an toàn mà reset về "cho phép ghi" mỗi lần khởi động thì gần như vô dụng.
   const [readOnly, setReadOnly] = useState(() => localStorage.getItem('tf_readonly') === '1');
+  // Tab bảng còn sửa đổi chưa commit (do DataGrid báo lên). Xem guardDirty bên dưới.
+  const [dirtyTabId, setDirtyTabId] = useState<string | null>(null);
+  // Tab truy vấn đã từng được mở -> mount thường trực để giữ kết quả. Mount lười chứ không
+  // mount hết `tabs`: khôi phục 10 tab từ localStorage mà dựng luôn 10 Monaco thì phí.
+  const [mountedQueryTabs, setMountedQueryTabs] = useState<Set<string>>(() => new Set());
+  // Nhóm tab (kiểu Chrome). Lưu cùng chỗ với danh sách tab, xem restoreTabs.
+  const [tabGroups, setTabGroups] = useState<TabGroup[]>([]);
   const [dbReloadKey, setDbReloadKey] = useState(0);
 
   // Xuất/Nhập cả database (popup riêng, mở từ mục Công cụ ở Sidebar hoặc menu tiêu đề)
@@ -159,7 +231,14 @@ export const App: React.FC = () => {
     getVersion().then(setAppVersion).catch(() => { });
   }, []);
   const [showShortcuts, setShowShortcuts] = useState(false);
-  const [activeConnectionColor, setActiveConnectionColor] = useState<string | undefined>(undefined);
+  // Profile đang kết nối: id để ghi ngược tên/màu xuống tf_connection_profiles,
+  // tên + màu để popover chi tiết kết nối hiển thị và sửa tại chỗ. Kết nối không
+  // đi qua profile nào (chưa lưu) thì id rỗng -> popover vẫn xem được, chỉ không lưu.
+  const [activeProfile, setActiveProfile] = useState<{ id: string; name: string; color: string }>({
+    id: '',
+    name: '',
+    color: '',
+  });
 
   const [showGlobalImportPicker, setShowGlobalImportPicker] = useState(false);
 
@@ -391,38 +470,6 @@ export const App: React.FC = () => {
     }
   };
 
-  const splitSqlQueries = (sqlStr: string): string[] => {
-    const queries: string[] = [];
-    let currentQuery = '';
-    let inSingleQuote = false;
-    let inDoubleQuote = false;
-    let inBacktick = false;
-    
-    for (let i = 0; i < sqlStr.length; i++) {
-      const char = sqlStr[i];
-      if (char === "'" && !inDoubleQuote && !inBacktick) {
-        inSingleQuote = !inSingleQuote;
-      } else if (char === '"' && !inSingleQuote && !inBacktick) {
-        inDoubleQuote = !inDoubleQuote;
-      } else if (char === '`' && !inSingleQuote && !inDoubleQuote) {
-        inBacktick = !inBacktick;
-      }
-      
-      if (char === ';' && !inSingleQuote && !inDoubleQuote && !inBacktick) {
-        if (currentQuery.trim()) {
-          queries.push(currentQuery.trim());
-        }
-        currentQuery = '';
-      } else {
-        currentQuery += char;
-      }
-    }
-    if (currentQuery.trim()) {
-      queries.push(currentQuery.trim());
-    }
-    return queries;
-  };
-
   const extractTableNameFromSql = (sql: string): string | null => {
     const createMatch = sql.match(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:[`"']?([a-zA-Z0-9_]+)[`"']?)/i);
     if (createMatch && createMatch[1]) return createMatch[1];
@@ -435,7 +482,10 @@ export const App: React.FC = () => {
 
   const filterSqlQueries = (sqlText: string, mode: 'both' | 'structure' | 'data'): string => {
     if (mode === 'both') return sqlText;
-    const queries = splitSqlQueries(sqlText);
+    // splitStatements: cùng bộ tách với SQL editor và với split_sql_statements bên Rust
+    // (biết chuỗi, comment, khối $$...$$). Trước đây đây là một bộ tách tự chế thứ ba,
+    // chỉ đếm dấu nháy nên comment chứa ';' là cắt sai.
+    const queries = splitStatements(sqlText).map((s) => s.text);
     const filtered = queries.filter(q => {
       const trimmed = q.trim().toUpperCase();
       if (!trimmed) return false;
@@ -489,7 +539,11 @@ export const App: React.FC = () => {
           }
         }
 
-        const res = await dbHelper.executeQuery(filteredSql);
+        // executeQueryMulti, KHÔNG phải executeQuery: execute_query gửi nguyên chuỗi xuống
+        // driver như MỘT câu lệnh. Một tệp .sql nhiều câu lệnh sẽ lỗi cú pháp ngay ở câu thứ
+        // hai trên MySQL/Postgres, còn SQLite chỉ chạy câu đầu rồi báo thành công (mất dữ liệu
+        // im lặng). executeQueryMulti tách câu lệnh bằng split_sql_statements rồi chạy lần lượt.
+        const res = await dbHelper.executeQueryMulti(filteredSql);
         if (res.success) {
           alert(t('app.importSqlSuccess'));
           window.dispatchEvent(new CustomEvent('database-restored'));
@@ -649,6 +703,9 @@ export const App: React.FC = () => {
       document.documentElement.setAttribute('data-theme', 'dark');
     }
 
+    // Kiểu thanh tiến độ cũng đặt trên <html> như theme, xem utils/progressStyle.ts
+    applyProgressStyle(getProgressStyle());
+
     // macOS không tự bo góc cửa sổ khi decorations = false, nên phải tự bo bằng
     // CSS cho khớp radius của lớp vibrancy (windowEffects.radius trong
     // tauri.conf.json). Windows 11 tự bo nên không cần.
@@ -656,11 +713,36 @@ export const App: React.FC = () => {
     document.documentElement.setAttribute('data-os', isMac ? 'macos' : 'other');
   }, []);
 
-  const toggleTheme = () => {
-    const nextTheme: 'dark' | 'light' = theme === 'dark' ? 'light' : 'dark';
+  const applyTheme = (nextTheme: 'dark' | 'light') => {
     setTheme(nextTheme);
     document.documentElement.setAttribute('data-theme', nextTheme);
     localStorage.setItem('tf_theme', nextTheme);
+  };
+
+  const toggleTheme = () => applyTheme(theme === 'dark' ? 'light' : 'dark');
+
+  // Đổi tên/màu kết nối từ popover chi tiết. Phần hiển thị luôn đổi ngay; việc
+  // ghi xuống profile chỉ xảy ra khi kết nối này thực sự đến từ một profile đã lưu.
+  const handleProfileChange = (patch: { name?: string; color?: string }) => {
+    setActiveProfile((prev) => ({
+      ...prev,
+      name: patch.name ?? prev.name,
+      color: patch.color ?? prev.color,
+    }));
+    updateProfileDisplay(activeProfile.id, patch);
+  };
+
+  // Mở lại phiên bằng đúng cấu hình đang dùng: hữu ích khi server đóng kết nối
+  // nhàn rỗi. Giữ nguyên tab đang mở — chỉ phiên phía Rust được dựng lại — nhưng
+  // xoá cache catalog vì server có thể đã đổi schema trong lúc mất kết nối.
+  const handleReconnect = async (): Promise<{ success: boolean; message?: string }> => {
+    if (!activeConnConfig) return { success: false };
+    await dbHelper.disconnect();
+    const res = await dbHelper.connect(activeConnConfig);
+    if (!res.success) return { success: false, message: res.message };
+    invalidateCatalog();
+    setDbReloadKey((prev) => prev + 1);
+    return { success: true };
   };
 
   const toggleReadOnly = () => {
@@ -675,7 +757,7 @@ export const App: React.FC = () => {
       // Không lưu tab terminal: phiên PTY không tồn tại sau khi reload
       const persistTabs = tabs.filter(t => t.type !== 'terminal');
       const persistActive = persistTabs.some(t => t.id === activeTabId) ? activeTabId : (persistTabs[0]?.id ?? null);
-      const payload = { tabs: persistTabs, activeTabId: persistActive, queryCount };
+      const payload = { tabs: persistTabs, activeTabId: persistActive, queryCount, groups: tabGroups };
       try {
         localStorage.setItem(storageKey, JSON.stringify(payload));
       } catch {
@@ -692,7 +774,7 @@ export const App: React.FC = () => {
         }
       }
     }
-  }, [tabs, activeTabId, connection, activeConnConfig, queryCount]);
+  }, [tabs, activeTabId, connection, activeConnConfig, queryCount, tabGroups]);
 
   React.useEffect(() => {
     const applyWindowSize = async () => {
@@ -726,9 +808,16 @@ export const App: React.FC = () => {
       ?? (storageKey === legacyKey ? null : localStorage.getItem(legacyKey));
     if (!saved) return false;
     try {
-      const { tabs: savedTabs, activeTabId: savedActiveId, queryCount: savedQueryCount } = JSON.parse(saved);
+      const {
+        tabs: savedTabs,
+        activeTabId: savedActiveId,
+        queryCount: savedQueryCount,
+        groups: savedGroups,
+      } = JSON.parse(saved);
       if (Array.isArray(savedTabs) && savedTabs.length > 0) {
         setTabs(savedTabs);
+        // Bản lưu trước khi có nhóm không có trường này -> mọi tab thành tab rời.
+        setTabGroups(Array.isArray(savedGroups) ? savedGroups : []);
         setActiveTabId(savedActiveId || savedTabs[0].id);
         setQueryCount(savedQueryCount || (savedTabs.length + 1));
         return true;
@@ -740,9 +829,15 @@ export const App: React.FC = () => {
   };
 
   // Handle successful database connection
-  const handleConnect = (dbName: string, dbType: 'sqlite' | 'postgres' | 'mysql' | 'redis', color?: string, config?: DbConnectionConfig) => {
+  const handleConnect = (
+    dbName: string,
+    dbType: 'sqlite' | 'postgres' | 'mysql' | 'redis',
+    color?: string,
+    config?: DbConnectionConfig,
+    profile?: { id: string; name: string },
+  ) => {
     setConnection({ dbName, dbType });
-    setActiveConnectionColor(color);
+    setActiveProfile({ id: profile?.id || '', name: profile?.name || dbName, color: color || '' });
     setActiveConnConfig(config || null);
 
     // Đổi kết nối -> xoá cache bảng/cột để autocomplete & hover không còn dữ liệu của DB cũ
@@ -765,10 +860,85 @@ export const App: React.FC = () => {
     setQueryCount(2);
   };
 
-  // Disconnect from database
-  // Hỏi xác nhận nếu bảng đang mở còn thay đổi chưa lưu (cờ do DataGrid đặt: window.__gridDirty)
+  // Hỏi xác nhận nếu bảng đang mở còn thay đổi chưa lưu.
+  //
+  // Trước đây cờ này là biến toàn cục `window.__gridDirty` do DataGrid đặt. Đổi
+  // sang state vì thanh tab cần chấm dấu "chưa lưu", mà ghi biến toàn cục thì
+  // không kéo theo render nào. Chỉ có một tab *bảng* được mount tại một thời điểm
+  // (xem active-panel-container bên dưới — tab truy vấn và terminal thì mount thường
+  // trực) nên nhiều nhất một tab bẩn cùng lúc.
   const guardDirty = () =>
-    !(window as any).__gridDirty || window.confirm(t('app.confirmDiscardGridChanges'));
+    !dirtyTabId || window.confirm(t('app.confirmDiscardGridChanges'));
+
+  // Cả hai hàm dời tab đều nằm ở utils/tabGroups.ts: chúng thuần và là nơi giữ
+  // bất biến "tab cùng nhóm nằm liền nhau", nên ở đó mới test được.
+  const handleReorderTabs = (from: number, to: number, groupId: string | undefined) =>
+    setTabs((prev) => reorderTabs(prev, from, to, groupId));
+
+  const handleCreateTabGroup = (tabId: string) => {
+    const id = `group_${Date.now()}`;
+    const color = TAB_GROUP_COLORS[tabGroups.length % TAB_GROUP_COLORS.length];
+    setTabGroups((prev) => [...prev, { id, name: t('tabs.defaultGroupName', { n: prev.length + 1 }), color }]);
+    setTabs((prev) => moveTabIntoGroup(prev, tabId, id));
+  };
+
+  const handleAssignTabGroup = (tabId: string, groupId: string) =>
+    setTabs((prev) => moveTabIntoGroup(prev, tabId, groupId));
+
+  const handleRemoveTabFromGroup = (tabId: string) =>
+    setTabs((prev) => moveTabIntoGroup(prev, tabId, undefined));
+
+  const handleRenameTabGroup = (groupId: string, name: string) =>
+    setTabGroups((prev) => prev.map((g) => (g.id === groupId ? { ...g, name } : g)));
+
+  const handleSetTabGroupColor = (groupId: string, color: string) =>
+    setTabGroups((prev) => prev.map((g) => (g.id === groupId ? { ...g, color } : g)));
+
+  // Thu gọn một nhóm ĐANG CHỨA tab được xem thì phải chuyển sang xem tab khác
+  // trước, đúng như Chrome. Nếu không, phần render sẽ tự mở nhóm ra (nó không
+  // bao giờ giấu tab đang hiển thị nội dung) và bấm vào tên nhóm trông như
+  // không có tác dụng gì — đây chính là lý do nút thu gọn "không ăn".
+  const handleToggleTabGroup = (groupId: string) => {
+    const group = tabGroups.find((g) => g.id === groupId);
+    if (!group) return;
+
+    const collapsing = !group.collapsed;
+    if (collapsing && tabs.some((tab) => tab.id === activeTabId && tab.groupId === groupId)) {
+      const outside = tabs.filter((tab) => tab.groupId !== groupId);
+      // Cả cửa sổ chỉ có mỗi nhóm này: thu gọn thì không còn gì để hiển thị.
+      if (outside.length === 0) return;
+      if (!guardDirty()) return;
+      const at = tabs.findIndex((tab) => tab.id === activeTabId);
+      const after = tabs.slice(at + 1).find((tab) => tab.groupId !== groupId);
+      const before = [...tabs.slice(0, at)].reverse().find((tab) => tab.groupId !== groupId);
+      setActiveTabId((after ?? before ?? outside[0]).id);
+    }
+
+    setTabGroups((prev) => prev.map((g) => (g.id === groupId ? { ...g, collapsed: collapsing } : g)));
+  };
+
+  const handleMoveTabGroup = (groupId: string, targetIndex: number) =>
+    setTabs((prev) => moveGroup(prev, groupId, targetIndex));
+
+  const handleCloseTabGroup = (groupId: string) => {
+    if (!guardDirty()) return;
+    const remaining = tabs.filter((tab) => tab.groupId !== groupId);
+    setTabs(remaining);
+    if (!remaining.some((tab) => tab.id === activeTabId)) {
+      setActiveTabId(remaining[remaining.length - 1]?.id ?? null);
+    }
+  };
+
+  // Nhóm rỗng thì bỏ đi. Chạy tập trung ở đây thay vì rải vào từng chỗ đóng tab:
+  // tab bị đóng ở rất nhiều đường (nút X, chuột giữa, đóng tab khác, đóng bên
+  // phải, đóng tất cả), sót một đường là còn lại một nhóm ma trong bản lưu.
+  React.useEffect(() => {
+    setTabGroups((prev) => {
+      const used = new Set(tabs.map((tab) => tab.groupId).filter(Boolean));
+      const next = prev.filter((g) => used.has(g.id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [tabs]);
 
   const handleSelectTab = (id: string) => {
     if (id !== activeTabId && !guardDirty()) return;
@@ -779,6 +949,7 @@ export const App: React.FC = () => {
     if (!guardDirty()) return;
     await dbHelper.disconnect();
     setConnection(null);
+    setActiveProfile({ id: '', name: '', color: '' });
     setTabs([]);
     setActiveTabId(null);
     setQueryCount(1);
@@ -808,7 +979,11 @@ export const App: React.FC = () => {
   };
 
   // Open a specific table in a new or existing tab
-  const handleSelectTable = (tableName: string, initialViewMode: 'data' | 'structure' = 'data') => {
+  const handleSelectTable = (
+    tableName: string,
+    initialViewMode: 'data' | 'structure' = 'data',
+    initialFilter?: { column: string; value: any }
+  ) => {
     const tabId = `table_${tableName}`;
     if (tabId !== activeTabId && !guardDirty()) return;
     const exists = tabs.find((t) => t.id === tabId);
@@ -820,24 +995,23 @@ export const App: React.FC = () => {
         name: tableName,
         label: tableName,
         initialViewMode,
+        initialFilter,
       } as any;
       setTabs([...tabs, newTab]);
     } else {
-      if (initialViewMode) {
-        setTabs(tabs.map(t => t.id === tabId ? { ...t, initialViewMode } as any : t));
-      }
+      setTabs(tabs.map(t => t.id === tabId ? { ...t, initialViewMode, initialFilter } as any : t));
     }
     setActiveTabId(tabId);
   };
 
-  // Ctrl+Click / F12 trên tên bảng trong SQL Editor -> mở tab bảng.
+  // Ctrl+Click / F12 trên tên bảng hoặc click FK link -> mở tab bảng kèm bộ lọc.
   // Dùng ref để listener (đăng ký 1 lần) luôn gọi bản handleSelectTable mới nhất.
   const selectTableRef = React.useRef(handleSelectTable);
   selectTableRef.current = handleSelectTable;
   React.useEffect(() => {
     const handleOpenTableTab = (e: any) => {
       const table = e.detail?.table;
-      if (table) selectTableRef.current(table, e.detail?.viewMode || 'data');
+      if (table) selectTableRef.current(table, e.detail?.viewMode || 'data', e.detail?.initialFilter);
     };
     window.addEventListener('open-table-tab', handleOpenTableTab);
     return () => window.removeEventListener('open-table-tab', handleOpenTableTab);
@@ -992,6 +1166,46 @@ export const App: React.FC = () => {
     setActiveTabId(id);
   };
 
+  const handleOpenRoutineTab = async (name: string, kind: 'procedure' | 'function') => {
+    const tabId = `routine_${kind}_${name}`;
+    const existing = tabs.find((t) => t.id === tabId);
+    if (existing) {
+      setActiveTabId(tabId);
+      return;
+    }
+    const res = await dbHelper.getObjectDefinition(name, kind);
+    const sql = res.success && res.sql ? res.sql : '';
+    const newTab: TabInfo = {
+      id: tabId,
+      type: 'routine',
+      name: name,
+      label: `${kind === 'procedure' ? 'Proc' : 'Func'}: ${name}`,
+      routineInfo: { name, kind, sql },
+    };
+    setTabs((prev) => [...prev, newTab]);
+    setActiveTabId(tabId);
+  };
+
+  const handleOpenViewTab = async (name: string) => {
+    const tabId = `view_${name}`;
+    const existing = tabs.find((t) => t.id === tabId);
+    if (existing) {
+      setActiveTabId(tabId);
+      return;
+    }
+    const res = await dbHelper.getObjectDefinition(name, 'view');
+    const sql = res.success && res.sql ? res.sql : '';
+    const newTab: TabInfo = {
+      id: tabId,
+      type: 'view',
+      name: name,
+      label: `View: ${name}`,
+      viewInfo: { name, sql },
+    };
+    setTabs((prev) => [...prev, newTab]);
+    setActiveTabId(tabId);
+  };
+
   const getActiveTab = () => {
     return tabs.find((t) => t.id === activeTabId) || null;
   };
@@ -999,10 +1213,52 @@ export const App: React.FC = () => {
   const activeTab = getActiveTab();
   const activeTable = activeTab?.type === 'table' ? activeTab.name : null;
 
-  return (
-    <>
-      <TitleBar
-        hasConnection={!!connection}
+  /** Cập nhật một tab. Phải ổn định: QueryTabPanel memo hoá theo props (xem đó). */
+  const patchTab = React.useCallback((id: string, patch: Partial<TabInfo>) => {
+    setTabs(prev => prev.map(tb => (tb.id === id ? { ...tb, ...patch } : tb)));
+  }, []);
+
+  // Ghi nhận tab truy vấn vừa được mở, đồng thời bỏ những tab đã đóng. Chạy sau mỗi lần
+  // `tabs` đổi (tức mỗi lần gõ phím đã debounce) nhưng trả về đúng Set cũ khi không có gì
+  // thay đổi, nên không kéo theo render thừa.
+  React.useEffect(() => {
+    setMountedQueryTabs(prev => {
+      const live = new Set(tabs.filter(tb => tb.type === 'query').map(tb => tb.id));
+      const next = new Set<string>();
+      for (const id of prev) if (live.has(id)) next.add(id);
+      if (activeTabId && live.has(activeTabId)) next.add(activeTabId);
+      // Không so mỗi size: đóng một tab và mở một tab khác trong cùng một render cho ra
+      // hai tập khác nhau mà cùng số phần tử.
+      if (next.size === prev.size && [...next].every(id => prev.has(id))) return prev;
+      return next;
+    });
+  }, [tabs, activeTabId]);
+
+  // Scope của danh sách tab hiện tại, dùng làm tiền tố cho key của QueryTabPanel.
+  const tabScope = scopeKey(activeConnConfig, connection?.dbName);
+
+  // Dựng sẵn thành biến vì thanh tiêu đề nằm ở hai vị trí khác nhau trong cây:
+  // ở màn kết nối nó nằm *trong* .cm-screen để cùng chịu lớp aurora của màn đó,
+  // còn ở workspace nó là con trực tiếp của #root như cũ.
+  const titleBar = (
+    <TitleBar
+      hasConnection={!!connection}
+        readOnly={readOnly}
+        onToggleReadOnly={toggleReadOnly}
+        // version/tls không còn ở đây: TitleBar đọc số thật từ get_connection_status,
+        // các trường này chỉ là giá trị lùi cho nhịp trước khi lần ping đầu về.
+        activeConnectionInfo={{
+          host: activeConnConfig?.host || 'LOCAL',
+          dbType: connection?.dbType?.toUpperCase() || 'MYSQL',
+          dbName: connection?.dbName,
+        }}
+        activeProfileName={activeProfile.name}
+        activeProfileColor={activeProfile.color}
+        onProfileChange={handleProfileChange}
+        theme={theme}
+        onThemeChange={applyTheme}
+        onReconnect={handleReconnect}
+        activeTableName={activeTable}
         onNewConnection={handleDisconnect}
         onDisconnect={handleDisconnect}
         onNewQuery={handleNewQueryTab}
@@ -1012,165 +1268,195 @@ export const App: React.FC = () => {
         onToggleTheme={toggleTheme}
         onShowShortcuts={() => setShowShortcuts(true)}
         onShowAbout={() => setShowAbout(true)}
-      />
+        onToggleTerminal={() => {}}
+        aiOpen={showAi}
+        onToggleAiAssistant={() => setShowAi(prev => !prev)}
+        onDatabaseChanged={handleDatabaseChanged}
+      onOpenAllDbStats={() => { setDbInfoTab('all'); setShowDbInfoModal(true); }}
+    />
+  );
 
+  return (
+    <>
       {!connection ? (
-        <ConnectionManager onConnect={handleConnect} />
-      ) : connection.dbType === 'redis' ? (
-        <div className="workspace-container" style={{ borderTop: activeConnectionColor ? `3px solid ${activeConnectionColor}` : 'none' }}>
-          <RedisBrowser
-            dbName={connection.dbName}
-            initialDbIndex={activeConnConfig?.dbIndex ?? 0}
-            onDisconnect={handleDisconnect}
-            readOnly={readOnly}
-          />
+        // Thanh tiêu đề nằm trong .cm-screen chứ không đứng trên nó: lớp aurora
+        // là ::before của shell nên chỉ phủ được những gì shell chứa. Đứng
+        // ngoài thì mép dưới thanh tiêu đề luôn là một đường ranh màu.
+        <div className="cm-screen">
+          {titleBar}
+          <ConnectionManager onConnect={handleConnect} />
         </div>
-      ) : (
-        <div className="workspace-container" style={{ borderTop: activeConnectionColor ? `3px solid ${activeConnectionColor}` : 'none' }}>
-          {showSidebar && (
-            <Sidebar
+      ) : connection.dbType === 'redis' ? (
+        <>
+          {titleBar}
+          <div className="workspace-container">
+            <RedisBrowser
               dbName={connection.dbName}
-              dbType={connection.dbType}
+              initialDbIndex={activeConnConfig?.dbIndex ?? 0}
+              config={activeConnConfig}
               readOnly={readOnly}
-              onSelectTable={handleSelectTable}
-              onNewQuery={handleNewQueryTab}
-              onOpenTerminal={handleOpenTerminal}
-              terminalConfig={terminalConfig()}
-              onDisconnect={handleDisconnect}
-              activeTable={activeTable}
-              onImportToTable={handleImportToTableTrigger}
-              onExportTable={handleExportTableTrigger}
-              onExportDatabase={() => setShowExportDbDialog(true)}
-              onImportDatabase={() => setShowImportDbDialog(true)}
-              onImportNewTable={() => { setGlobalImportTargetTable(null); setShowGlobalImportPicker(true); }}
-              onOpenDbInfo={() => { setDbInfoTab('current'); setShowDbInfoModal(true); }}
-              onOpenAllDbStats={() => { setDbInfoTab('all'); setShowDbInfoModal(true); }}
-              onSchemaMigration={() => setShowSchemaMigration(true)}
-              onCompareDatabases={() => setShowDbCompare(true)}
-              onGenerateData={(tableName) => {
-                setDataGenTable(tableName ?? null);
-                setShowDataGen(true);
-              }}
-              onTableRenamed={handleTableRenamed}
-              onTableDropped={handleTableDropped}
-              onDatabaseChanged={handleDatabaseChanged}
             />
-          )}
+          </div>
+        </>
+      ) : (
+        <>
+          {titleBar}
+          <div className="workspace-container">
+            {showSidebar && (
+              <Sidebar
+                dbName={connection.dbName}
+                dbType={connection.dbType}
+                readOnly={readOnly}
+                onSelectTable={handleSelectTable}
+                onNewQuery={handleNewQueryTab}
+                onOpenTerminal={handleOpenTerminal}
+                terminalConfig={terminalConfig()}
+                onDisconnect={handleDisconnect}
+                activeTable={activeTable}
+                onImportToTable={handleImportToTableTrigger}
+                onExportTable={handleExportTableTrigger}
+                onExportDatabase={() => setShowExportDbDialog(true)}
+                onImportDatabase={() => setShowImportDbDialog(true)}
+                onImportNewTable={() => { setGlobalImportTargetTable(null); setShowGlobalImportPicker(true); }}
+                onOpenDbInfo={() => { setDbInfoTab('current'); setShowDbInfoModal(true); }}
+                onOpenAllDbStats={() => { setDbInfoTab('all'); setShowDbInfoModal(true); }}
+                onSchemaMigration={() => setShowSchemaMigration(true)}
+                onCompareDatabases={() => setShowDbCompare(true)}
+                onGenerateData={(tableName) => {
+                  setDataGenTable(tableName ?? null);
+                  setShowDataGen(true);
+                }}
+                onTableRenamed={handleTableRenamed}
+                onTableDropped={handleTableDropped}
+                onDatabaseChanged={handleDatabaseChanged}
+                onOpenQueryWithSql={openQueryTabWithSql}
+                onOpenRoutineTab={handleOpenRoutineTab}
+                onOpenViewTab={handleOpenViewTab}
+              />
+            )}
 
-          <div className="main-workspace-area">
-            <div style={{ display: 'flex', alignItems: 'center', background: 'var(--win-bg-tab-bar)', paddingRight: '8px', borderBottom: '1px solid var(--win-border)', position: 'relative', zIndex: 100 }}>
-              <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
-                <TabManager
-                  tabs={tabs}
-                  activeTabId={activeTabId}
-                  onSelectTab={handleSelectTab}
-                  onCloseTab={handleCloseTab}
-                  onCloseOthers={handleCloseOthers}
-                  onCloseTabsToRight={handleCloseTabsToRight}
-                  onCloseAll={handleCloseAll}
-                  onNewQueryTab={handleNewQueryTab}
-                />
+            <div className="main-workspace-area">
+              {/* Nút bật/tắt AI Copilot đã chuyển lên thanh tiêu đề (TitleBar) —
+                  thanh tab giờ chỉ còn tab và cụm nút của chính nó. */}
+              <div style={{ display: 'flex', alignItems: 'center', background: 'var(--win-bg-tab-bar)', borderBottom: '1px solid var(--win-border)', position: 'relative', zIndex: 100 }}>
+                <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
+                  <TabManager
+                    tabs={tabs}
+                    activeTabId={activeTabId}
+                    dirtyTabId={dirtyTabId}
+                    onSelectTab={handleSelectTab}
+                    onCloseTab={handleCloseTab}
+                    onCloseOthers={handleCloseOthers}
+                    onCloseTabsToRight={handleCloseTabsToRight}
+                    onCloseAll={handleCloseAll}
+                    onReorderTabs={handleReorderTabs}
+                    onNewQueryTab={handleNewQueryTab}
+                    groups={tabGroups}
+                    onCreateGroup={handleCreateTabGroup}
+                    onAssignGroup={handleAssignTabGroup}
+                    onRemoveFromGroup={handleRemoveTabFromGroup}
+                    onRenameGroup={handleRenameTabGroup}
+                    onSetGroupColor={handleSetTabGroupColor}
+                    onToggleGroup={handleToggleTabGroup}
+                    onMoveGroup={handleMoveTabGroup}
+                    onCloseGroup={handleCloseTabGroup}
+                  />
+                </div>
               </div>
-              {/* Nút đổi sáng/tối đã bỏ khỏi thanh tab — vẫn dùng được ở
-                  menu Hiển thị > Đổi giao diện sáng/tối trên title bar. */}
-              <button
-                className="tab-new-btn"
-                onClick={toggleReadOnly}
-                style={{
-                  color: readOnly ? '#f59e0b' : 'var(--win-text-secondary)',
-                  display: 'flex', alignItems: 'center', gap: '4px', width: 'auto', padding: '0 8px', fontSize: '11px', marginRight: '6px'
-                }}
-                title={readOnly ? t('app.readOnlyOnTitle') : t('app.readOnlyOffTitle')}
-              >
-                {readOnly ? <Lock size={14} /> : <LockOpen size={14} />}
-                <span>{readOnly ? t('app.readOnlyOn') : t('app.readOnlyOff')}</span>
-              </button>
-              <button
-                className="tab-new-btn"
-                onClick={() => setShowAi(!showAi)}
-                style={{ 
-                  color: showAi ? 'var(--win-accent)' : 'var(--win-text-secondary)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', width: '28px', height: '24px', padding: 0 
-                }}
-                title={t('app.toggleAiCopilot')}
-              >
-                <Bot size={14} />
-              </button>
-            </div>
 
-            <div className="active-panel-container" style={{ position: 'relative' }}>
-              {!activeTab ? (
-                <div style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', color: 'var(--win-text-secondary)', fontSize: '13px' }}>
-                  {t('app.emptyWorkspace')}
-                </div>
-              ) : activeTab.type === 'terminal' ? (
-                (activeTab as any).floating ? (
+              <div className="active-panel-container" style={{ position: 'relative' }}>
+                {!activeTab ? (
                   <div style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', color: 'var(--win-text-secondary)', fontSize: '13px' }}>
-                    {t('app.terminalFloating')}
+                    {t('app.emptyWorkspace')}
                   </div>
-                ) : null
-              ) : (
-                <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-                  {activeTab.type === 'table' ? (
-                    <DataGrid
-                      key={activeTab.id + '_' + ((activeTab as any).initialViewMode || 'data') + '_' + dbReloadKey}
-                      tableName={activeTab.name}
-                      dbType={connection.dbType}
-                      initialViewMode={(activeTab as any).initialViewMode || 'data'}
-                      readOnly={readOnly}
-                    />
-                  ) : (
-                    <SqlEditor
-                      key={activeTab.id}
-                      dbType={connection?.dbType}
-                      connKey={connKey(activeConnConfig)}
-                      dbName={connection.dbName}
-                      initialSql={(activeTab as any).sql || ''}
-                      initialSql2={(activeTab as any).sql2 || ''}
-                      initialSplitMode={(activeTab as any).splitMode || 'none'}
-                      theme={theme}
-                      readOnly={readOnly}
-                      onSqlChange={(val) => {
-                        const id = activeTab.id;
-                        setTabs(prev => prev.map(t => t.id === id ? ({ ...t, sql: val } as any) : t));
-                      }}
-                      onSql2Change={(val) => {
-                        const id = activeTab.id;
-                        setTabs(prev => prev.map(t => t.id === id ? ({ ...t, sql2: val } as any) : t));
-                      }}
-                      onSplitModeChange={(val) => {
-                        const id = activeTab.id;
-                        setTabs(prev => prev.map(t => t.id === id ? ({ ...t, splitMode: val } as any) : t));
-                      }}
-                    />
-                  )}
-                </div>
-              )}
+                ) : activeTab.type === 'terminal' ? (
+                  (activeTab as any).floating ? (
+                    <div style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', color: 'var(--win-text-secondary)', fontSize: '13px' }}>
+                      {t('app.terminalFloating')}
+                    </div>
+                  ) : null
+                ) : activeTab.type === 'query' ? (
+                  // Tab truy vấn mount thường trực bên dưới (giống terminal) nên ở đây không
+                  // render gì — nếu render, tab sẽ bị dựng lại và mất kết quả mỗi lần chuyển.
+                  null
+                ) : (
+                  <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+                    {activeTab.type === 'table' ? (
+                      <DataGrid
+                        key={activeTab.id + '_' + ((activeTab as any).initialViewMode || 'data') + '_' + ((activeTab as any).initialFilter ? JSON.stringify((activeTab as any).initialFilter) : '') + '_' + dbReloadKey}
+                        tableName={activeTab.name}
+                        dbType={connection.dbType}
+                        initialViewMode={(activeTab as any).initialViewMode || 'data'}
+                        initialFilter={(activeTab as any).initialFilter}
+                        readOnly={readOnly}
+                        // Chỉ gắn cờ cho tab đang mount; hàm dọn dẹp của DataGrid
+                        // luôn báo false nên xoá cờ chứ không để lại dấu sai tab.
+                        onDirtyChange={(dirty) => setDirtyTabId(dirty ? activeTab.id : null)}
+                      />
+                    ) : activeTab.type === 'routine' ? (
+                      <RoutineEditorModal
+                        key={activeTab.id}
+                        name={activeTab.routineInfo?.name || activeTab.name}
+                        kind={activeTab.routineInfo?.kind || 'procedure'}
+                        initialSql={activeTab.routineInfo?.sql || ''}
+                        onClose={() => handleCloseTab(activeTab.id)}
+                        embedded={true}
+                      />
+                    ) : activeTab.type === 'view' ? (
+                      <ViewEditorModal
+                        key={activeTab.id}
+                        name={activeTab.viewInfo?.name || activeTab.name}
+                        initialSql={activeTab.viewInfo?.sql || ''}
+                        onClose={() => handleCloseTab(activeTab.id)}
+                        embedded={true}
+                      />
+                    ) : null}
+                  </div>
+                )}
 
-              {/* Terminal: mount thường trực (ẩn/hiện bằng CSS) để phiên PTY sống khi chuyển tab */}
-              {tabs.filter(t => t.type === 'terminal').map(t => (
-                <TerminalPanel
-                  key={t.id}
-                  config={((t as any).config || { type: connection.dbType }) as DbConnectionConfig}
-                  profileName={t.label}
-                  floating={!!(t as any).floating}
-                  active={activeTabId === t.id}
-                  onToggleFloat={() => setTabs(prev => prev.map(x => x.id === t.id ? ({ ...x, floating: !(x as any).floating } as any) : x))}
-                  onClose={() => handleCloseTab(t.id)}
-                  // Terminal ở đây là một tab -> đã có X trên tab, bỏ nút X trùng ở header
-                  closable={false}
-                />
-              ))}
+                {/* Tab truy vấn: mount thường trực (ẩn/hiện bằng CSS) để kết quả sống khi chuyển tab.
+                    Chỉ mount tab đã từng được mở — xem mountedQueryTabs. */}
+                {tabs.filter(qt => qt.type === 'query' && mountedQueryTabs.has(qt.id)).map(qt => (
+                  <QueryTabPanel
+                    // Gắn cả scope vào key: id tab là `query_<timestamp>` nên hai database khác
+                    // nhau vẫn có thể trùng id, và khi đó React sẽ dùng lại instance cũ.
+                    key={tabScope + '|' + qt.id}
+                    tab={qt}
+                    active={activeTabId === qt.id}
+                    dbType={connection?.dbType}
+                    connKey={connKey(activeConnConfig)}
+                    dbName={connection.dbName}
+                    theme={theme}
+                    readOnly={readOnly}
+                    onPatch={patchTab}
+                  />
+                ))}
 
-              {showAi && (
-                <AiAssistant
-                  onInsertSql={handleInsertSql}
-                  tableNameContext={activeTable}
-                />
-              )}
+                {/* Terminal: mount thường trực (ẩn/hiện bằng CSS) để phiên PTY sống khi chuyển tab */}
+                {tabs.filter(t => t.type === 'terminal').map(t => (
+                  <TerminalPanel
+                    key={t.id}
+                    config={((t as any).config || { type: connection.dbType }) as DbConnectionConfig}
+                    profileName={t.label}
+                    floating={!!(t as any).floating}
+                    active={activeTabId === t.id}
+                    onToggleFloat={() => setTabs(prev => prev.map(x => x.id === t.id ? ({ ...x, floating: !(x as any).floating } as any) : x))}
+                    onClose={() => handleCloseTab(t.id)}
+                    // Terminal ở đây là một tab -> đã có X trên tab, bỏ nút X trùng ở header
+                    closable={false}
+                  />
+                ))}
+
+                {showAi && (
+                  <AiAssistant
+                    onInsertSql={handleInsertSql}
+                    tableNameContext={activeTable}
+                  />
+                )}
+              </div>
             </div>
           </div>
-        </div>
+        </>
       )}
 
       {/* Popup chọn tệp: báo định dạng cho phép trước khi mở hộp thoại của hệ điều hành */}
@@ -1549,20 +1835,6 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {/* Floating DB Connection Speed & Status Pill (TablePlus style) */}
-      {connection && (
-        <div
-          style={{
-            position: 'fixed',
-            bottom: '6px',
-            right: '12px',
-            zIndex: 900,
-            pointerEvents: 'auto',
-          }}
-        >
-          <DbConnectionStatusPill hasConnection={!!connection} />
-        </div>
-      )}
 
       {/* Shortcuts Modal */}
       {showShortcuts && (

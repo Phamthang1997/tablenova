@@ -111,7 +111,15 @@ export interface SavedProfile {
 }
 
 interface ConnectionManagerProps {
-  onConnect: (dbName: string, dbType: 'sqlite' | 'postgres' | 'mysql' | 'redis', color?: string, config?: DbConnectionConfig) => void;
+  // `profile` là profile đã chọn để kết nối (nếu có). App giữ id + tên để popover
+  // chi tiết kết nối sửa tên/màu rồi ghi thẳng ngược vào tf_connection_profiles.
+  onConnect: (
+    dbName: string,
+    dbType: 'sqlite' | 'postgres' | 'mysql' | 'redis',
+    color?: string,
+    config?: DbConnectionConfig,
+    profile?: { id: string; name: string },
+  ) => void;
 }
 
 // SSL levels in the order the <select> shows them. The explanation sits under
@@ -190,7 +198,12 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
   const [myPassword, setMyPassword] = useState('');
   const [myDatabase, setMyDatabase] = useState('');
   const [sslEnabled, setSslEnabled] = useState(false);
-  const [sslMode, setSslMode] = useState('DISABLED');
+  // PREFERRED: dùng TLS nếu máy chủ hỗ trợ, tự lùi về không mã hoá nếu không —
+  // nên không làm hỏng kết nối tới máy chủ nội bộ. Mặc định thật cho kết nối mới
+  // nằm ở handleCreateNewProfile (config.sslMode), giá trị khởi tạo này chỉ phủ
+  // nhịp render trước khi profile đầu tiên được chọn. Profile đã lưu không đổi:
+  // hai chỗ nạp profile vẫn lùi về DISABLED cho bản ghi cũ chưa có trường này.
+  const [sslMode, setSslMode] = useState('PREFERRED');
   const [sslKeyPath, setSslKeyPath] = useState('');
   const [sslCertPath, setSslCertPath] = useState('');
   const [sslCaPath, setSslCaPath] = useState('');
@@ -982,6 +995,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
   };
 
   const handleCreateNewProfile = async (type: 'sqlite' | 'postgres' | 'mysql' | 'redis') => {
+    // sslMode phải nằm sẵn trong config chứ không chỉ ở giá trị khởi tạo của
+    // state: selectProfile ngay bên dưới đọc lại từ config, thiếu trường này là
+    // nó lùi về DISABLED và ghi đè mọi thứ form đang hiển thị.
     const newProfile: SavedProfile = {
       id: newProfileId(),
       name: t('connection.newProfileName', { type: type.toUpperCase() }),
@@ -989,10 +1005,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
       config: type === 'sqlite'
         ? { type, sqlitePath: 'new_database.db' }
         : type === 'postgres'
-          ? { type, host: 'localhost', port: 5432, user: 'postgres', database: 'postgres' }
+          ? { type, host: 'localhost', port: 5432, user: 'postgres', database: 'postgres', sslMode: 'PREFERRED' }
           : type === 'redis'
             ? { type, host: '127.0.0.1', port: 6379, user: '', password: '', dbIndex: 0 }
-            : { type, host: 'localhost', port: 3306, user: 'root', database: '' }
+            : { type, host: 'localhost', port: 3306, user: 'root', database: '', sslMode: 'PREFERRED' }
     };
 
     await persistProfiles([...profiles, newProfile]);
@@ -1140,7 +1156,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
       setConnectingDbName(res.database || (config.type === 'sqlite' ? config.sqlitePath : config.database) || 'Database');
       const activeProfile = profiles.find(p => p.id === activeProfileId);
       setTimeout(() => {
-        onConnect(res.database || 'Database', config.type, activeProfile?.color, config);
+        onConnect(
+          res.database || 'Database',
+          config.type,
+          activeProfile?.color,
+          config,
+          activeProfile ? { id: activeProfile.id, name: activeProfile.name } : undefined,
+        );
       }, 480);
     } else {
       setErrorMsg(res.message);

@@ -80,12 +80,13 @@ export const Modal: React.FC<ModalProps> = ({
         left: 0,
         width: '100%',
         height: '100%',
-        background: 'rgba(0,0,0,0.6)',
+        background: 'rgba(0, 0, 0, 0.45)',
         zIndex,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        backdropFilter: 'blur(2px)',
+        backdropFilter: 'blur(6px)',
+        WebkitBackdropFilter: 'blur(6px)',
       }}
     >
       <div style={{

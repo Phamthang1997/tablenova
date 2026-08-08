@@ -23,6 +23,7 @@ import {
   findUnsafeStatements, type UnsafeStatement, type UnsafeStatementKind,
 } from '../sql/statements';
 import * as catalog from '../sql/catalog';
+import { resolveResultEditability, type ResultEditability, type NotEditableReason } from '../sql/editableResult';
 
 // Configure Monaco Environment for Vite native web workers
 (window as any).MonacoEnvironment = {
@@ -65,7 +66,7 @@ if (typeof document !== 'undefined' && (document as any).fonts?.ready) {
 
 // Pack monaco directly into the loader config
 loader.config({ monaco });
-import { dbHelper } from '../utils/dbHelper';
+import { dbHelper, type GridChange } from '../utils/dbHelper';
 
 const LoadingSpinner: React.FC<{ size?: number; style?: React.CSSProperties }> = ({ size = 16, style }) => (
   <svg
@@ -119,7 +120,7 @@ function registerSqlFormatter(dbType: string) {
     monaco.languages.registerDocumentFormattingEditProvider(lang, formatProvider)
   );
 }
-import { Play, Clipboard, Trash2, CheckCircle2, AlertTriangle, ChevronLeft, ChevronRight, Copy, AlignLeft, ChevronsLeft, ChevronsRight, History, X, Bookmark, ChevronDown, MoreHorizontal, Star, Columns, Rows, Settings, Network, Zap, FileText, Square } from 'lucide-react';
+import { Play, Clipboard, Trash2, CheckCircle2, AlertTriangle, ChevronLeft, ChevronRight, Copy, AlignLeft, History, X, Bookmark, ChevronDown, MoreHorizontal, SlidersHorizontal, Star, Columns, Rows, Settings, Network, Zap, FileText, Square } from 'lucide-react';
 import { getQueryParamsConfig, saveQueryParamsConfig, extractQueryParams, buildParameterizedSql, type QueryParamsConfig } from '../utils/queryParamHelper';
 import { buildExplainQuery, explainJsonLabel, parseExplainOutput, supportsJsonExplain, type ExplainResult } from '../utils/explainHelper';
 import {
@@ -221,7 +222,6 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
-  const [pageInput, setPageInput] = useState('1');
   const [showCopyDropdown, setShowCopyDropdown] = useState(false);
   const [runningQueryId, setRunningQueryId] = useState<string | null>(null);
 
@@ -236,7 +236,6 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   const [statusMsg2, setStatusMsg2] = useState<string | null>(null);
   const [page2, setPage2] = useState(1);
   const [pageSize2, setPageSize2] = useState(50);
-  const [pageInput2, setPageInput2] = useState('1');
   const [showCopyDropdown2, setShowCopyDropdown2] = useState(false);
   const [runningQueryId2, setRunningQueryId2] = useState<string | null>(null);
 
@@ -267,12 +266,56 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [newQueryName, setNewQueryName] = useState('');
 
-  // Dropdown của nút Chạy (split button), menu "thêm thao tác", và menu "chia khung" theo Pane (1 | 2)
   const [runMenuPane, setRunMenuPane] = useState<1 | 2 | null>(null);
   const [moreMenuPane, setMoreMenuPane] = useState<1 | 2 | null>(null);
-  const [splitMenuPane, setSplitMenuPane] = useState<1 | 2 | null>(null);
+  const [, setSplitMenuPane] = useState<1 | 2 | null>(null);
   const [formatMenuPane, setFormatMenuPane] = useState<1 | 2 | null>(null);
+  const [limitMenuPane, setLimitMenuPane] = useState<1 | 2 | null>(null);
+  const [editorSettingsMenuPane, setEditorSettingsMenuPane] = useState<1 | 2 | null>(null);
+  const [limitPane1, setLimitPane1] = useState<string>('No limit');
+  const [limitPane2, setLimitPane2] = useState<string>('No limit');
   const [dropdownPlacement, setDropdownPlacement] = useState<Record<string, 'up' | 'down'>>({});
+
+  // TablePlus Editor & Grid Settings states (Image 2 + Image 3)
+  const [editorFontSize, setEditorFontSize] = useState<number>(13);
+  const [showInvisibleChars, setShowInvisibleChars] = useState<boolean>(false);
+  const [wordWrap, setWordWrap] = useState<boolean>(true);
+  const [highlightQuery, setHighlightQuery] = useState<boolean>(true);
+  const [showRowNumbers, setShowRowNumbers] = useState<boolean>(true);
+  const [autoFitColsPane1, setAutoFitColsPane1] = useState<boolean>(false);
+  const [autoFitColsPane2, setAutoFitColsPane2] = useState<boolean>(false);
+  const [cursorPos1, setCursorPos1] = useState<{ line: number; column: number }>({ line: 1, column: 1 });
+  const [cursorPos2, setCursorPos2] = useState<{ line: number; column: number }>({ line: 1, column: 1 });
+
+  // Trạng thái sắp xếp cột của Lưới kết quả SQL (Sort Column & Direction)
+  const [sortCol1, setSortCol1] = useState<string | null>(null);
+  const [sortDir1, setSortDir1] = useState<'asc' | 'desc' | null>(null);
+  const [sortCol2, setSortCol2] = useState<string | null>(null);
+  const [sortDir2, setSortDir2] = useState<'asc' | 'desc' | null>(null);
+
+  const handleTableSort = (colName: string, paneId: 1 | 2) => {
+    if (paneId === 1) {
+      if (sortCol1 !== colName) {
+        setSortCol1(colName);
+        setSortDir1('asc');
+      } else if (sortDir1 === 'asc') {
+        setSortDir1('desc');
+      } else {
+        setSortCol1(null);
+        setSortDir1(null);
+      }
+    } else {
+      if (sortCol2 !== colName) {
+        setSortCol2(colName);
+        setSortDir2('asc');
+      } else if (sortDir2 === 'asc') {
+        setSortDir2('desc');
+      } else {
+        setSortCol2(null);
+        setSortDir2(null);
+      }
+    }
+  };
 
   const toggleDropdown = (menuKey: string, paneId: 1 | 2, e: React.MouseEvent<HTMLElement>, setMenuPane: React.Dispatch<React.SetStateAction<1 | 2 | null>>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -280,6 +323,30 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     const placement = spaceBelow < 280 && rect.top > spaceBelow ? 'up' : 'down';
     setDropdownPlacement(prev => ({ ...prev, [`${menuKey}_${paneId}`]: placement }));
     setMenuPane(prev => prev === paneId ? null : paneId);
+  };
+
+  const handleInnerResizerMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsDraggingResizer(true);
+    const startY = e.clientY;
+    const startHeight = paneEditorHeight;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const deltaY = moveEvent.clientY - startY;
+      const newHeight = Math.max(60, Math.min(window.innerHeight - 180, startHeight + deltaY));
+      setPaneEditorHeight(newHeight);
+    };
+
+    const onMouseUp = () => {
+      setIsDraggingResizer(false);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      if (editorRef.current) editorRef.current.layout();
+      if (editorRef2.current) editorRef2.current.layout();
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
   };
 
   // Query Parameters State
@@ -310,6 +377,21 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   const [explainResult2, setExplainResult2] = useState<ExplainResult | null>(null);
   const [activeTabType1, setActiveTabType1] = useState<'data' | 'explain'>('data');
   const [activeTabType2, setActiveTabType2] = useState<'data' | 'explain'>('data');
+
+  // ─── Sửa trực tiếp trên bảng kết quả ───────────────────────────────────────────────
+  // Only the edit buffer is split per pane: at most one cell is being typed into and at
+  // most one preview dialog is open at a time, so those stay single.
+  const [cellEdits, setCellEdits] = useState<Record<1 | 2, Record<string, Record<string, any>>>>({ 1: {}, 2: {} });
+  const [editingCell, setEditingCell] = useState<{ pane: 1 | 2; rowKey: string; col: string } | null>(null);
+  const [editValue, setEditValue] = useState('');
+  const [editCommit, setEditCommit] = useState<
+    { pane: 1 | 2; table: string; primaryKey: string; sqls: string[]; changes: GridChange[] } | null
+  >(null);
+  const [editCommitting, setEditCommitting] = useState(false);
+  const [editMsg, setEditMsg] = useState<{ pane: 1 | 2; text: string; kind: 'ok' | 'err' } | null>(null);
+  // `getCachedSchema` is a synchronous read, so a cache miss has to be turned into a
+  // re-render once the fetch lands. Only the setter is used — the value itself is never read.
+  const [, setSchemaTick] = useState(0);
 
   // Load history & saved queries on mount, then follow the shared store: mỗi tab
   // truy vấn là một SqlEditor riêng với bản copy riêng, nên phải nạp lại khi tab
@@ -556,9 +638,22 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       editorRef2.current = editor;
     }
 
+    const syncCursor = () => {
+      const pos = editor.getPosition();
+      if (pos) {
+        if (editorId === 1) setCursorPos1({ line: pos.lineNumber, column: pos.column });
+        else setCursorPos2({ line: pos.lineNumber, column: pos.column });
+      }
+    };
+
     editor.onDidFocusEditorText(() => {
       setFocusedEditor(editorId);
+      syncCursor();
     });
+
+    editor.onDidChangeCursorPosition(syncCursor);
+    editor.onDidChangeCursorSelection(syncCursor);
+    syncCursor();
 
     // Rời khung -> đẩy ngay nội dung còn treo trong debounce ra state/cha
     editor.onDidBlurEditorText(() => {
@@ -817,6 +912,10 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     const isPane1 = pane === 1;
     const queryId = `q_${crypto.randomUUID()}`;
 
+    // Bộ đệm sửa ô khoá theo giá trị khoá chính của bộ kết quả CŨ. Chạy câu lệnh mới mà
+    // giữ lại thì các ô đó sẽ bám nhầm vào dòng khác, nên phải xoá cùng lúc với kết quả.
+    discardEdits(isPane1 ? 1 : 2);
+
     if (isPane1) {
       setLoading(true);
       setHasRun(true);
@@ -848,6 +947,15 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     let cancelled = false;
     const t0 = performance.now();
     let tFirst = 0; // thời điểm nhận batch dữ liệu đầu tiên (~ thực thi xong, bắt đầu tải)
+
+    // Channel của Tauri gửi message rời khỏi Rust theo kiểu "bắn rồi quên", nên chúng có thể
+    // còn xếp hàng khi promise của invoke() đã resolve. Chờ mỗi invoke là tính tổng trên một
+    // `acc` chưa đầy -> thanh trạng thái báo "0 dòng" (và exec = transfer, vì `tFirst` chưa
+    // được đặt) trong khi lưới vẫn đang đổ đầy phía sau. Lệnh Rust luôn gửi đúng MỘT message
+    // kết thúc ('done' hoặc 'error') trước khi return, và channel giữ nguyên thứ tự, nên chờ
+    // message đó là đủ và không thể treo.
+    let markStreamEnd: () => void = () => {};
+    const streamEnded = new Promise<void>(resolve => { markStreamEnd = resolve; });
 
     const flush = () => {
       const snapshot = acc.map(r => ({ query: r.query, columns: r.columns, data: r.data, affected: r.affected }));
@@ -882,10 +990,13 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
           flush();
         } else if (msg.type === 'error') {
           errText = msg.message || t('sqlEditor.errUnknownExec');
+          markStreamEnd();
         } else if (msg.type === 'done') {
           cancelled = !!msg.cancelled;
+          markStreamEnd();
         }
       }, params);
+      await streamEnded;
     } catch (e: any) {
       errText = t('sqlEditor.errQuery', { message: String(e) });
     }
@@ -926,9 +1037,10 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       const head = cancelled
         ? t('sqlEditor.stopped')
         : (n > 1 ? t('sqlEditor.execOkMulti', { n }) : t('sqlEditor.execOk'));
-      const parts: string[] = [t('sqlEditor.rowsPart', { n: totalRows.toLocaleString(locale) })];
+      const parts: string[] = [];
       if (affectedTotal > 0) parts.push(t('sqlEditor.affectedPart', { n: affectedTotal.toLocaleString(locale) }));
-      setStat(`${head} — ${parts.join(', ')} (${timeInfo}).`);
+      const detailsStr = parts.length > 0 ? ` — ${parts.join(', ')}` : '';
+      setStat(`${head}${detailsStr} (${timeInfo}).`);
       if (onRunSuccess) onRunSuccess();
     }
 
@@ -1206,66 +1318,347 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   const renderPaneActionBar = (paneId: 1 | 2) => {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', width: '100%', flexShrink: 0 }}>
-        {/* Full-width Resizer Drag Bar */}
-        <div
-          onMouseDown={handleInnerResizerMouseDown}
-          style={{
-            height: '6px',
-            cursor: 'row-resize',
-            background: isDraggingResizer ? 'var(--win-accent-light, rgba(59, 130, 246, 0.2))' : 'var(--win-bg-window)',
-            borderTop: '1px solid var(--win-border)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            userSelect: 'none',
-            flexShrink: 0,
-            transition: 'background 0.15s ease'
-          }}
-          title={t('sqlEditor.resizeEditorTitle')}
-        >
-          <div style={{ width: '40px', height: '3px', borderRadius: '2px', background: isDraggingResizer ? 'var(--win-accent)' : 'var(--win-text-disabled)', opacity: isDraggingResizer ? 1 : 0.6 }} />
-        </div>
-
         <div 
           className="sql-pane-action-bar" 
           style={{ 
             display: 'flex', 
             justifyContent: 'space-between', 
             alignItems: 'center', 
-            padding: '3px 8px', 
+            padding: '2px 8px', 
             background: 'var(--win-bg-card, var(--win-bg-window))', 
-            borderTop: '1px solid var(--win-border)', 
-            borderBottom: '1px solid var(--win-border)',
+            borderTop: 'none', 
             flexShrink: 0,
             fontSize: '11px',
             userSelect: 'none'
           }}
         >
+          {/* Khối bên trái: Icon Cấu hình Sliders (Image 2 + Image 3) & Vị trí con trỏ (line X, column Y) */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <div 
-              onMouseDown={handleInnerResizerMouseDown}
-              style={{ cursor: 'row-resize', display: 'flex', alignItems: 'center', color: 'var(--win-text-disabled)', padding: '2px 4px' }}
-              title={t('sqlEditor.resizeEditorTitle')}
-            >
-              <MoreHorizontal size={14} style={{ transform: 'rotate(90deg)' }} />
+            <div style={{ position: 'relative' }}>
+              <button
+                onClick={(e) => {
+                  setRunMenuPane(null);
+                  setMoreMenuPane(null);
+                  setFormatMenuPane(null);
+                  setLimitMenuPane(null);
+                  toggleDropdown('settings', paneId, e, setEditorSettingsMenuPane);
+                }}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  boxShadow: 'none',
+                  padding: '2px 4px',
+                  fontSize: '12px',
+                  height: '24px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: 'var(--win-text-secondary)',
+                  cursor: 'pointer',
+                  borderRadius: '4px',
+                  transition: 'background 0.12s ease, color 0.12s ease'
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(0,0,0,0.06)'; e.currentTarget.style.color = 'var(--win-text-primary)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--win-text-secondary)'; }}
+                title={t('sqlEditor.settingsTitle', 'Cấu hình Editor & Lưới')}
+              >
+                <SlidersHorizontal size={14} />
+              </button>
+
+              {/* TablePlus Editor & Grid Settings Popover Menu (Image 3) */}
+              {editorSettingsMenuPane === paneId && (
+                <>
+                  <div style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={() => setEditorSettingsMenuPane(null)} />
+                  <div style={{
+                    position: 'absolute',
+                    top: dropdownPlacement[`settings_${paneId}`] === 'up' ? undefined : 'calc(100% + 4px)',
+                    bottom: dropdownPlacement[`settings_${paneId}`] === 'up' ? 'calc(100% + 4px)' : undefined,
+                    left: 0,
+                    background: 'var(--win-bg-popover, var(--win-bg-card))',
+                    border: '1px solid var(--win-border-strong, var(--win-border))',
+                    borderRadius: '6px',
+                    boxShadow: '0 10px 30px rgba(0,0,0,0.45)',
+                    zIndex: 9999,
+                    minWidth: '230px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    padding: '4px 0',
+                    fontSize: '12px'
+                  }}>
+                    {/* Font size */}
+                    <div style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span>{t('sqlEditor.fontSize', 'Font size')}</span>
+                      <select
+                        value={editorFontSize}
+                        onChange={(e) => setEditorFontSize(Number(e.target.value))}
+                        style={{ background: 'var(--win-bg-window)', border: '1px solid var(--win-border)', color: 'var(--win-text-primary)', borderRadius: '3px', padding: '1px 4px', fontSize: '11px' }}
+                      >
+                        <option value="11">11px</option>
+                        <option value="12">12px</option>
+                        <option value="13">13px (Default)</option>
+                        <option value="14">14px</option>
+                        <option value="15">15px</option>
+                        <option value="16">16px</option>
+                      </select>
+                    </div>
+
+                    <div style={{ borderTop: '1px solid var(--win-border)', margin: '3px 0' }} />
+
+                    <button className="copy-dropdown-item" onClick={() => setShowInvisibleChars(v => !v)} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}>
+                      <span style={{ width: '14px', fontWeight: 'bold', color: 'var(--win-accent)' }}>{showInvisibleChars ? '✓' : ''}</span>
+                      <span>{t('sqlEditor.showInvisibleChars', 'Show invisible Characters')}</span>
+                    </button>
+
+                    <button className="copy-dropdown-item" onClick={() => setWordWrap(v => !v)} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}>
+                      <span style={{ width: '14px', fontWeight: 'bold', color: 'var(--win-accent)' }}>{wordWrap ? '✓' : ''}</span>
+                      <span>{t('sqlEditor.wrapLines', 'Wrap lines to Editor Width')}</span>
+                    </button>
+
+                    <button className="copy-dropdown-item" onClick={() => setHighlightQuery(v => !v)} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}>
+                      <span style={{ width: '14px', fontWeight: 'bold', color: 'var(--win-accent)' }}>{highlightQuery ? '✓' : ''}</span>
+                      <span>{t('sqlEditor.highlightQuery', 'Highlight current Query')}</span>
+                    </button>
+
+                    <div style={{ borderTop: '1px solid var(--win-border)', margin: '3px 0' }} />
+
+                    <button className="copy-dropdown-item" onClick={() => setShowRowNumbers(v => !v)} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}>
+                      <span style={{ width: '14px', fontWeight: 'bold', color: 'var(--win-accent)' }}>{showRowNumbers ? '✓' : ''}</span>
+                      <span>{t('sqlEditor.showRowNumbers', 'Show result Row Numbers')}</span>
+                    </button>
+
+                    <button className="copy-dropdown-item" onClick={() => {
+                      if (paneId === 1) setAutoFitColsPane1(v => !v);
+                      else setAutoFitColsPane2(v => !v);
+                      setEditorSettingsMenuPane(null);
+                    }} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}>
+                      <span style={{ width: '14px', fontWeight: 'bold', color: 'var(--win-accent)' }}>{(paneId === 1 ? autoFitColsPane1 : autoFitColsPane2) ? '✓' : ''}</span>
+                      <span>{t('sqlEditor.autoFitColumns', 'Auto-fit Column Widths')}</span>
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
+
+            {/* Trạng thái vị trí con trỏ: line X, column Y (Image 2) */}
+            <span style={{ fontSize: '11px', color: 'var(--win-text-secondary)', fontFamily: 'var(--win-font-mono)' }}>
+              line {(paneId === 1 ? cursorPos1 : cursorPos2).line}, column {(paneId === 1 ? cursorPos1 : cursorPos2).column}
+            </span>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            {/* Split button: Chạy + dropdown */}
+          {/* Khối bên phải: Nút No limit + cụm nút Format, Run, [...] */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: 'auto' }}>
+            {/* Nút No limit / Giới hạn câu truy vấn */}
+            <div style={{ position: 'relative' }}>
+              <button
+                className="btn btn-secondary"
+                onClick={(e) => {
+                  setRunMenuPane(null);
+                  setMoreMenuPane(null);
+                  setFormatMenuPane(null);
+                  toggleDropdown('limit', paneId, e, setLimitMenuPane);
+                }}
+                style={{
+                  padding: '0 10px',
+                  fontSize: '12px',
+                  height: '26px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '5px'
+                }}
+                title={t('sqlEditor.queryLimitTitle', 'Giới hạn số dòng trả về')}
+              >
+                <span>{paneId === 1 ? limitPane1 : limitPane2}</span>
+                <span style={{ fontSize: '8px', opacity: 0.7 }}>▼</span>
+              </button>
+              {limitMenuPane === paneId && (
+                <>
+                  <div style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={() => setLimitMenuPane(null)} />
+                  <div style={{
+                    position: 'absolute',
+                    top: dropdownPlacement[`limit_${paneId}`] === 'up' ? undefined : 'calc(100% + 4px)',
+                    bottom: dropdownPlacement[`limit_${paneId}`] === 'up' ? 'calc(100% + 4px)' : undefined,
+                    left: 0,
+                    minWidth: '130px',
+                    background: 'var(--win-bg-popover, var(--win-bg-card))',
+                    border: '1px solid var(--win-border-strong, var(--win-border))',
+                    borderRadius: '6px',
+                    boxShadow: '0 10px 30px rgba(0,0,0,0.45)',
+                    zIndex: 9999,
+                    padding: '4px 0'
+                  }}>
+                    {['No limit', '100 rows', '500 rows', '1,000 rows', '5,000 rows', '10,000 rows'].map(opt => (
+                      <button
+                        key={opt}
+                        className={`context-menu-item ${(paneId === 1 ? limitPane1 : limitPane2) === opt ? 'active' : ''}`}
+                        onClick={() => {
+                          if (paneId === 1) setLimitPane1(opt);
+                          else setLimitPane2(opt);
+                          setLimitMenuPane(null);
+                        }}
+                        style={{ padding: '6px 12px', width: '100%', textAlign: 'left', fontSize: '12px' }}
+                      >
+                        {opt}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Menu thao tác phụ [...] gom toàn bộ Tùy chọn Param, Chia khung, History, Copy, Paste, Clear */}
+            <div style={{ position: 'relative' }}>
+              <button
+                className="btn btn-secondary"
+                onClick={(e) => {
+                  setRunMenuPane(null);
+                  setFormatMenuPane(null);
+                  setSplitMenuPane(null);
+                  setLimitMenuPane(null);
+                  toggleDropdown('more', paneId, e, setMoreMenuPane);
+                }}
+                style={{ padding: '0 8px', fontSize: '12px', height: '26px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                title={t('sqlEditor.moreActions')}
+              >
+                <MoreHorizontal size={14} />
+              </button>
+              {moreMenuPane === paneId && (
+                <>
+                  <div style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={() => setMoreMenuPane(null)} />
+                  <div style={{
+                    position: 'absolute',
+                    top: dropdownPlacement[`more_${paneId}`] === 'up' ? undefined : 'calc(100% + 4px)',
+                    bottom: dropdownPlacement[`more_${paneId}`] === 'up' ? 'calc(100% + 4px)' : undefined,
+                    right: 0,
+                    minWidth: '200px',
+                    background: 'var(--win-bg-popover, var(--win-bg-card))',
+                    border: '1px solid var(--win-border-strong, var(--win-border))',
+                    borderRadius: '6px',
+                    boxShadow: '0 10px 30px rgba(0,0,0,0.45)',
+                    zIndex: 9999,
+                    padding: '4px 0'
+                  }}>
+                    {/* Mục Chia khung */}
+                    <div style={{ padding: '4px 12px 2px 12px', fontSize: '10px', fontWeight: 700, color: 'var(--win-text-disabled)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                      Chia khung (Split Panes)
+                    </div>
+                    <button 
+                      className={`context-menu-item ${splitMode === 'none' ? 'active' : ''}`}
+                      onClick={() => { setMoreMenuPane(null); setSplitMode('none'); onSplitModeChange?.('none'); }}
+                      style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}
+                    >
+                      <Square size={13} style={{ flexShrink: 0 }} />
+                      <span>{t('sqlEditor.singlePane')}</span>
+                    </button>
+                    <button 
+                      className={`context-menu-item ${splitMode === 'vertical' ? 'active' : ''}`}
+                      onClick={() => { setMoreMenuPane(null); setSplitMode('vertical'); onSplitModeChange?.('vertical'); }}
+                      style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}
+                    >
+                      <Columns size={13} style={{ flexShrink: 0 }} />
+                      <span>{t('sqlEditor.splitVertical')}</span>
+                    </button>
+                    <button 
+                      className={`context-menu-item ${splitMode === 'horizontal' ? 'active' : ''}`}
+                      onClick={() => { setMoreMenuPane(null); setSplitMode('horizontal'); onSplitModeChange?.('horizontal'); }}
+                      style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}
+                    >
+                      <Rows size={13} style={{ flexShrink: 0 }} />
+                      <span>Chia ngang (Top / Bottom)</span>
+                    </button>
+
+                    <div style={{ borderTop: '1px solid var(--win-border)', margin: '4px 0' }} />
+                    <button className="context-menu-item" onClick={() => { setMoreMenuPane(null); setShowQueryParamsConfigModal(true); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}>
+                      <Settings size={12} style={{ flexShrink: 0, color: queryParamsConfig.enabled ? 'var(--win-accent)' : undefined }} />
+                      <span>{t('sqlEditor.paramOptions')}</span>
+                    </button>
+
+                    <div style={{ borderTop: '1px solid var(--win-border)', margin: '4px 0' }} />
+                    <button className="context-menu-item" onClick={() => { setMoreMenuPane(null); handleCopySql(paneId); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}>
+                      <Copy size={12} style={{ flexShrink: 0 }} />
+                      <span>{t('sqlEditor.copySql')}</span>
+                    </button>
+                    <button className="context-menu-item" onClick={() => { setMoreMenuPane(null); handlePasteSql(paneId); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}>
+                      <Clipboard size={12} style={{ flexShrink: 0 }} />
+                      <span>{t('sqlEditor.pasteSql')}</span>
+                    </button>
+                    <button className="context-menu-item" onClick={() => { setMoreMenuPane(null); handleClear(paneId); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}>
+                      <Trash2 size={12} style={{ flexShrink: 0 }} />
+                      <span>{t('sqlEditor.clearAll')}</span>
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Menu Định dạng SQL: Beautify / Minify */}
+            <div style={{ position: 'relative' }}>
+              <button
+                className="btn btn-secondary"
+                onClick={(e) => {
+                  setRunMenuPane(null);
+                  setMoreMenuPane(null);
+                  setSplitMenuPane(null);
+                  setLimitMenuPane(null);
+                  toggleDropdown('format', paneId, e, setFormatMenuPane);
+                }}
+                style={{ padding: '0 10px', fontSize: '12px', height: '26px', display: 'flex', alignItems: 'center', gap: '5px' }}
+                title={t('sqlEditor.formatTitle')}
+              >
+                <AlignLeft size={12} />
+                <span>{t('sqlEditor.format')}</span>
+                <span style={{ fontSize: '7px', opacity: 0.7 }}>▼</span>
+              </button>
+              {formatMenuPane === paneId && (
+                <>
+                  <div style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={() => setFormatMenuPane(null)} />
+                  <div style={{
+                    position: 'absolute',
+                    top: dropdownPlacement[`format_${paneId}`] === 'up' ? undefined : 'calc(100% + 4px)',
+                    bottom: dropdownPlacement[`format_${paneId}`] === 'up' ? 'calc(100% + 4px)' : undefined,
+                    right: 0,
+                    width: 'max-content',
+                    minWidth: '270px',
+                    background: 'var(--win-bg-popover, var(--win-bg-card))',
+                    border: '1px solid var(--win-border-strong, var(--win-border))',
+                    borderRadius: '6px',
+                    boxShadow: '0 10px 30px rgba(0,0,0,0.45)',
+                    zIndex: 9999,
+                    padding: '4px 0',
+                    boxSizing: 'border-box'
+                  }}>
+                    <button
+                      className="context-menu-item"
+                      onClick={() => { setFormatMenuPane(null); handleBeautify(paneId); }}
+                      style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}
+                    >
+                      <AlignLeft size={13} style={{ flexShrink: 0 }} />
+                      <span>{t('sqlEditor.beautify')}</span>
+                      <kbd style={{ marginLeft: 'auto', paddingLeft: '16px', flexShrink: 0, fontSize: '10.5px', color: 'var(--win-text-disabled)', fontFamily: 'inherit' }}>Ctrl+Shift+F</kbd>
+                    </button>
+                    <button
+                      className="context-menu-item"
+                      onClick={() => { setFormatMenuPane(null); handleMinify(paneId); }}
+                      style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}
+                    >
+                      <Rows size={13} style={{ flexShrink: 0 }} />
+                      <span>{t('sqlEditor.minify')}</span>
+                      <kbd style={{ marginLeft: 'auto', paddingLeft: '16px', flexShrink: 0, fontSize: '10.5px', color: 'var(--win-text-disabled)', fontFamily: 'inherit' }}>Ctrl+Shift+M</kbd>
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Split button: Chạy SQL / Tùy chọn chạy ở GÓC NGOÀI CÙNG BÊN PHẢI */}
             <div style={{ position: 'relative', display: 'flex' }}>
               <button
                 className="btn btn-primary btn-join-l"
                 onClick={() => handleRun(paneId)}
                 disabled={paneId === 1 ? loading : loading2}
-                style={{ display: 'flex', alignItems: 'center', padding: '0 10px' }}
+                style={{ display: 'flex', alignItems: 'center', padding: '0 12px', height: '26px', fontSize: '12px' }}
                 title={t('sqlEditor.runCurrentTitle')}
               >
-                {/* currentColor, not a hardcoded #fff: `.btn:disabled` repaints the button
-                    with a light background in the light theme, and a white triangle on it
-                    is invisible. Following the text colour keeps the icon readable in
-                    every state. */}
-                <Play size={11} fill="currentColor" />
+                <Play size={12} fill="currentColor" />
                 <span>{t('sqlEditor.run')}</span>
               </button>
               <button
@@ -1274,10 +1667,11 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                   setMoreMenuPane(null);
                   setSplitMenuPane(null);
                   setFormatMenuPane(null);
+                  setLimitMenuPane(null);
                   toggleDropdown('run', paneId, e, setRunMenuPane);
                 }}
                 disabled={paneId === 1 ? loading : loading2}
-                style={{ padding: '0 5px', display: 'flex', alignItems: 'center' }}
+                style={{ padding: '0 8px', display: 'flex', alignItems: 'center', height: '26px' }}
                 title={t('sqlEditor.runOptions')}
               >
                 <ChevronDown size={12} />
@@ -1289,10 +1683,10 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                     position: 'absolute',
                     top: dropdownPlacement[`run_${paneId}`] === 'up' ? undefined : 'calc(100% + 4px)',
                     bottom: dropdownPlacement[`run_${paneId}`] === 'up' ? 'calc(100% + 4px)' : undefined,
-                    left: 0,
+                    right: 0,
                     width: 'max-content',
                     minWidth: '240px',
-                    background: 'var(--win-bg-card)',
+                    background: 'var(--win-bg-popover, var(--win-bg-card))',
                     border: '1px solid var(--win-border-strong, var(--win-border))',
                     borderRadius: '6px',
                     boxShadow: '0 10px 30px rgba(0,0,0,0.45)',
@@ -1340,7 +1734,6 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                         style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}
                       >
                         <FileText size={13} style={{ flexShrink: 0 }} />
-                        {/* The statement itself, not prose — no translation key. */}
                         <span>{explainJsonLabel(dbType)}</span>
                       </button>
                     )}
@@ -1360,219 +1753,44 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
               )}
             </div>
 
+            {/* Nút Dừng Query khi đang thực thi */}
             {(paneId === 1 ? loading : loading2) && (
               <button
                 className="btn btn-secondary"
                 onClick={() => stopQuery(paneId)}
-                style={{ padding: '2px 8px', fontSize: '11px', height: '22px', display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--st-danger)', borderColor: 'var(--st-danger)' }}
+                style={{ padding: '2px 8px', fontSize: '11px', height: '24px', display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--st-danger)', borderColor: 'var(--st-danger)' }}
                 title={t('sqlEditor.stopTitle')}
               >
                 <X size={12} />
                 <span>{t('sqlEditor.stop')}</span>
               </button>
             )}
-
-            {/* Menu Định dạng SQL: Beautify / Minify */}
-            <div style={{ position: 'relative' }}>
-              <button
-                className="btn btn-secondary"
-                onClick={(e) => {
-                  setRunMenuPane(null);
-                  setMoreMenuPane(null);
-                  setSplitMenuPane(null);
-                  toggleDropdown('format', paneId, e, setFormatMenuPane);
-                }}
-                style={{ padding: '2px 6px', display: 'flex', alignItems: 'center', gap: '4px' }}
-                title={t('sqlEditor.formatTitle')}
-              >
-                <AlignLeft size={11} />
-                <span>{t('sqlEditor.format')}</span>
-                <span style={{ fontSize: '7px', opacity: 0.7 }}>▼</span>
-              </button>
-              {formatMenuPane === paneId && (
-                <>
-                  <div style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={() => setFormatMenuPane(null)} />
-                  <div style={{
-                    position: 'absolute',
-                    top: dropdownPlacement[`format_${paneId}`] === 'up' ? undefined : 'calc(100% + 4px)',
-                    bottom: dropdownPlacement[`format_${paneId}`] === 'up' ? 'calc(100% + 4px)' : undefined,
-                    right: 0,
-                    width: 'max-content',
-                    minWidth: '270px',
-                    background: 'var(--win-bg-card)',
-                    border: '1px solid var(--win-border-strong, var(--win-border))',
-                    borderRadius: '6px',
-                    boxShadow: '0 10px 30px rgba(0,0,0,0.45)',
-                    zIndex: 9999,
-                    padding: '4px 0',
-                    boxSizing: 'border-box'
-                  }}>
-                    <button
-                      className="context-menu-item"
-                      onClick={() => { setFormatMenuPane(null); handleBeautify(paneId); }}
-                      style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}
-                    >
-                      <AlignLeft size={13} style={{ flexShrink: 0 }} />
-                      <span>{t('sqlEditor.beautify')}</span>
-                      <kbd style={{ marginLeft: 'auto', paddingLeft: '16px', flexShrink: 0, fontSize: '10.5px', color: 'var(--win-text-disabled)', fontFamily: 'inherit' }}>Ctrl+Shift+F</kbd>
-                    </button>
-                    <button
-                      className="context-menu-item"
-                      onClick={() => { setFormatMenuPane(null); handleMinify(paneId); }}
-                      style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}
-                    >
-                      <Rows size={13} style={{ flexShrink: 0 }} />
-                      <span>{t('sqlEditor.minify')}</span>
-                      <kbd style={{ marginLeft: 'auto', paddingLeft: '16px', flexShrink: 0, fontSize: '10.5px', color: 'var(--win-text-disabled)', fontFamily: 'inherit' }}>Ctrl+Shift+M</kbd>
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-
-            {/* Menu thao tác phụ */}
-            <div style={{ position: 'relative' }}>
-              <button
-                className="btn btn-secondary"
-                onClick={(e) => {
-                  setRunMenuPane(null);
-                  setFormatMenuPane(null);
-                  setSplitMenuPane(null);
-                  toggleDropdown('more', paneId, e, setMoreMenuPane);
-                }}
-                style={{ padding: '2px 6px', fontSize: '11px', height: '22px', display: 'flex', alignItems: 'center' }}
-                title={t('sqlEditor.moreActions')}
-              >
-                <MoreHorizontal size={13} />
-              </button>
-              {moreMenuPane === paneId && (
-                <>
-                  <div style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={() => setMoreMenuPane(null)} />
-                  <div style={{
-                    position: 'absolute',
-                    top: dropdownPlacement[`more_${paneId}`] === 'up' ? undefined : 'calc(100% + 4px)',
-                    bottom: dropdownPlacement[`more_${paneId}`] === 'up' ? 'calc(100% + 4px)' : undefined,
-                    right: 0,
-                    minWidth: '170px',
-                    background: 'var(--win-bg-card)',
-                    border: '1px solid var(--win-border)',
-                    borderRadius: '6px',
-                    boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
-                    zIndex: 9999,
-                    padding: '4px 0'
-                  }}>
-                    <button className="context-menu-item" onClick={() => { setMoreMenuPane(null); handleCopySql(paneId); }}><Copy size={12} /> {t('sqlEditor.copySql')}</button>
-                    <button className="context-menu-item" onClick={() => { setMoreMenuPane(null); handlePasteSql(paneId); }}><Clipboard size={12} /> {t('sqlEditor.pasteSql')}</button>
-                    <button className="context-menu-item" onClick={() => { setMoreMenuPane(null); handleClear(paneId); }}><Trash2 size={12} /> {t('sqlEditor.clearAll')}</button>
-                    <div style={{ borderTop: '1px solid var(--win-border)', margin: '4px 0' }} />
-                    <button className="context-menu-item" onClick={() => { setMoreMenuPane(null); setShowQueryParamsConfigModal(true); }}><Settings size={12} /> {t('sqlEditor.paramOptions')}</button>
-                  </div>
-                </>
-              )}
-            </div>
-
-            {/* Nút Param Options */}
-            <button
-              className="btn btn-secondary"
-              onClick={() => setShowQueryParamsConfigModal(true)}
-              style={{
-                padding: '2px 6px',
-                fontSize: '11px',
-                height: '22px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-                color: queryParamsConfig.enabled ? 'var(--win-accent)' : undefined,
-                borderColor: queryParamsConfig.enabled ? 'var(--win-accent)' : undefined
-              }}
-              title={queryParamsConfig.enabled ? t('sqlEditor.paramsOn') : t('sqlEditor.paramsConfigure')}
-            >
-              <Settings size={11} style={{ color: queryParamsConfig.enabled ? 'var(--win-accent)' : undefined }} />
-              <span>Param</span>
-            </button>
-
-            {/* Menu chia khung */}
-            <div style={{ position: 'relative' }}>
-              <button
-                className="btn btn-secondary"
-                onClick={(e) => {
-                  setRunMenuPane(null);
-                  setFormatMenuPane(null);
-                  setMoreMenuPane(null);
-                  toggleDropdown('split', paneId, e, setSplitMenuPane);
-                }}
-                style={{ padding: '2px 6px', display: 'flex', alignItems: 'center', gap: '4px' }}
-                title="Chia khung (Split Panes)"
-              >
-                {splitMode === 'none' && <Columns size={11} />}
-                {splitMode === 'vertical' && <Columns size={11} style={{ color: 'var(--win-accent)' }} />}
-                {splitMode === 'horizontal' && <Rows size={11} style={{ color: 'var(--win-accent)' }} />}
-                <span>Chia khung</span>
-                <span style={{ fontSize: '7px', opacity: 0.7 }}>▼</span>
-              </button>
-              {splitMenuPane === paneId && (
-                <>
-                  <div style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={() => setSplitMenuPane(null)} />
-                  <div style={{
-                    position: 'absolute',
-                    top: dropdownPlacement[`split_${paneId}`] === 'up' ? undefined : 'calc(100% + 4px)',
-                    bottom: dropdownPlacement[`split_${paneId}`] === 'up' ? 'calc(100% + 4px)' : undefined,
-                    right: 0,
-                    width: 'max-content',
-                    minWidth: '220px',
-                    background: 'var(--win-bg-card)',
-                    border: '1px solid var(--win-border-strong, var(--win-border))',
-                    borderRadius: '6px',
-                    boxShadow: '0 10px 30px rgba(0,0,0,0.45)',
-                    zIndex: 9999,
-                    padding: '4px 0',
-                    boxSizing: 'border-box'
-                  }}>
-                    <button 
-                      className={`context-menu-item ${splitMode === 'none' ? 'active' : ''}`}
-                      onClick={() => { setSplitMode('none'); onSplitModeChange?.('none'); setSplitMenuPane(null); }}
-                      style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 14px', whiteSpace: 'nowrap' }}
-                    >
-                      <Square size={13} style={{ flexShrink: 0 }} />
-                      <span>{t('sqlEditor.singlePane')}</span>
-                    </button>
-                    <button 
-                      className={`context-menu-item ${splitMode === 'vertical' ? 'active' : ''}`}
-                      onClick={() => { setSplitMode('vertical'); onSplitModeChange?.('vertical'); setSplitMenuPane(null); }}
-                      style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 14px', whiteSpace: 'nowrap' }}
-                    >
-                      <Columns size={13} style={{ flexShrink: 0 }} />
-                      <span>{t('sqlEditor.splitVertical')}</span>
-                    </button>
-                    <button 
-                      className={`context-menu-item ${splitMode === 'horizontal' ? 'active' : ''}`}
-                      onClick={() => { setSplitMode('horizontal'); onSplitModeChange?.('horizontal'); setSplitMenuPane(null); }}
-                      style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 14px', whiteSpace: 'nowrap' }}
-                    >
-                      <Rows size={13} style={{ flexShrink: 0 }} />
-                      <span>Chia ngang (Top / Bottom)</span>
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-
-            <button 
-              className="btn btn-secondary" 
-              onClick={() => setShowHistory(!showHistory)} 
-              style={{ padding: '2px 6px', display: 'flex', alignItems: 'center', gap: '4px' }} 
-              title={t('sqlEditor.historyTitle')}
-            >
-              <History size={11} />
-              <span>{t('sqlEditor.history')}</span>
-            </button>
           </div>
         </div>
+
+        {/* Đường kẻ kéo resizer (isDraggingResizer) nằm ở ĐƯỜNG KẺ DƯỚI giữa action bar và kết quả */}
+        <div
+          onMouseDown={handleInnerResizerMouseDown}
+          style={{
+            height: '4px',
+            cursor: 'row-resize',
+            background: isDraggingResizer ? 'var(--win-accent, #3b82f6)' : 'var(--win-border-light, rgba(229, 231, 235, 0.5))',
+            flexShrink: 0,
+            userSelect: 'none',
+            transition: 'background 0.15s ease',
+            position: 'relative',
+            zIndex: 10
+          }}
+          title={t('sqlEditor.resizeEditorTitle', 'Kéo để thay đổi chiều cao')}
+        />
       </div>
     );
   };
 
   const handleTabChange = (index: number, paneId: 1 | 2 = 1) => {
+    // Mỗi tab kết quả là một câu lệnh khác, có thể trên bảng khác — bộ đệm sửa ô không
+    // mang sang được.
+    discardEdits(paneId);
     if (paneId === 1) {
       setActiveTabIndex(index);
       setPage(1);
@@ -1592,34 +1810,6 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     }
   };
 
-  const totalPages = Math.ceil(results.length / pageSize) || 1;
-  const totalPages2 = Math.ceil(results2.length / pageSize2) || 1;
-
-  useEffect(() => {
-    setPageInput(String(page));
-  }, [page]);
-
-  useEffect(() => {
-    setPageInput2(String(page2));
-  }, [page2]);
-
-  const handlePageSubmit = (paneId: 1 | 2 = 1) => {
-    if (paneId === 1) {
-      const parsed = parseInt(pageInput);
-      if (!isNaN(parsed) && parsed >= 1 && parsed <= totalPages) {
-        setPage(parsed);
-      } else {
-        setPageInput(String(page));
-      }
-    } else {
-      const parsed = parseInt(pageInput2);
-      if (!isNaN(parsed) && parsed >= 1 && parsed <= totalPages2) {
-        setPage2(parsed);
-      } else {
-        setPageInput2(String(page2));
-      }
-    }
-  };
 
   const handleCopyAs = (format: 'table' | 'object' | 'array', paneId: 1 | 2 = 1) => {
     const curResults = paneId === 1 ? results : results2;
@@ -1719,28 +1909,209 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     }
   };
 
-  const handleInnerResizerMouseDown = (e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsDraggingResizer(true);
-    const startY = e.clientY;
-    const startHeight = paneEditorHeight;
+  /** Nhảy tới dòng cha / bảng liên quan khi click vào ô Foreign Key (FK) */
+  const handleFkClick = async (colName: string, cellVal: any, pTargetTable?: string, _paneId: 1 | 2 = 1) => {
+    if (cellVal === null || cellVal === undefined || String(cellVal).trim() === '') return;
 
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      const deltaY = moveEvent.clientY - startY;
-      const newHeight = Math.max(60, Math.min(window.innerHeight - 180, startHeight + deltaY));
-      setPaneEditorHeight(newHeight);
-    };
+    let targetTable = '';
+    let targetCol = colName;
 
-    const handleMouseUp = () => {
-      setIsDraggingResizer(false);
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-      if (editorRef.current) editorRef.current.layout();
-      if (editorRef2.current) editorRef2.current.layout();
-    };
+    // 1. Kiểm tra trong catalog foreign keys của bảng hiện tại
+    if (pTargetTable) {
+      const schema = catalog.getCachedSchema(pTargetTable) || await catalog.getSchema(pTargetTable);
+      if (schema && schema.foreignKeys) {
+        // Tên trường phải khớp JSON của get_full_catalog: column / refTable / refColumn
+        // (xem SchemaInfo trong dbHelper.ts và json! ở database.rs).
+        const fk = schema.foreignKeys.find(
+          (f) => (f.column || '').toLowerCase() === colName.toLowerCase()
+        );
+        if (fk?.refTable) {
+          targetTable = fk.refTable;
+          if (fk.refColumn) targetCol = fk.refColumn;
+        }
+      }
+    }
 
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
+    // 2. Dự phòng theo quy ước đặt tên (vd: language_id -> bảng language, cột language_id)
+    if (!targetTable) {
+      if (colName.toLowerCase().endsWith('_id')) {
+        targetTable = colName.substring(0, colName.length - 3);
+      } else {
+        targetTable = colName;
+      }
+    }
+
+    // 3. Nếu chưa biết tên cột đích, kiểm tra schema bảng đích để dùng đúng tên cột hoặc PK
+    if (targetTable) {
+      const targetSchema = catalog.getCachedSchema(targetTable) || await catalog.getSchema(targetTable);
+      if (targetSchema && targetSchema.columns && targetSchema.columns.length > 0) {
+        const hasCol = targetSchema.columns.some((c: any) => c.name.toLowerCase() === colName.toLowerCase());
+        if (hasCol) {
+          targetCol = colName;
+        } else {
+          const pkCol = targetSchema.columns.find((c: any) => c.isPrimaryKey);
+          if (pkCol) targetCol = pkCol.name;
+        }
+      }
+    }
+
+    // Mở tab xem dữ liệu bảng liên quan và áp bộ lọc (WHERE targetCol = cellVal)
+    // thay vì ghi đè câu lệnh SQL hiện tại.
+    window.dispatchEvent(new CustomEvent('open-table-tab', {
+      detail: {
+        table: targetTable,
+        viewMode: 'data',
+        initialFilter: { column: targetCol || colName, value: cellVal }
+      }
+    }));
+  };
+
+  // ─── Sửa trực tiếp trên bảng kết quả ───────────────────────────────────────────────
+
+  /** Editability of the result tab currently shown in a pane. Pure — safe to call in render. */
+  const editabilityOf = (query: string, cols: string[]): ResultEditability =>
+    resolveResultEditability(query, cols, catalog.getCachedSchema);
+
+  /**
+   * Same, plus the app-wide Read-only switch. Deliberately a separate wrapper rather than a
+   * check inside `editabilityOf`: the schema-warming effect below keys off the *structural*
+   * reason, so folding Read-only into it would stop the prefetch and leave the grid stuck on
+   * `unknownTable` after the user turns Read-only back off.
+   */
+  const editabilityInMode = (query: string, cols: string[]): ResultEditability => {
+    const e = editabilityOf(query, cols);
+    if (!readOnly || !e.editable) return e;
+    return { editable: false, reason: 'readOnlyMode', table: e.table };
+  };
+
+  // A table missing from the catalog cache reads as read-only. Fetch it in the background,
+  // then bump the tick so the grid resolves again. `schemaTick` is deliberately NOT a
+  // dependency: a table that genuinely cannot be introspected would loop forever.
+  useEffect(() => {
+    const wanted = new Set<string>();
+    for (const [all, idx] of [[allResults, activeTabIndex], [allResults2, activeTabIndex2]] as const) {
+      const r = all[idx];
+      if (!r) continue;
+      const e = editabilityOf(r.query || '', r.columns || []);
+      if (!e.editable && e.reason === 'unknownTable' && e.table) wanted.add(e.table);
+    }
+    if (wanted.size === 0) return;
+    let alive = true;
+    Promise.all([...wanted].map(tbl => catalog.getSchema(tbl))).then(() => {
+      if (alive) setSchemaTick(x => x + 1);
+    });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allResults, activeTabIndex, allResults2, activeTabIndex2]);
+
+  // Turning Read-only on drops the buffered cell edits. They cannot be saved any more, and the
+  // grid stops rendering them as dirty (`pTarget` is null), so keeping them would leave state
+  // the user can neither see nor discard — and it would come back when Read-only is turned off,
+  // by then possibly on top of re-run rows.
+  useEffect(() => {
+    if (!readOnly) return;
+    setEditingCell(null);
+    setCellEdits({ 1: {}, 2: {} });
+  }, [readOnly]);
+
+  // switch trả về key literal, KHÔNG nội suy key động (i18next phải kiểm được từng key).
+  const notEditableLabel = (reason: NotEditableReason, table?: string): string => {
+    const v = { table: table || '' };
+    switch (reason) {
+      case 'readOnlyMode': return t('sqlEditor.whyReadOnlyMode');
+      case 'notSelect': return t('sqlEditor.whyNotSelect');
+      case 'notSimple': return t('sqlEditor.whyNotSimple');
+      case 'multiTable': return t('sqlEditor.whyMultiTable');
+      case 'derivedTable': return t('sqlEditor.whyDerivedTable');
+      case 'computedColumns': return t('sqlEditor.whyComputedColumns');
+      case 'unknownTable': return t('sqlEditor.whyUnknownTable', v);
+      case 'noPrimaryKey': return t('sqlEditor.whyNoPrimaryKey', v);
+      case 'pkNotSelected': return t('sqlEditor.whyPkNotSelected', v);
+    }
+  };
+
+  const countEdits = (pane: 1 | 2) =>
+    Object.values(cellEdits[pane]).reduce((n, cols) => n + Object.keys(cols).length, 0);
+
+  const showEditMsg = (pane: 1 | 2, text: string, kind: 'ok' | 'err') => {
+    setEditMsg({ pane, text, kind });
+    setTimeout(() => setEditMsg(cur => (cur && cur.text === text ? null : cur)), 4000);
+  };
+
+  const startCellEdit = (pane: 1 | 2, rowKey: string, col: string, current: any) => {
+    setEditingCell({ pane, rowKey, col });
+    setEditValue(current === null || current === undefined ? '' : String(current));
+  };
+
+  /** `original` is the value straight off the row, i.e. before any buffered edit. */
+  const saveCellEdit = (original: any) => {
+    if (!editingCell) return;
+    const { pane, rowKey, col } = editingCell;
+    setCellEdits(prev => {
+      const paneEdits = { ...prev[pane] };
+      const rowEdits = { ...(paneEdits[rowKey] || {}) };
+      // Typed back to the original value -> drop it, so the Save button never counts a no-op.
+      if (String(original ?? '') === editValue) delete rowEdits[col];
+      else rowEdits[col] = editValue;
+      if (Object.keys(rowEdits).length === 0) delete paneEdits[rowKey];
+      else paneEdits[rowKey] = rowEdits;
+      return { ...prev, [pane]: paneEdits };
+    });
+    setEditingCell(null);
+  };
+
+  const discardEdits = (pane: 1 | 2) => {
+    setCellEdits(prev => ({ ...prev, [pane]: {} }));
+    setEditingCell(null);
+  };
+
+  const handleEditSave = async (pane: 1 | 2, table: string, primaryKey: string) => {
+    if (readOnly) {
+      showEditMsg(pane, t('sqlEditor.errEditReadOnly'), 'err');
+      return;
+    }
+    const changes: GridChange[] = Object.entries(cellEdits[pane]).map(([rowKey, cols]) => ({
+      type: 'update',
+      rowId: rowKey,
+      newData: cols,
+    }));
+    if (changes.length === 0) return;
+    const preview = await dbHelper.commitChanges(table, changes, primaryKey, true);
+    if (!preview.success) {
+      showEditMsg(pane, t('sqlEditor.errEditPreview', { message: preview.message }), 'err');
+      return;
+    }
+    setEditCommit({ pane, table, primaryKey, sqls: preview.sqls || [], changes });
+  };
+
+  const handleEditCommitConfirm = async () => {
+    if (!editCommit) return;
+    const { pane, table, primaryKey, changes } = editCommit;
+    setEditCommitting(true);
+    const res = await dbHelper.commitChanges(table, changes, primaryKey);
+    setEditCommitting(false);
+    setEditCommit(null);
+    if (!res.success) {
+      showEditMsg(pane, t('sqlEditor.errEditCommit', { message: res.message }), 'err');
+      return;
+    }
+
+    // Write the saved values straight into the rows on screen instead of re-running the
+    // statement: the values are already known, while a re-run would add a second history
+    // entry for the same query and can be arbitrarily expensive.
+    const paneEdits = cellEdits[pane];
+    const patch = (list: any[]) => list.map(r => {
+      const e = paneEdits[String(r[primaryKey])];
+      return e ? { ...r, ...e } : r;
+    });
+    const idx = pane === 1 ? activeTabIndex : activeTabIndex2;
+    const setRows = pane === 1 ? setResults : setResults2;
+    const setAll = pane === 1 ? setAllResults : setAllResults2;
+    setRows(prev => patch(prev));
+    setAll(prev => prev.map((r, i) => (i === idx ? { ...r, data: patch(r.data || []) } : r)));
+
+    setCellEdits(prev => ({ ...prev, [pane]: {} }));
+    showEditMsg(pane, t('sqlEditor.editCommitSuccess', { n: changes.length, table }), 'ok');
   };
 
   const renderResultGrid = (paneId: 1 | 2) => {
@@ -1754,11 +2125,9 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     const pStatusMsg = paneId === 1 ? statusMsg : statusMsg2;
     const pPage = paneId === 1 ? page : page2;
     const pPageSize = paneId === 1 ? pageSize : pageSize2;
-    const pPageInput = paneId === 1 ? pageInput : pageInput2;
     const pShowCopyDropdown = paneId === 1 ? showCopyDropdown : showCopyDropdown2;
     const pSetPage = paneId === 1 ? setPage : setPage2;
     const pSetPageSize = paneId === 1 ? setPageSize : setPageSize2;
-    const pSetPageInput = paneId === 1 ? setPageInput : setPageInput2;
     const pSetShowCopyDropdown = paneId === 1 ? setShowCopyDropdown : setShowCopyDropdown2;
 
     const pExplainResult = paneId === 1 ? explainResult1 : explainResult2;
@@ -1768,9 +2137,37 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     const activeResult = pAllResults[pActiveTabIndex] || { data: [], columns: [], affectedRows: 0, query: '' };
     const totalPagesNum = Math.ceil(pResults.length / pPageSize) || 1;
 
+    const pSortCol = paneId === 1 ? sortCol1 : sortCol2;
+    const pSortDir = paneId === 1 ? sortDir1 : sortDir2;
+
+    let sortedResults = [...pResults];
+    if (pSortCol && pSortDir) {
+      sortedResults.sort((a, b) => {
+        const valA = a[pSortCol];
+        const valB = b[pSortCol];
+        if (valA === valB) return 0;
+        if (valA === null || valA === undefined) return 1;
+        if (valB === null || valB === undefined) return -1;
+
+        let comp = 0;
+        if (typeof valA === 'number' && typeof valB === 'number') {
+          comp = valA - valB;
+        } else {
+          comp = String(valA).localeCompare(String(valB), undefined, { numeric: true, sensitivity: 'base' });
+        }
+        return pSortDir === 'asc' ? comp : -comp;
+      });
+    }
+
+    const pEditability = editabilityInMode(activeResult.query || '', pColumns);
+    const pTarget = pEditability.editable ? pEditability : null;
+    const pEditableCols = pTarget ? new Set(pTarget.columns) : null;
+    const pEdits = cellEdits[paneId];
+    const pEditCount = countEdits(paneId);
+
     return (
-      <div className="sql-results-wrapper" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', borderTop: '1px solid var(--win-border)' }}>
-        <div className="sql-results-tabs" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--win-bg-window)', borderBottom: '1px solid var(--win-border)', overflow: 'visible', paddingRight: '8px', height: '28px', flexShrink: 0 }}>
+      <div className="sql-results-wrapper" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', borderTop: 'none' }}>
+        <div className="sql-results-tabs" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--win-bg-window)', borderBottom: '1px solid var(--win-border-light, rgba(229,231,235,0.4))', overflow: 'visible', paddingRight: '8px', height: '28px', flexShrink: 0 }}>
           <div style={{ display: 'flex', gap: '2px', overflowX: 'auto', flex: 1, height: '100%', alignItems: 'center', scrollbarWidth: 'none' }}>
             {pAllResults.length > 0 ? (
               pAllResults.map((resItem, idx) => {
@@ -1778,7 +2175,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                 // Hậu tố đếm: câu ghi hiện "✓N" (dòng ảnh hưởng), câu đọc hiện "(N)" (số dòng trả về).
                 const countSuffix = resItem.affected !== undefined && resItem.affected !== null
                   ? ` ✓${Number(resItem.affected).toLocaleString(locale)}`
-                  : ` (${(resItem.data?.length || 0).toLocaleString('vi-VN')})`;
+                  : ` (${(resItem.data?.length || 0).toLocaleString(locale)})`;
                 const label = `${idx + 1}: ${firstWord || 'SQL'}${countSuffix}`;
                 const isActive = pActiveTabType === 'data' && pActiveTabIndex === idx;
                 return (
@@ -1839,46 +2236,48 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
 
           {pResults.length > 0 && (
             <div style={{ display: 'flex', gap: '4px', alignItems: 'center', padding: '2px 0' }}>
-              <span style={{ fontSize: '10px', color: 'var(--win-text-disabled)', marginRight: '2px' }}>{t('sqlEditor.exportLabel')}</span>
-              <div style={{ position: 'relative', display: 'inline-block', zIndex: 1000 }}>
-                <button 
-                  className="btn btn-secondary" 
-                  onClick={() => pSetShowCopyDropdown(!pShowCopyDropdown)}
-                  style={{ padding: '2px 6px', display: 'flex', alignItems: 'center', gap: '3px' }}
-                  title={t('sqlEditor.copyResultsTitle')}
+              {pEditability.editable ? (
+                <span
+                  title={t('sqlEditor.editableHint', { table: pEditability.table })}
+                  style={{
+                    fontSize: '10px', fontWeight: 600, padding: '1px 6px', borderRadius: '9px',
+                    color: 'var(--st-ok)', border: '1px solid var(--st-ok)', whiteSpace: 'nowrap',
+                  }}
                 >
-                  <span>{t('sqlEditor.copy')}</span>
-                  <span style={{ fontSize: '7px', opacity: 0.7 }}>▼</span>
-                </button>
-                {pShowCopyDropdown && (
-                  <>
-                    <div 
-                      style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 999 }} 
-                      onClick={() => pSetShowCopyDropdown(false)} 
-                    />
-                    <div style={{
-                      position: 'absolute',
-                      top: '22px',
-                      left: 0,
-                      background: 'var(--win-bg-card)',
-                      border: '1px solid var(--win-border-strong, var(--win-border))',
-                      borderRadius: '4px',
-                      boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
-                      zIndex: 1000,
-                      minWidth: '160px',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      padding: '4px 0',
-                    }}>
-                      <button className="copy-dropdown-item" onClick={() => { handleCopyAs('table', paneId); pSetShowCopyDropdown(false); }}>{t('sqlEditor.copyAsTable')}</button>
-                      <button className="copy-dropdown-item" onClick={() => { handleCopyAs('object', paneId); pSetShowCopyDropdown(false); }}>{t('sqlEditor.copyAsJsonObject')}</button>
-                      <button className="copy-dropdown-item" onClick={() => { handleCopyAs('array', paneId); pSetShowCopyDropdown(false); }}>{t('sqlEditor.copyAsJsonArray')}</button>
-                    </div>
-                  </>
-                )}
-              </div>
-              <button className="btn btn-secondary" onClick={() => handleExportCsv(paneId)} style={{ padding: '2px 6px' }}>CSV</button>
-              <button className="btn btn-secondary" onClick={() => handleExportJson(paneId)} style={{ padding: '2px 6px' }}>JSON</button>
+                  {t('sqlEditor.editableBadge', { table: pEditability.table })}
+                </span>
+              ) : (
+                <span
+                  title={notEditableLabel(pEditability.reason, pEditability.table)}
+                  style={{
+                    fontSize: '10px', padding: '1px 6px', borderRadius: '9px',
+                    color: 'var(--win-text-disabled)', border: '1px solid var(--win-border)', whiteSpace: 'nowrap',
+                  }}
+                >
+                  {t('sqlEditor.readOnlyBadge')}
+                </span>
+              )}
+
+              {pTarget && pEditCount > 0 && (
+                <>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => discardEdits(paneId)}
+                    title={t('sqlEditor.editDiscardTitle')}
+                    style={{ padding: '2px 6px' }}
+                  >
+                    {t('sqlEditor.editDiscard')}
+                  </button>
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => handleEditSave(paneId, pTarget.table, pTarget.primaryKey)}
+                    title={t('sqlEditor.editSaveTitle')}
+                    style={{ padding: '2px 6px', background: 'var(--st-ok)', borderColor: 'var(--st-ok)' }}
+                  >
+                    {t('sqlEditor.editSave', { n: pEditCount })}
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -1927,27 +2326,135 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                   <table className="grid-table">
                     <thead>
                       <tr>
-                        <th style={{ width: '36px', textAlign: 'center' }}>#</th>
+                        {showRowNumbers && (
+                          <th
+                            className="grid-header-index"
+                            style={{ width: '28px', textAlign: 'center', fontWeight: 400, color: '#9ca3af', cursor: 'pointer' }}
+                            onClick={() => {
+                              if (paneId === 1) setAutoFitColsPane1(v => !v);
+                              else setAutoFitColsPane2(v => !v);
+                            }}
+                            title={t('sqlEditor.autoFitColumnsTitle', 'Tự động vừa khớp độ rộng cột')}
+                          >
+                            <span style={{ fontSize: '11px', opacity: (paneId === 1 ? autoFitColsPane1 : autoFitColsPane2) ? 1 : 0.65, display: 'inline-block', color: (paneId === 1 ? autoFitColsPane1 : autoFitColsPane2) ? 'var(--win-accent)' : undefined }}>⇄</span>
+                          </th>
+                        )}
                         {/* key theo VỊ TRÍ, không theo tên: `SELECT *` qua nhiều JOIN trả về
                             trùng tên cột (film_id có ở film/film_actor/inventory) nên tên cột
                             không phải khoá duy nhất — React sẽ cảnh báo và có thể nhân đôi/bỏ ô. */}
-                        {pColumns.map((col, ci) => (
-                          <th key={ci}>{col}</th>
-                        ))}
+                        {pColumns.map((col, ci) => {
+                          const sampleVal = pResults[0]?.[col];
+                          const isNum = typeof sampleVal === 'number' || (sampleVal !== null && sampleVal !== undefined && !isNaN(Number(sampleVal)) && String(sampleVal).trim() !== '') || col.toLowerCase().endsWith('_id') || col.toLowerCase().includes('year');
+                          const isAutoFit = paneId === 1 ? autoFitColsPane1 : autoFitColsPane2;
+                          const isSorted = pSortCol === col;
+                          return (
+                            <th
+                              key={ci}
+                              onClick={() => handleTableSort(col, paneId)}
+                              style={{
+                                textAlign: isNum ? 'right' : 'left',
+                                whiteSpace: isAutoFit ? 'nowrap' : undefined,
+                                cursor: 'pointer',
+                                userSelect: 'none'
+                              }}
+                              title={t('sqlEditor.sortColumnTitle', { col })}
+                            >
+                              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', justifyContent: isNum ? 'flex-end' : 'flex-start', width: '100%' }}>
+                                <span>{col}</span>
+                                {isSorted && (
+                                  <span style={{ fontSize: '10px', color: 'var(--win-accent, #3b82f6)', flexShrink: 0 }}>
+                                    {pSortDir === 'asc' ? '▲' : '▼'}
+                                  </span>
+                                )}
+                              </div>
+                            </th>
+                          );
+                        })}
                       </tr>
                     </thead>
                     <tbody>
-                      {pResults.slice((pPage - 1) * pPageSize, pPage * pPageSize).map((row, index) => (
+                      {sortedResults.slice((pPage - 1) * pPageSize, pPage * pPageSize).map((row, index) => (
                         <tr key={index}>
-                          <td style={{ textAlign: 'center', color: 'var(--win-text-secondary)', background: 'rgba(0,0,0,0.1)' }}>
-                            {(pPage - 1) * pPageSize + index + 1}
-                          </td>
+                          {showRowNumbers && (
+                            <td className="grid-row-index" style={{ textAlign: 'right', paddingRight: '6px', userSelect: 'none' }}>
+                              {(pPage - 1) * pPageSize + index + 1}
+                            </td>
+                          )}
                           {pColumns.map((col, ci) => {
-                            const cellVal = row[col];
+                            // Buộc phải khoá theo GIÁ TRỊ khoá chính chứ không theo chỉ số dòng:
+                            // lưới phân trang phía client nên chỉ số chỉ đúng trong trang hiện tại.
+                            const rowKey = pTarget ? String(row[pTarget.primaryKey]) : '';
+                            const edited = pTarget ? pEdits[rowKey]?.[col] : undefined;
+                            const isDirty = edited !== undefined;
+                            const cellVal = isDirty ? edited : row[col];
+                            const canEdit = !!pEditableCols?.has(col);
+                            const isEditing =
+                              editingCell?.pane === paneId && editingCell.rowKey === rowKey && editingCell.col === col;
+                            const isFkCol = col.toLowerCase().endsWith('_id') && !col.toLowerCase().startsWith('id');
+                            const isNum = typeof cellVal === 'number' || (cellVal !== null && cellVal !== undefined && !isNaN(Number(cellVal)) && String(cellVal).trim() !== '') || col.toLowerCase().endsWith('_id') || col.toLowerCase().includes('year');
+                            const isAutoFit = paneId === 1 ? autoFitColsPane1 : autoFitColsPane2;
+
                             return (
-                              <td key={ci}>
-                                {cellVal === null ? (
-                                  <span style={{ color: 'var(--win-text-disabled)', fontStyle: 'italic' }}>NULL</span>
+                              <td
+                                key={ci}
+                                className={isDirty ? 'grid-cell-dirty' : ''}
+                                style={{ textAlign: isNum ? 'right' : 'left', whiteSpace: isAutoFit ? 'nowrap' : undefined }}
+                                title={
+                                  pTarget && !canEdit
+                                    ? t('sqlEditor.editColumnReadOnly', { table: pTarget.table })
+                                    : undefined
+                                }
+                                onDoubleClick={canEdit ? () => startCellEdit(paneId, rowKey, col, cellVal) : undefined}
+                              >
+                                {isEditing ? (
+                                  <input
+                                    type="text"
+                                    className="grid-input-edit"
+                                    value={editValue}
+                                    onChange={(e) => setEditValue(e.target.value)}
+                                    onBlur={() => saveCellEdit(row[col])}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') saveCellEdit(row[col]);
+                                      if (e.key === 'Escape') setEditingCell(null);
+                                    }}
+                                    autoFocus
+                                  />
+                                ) : cellVal === null ? (
+                                  <span style={{ color: 'var(--win-accent, #3b82f6)', opacity: 0.8, fontStyle: 'italic' }}>{'NULL'}</span>
+                                ) : isFkCol ? (
+                                  <div
+                                    style={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'flex-end',
+                                      gap: '4px',
+                                      width: '100%',
+                                      cursor: 'pointer'
+                                    }}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleFkClick(col, cellVal, pTarget?.table, paneId);
+                                    }}
+                                    title={t('sqlEditor.fkNavigateTitle', { col, val: cellVal })}
+                                  >
+                                    <span style={{ textDecoration: 'underline', textDecorationStyle: 'dotted', textUnderlineOffset: '3px', color: 'var(--win-accent, #3b82f6)' }}>
+                                      {String(cellVal)}
+                                    </span>
+                                    <span
+                                      style={{
+                                        opacity: 0.85,
+                                        fontSize: '11px',
+                                        color: 'var(--win-accent, #3b82f6)',
+                                        padding: '0 3px',
+                                        borderRadius: '3px',
+                                        transition: 'all 0.15s ease'
+                                      }}
+                                      onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.background = 'var(--win-accent, #3b82f6)'; e.currentTarget.style.color = '#fff'; }}
+                                      onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.85'; e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--win-accent, #3b82f6)'; }}
+                                    >
+                                      →
+                                    </span>
+                                  </div>
                                 ) : (
                                   String(cellVal)
                                 )}
@@ -1964,99 +2471,137 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
           )}
         </div>
 
-        {!pErrorMsg && pResults.length > 0 && (
-          <div className="grid-pagination" style={{ borderTop: '1px solid var(--win-border)', background: 'var(--win-bg-window)', flexShrink: 0, padding: '2px 8px', fontSize: '11px' }}>
-            <div>
-              <Trans
-                i18nKey="sqlEditor.rowsRange"
-                values={{
-                  from: (pPage - 1) * pPageSize + 1,
-                  to: Math.min(pPage * pPageSize, pResults.length),
-                  total: pResults.length,
-                }}
-                components={{ strong: <b /> }}
-              />
+        {!pErrorMsg && (
+          <div className="grid-pagination" style={{ borderTop: '1px solid var(--win-border-light, rgba(229,231,235,0.4))', background: 'var(--win-bg-window)', flexShrink: 0, padding: '2px 8px', fontSize: '11px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '26px' }}>
+            {/* Trái: Thông báo thực thi / Kết quả */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, marginRight: '12px' }}>
+              {editMsg && editMsg.pane === paneId ? (
+                <>
+                  {editMsg.kind === 'ok'
+                    ? <CheckCircle2 size={12} style={{ color: 'var(--st-ok)', flexShrink: 0 }} />
+                    : <AlertTriangle size={12} style={{ color: 'var(--st-danger)', flexShrink: 0 }} />}
+                  <span style={{ color: editMsg.kind === 'ok' ? 'var(--st-ok)' : 'var(--st-danger)', fontWeight: 500 }}>{editMsg.text}</span>
+                </>
+              ) : pStatusMsg ? (
+                <>
+                  <CheckCircle2 size={12} style={{ color: 'var(--st-ok)', flexShrink: 0 }} />
+                  <span style={{ color: 'var(--st-ok)', fontWeight: 500 }}>
+                    {pStatusMsg}
+                  </span>
+                </>
+              ) : pResults.length > 0 ? (
+                <>
+                  <CheckCircle2 size={12} style={{ color: 'var(--st-ok)', flexShrink: 0 }} />
+                  <span style={{ color: 'var(--st-ok)', fontWeight: 500 }}>
+                    {t('sqlEditor.execOkDefault', { n: pResults.length })}
+                  </span>
+                </>
+              ) : (
+                <span style={{ color: 'var(--win-text-disabled)' }}>{t('sqlEditor.paneReady', { pane: paneId })}</span>
+              )}
             </div>
-            <div className="pagination-controls">
-              <span style={{ marginRight: '6px' }}>
-                {t('sqlEditor.rowsLabel')}{' '}
-                <select
-                  value={pPageSize}
-                  onChange={(e) => {
-                    pSetPageSize(parseInt(e.target.value));
-                    pSetPage(1);
-                  }}
-                  style={{ background: 'var(--win-bg-window)', border: '1px solid var(--win-border)', color: 'var(--win-text-primary)', borderRadius: '3px', padding: '1px 2px', fontSize: '11px' }}
-                >
-                  <option value="50">50</option>
-                  <option value="100">100</option>
-                  <option value="200">200</option>
-                </select>
-              </span>
 
-              <button className="pagination-btn" onClick={() => pSetPage(1)} disabled={pPage === 1} title={t('sqlEditor.firstPage')}>
-                <ChevronsLeft size={14} />
-              </button>
-              <button className="pagination-btn" onClick={() => pSetPage(p => Math.max(p - 1, 1))} disabled={pPage === 1} title={t('sqlEditor.prevPage')}>
-                <ChevronLeft size={14} />
-              </button>
-              
-              <span style={{ display: 'flex', alignItems: 'center' }}>
-                Trang 
-                <input
-                  type="number"
-                  value={pPageInput}
-                  onChange={(e) => pSetPageInput(e.target.value)}
-                  onBlur={() => handlePageSubmit(paneId)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') handlePageSubmit(paneId); }}
-                  style={{
-                    width: '30px',
-                    textAlign: 'center',
-                    background: 'var(--win-bg-window)',
-                    border: '1px solid var(--win-border)',
-                    color: 'var(--win-text-primary)',
-                    borderRadius: '3px',
-                    padding: '1px 0',
-                    margin: '0 3px',
-                    fontSize: '11px',
-                    fontWeight: 600
-                  }}
-                />
-                / <b>{totalPagesNum}</b>
-              </span>
-
-              <button className="pagination-btn" onClick={() => pSetPage(p => Math.min(p + 1, totalPagesNum))} disabled={pPage >= totalPagesNum} title={t('sqlEditor.nextPage')}>
-                <ChevronRight size={14} />
-              </button>
-              <button className="pagination-btn" onClick={() => pSetPage(totalPagesNum)} disabled={pPage >= totalPagesNum} title={t('sqlEditor.lastPage')}>
-                <ChevronsRight size={14} />
-              </button>
-            </div>
-          </div>
-        )}
-
-        <div className="sql-results-status" style={{ flexShrink: 0, height: '24px', padding: '0 8px', fontSize: '11px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {pStatusMsg ? (
-              <>
-                <CheckCircle2 size={12} style={{ color: 'var(--st-ok)', flexShrink: 0 }} />
-                <span style={{ color: 'var(--st-ok)' }}>
-                  {pStatusMsg}
-                  {activeResult && activeResult.query && (
-                    <span style={{ fontSize: '10.5px', color: 'var(--win-text-secondary)', marginLeft: '6px' }}>
-                      {activeResult.affectedRows > 0
-                        ? t('sqlEditor.paneAffected', { pane: paneId, n: activeResult.affectedRows })
-                        : t('sqlEditor.paneFetched', { pane: paneId, n: activeResult.data?.length || 0 })}
-                    </span>
-                  )}
+            {/* Phải: Cụm điều khiển phân trang & Xuất dữ liệu */}
+            {pResults.length > 0 && (
+              <div className="pagination-controls" style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                <span style={{ fontSize: '11px', color: 'var(--win-text-secondary)', marginRight: '4px' }}>
+                  <Trans
+                    i18nKey="sqlEditor.rowsRange"
+                    values={{
+                      from: (pPage - 1) * pPageSize + 1,
+                      to: Math.min(pPage * pPageSize, pResults.length),
+                      total: pResults.length,
+                    }}
+                    components={{ strong: <b /> }}
+                  />
                 </span>
-              </>
-            ) : (
-              <span>{t('sqlEditor.paneReady', { pane: paneId })}</span>
+
+                <div className="gp-pager" style={{ height: '22px' }}>
+                  <button
+                    className="gp-pager-btn"
+                    onClick={() => pSetPage(p => Math.max(p - 1, 1))}
+                    disabled={pPage === 1}
+                    title={t('sqlEditor.prevPage')}
+                  >
+                    <ChevronLeft size={13} />
+                  </button>
+
+                  <span className="gp-pager-sep" />
+
+                  <select
+                    className="gp-pager-select"
+                    value={pPageSize}
+                    onChange={(e) => {
+                      pSetPageSize(parseInt(e.target.value));
+                      pSetPage(1);
+                    }}
+                    title={t('sqlEditor.rowsPerPage')}
+                    style={{ fontSize: '11px', fontWeight: 600 }}
+                  >
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                    <option value="200">200</option>
+                  </select>
+
+                  <span className="gp-pager-sep" />
+
+                  <button
+                    className="gp-pager-btn"
+                    onClick={() => pSetPage(p => Math.min(p + 1, totalPagesNum))}
+                    disabled={pPage >= totalPagesNum}
+                    title={t('sqlEditor.nextPage')}
+                  >
+                    <ChevronRight size={13} />
+                  </button>
+                </div>
+
+                <div style={{ width: '1px', height: '12px', background: 'var(--win-border)', margin: '0 4px' }} />
+
+                {/* Nút Xuất/Sao chép dữ liệu (Export) gom 1 nút duy nhất ở phía dưới */}
+                <div style={{ position: 'relative', display: 'inline-block' }}>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => pSetShowCopyDropdown(!pShowCopyDropdown)}
+                    style={{ padding: '2px 8px', fontSize: '11px', height: '22px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                    title={t('sqlEditor.exportTitle', 'Xuất/Sao chép dữ liệu')}
+                  >
+                    <span>Export</span>
+                    <span style={{ fontSize: '7px', opacity: 0.7 }}>▼</span>
+                  </button>
+                  {pShowCopyDropdown && (
+                    <>
+                      <div
+                        style={{ position: 'fixed', inset: 0, zIndex: 9998 }}
+                        onClick={() => pSetShowCopyDropdown(false)}
+                      />
+                      <div style={{
+                        position: 'absolute',
+                        bottom: '26px',
+                        right: 0,
+                        background: 'var(--win-bg-popover, var(--win-bg-card))',
+                        border: '1px solid var(--win-border-strong, var(--win-border))',
+                        borderRadius: '6px',
+                        boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+                        zIndex: 9999,
+                        minWidth: '170px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        padding: '4px 0',
+                      }}>
+                        <button className="copy-dropdown-item" onClick={() => { handleCopyAs('table', paneId); pSetShowCopyDropdown(false); }}>{t('sqlEditor.copyAsTable')}</button>
+                        <button className="copy-dropdown-item" onClick={() => { handleCopyAs('object', paneId); pSetShowCopyDropdown(false); }}>{t('sqlEditor.copyAsJsonObject')}</button>
+                        <button className="copy-dropdown-item" onClick={() => { handleCopyAs('array', paneId); pSetShowCopyDropdown(false); }}>{t('sqlEditor.copyAsJsonArray')}</button>
+                        <div style={{ borderTop: '1px solid var(--win-border)', margin: '4px 0' }} />
+                        <button className="copy-dropdown-item" onClick={() => { handleExportCsv(paneId); pSetShowCopyDropdown(false); }}>Export CSV</button>
+                        <button className="copy-dropdown-item" onClick={() => { handleExportJson(paneId); pSetShowCopyDropdown(false); }}>Export JSON</button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
             )}
           </div>
-          <div></div>
-        </div>
+        )}
       </div>
     );
   };
@@ -2099,7 +2644,13 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                   {t('sqlEditor.loadingEditor')}
                 </div>
               }
-              options={SQL_EDITOR_OPTIONS}
+              options={{
+                ...SQL_EDITOR_OPTIONS,
+                fontSize: editorFontSize,
+                renderWhitespace: showInvisibleChars ? 'all' : 'none',
+                wordWrap: wordWrap ? 'on' : 'off',
+                readOnly: readOnly,
+              }}
             />
           </div>
 
@@ -2159,7 +2710,13 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                     {t('sqlEditor.loadingEditor')}
                   </div>
                 }
-                options={SQL_EDITOR_OPTIONS}
+                options={{
+                  ...SQL_EDITOR_OPTIONS,
+                  fontSize: editorFontSize,
+                  renderWhitespace: showInvisibleChars ? 'all' : 'none',
+                  wordWrap: wordWrap ? 'on' : 'off',
+                  readOnly: readOnly,
+                }}
               />
             </div>
 
@@ -2532,6 +3089,43 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
           onCancel={() => setUnsafePrompt(null)}
         />
       )}
+
+      {/* ─── Xem trước SQL trước khi ghi các ô đã sửa (giống DataGrid) ─── */}
+      {editCommit && (
+        <Modal
+          title={t('sqlEditor.editPreviewTitle', { n: editCommit.sqls.length })}
+          onClose={() => setEditCommit(null)}
+          width="640px"
+          maxWidth="92%"
+          maxHeight="80vh"
+          zIndex={99999}
+          closeDisabled={editCommitting}
+        >
+          <ModalBody style={{ padding: '16px', gap: 0, background: 'var(--win-bg-window)', fontFamily: 'var(--win-font-mono)', fontSize: '12px', color: 'var(--win-text-primary)', flex: 1 }}>
+            {editCommit.sqls.map((sql, idx) => (
+              <pre key={idx} style={{ margin: '0 0 10px 0', whiteSpace: 'pre-wrap', wordBreak: 'break-all', paddingBottom: '8px', borderBottom: idx < editCommit.sqls.length - 1 ? '1px dashed var(--win-border)' : 'none' }}>
+                {sql};
+              </pre>
+            ))}
+          </ModalBody>
+          <ModalFooter>
+            <button className="btn btn-secondary" onClick={() => setEditCommit(null)} disabled={editCommitting}>
+              {t('common.cancel')}
+            </button>
+            <button
+              className="btn btn-primary"
+              onClick={handleEditCommitConfirm}
+              disabled={editCommitting || editCommit.sqls.length === 0}
+              style={{ background: 'var(--st-ok)', borderColor: 'var(--st-ok)' }}
+            >
+              {editCommitting ? t('sqlEditor.editCommitRunning') : t('sqlEditor.editCommitConfirm')}
+            </button>
+          </ModalFooter>
+        </Modal>
+      )}
     </div>
   );
 };
+
+export default SqlEditor;
+
