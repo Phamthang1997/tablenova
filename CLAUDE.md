@@ -13,7 +13,7 @@ Many user-facing strings, backend error messages, and Rust comments are written 
 Development requires a native toolchain on Windows: Rust (cargo), a MinGW64 GCC toolchain on PATH (for linking), and Node.js.
 
 - `npm run dev` / `npm start` — run the full Tauri app (spawns Vite dev server + Rust backend with hot reload). Equivalent to `tauri dev`.
-- `.\dev-start.bat` — same as above but also sets `PATH` (cargo, MinGW64, node) and `CARGO_TARGET_DIR=C:\cargo-targets\tableforge`. The target dir is deliberately pointed **outside** the workspace so rust-analyzer doesn't try to watch/index the huge `target/` tree. Use this script (or replicate its env vars) if `cargo`/link errors occur when running `npm run dev` directly.
+- `.\dev-start.bat` — same as above but also sets `PATH` (cargo, MinGW64, node) and `CARGO_TARGET_DIR=C:\cargo-targets\tablenova`. The target dir is deliberately pointed **outside** the workspace so rust-analyzer doesn't try to watch/index the huge `target/` tree. Use this script (or replicate its env vars) if `cargo`/link errors occur when running `npm run dev` directly.
 - `npm run vite-dev` — frontend only, no Tauri/Rust (useful for fast UI iteration, but `@tauri-apps/api` calls will fail/reject since there's no Rust backend listening).
 - `npm run build-frontend` — type-check (`tsc -b`) and build the Vite frontend only.
 - `npm run build` — full production build via `tauri build` (produces installers/binaries under `src-tauri/target`).

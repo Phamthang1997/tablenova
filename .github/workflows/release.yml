@@ -54,7 +54,16 @@ jobs:
         with:
           tagName: v__VERSION__
           releaseName: 'TableNova v__VERSION__'
-          releaseBody: 'Phiên bản đóng gói ứng dụng TableNova cho macOS (ARM64) và Windows.'
+          releaseBody: |
+            Official release build of TableNova for macOS (Apple Silicon ARM64) and Windows (x64).
+
+            ⚠️ **macOS Installation Note ("TableNova is damaged and can't be opened")**:
+            Since this build is currently unsigned with an Apple Developer ID, macOS Gatekeeper may block downloaded `.dmg` packages with a security prompt.
+
+            To open the application on macOS, move `TableNova.app` to your **Applications** folder, open **Terminal**, and execute:
+            ```bash
+            sudo xattr -rd com.apple.quarantine /Applications/TableNova.app
+            ```
           releaseDraft: true
           prerelease: false
           args: --target ${{ matrix.target }}
