@@ -181,6 +181,41 @@ function isReadOnlySql(text: string): boolean {
   });
 }
 
+/** Áp dụng giới hạn số dòng (LIMIT) từ dropdown thanh công cụ vào câu lệnh SELECT/WITH nếu chưa có LIMIT */
+function applyLimitToSql(sqlText: string, limitOption: string): string {
+  if (!limitOption || limitOption === 'No limit') return sqlText;
+  const match = limitOption.match(/[\d,]+/);
+  if (!match) return sqlText;
+  const limitNum = parseInt(match[0].replace(/,/g, ''), 10);
+  if (!limitNum || limitNum <= 0) return sqlText;
+
+  const trimmed = sqlText.trim();
+  if (!trimmed) return sqlText;
+
+  const statements = splitStatements(trimmed);
+  if (statements.length === 0) return sqlText;
+
+  let modified = false;
+  const newStmts = statements.map((s) => {
+    const code = s.text.trim();
+    if (!code) return s.text;
+
+    let clean = code.endsWith(';') ? code.slice(0, -1).trim() : code;
+    const firstWord = clean.split(/\s+/)[0]?.toUpperCase();
+
+    if (firstWord === 'SELECT' || firstWord === 'WITH') {
+      const hasLimit = /\bLIMIT\s+\d+/i.test(clean);
+      if (!hasLimit) {
+        modified = true;
+        return `${clean} LIMIT ${limitNum};`;
+      }
+    }
+    return code.endsWith(';') ? code : `${code};`;
+  });
+
+  return modified ? newStmts.join('\n\n') : sqlText;
+}
+
 export const SqlEditor: React.FC<SqlEditorProps> = ({
   dbType = 'sqlite',
   connKey = '',
@@ -906,7 +941,9 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     await runRawSql(textToRun, pane);
   };
 
-  const runRawSql = async (textToRun: string, pane: 1 | 2, params?: any[]) => {
+  const runRawSql = async (rawSqlText: string, pane: 1 | 2, params?: any[]) => {
+    const limitOpt = pane === 1 ? limitPane1 : limitPane2;
+    const textToRun = applyLimitToSql(rawSqlText, limitOpt);
     const historyId = addToHistory(textToRun); // Log query history immediately
 
     const isPane1 = pane === 1;

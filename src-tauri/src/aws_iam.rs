@@ -3,7 +3,7 @@
 // Tự implement SigV4 presign (hmac + sha2) để KHÔNG phải kéo cả AWS SDK.
 // Credential: Access Key (nhập tay) hoặc Profile (đọc ~/.aws/credentials). SSO chưa hỗ trợ.
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, Mac, KeyInit};
 use sha2::{Digest, Sha256};
 use serde_json::Value;
 

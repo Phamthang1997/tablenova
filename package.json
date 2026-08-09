@@ -9,11 +9,14 @@
     "vite-dev": "vite",
     "build-frontend": "tsc -b && vite build",
     "build": "tauri build",
+    "build:mac": "tauri build --target aarch64-apple-darwin",
+    "build:win": "tauri build --target x86_64-pc-windows-msvc",
     "start": "tauri dev",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "lint": "oxlint"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",

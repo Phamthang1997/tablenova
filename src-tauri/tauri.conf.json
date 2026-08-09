@@ -1,7 +1,7 @@
 {
   "productName": "TableNova",
   "version": "0.1.1",
-  "identifier": "com.tablenova.app",
+  "identifier": "com.tablenova.desktop",
   "build": {
     "beforeDevCommand": "npm run vite-dev",
     "beforeBuildCommand": "npm run build-frontend",
@@ -34,8 +34,8 @@
     "publisher": "TableNova Team",
     "copyright": "Copyright © 2026 TableNova. All rights reserved.",
     "licenseFile": "installer/LICENSE.txt",
-    "shortDescription": "TableNova - Trình quản trị cơ sở dữ liệu hiện đại",
-    "longDescription": "TableNova là ứng dụng quản lý cơ sở dữ liệu tốc độ cao hỗ trợ SQLite, MySQL, PostgreSQL tích hợp trợ lý AI và SSH Tunneling.",
+    "shortDescription": "TableNova - Modern Database Management Tool",
+    "longDescription": "TableNova is a high-speed database management application supporting SQLite, MySQL, and PostgreSQL with integrated AI assistant and SSH tunneling.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -43,10 +43,20 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "macOS": {
+      "frameworks": [],
+      "minimumSystemVersion": "11.0",
+      "dmg": {
+        "windowSize": {
+          "width": 660,
+          "height": 400
+        }
+      }
+    },
     "windows": {
       "nsis": {
-        "headerImage": "installer/header.png",
-        "sidebarImage": "installer/sidebar.png",
+        "headerImage": "installer/header.bmp",
+        "sidebarImage": "installer/sidebar.bmp",
         "installerIcon": "icons/icon.ico",
         "uninstallerIcon": "icons/icon.ico",
         "installMode": "both"
