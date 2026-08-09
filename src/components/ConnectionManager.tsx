@@ -182,7 +182,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     const v = (h || '').trim().toLowerCase();
     return v !== '' && !['localhost', '127.0.0.1', '::1', '0.0.0.0', 'host.docker.internal'].includes(v);
   };
-  const [sqlitePath, setSqlitePath] = useState('demo.db');
+  const [sqlitePath, setSqlitePath] = useState('');
 
   // PG config
   const [pgHost, setPgHost] = useState('localhost');
@@ -251,7 +251,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
   // Connection-less Backup/Restore States
   const [brAction, setBrAction] = useState<'backup' | 'restore'>('backup');
   const [brType, setBrType] = useState<'sqlite' | 'postgres' | 'mysql'>('sqlite');
-  const [brSqlitePath, setBrSqlitePath] = useState('demo.db');
+  const [brSqlitePath, setBrSqlitePath] = useState('');
   const [brPgHost, setBrPgHost] = useState('localhost');
   const [brPgPort, setBrPgPort] = useState(5432);
   const [brPgUser, setBrPgUser] = useState('postgres');
@@ -814,17 +814,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
         }
       } catch { }
     } else {
-      const defaultProfiles: SavedProfile[] = [
-        {
-          id: 'demo',
-          name: 'Demo Database',
-          type: 'sqlite',
-          config: { type: 'sqlite', sqlitePath: 'demo.db' }
-        }
-      ];
-      setProfiles(defaultProfiles);
-      localStorage.setItem(PROFILES_KEY, JSON.stringify(defaultProfiles));
-      selectProfile(defaultProfiles[0]);
+      setProfiles([]);
+      localStorage.setItem(PROFILES_KEY, JSON.stringify([]));
     }
     // Mount-only bootstrap. persistProfiles/selectProfile now close over `t`,
     // whose identity changes on every language switch, so listing them here
@@ -848,7 +839,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
 
     const config = await configWithSecrets(profile);
     if (profile.type === 'sqlite') {
-      setSqlitePath(config.sqlitePath || 'demo.db');
+      setSqlitePath(config.sqlitePath || '');
     } else if (profile.type === 'redis') {
       setRedisHost(config.host || '127.0.0.1');
       setRedisPort(config.port || 6379);
@@ -1017,10 +1008,6 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
 
   const handleDeleteProfile = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (id === 'demo') {
-      alert(t('connection.errDeleteDemo'));
-      return;
-    }
     if (!confirm(t('connection.confirmDeleteProfile'))) return;
 
     const newProfiles = profiles.filter(p => p.id !== id);
@@ -1057,16 +1044,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     selectProfile(duplicated);
   };
 
-  const handleConnect = async (isDemo = false) => {
+  const handleConnect = async (_isDemo = false) => {
     setLoading(true);
     setErrorMsg(null);
     setSuccessMsg(null);
 
     let config: DbConnectionConfig;
 
-    if (isDemo) {
-      config = { type: 'sqlite', sqlitePath: 'demo.db' };
-    } else if (activeType === 'sqlite') {
+    if (activeType === 'sqlite') {
       config = { type: 'sqlite', sqlitePath };
     } else if (activeType === 'postgres') {
       config = {
@@ -2185,7 +2170,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                     // Mật khẩu nằm trong kho HĐH -> phải đọc ra mới điền được vào form sao lưu.
                     const c = await configWithSecrets(selectedProf);
                     if (selectedProf.type === 'sqlite') {
-                      setBrSqlitePath(c.sqlitePath || 'demo.db');
+                      setBrSqlitePath(c.sqlitePath || '');
                     } else if (selectedProf.type === 'postgres') {
                       setBrPgHost(c.host || 'localhost');
                       setBrPgPort(c.port || 5432);
@@ -2550,11 +2535,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                             <button className="cm-icon-btn sm" onClick={(e) => handleDuplicateProfile(p, e)} title={t('connection.duplicateProfile')}>
                               <Copy size={12} />
                             </button>
-                            {p.id !== 'demo' && (
-                              <button className="cm-icon-btn sm danger" onClick={(e) => handleDeleteProfile(p.id, e)} title={t('connection.deleteProfile')}>
-                                <Trash2 size={12} />
-                              </button>
-                            )}
+                            <button className="cm-icon-btn sm danger" onClick={(e) => handleDeleteProfile(p.id, e)} title={t('connection.deleteProfile')}>
+                              <Trash2 size={12} />
+                            </button>
                           </div>
                         </div>
                       );

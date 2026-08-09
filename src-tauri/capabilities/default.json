@@ -1,11 +1,15 @@
 {
-  "$schema": "../node_modules/@tauri-apps/cli/schema-capabilities.json",
   "identifier": "default",
   "description": "Default capabilities for the application",
   "windows": ["*"],
   "permissions": [
     "core:default",
     "dialog:default",
+    "dialog:allow-confirm", 
+    "dialog:allow-ask",
+    "dialog:allow-message",
+    "dialog:allow-open",
+    "dialog:allow-save",
     "fs:default",
     {
       "identifier": "fs:allow-write-file",

@@ -5,12 +5,12 @@ edition = "2024"
 
 [dependencies]
 tauri = { version = "2.11.5", features = ["macos-private-api"] }
-tauri-plugin-dialog = "2.7.1"
+tauri-plugin-dialog = "2.7.2"
 tauri-plugin-fs = "2.5.1"
 window-vibrancy = "0.8.0"
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.150"
-rusqlite = { version = "0.40.1", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
 sqlx = { version = "0.9.0", default-features = false, features = [
     "runtime-tokio",
     "tls-rustls",
@@ -34,32 +34,30 @@ sqlx-mysql = { version = "0.9.0", default-features = false, features = [
 bigdecimal = "0.4"
 uuid = "1"
 russh = "0.62.5"
-portable-pty = "0.8"
-flate2 = "1.0.35"
+portable-pty = "0.9"
+flate2 = "1.1.9"
 zip = "8.6.0"
-tokio = { version = "1.52.3", features = ["full"] }
+tokio = { version = "1.53.1", features = ["full"] }
 futures-util = "0.3"
-thiserror = "2.0.11"
+thiserror = "2.0.20"
 chrono = "0.4.45"
-regex = "1.13.0"
-hmac = "0.12"
-sha2 = "0.10"
-redis = { version = "1.4.1", features = ["tokio-comp", "tokio-rustls-comp"] }
+regex = "1.13.1"
+hmac = "0.13"
+sha2 = "0.11"
+redis = { version = "1.5.0", features = ["tokio-comp", "tokio-rustls-comp"] }
 # Kho bí mật của HĐH (Windows Credential Manager / Keychain / Secret Service).
 # Tắt default-features rồi bật đúng backend theo từng nền tảng bên dưới, tránh kéo
 # zbus + secret-service vào bản build Windows.
-keyring = { version = "4.1.5", default-features = false, features = ["v1"] }
+keyring = { version = "4.1.6", default-features = false, features = ["v1"] }
 
 [build-dependencies]
 tauri-build = { version = "2.6.3", features = [] }
 
 [target.'cfg(windows)'.dependencies]
-keyring = { version = "4.1.5", features = ["windows-native-keyring-store"] }
+keyring = { version = "4.1.6", features = ["windows-native-keyring-store"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-keyring = { version = "4.1.5", features = ["apple-native-keyring-store"] }
+keyring = { version = "4.1.6", features = ["apple-native-keyring-store"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-keyring = { version = "4.1.5", features = [
-    "zbus-secret-service-keyring-store",
-] }
+keyring = { version = "4.1.6", features = ["zbus-secret-service-keyring-store"] }
