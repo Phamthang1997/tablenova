@@ -94,6 +94,14 @@
    npm run build
    ```
 
+### ⚠️ macOS Gatekeeper Troubleshooting ("App is damaged and can't be opened")
+If you download a `.dmg` release built from GitHub Actions, macOS Gatekeeper blocks unsigned apps downloaded via web browsers. To fix this:
+1. Move `TableNova.app` to your `/Applications` folder.
+2. Open Terminal and run:
+   ```bash
+   sudo xattr -rd com.apple.quarantine /Applications/TableNova.app
+   ```
+
 ---
 
 ## 📁 Project Structure

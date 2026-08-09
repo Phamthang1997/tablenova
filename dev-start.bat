@@ -3,7 +3,7 @@ set MINGW64=C:\Users\MeoMeo\AppData\Local\Microsoft\WinGet\Packages\BrechtSander
 set PATH=C:\Users\MeoMeo\.cargo\bin;%MINGW64%;C:\Program Files\nodejs;%PATH%
 
 REM Target dir NGOAI workspace -> rust-analyzer khong watch duoc
-set CARGO_TARGET_DIR=C:\cargo-targets\tableforge
+set CARGO_TARGET_DIR=C:\cargo-targets\tablenova
 
 echo === Rust: cargo --version ===
 cargo --version
