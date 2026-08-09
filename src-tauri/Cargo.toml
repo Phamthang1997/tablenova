@@ -60,10 +60,4 @@ keyring = { version = "4.1.6", features = ["windows-native-keyring-store"] }
 keyring = { version = "4.1.6", features = ["apple-native-keyring-store"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-<<<<<<< HEAD
-keyring = { version = "4.1.5", features = [
-    "zbus-secret-service-keyring-store",
-] }
-=======
 keyring = { version = "4.1.6", features = ["zbus-secret-service-keyring-store"] }
->>>>>>> cbc42ae (feat: translate installer to English, upgrade Rust dependencies, update NSIS bitmaps, fix dialog permissions and SQL row limit)
