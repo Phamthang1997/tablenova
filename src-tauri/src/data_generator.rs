@@ -2221,6 +2221,9 @@ pub async fn generate_data(
     // không thoả CommandArg — frontend luôn tạo kênh.
     on_progress: Channel<Value>,
 ) -> Result<Value, String> {
+    // Same reason as restore_backup: this runs on its own connection and would block on the locks
+    // an open manual transaction holds. See tx_session::reject_if_open.
+    crate::tx_session::reject_if_manual_or_open("sinh dữ liệu")?;
     let (conn, dialect) = active_conn(&state)?;
     if spec.tables.is_empty() {
         return Err("Chưa chọn bảng nào để sinh dữ liệu".to_string());

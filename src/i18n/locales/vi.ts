@@ -21,6 +21,35 @@ const vi: typeof en = {
     connectionError: 'Lỗi kết nối: {{message}}',
   },
 
+  docs: {
+    title: 'Tài liệu tra cứu Cơ sở dữ liệu',
+    searchPlaceholder: 'Tìm kiếm hàm SQL, lệnh Redis, câu lệnh PRAGMA...',
+    allEngines: 'Tất cả Database',
+    allCategories: 'Tất cả Phân loại',
+    noResults: 'Không tìm thấy tài liệu phù hợp với tìm kiếm.',
+    insertExample: 'Chèn ví dụ vào Editor',
+    copiedExample: 'Đã chép ví dụ!',
+    parameters: 'Tham số',
+    returns: 'Kiểu trả về',
+    timeComplexity: 'Độ phức tạp thời gian',
+    since: 'Hỗ trợ từ phiên bản',
+    officialDocs: 'Tài liệu chính thức',
+    examples: 'Ví dụ sử dụng',
+    catAll: 'Tất cả',
+    catDml: 'DML / Truy vấn',
+    catDdl: 'DDL / Cấu trúc',
+    catTransaction: 'Giao dịch (Transaction)',
+    catString: 'Chuỗi (String)',
+    catDatetime: 'Ngày tháng (Date/Time)',
+    catJson: 'Dữ liệu JSON',
+    catAggregate: 'Hàm gộp (Aggregate)',
+    catWindow: 'Hàm cửa sổ (Window)',
+    catMath: 'Toán học (Math)',
+    catSpatialVector: 'Vector & GIS',
+    catCommand: 'Lệnh Redis',
+    catPragma: 'PRAGMAs',
+  },
+
   language: {
     label: 'Ngôn ngữ',
     en: 'English',
@@ -347,6 +376,9 @@ const vi: typeof en = {
     warnRedisTls:
       'Redis <strong>từ xa</strong> nhưng TLS đang tắt — dữ liệu truyền không mã hoá (server phải hỗ trợ <strong>rediss://</strong>).',
     enableTls: 'Bật TLS',
+    warnRedisTlsOverSsh:
+      'Qua SSH tunnel, chứng chỉ được đối chiếu với <strong>127.0.0.1</strong> nên <strong>VERIFY_IDENTITY</strong> luôn thất bại. <strong>VERIFY_CA</strong> vẫn kiểm tra chuỗi chứng chỉ, chỉ bỏ qua tên miền.',
+    useVerifyCa: 'Dùng VERIFY_CA',
     warnSslDisabled:
       'Máy chủ <strong>từ xa</strong> nhưng SSL đang <strong>DISABLED</strong> — mật khẩu và dữ liệu truyền đi không được mã hoá.',
     enableSsl: 'Bật SSL',
@@ -367,6 +399,8 @@ const vi: typeof en = {
     tlsSwitchLabel: 'Mã hoá TLS (rediss://)',
     tlsSwitchHint:
       'Bắt buộc với Redis Cloud, ElastiCache in-transit encryption và hầu hết Redis từ xa.',
+    tlsSwitchModeHint:
+      'Mode <strong>{{mode}}</strong> — chứng chỉ CA, mTLS và mức kiểm tra nằm ở tab SSL.',
 
     serverSection: 'Máy chủ',
     serverDesc: 'Địa chỉ máy chủ và cổng kết nối tới {{db}}.',
@@ -411,6 +445,8 @@ const vi: typeof en = {
       'Riêng Postgres: nếu điền <strong>CA cert</strong> thì REQUIRED sẽ tự kiểm tra chứng chỉ như VERIFY_CA.',
     certHintMysql:
       'REQUIRED không kiểm tra chứng chỉ máy chủ, nên <strong>CA cert</strong> ở đây không có tác dụng.',
+    certHintRedis:
+      'REQUIRED bỏ qua hoàn toàn việc kiểm tra chứng chỉ, nên <strong>CA cert</strong> không có tác dụng — chỉ chứng chỉ và khoá client vẫn được gửi, phục vụ mTLS.',
 
     sshSection: 'SSH Tunnel',
     sshDesc:
@@ -2117,6 +2153,53 @@ const vi: typeof en = {
     inferString: 'chuỗi',
   },
 
+  // Chế độ transaction thủ công (TxControl.tsx). Trạng thái do Rust đẩy sang — xem tx_session.rs.
+  tx: {
+    auto: 'Tự động commit',
+    autoShort: 'Tự động',
+    manualShort: 'Thủ công',
+    manual: 'Commit thủ công',
+    modeTitle: 'Transaction',
+    autoDesc: 'Mỗi câu lệnh được ghi xuống ngay khi chạy.',
+    manualDesc: 'Câu lệnh được giữ lại cho đến khi bạn commit hoặc rollback.',
+    pending: '{{n}} câu',
+    idle: 'chưa có thay đổi',
+    commit: 'Commit',
+    rollback: 'Rollback',
+    aborted: 'đã huỷ',
+    abortedHint: 'Có câu lệnh lỗi. Trên PostgreSQL cả transaction hỏng theo — hãy rollback, hoặc rollback về một savepoint.',
+    implicitNotice: 'Câu DDL vừa rồi đã tự commit transaction (MySQL). Phần trước đó không rollback lại được nữa.',
+    isolation: 'Mức cô lập',
+    lockMode: 'Mức khoá',
+    isolationDefault: 'Mặc định của server',
+    isolationHint: 'Áp dụng cho transaction kế tiếp, không phải cái đang mở.',
+    readOnly: 'Transaction chỉ đọc',
+    readOnlyHint: 'Server sẽ từ chối mọi thao tác ghi cho đến khi transaction này kết thúc.',
+    savepoints: 'Savepoint',
+    savepointPlaceholder: 'tên savepoint',
+    savepointAdd: 'Thêm',
+    savepointRollback: 'Rollback về đây',
+    savepointsEmpty: 'Chưa có.',
+    pendingTitle: 'Đang có thay đổi chưa commit…',
+    ranTimes: 'Câu lệnh này đã chạy {{n}} lần',
+    staleBackend: 'Backend đang chạy không gửi danh sách câu lệnh — nó cũ hơn cửa sổ này. Hãy khởi động lại app (hoặc bản dev) để xem SQL.',
+    clickToManual: 'Chuyển sang commit thủ công',
+    clickToAuto: 'Chuyển về tự động commit',
+    clickToReview: 'Xem {{n}} câu lệnh đang chờ',
+    autoBlocked: 'Hãy commit hoặc huỷ bỏ các thay đổi đang chờ trước.',
+    pendingEmpty: 'Chưa có thay đổi — transaction đang mở nhưng mới chỉ chạy câu đọc.',
+    pendingTruncated: 'Hiển thị {{n}}/{{b}} câu; phần còn lại được bỏ qua để giữ bộ nhớ trong tầm.',
+    discard: 'Huỷ bỏ',
+    settings: 'Thiết lập',
+    longOpen: 'Đã mở {{n}} — transaction dài giữ khoá trên server.',
+    sqliteLockNote: 'Trên SQLite, transaction ghi khoá toàn bộ tệp database.',
+    closeTitle: 'Vẫn còn transaction đang mở',
+    closeMessage: 'Có {{n}} câu lệnh chưa được commit. Đóng bây giờ là rollback hết.',
+    closeCommit: 'Commit rồi đóng',
+    closeRollback: 'Rollback rồi đóng',
+    elapsedSec: '{{n}} giây',
+    elapsedMin: '{{n}} phút {{b}} giây',
+  },
   backend: {
     notConnected: 'Chưa kết nối CSDL',
     notConnectedRedis: 'Chưa kết nối Redis',
@@ -2183,6 +2266,11 @@ const vi: typeof en = {
     redisBlockingCmd: "Lệnh '{{a}}' cần kết nối riêng — dùng tab Pub/Sub hoặc Profiler",
     redisNoPagingForType: "Chưa hỗ trợ phân trang cho kiểu '{{a}}'",
     redisPushConnFailed: 'Không mở được kết nối riêng cho Redis: {{a}}',
+    mtlsIncomplete: 'mTLS cần cả chứng chỉ client và khoá client',
+    readCaCertFailed: "Không đọc được chứng chỉ CA '{{a}}': {{b}}",
+    readClientCertFailed: "Không đọc được chứng chỉ client '{{a}}': {{b}}",
+    readClientKeyFailed: "Không đọc được khoá client '{{a}}': {{b}}",
+    tlsConfigInvalid: 'Cấu hình TLS không hợp lệ: {{a}}',
     redisAnalysisSampled: 'Chỉ phân tích {{a}} key lấy mẫu — số liệu là ước lượng.',
     secretStoreOpenFailed: 'Không mở được kho bí mật của hệ điều hành: {{a}}',
     secretWriteFailed:
@@ -2239,6 +2327,18 @@ const vi: typeof en = {
     dataGenCycle: "Các bảng tham chiếu vòng: {{a}}. Hãy bật 'Tắt ràng buộc' khi sinh.",
     dataGenDeleteFailed: "Không xoá được dữ liệu cũ của bảng '{{a}}': {{b}}",
     dataGenInsertFailed: "Lỗi khi chèn dữ liệu vào bảng '{{a}}': {{b}}",
+    // tx_session.rs — chế độ transaction thủ công. Chuỗi phải TRÙNG TỪNG KÝ TỰ với literal
+    // trong Rust: __tests__/backendErrors.test.ts kiểm tra round-trip.
+    txNotOpen: 'Không có transaction nào đang mở',
+    txAborted: 'Transaction đã bị huỷ do lỗi trước đó, chỉ có thể rollback',
+    txPendingAutocommit: 'Transaction đang mở — hãy commit hoặc rollback trước khi bật lại auto-commit',
+    txOpenSwitchDb: 'Transaction đang mở — hãy commit hoặc rollback trước khi đổi database',
+    txOpenRestore: 'Đang bật commit thủ công — hãy kết thúc transaction và chuyển về tự động trước khi phục hồi dữ liệu',
+    txOpenGenerate: 'Đang bật commit thủ công — hãy kết thúc transaction và chuyển về tự động trước khi sinh dữ liệu',
+    txBadIsolation: 'Mức cô lập không hợp lệ cho hệ quản trị này',
+    txSessionNotReady: 'Phiên transaction không sẵn sàng',
+    txConnMismatch: 'Kết nối không khớp với phiên transaction',
+    txBadSavepointName: 'Tên savepoint chỉ gồm chữ, số và dấu gạch dưới, bắt đầu bằng chữ',
   },
 
   db: {

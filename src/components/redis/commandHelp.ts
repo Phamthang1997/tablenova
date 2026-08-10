@@ -7,9 +7,15 @@
 // Not exhaustive by design: it covers what a data-browsing session actually types. An unknown
 // command still runs — the hint simply stays empty.
 
+import { getDoc } from '../../utils/docsService';
+
 export interface CommandEntry {
   name: string;
   args: string;
+  description?: string;
+  complexity?: string;
+  since?: string;
+  examples?: string[];
 }
 
 export const COMMANDS: CommandEntry[] = [
@@ -212,5 +218,17 @@ export function matchCommands(input: string, limit = 8): CommandEntry[] {
 export function commandSyntax(input: string): CommandEntry | null {
   const text = input.trim().toUpperCase();
   if (!text) return null;
-  return BY_LENGTH.find((c) => text === c.name || text.startsWith(`${c.name} `)) ?? null;
+  const match = BY_LENGTH.find((c) => text === c.name || text.startsWith(`${c.name} `));
+  if (!match) return null;
+
+  const doc = getDoc(match.name, 'redis');
+  if (!doc) return match;
+
+  return {
+    ...match,
+    description: doc.summary || doc.description,
+    complexity: doc.complexity,
+    since: doc.since,
+    examples: doc.examples,
+  };
 }

@@ -138,6 +138,41 @@ export interface ConnectionStatus {
   tlsVersion: string;
 }
 
+/**
+ * Trạng thái transaction thủ công. Rust là nguồn sự thật duy nhất: frontend KHÔNG phân tích SQL
+ * để đoán transaction còn mở hay không — xem `src-tauri/src/tx_session.rs`. Mỗi lần trạng thái đổi,
+ * backend phát sự kiện `tx-state-changed` kèm đúng object này.
+ */
+export interface TxStatus {
+  autocommit: boolean;
+  open: boolean;
+  /** Postgres: một câu lỗi làm hỏng cả transaction, chỉ còn rollback được. */
+  aborted: boolean;
+  /** Số câu lệnh **ghi** trong transaction. Câu đọc (SELECT/SHOW/...) mở transaction nhưng
+   *  không được đếm — con số này hứa "bấy nhiêu thay đổi đang chờ commit". */
+  statements: number;
+  /** SQL của đúng những câu đó, để hộp thoại "thay đổi đang chờ" hiển thị. */
+  pendingSql: string[];
+  /** Nhật ký đã chạm trần kích thước -> `pendingSql` ít hơn `statements`, phải nói ra. */
+  sqlTruncated: boolean;
+  sinceMs: number;
+  isolation: string | null;
+  readOnly: boolean;
+  savepoints: string[];
+  /** Câu lệnh vừa chạy đã tự commit (DDL trên MySQL) -> bộ đếm về 0 không phải do người dùng. */
+  implicitCommit: boolean;
+}
+
+export const TX_EVENT = 'tx-state-changed';
+
+/** Mức cô lập theo từng dialect — twin của `isolation_allowed` trong tx_session.rs. */
+export const TX_ISOLATION_LEVELS: Record<string, string[]> = {
+  postgres: ['READ COMMITTED', 'REPEATABLE READ', 'SERIALIZABLE'],
+  mysql: ['READ UNCOMMITTED', 'READ COMMITTED', 'REPEATABLE READ', 'SERIALIZABLE'],
+  // SQLite không có isolation level; thứ tương ứng là mức khoá của BEGIN.
+  sqlite: ['DEFERRED', 'IMMEDIATE', 'EXCLUSIVE'],
+};
+
 export interface TableItem {
   name: string;
   type: 'table' | 'view';
@@ -277,7 +312,23 @@ export const dbHelper = {
             user: config.user,
             password: config.password,
             dbIndex: config.dbIndex ?? 0,
+            // TLS: `sslEnabled` là công tắc cũ (profile trước khi có tab SSL chỉ có nó),
+            // `sslMode` mới là thứ quyết định mức kiểm tra chứng chỉ — xem redis_ssl_mode
+            // trong redis_db.rs.
             sslEnabled: config.sslEnabled,
+            sslMode: config.sslMode,
+            sslKeyPath: config.sslKeyPath,
+            sslCertPath: config.sslCertPath,
+            sslCaPath: config.sslCaPath,
+            useSsh: config.sshEnabled,
+            sshHost: config.sshHost,
+            sshPort: config.sshPort,
+            sshUser: config.sshUser,
+            sshAuthType: config.sshAuthType,
+            sshPassword: config.sshPassword,
+            sshKeyPath: config.sshKeyPath,
+            sshKeyContent: config.sshKeyContent,
+            sshPassphrase: config.sshPassphrase,
           },
         });
         if (res.success) {
@@ -594,6 +645,38 @@ export const dbHelper = {
     // params: mảng giá trị đã ép kiểu (number/bool/null/string) để backend bind ở tầng driver
     // (parameterized query, chống SQL injection). Bỏ qua nếu không dùng Tham số Truy vấn.
     await invoke('execute_query_stream', { sql, queryId, channel, params: params ?? null });
+  },
+
+  // ---- Transaction thủ công ----
+  // Lỗi được ném ra (không nuốt) vì mọi thao tác ở đây đều do người dùng bấm trực tiếp:
+  // "Commit không thành công" mà im lặng là kiểu sai tệ nhất trong nhóm này.
+
+  async txStatus(): Promise<TxStatus> {
+    return await invoke<TxStatus>('tx_status');
+  },
+
+  async txSetAutocommit(enabled: boolean): Promise<TxStatus> {
+    return await invoke<TxStatus>('tx_set_autocommit', { enabled });
+  },
+
+  async txSetIsolation(level: string | null, readOnly?: boolean): Promise<TxStatus> {
+    return await invoke<TxStatus>('tx_set_isolation', { level, readOnly: readOnly ?? null });
+  },
+
+  async txCommit(): Promise<TxStatus> {
+    return await invoke<TxStatus>('tx_commit');
+  },
+
+  async txRollback(): Promise<TxStatus> {
+    return await invoke<TxStatus>('tx_rollback');
+  },
+
+  async txSavepoint(name: string): Promise<TxStatus> {
+    return await invoke<TxStatus>('tx_savepoint', { name });
+  },
+
+  async txRollbackTo(name: string): Promise<TxStatus> {
+    return await invoke<TxStatus>('tx_rollback_to', { name });
   },
 
   // Yêu cầu dừng một truy vấn đang stream. Bỏ qua nếu queryId không còn chạy.

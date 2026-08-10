@@ -158,9 +158,18 @@ export const Console: React.FC<ConsoleProps> = ({ storageScope, onError, onSelec
       </div>
 
       {syntax && (
-        <div style={{ fontSize: '10px', fontFamily: 'var(--win-font-mono)', color: 'var(--win-text-secondary)' }}>
-          <span style={{ color: 'var(--win-accent)', fontWeight: 700 }}>{syntax.name}</span>
-          {syntax.args ? ` ${syntax.args}` : ''}
+        <div style={{ fontSize: '10px', fontFamily: 'var(--win-font-mono)', color: 'var(--win-text-secondary)', background: 'var(--win-bg-subtle, rgba(0,0,0,0.15))', padding: '4px 8px', borderRadius: '4px' }}>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ color: 'var(--win-accent)', fontWeight: 700 }}>{syntax.name}</span>
+            {syntax.args ? <span>{syntax.args}</span> : null}
+            {syntax.complexity ? <span style={{ color: '#f59e0b', fontSize: '9px' }}>⏱ {syntax.complexity}</span> : null}
+            {syntax.since ? <span style={{ opacity: 0.7, fontSize: '9px' }}>({syntax.since})</span> : null}
+          </div>
+          {syntax.description ? (
+            <div style={{ fontSize: '10px', color: 'var(--win-text-disabled)', marginTop: '2px' }}>
+              {syntax.description}
+            </div>
+          ) : null}
         </div>
       )}
 

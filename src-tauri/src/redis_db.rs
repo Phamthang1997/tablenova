@@ -16,6 +16,7 @@ use crate::redis_cmds::{
     is_blocking_cmd, is_read_only_cmd, parse_version, select_db_arg, token_name, tokenize,
     version_at_least,
 };
+use crate::ssh_tunnel::SshTunnel;
 
 /// What the connected server can actually do. Probed once at connect instead of being
 /// discovered by trying a command and catching the error: the app must work against Redis
@@ -46,7 +47,13 @@ impl RedisCaps {
 
 pub struct RedisState {
     pub conn: Mutex<Option<MultiplexedConnection>>,
-    pub config: Mutex<Option<Value>>, // để reconnect khi đổi db index
+    /// Config used to reconnect (changing db index, opening a dedicated connection). This is
+    /// the **tunneled** config when SSH is on — host/port already rewritten to the forwarded
+    /// local port — so every reconnect reuses the tunnel that is alive in `ssh_tunnel`.
+    pub config: Mutex<Option<Value>>,
+    /// Live SSH tunnel of the current connection. It lives here because dropping it closes
+    /// the forwarded port, which would strand the connection and every reconnect after it.
+    pub ssh_tunnel: Mutex<Option<SshTunnel>>,
     pub db_index: Mutex<i64>,
     /// Read-only mode. Lives here — not only in the UI — because the CLI console sends
     /// arbitrary command text, so a gate in the WebView is a gate on the wrong side of the
@@ -60,6 +67,7 @@ impl RedisState {
         Self {
             conn: Mutex::new(None),
             config: Mutex::new(None),
+            ssh_tunnel: Mutex::new(None),
             db_index: Mutex::new(0),
             read_only: AtomicBool::new(false),
             caps: Mutex::new(RedisCaps::default()),
@@ -78,25 +86,125 @@ fn url_encode(s: &str) -> String {
     out
 }
 
+/// Resolves the UI's SSL fields into one of DISABLED / REQUIRED / VERIFY_CA / VERIFY_IDENTITY.
+///
+/// Profiles saved before the Redis SSL tab existed carry only the on/off switch (`sslEnabled`),
+/// and that switch meant `rediss://` with rustls' default full verification — so an absent mode
+/// maps to VERIFY_IDENTITY, not to the weakest mode. PREFERRED is not offered for Redis (there
+/// is no STARTTLS-style negotiation: a port either speaks TLS or it does not) but is mapped
+/// defensively in case a profile switched type and kept the field.
+fn redis_ssl_mode(config: &Value) -> String {
+    let enabled = config.get("sslEnabled").and_then(|v| v.as_bool()).unwrap_or(false)
+        || config.get("useSsl").and_then(|v| v.as_bool()).unwrap_or(false);
+    let mode = config.get("sslMode").and_then(|v| v.as_str()).unwrap_or("").trim();
+    match mode {
+        "" | "DISABLED" => if enabled { "VERIFY_IDENTITY" } else { "DISABLED" },
+        "PREFERRED" => "VERIFY_IDENTITY",
+        other => other,
+    }
+    .to_string()
+}
+
 fn build_redis_url(config: &Value, db_index: i64) -> String {
     let host = config.get("host").and_then(|v| v.as_str()).unwrap_or("127.0.0.1");
     let port = config.get("port").and_then(|v| v.as_u64()).unwrap_or(6379);
     let user = config.get("user").and_then(|v| v.as_str()).unwrap_or("");
     let password = config.get("password").and_then(|v| v.as_str()).unwrap_or("");
-    let ssl = config.get("sslEnabled").and_then(|v| v.as_bool()).unwrap_or(false)
-        || config.get("useSsl").and_then(|v| v.as_bool()).unwrap_or(false);
-    let scheme = if ssl { "rediss" } else { "redis" };
+    let mode = redis_ssl_mode(config);
+    let scheme = if mode == "DISABLED" { "redis" } else { "rediss" };
 
     let auth = if !password.is_empty() {
         format!("{}:{}@", url_encode(user), url_encode(password))
     } else {
         String::new()
     };
-    format!("{}://{}{}:{}/{}", scheme, auth, host, port, db_index)
+    let mut url = format!("{}://{}{}:{}/{}", scheme, auth, host, port, db_index);
+    // REQUIRED = mã hoá nhưng không kiểm tra chứng chỉ. redis-rs chỉ nhận cấu hình này qua
+    // fragment `#insecure` của URL; url_encode đã escape '#' trong user/password nên fragment
+    // này không thể bị chèn từ dữ liệu người dùng.
+    if mode == "REQUIRED" {
+        url.push_str("#insecure");
+    }
+    url
 }
 
-async fn make_conn(url: &str) -> Result<MultiplexedConnection, String> {
-    let client = redis::Client::open(url).map_err(|e| e.to_string())?;
+// Ba hàm đọc file PEM riêng thay vì một hàm có tham số "loại file": bảng backendErrors.ts dịch
+// cả khung câu, một tham số tiếng Việt lồng bên trong sẽ nằm nguyên trong câu đã dịch.
+fn read_ca_pem(path: &str) -> Result<Vec<u8>, String> {
+    std::fs::read(path).map_err(|e| format!("Không đọc được chứng chỉ CA '{}': {}", path, e))
+}
+
+fn read_client_cert_pem(path: &str) -> Result<Vec<u8>, String> {
+    std::fs::read(path).map_err(|e| format!("Không đọc được chứng chỉ client '{}': {}", path, e))
+}
+
+fn read_client_key_pem(path: &str) -> Result<Vec<u8>, String> {
+    std::fs::read(path).map_err(|e| format!("Không đọc được khoá client '{}': {}", path, e))
+}
+
+/// Reads the CA / client certificate files named by the SSL tab. Returns `None` when none are
+/// set, which is the signal to use the system trust store through the plain URL path.
+fn redis_tls_certs(config: &Value) -> Result<Option<redis::TlsCertificates>, String> {
+    let field = |key: &str| {
+        config
+            .get(key)
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+    };
+    let ca = field("sslCaPath");
+    let cert = field("sslCertPath");
+    let key = field("sslKeyPath");
+    if ca.is_none() && cert.is_none() && key.is_none() {
+        return Ok(None);
+    }
+
+    let client_tls = match (cert, key) {
+        (Some(c), Some(k)) => Some(redis::ClientTlsConfig {
+            client_cert: read_client_cert_pem(&c)?,
+            client_key: read_client_key_pem(&k)?,
+        }),
+        (None, None) => None,
+        // mTLS cần đủ cặp cert + key. Thiếu một nửa mà im lặng bỏ qua thì server từ chối kết nối
+        // với một lỗi TLS khó hiểu, trong khi nguyên nhân thật nằm ở form.
+        _ => return Err("mTLS cần cả chứng chỉ client và khoá client".to_string()),
+    };
+    let root_cert = match ca {
+        Some(p) => Some(read_ca_pem(&p)?),
+        None => None,
+    };
+    Ok(Some(redis::TlsCertificates { client_tls, root_cert }))
+}
+
+/// Builds the client for `config`. Shared by connect, the db-index switch and the dedicated
+/// Pub/Sub-Profiler connection so all three speak TLS the same way.
+fn make_client(config: &Value, db_index: i64) -> Result<redis::Client, String> {
+    let mode = redis_ssl_mode(config);
+    let url = build_redis_url(config, db_index);
+    let certs = if mode == "DISABLED" { None } else { redis_tls_certs(config)? };
+
+    let client = match certs {
+        Some(c) => redis::Client::build_with_tls(url, c)
+            .map_err(|e| format!("Cấu hình TLS không hợp lệ: {}", e))?,
+        None => redis::Client::open(url).map_err(|e| format!("Cấu hình TLS không hợp lệ: {}", e))?,
+    };
+
+    // VERIFY_CA = kiểm tra chuỗi chứng chỉ nhưng bỏ qua tên miền. Phải đặt SAU build_with_tls:
+    // hàm đó dựng lại tls_params từ các file chứng chỉ và sẽ xoá mất cờ nếu đặt trước.
+    // Đây cũng là mode duy nhất dùng được khi Redis đi qua SSH tunnel, vì lúc đó chứng chỉ
+    // được đối chiếu với 127.0.0.1.
+    if mode == "VERIFY_CA" {
+        let mut addr = client.get_connection_info().addr().clone();
+        addr.set_danger_accept_invalid_hostnames(true);
+        let info = client.get_connection_info().clone().set_addr(addr);
+        return redis::Client::open(info).map_err(|e| format!("Cấu hình TLS không hợp lệ: {}", e));
+    }
+    Ok(client)
+}
+
+async fn make_conn(config: &Value, db_index: i64) -> Result<MultiplexedConnection, String> {
+    let client = make_client(config, db_index)?;
     client
         .get_multiplexed_async_connection()
         .await
@@ -232,8 +340,11 @@ fn parse_info(text: &str) -> Value {
 #[tauri::command]
 pub async fn redis_connect(state: tauri::State<'_, crate::AppState>, config: Value) -> Result<Value, String> {
     let db_index = config.get("dbIndex").and_then(|v| v.as_i64()).unwrap_or(0);
-    let url = build_redis_url(&config, db_index);
-    let mut conn = make_conn(&url).await?;
+    // Mở SSH tunnel trước: conn_config trỏ về 127.0.0.1:<cổng chuyển tiếp>, và chính conn_config
+    // đó được lưu lại để mọi lần reconnect sau (đổi db index, Pub/Sub, Profiler) dùng lại đúng
+    // cổng này thay vì mở tunnel mới.
+    let (conn_config, tunnel) = crate::database::apply_ssh_tunnel(&config, 6379).await?;
+    let mut conn = make_conn(&conn_config, db_index).await?;
 
     // PING để chắc chắn kết nối/authenticate OK.
     let _: String = redis::cmd("PING").query_async(&mut conn).await.map_err(|e| format!("PING lỗi: {}", e))?;
@@ -247,7 +358,9 @@ pub async fn redis_connect(state: tauri::State<'_, crate::AppState>, config: Val
     }
     *state.redis.caps.lock().map_err(|e| e.to_string())? = caps.clone();
     state.redis.read_only.store(read_only, Ordering::Relaxed);
-    *state.redis.config.lock().map_err(|e| e.to_string())? = Some(config);
+    // Thay tunnel cũ (drop tunnel cũ nếu có) — kết nối cũ đã bị thay ở trên nên không còn ai dùng.
+    *state.redis.ssh_tunnel.lock().map_err(|e| e.to_string())? = tunnel;
+    *state.redis.config.lock().map_err(|e| e.to_string())? = Some(conn_config);
     *state.redis.db_index.lock().map_err(|e| e.to_string())? = db_index;
 
     Ok(json!({ "success": true, "dbIndex": db_index, "caps": caps.to_json(), "readOnly": read_only }))
@@ -265,6 +378,8 @@ pub async fn redis_set_read_only(state: tauri::State<'_, crate::AppState>, flag:
 pub async fn redis_disconnect(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
     *state.redis.conn.lock().map_err(|e| e.to_string())? = None;
     *state.redis.config.lock().map_err(|e| e.to_string())? = None;
+    // Đóng luôn tunnel: giữ lại thì cổng chuyển tiếp và phiên SSH vẫn sống dù đã ngắt Redis.
+    *state.redis.ssh_tunnel.lock().map_err(|e| e.to_string())? = None;
     Ok(json!({ "success": true }))
 }
 
@@ -279,8 +394,7 @@ pub async fn redis_select_db(state: tauri::State<'_, crate::AppState>, index: i6
 async fn select_db_inner(state: &crate::AppState, index: i64) -> Result<Value, String> {
     let config = state.redis.config.lock().map_err(|e| e.to_string())?.clone()
         .ok_or_else(|| "Chưa kết nối Redis".to_string())?;
-    let url = build_redis_url(&config, index);
-    let mut conn = make_conn(&url).await?;
+    let mut conn = make_conn(&config, index).await?;
     let _: String = redis::cmd("PING").query_async(&mut conn).await.map_err(|e| e.to_string())?;
     *state.redis.conn.lock().map_err(|e| e.to_string())? = Some(conn);
     *state.redis.db_index.lock().map_err(|e| e.to_string())? = index;
@@ -1247,8 +1361,8 @@ async fn dedicated_client(state: &crate::AppState) -> Result<redis::Client, Stri
         .clone()
         .ok_or_else(|| "Chưa kết nối Redis".to_string())?;
     let db_index = *state.redis.db_index.lock().map_err(|e| e.to_string())?;
-    let url = build_redis_url(&config, db_index);
-    redis::Client::open(url).map_err(|e| format!("Không mở được kết nối riêng cho Redis: {}", e))
+    make_client(&config, db_index)
+        .map_err(|e| format!("Không mở được kết nối riêng cho Redis: {}", e))
 }
 
 fn register_cancel(state: &crate::AppState, query_id: &str) -> Result<Arc<AtomicBool>, String> {

@@ -18,6 +18,8 @@ import { setupSqlHover, findTable, openTableTab } from '../sql/intellisense';
 import { defineSqlThemes, sqlThemeName } from '../sql/theme';
 import { SQL_EDITOR_OPTIONS } from '../sql/editorOptions';
 import { formatSql, minifySql } from '../sql/format';
+import { attachEditorInspection } from '../sql/inspection';
+import { registerSqlRenameProvider } from '../sql/refactor';
 import {
   statementAt, analyzeStatements, splitStatements, isSchemaChangingSql,
   findUnsafeStatements, type UnsafeStatement, type UnsafeStatementKind,
@@ -53,10 +55,11 @@ import { resolveResultEditability, type ResultEditability, type NotEditableReaso
   }
 };
 
-// Đăng ký smart completion + hover + theme (dùng chung, chỉ chạy 1 lần)
+// Đăng ký smart completion + hover + theme + rename provider (dùng chung, chỉ chạy 1 lần)
 setupSqlCompletion();
 setupSqlHover();
 defineSqlThemes();
+registerSqlRenameProvider(monaco);
 
 // Monaco đo bề rộng ký tự lúc khởi tạo. Nếu JetBrains Mono nạp xong SAU đó thì con trỏ
 // sẽ lệch khỏi chữ -> đo lại khi mọi font đã sẵn sàng.
@@ -799,6 +802,18 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       handleSaveQuery();
     });
 
+    // F2 / Context menu: Đổi tên Ký hiệu thông minh (Rename Symbol)
+    editor.addAction({
+      id: 'trigger-symbol-rename',
+      label: 'Rename Symbol',
+      keybindings: [monaco.KeyCode.F2],
+      contextMenuGroupId: '1_modification',
+      contextMenuOrder: 1.0,
+      run: (ed: any) => {
+        ed.trigger('keyboard', 'editor.action.rename', {});
+      },
+    });
+
     // F12 / context menu: mở bảng đang ở dưới con trỏ trong tab mới
     editor.addAction({
       id: 'open-table-under-cursor',
@@ -880,6 +895,10 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
 
     registerSqlFormatter(dbType);
     void catalog.getTables(); // nạp nền catalog cho autocomplete/hover
+    const cleanupInspection = attachEditorInspection(monaco, editor);
+    editor.onDidDispose(() => {
+      cleanupInspection();
+    });
 
     setTimeout(() => {
       editor.layout();

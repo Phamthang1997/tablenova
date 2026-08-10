@@ -4,12 +4,13 @@ import { useTranslation } from 'react-i18next';
 import {
   Minus, Square, X, Plus, Unplug, FileCode, HardDriveDownload, HardDriveUpload,
   PanelLeft, SunMoon, RotateCw, Info, Keyboard, Check, Eye, Sliders, Database,
-  GitBranch, PanelBottom, Bot, Lock, LockOpen, ChevronUp, ChevronRight, ChevronLeft, Trash2, BarChart3,
+  GitBranch, PanelBottom, Bot, Lock, LockOpen, ChevronUp, ChevronRight, ChevronLeft, Trash2, BarChart3, BookOpen,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { SUPPORTED_LANGUAGES, currentLanguage } from '../i18n';
 import { DbConnectionStatusPill } from './DbConnectionStatusPill';
+import { TxControl } from './TxControl';
 import { ConnectionInfoPopover } from './ConnectionInfoPopover';
 import { dbHelper } from '../utils/dbHelper';
 import type { ConnectionStatus } from '../utils/dbHelper';
@@ -49,6 +50,7 @@ interface TitleBarProps {
   onToggleAiAssistant?: () => void;
   onDatabaseChanged?: (dbName: string) => void;
   onOpenAllDbStats?: () => void;
+  onOpenDocs?: () => void;
 }
 
 export const TitleBar: React.FC<TitleBarProps> = ({
@@ -77,6 +79,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
   onToggleAiAssistant,
   onDatabaseChanged,
   onOpenAllDbStats,
+  onOpenDocs,
 }) => {
   const { t, i18n } = useTranslation();
   // Cascading menu: the root panel only lists category names; the items of a
@@ -315,6 +318,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
     {
       title: t('titlebar.menuHelp'),
       items: [
+        { label: t('docs.title'), Icon: BookOpen, onClick: onOpenDocs, shortcut: 'F1' },
         { label: t('titlebar.shortcuts'), Icon: Keyboard, onClick: onShowShortcuts },
         { label: t('titlebar.about'), Icon: Info, onClick: onShowAbout, separatorBefore: true },
       ],
@@ -517,6 +521,21 @@ export const TitleBar: React.FC<TitleBarProps> = ({
   const rightTools: Tool[] = [
     ...(menuOnRight ? [menuTool] : []),
     {
+      key: 'docs',
+      offline: true,
+      el: (
+        <button
+          className="tb-capsule-btn"
+          onClick={onOpenDocs}
+          style={{ padding: '0 8px', display: 'inline-flex', alignItems: 'center', gap: '5px' }}
+          title={t('docs.title') + ' (F1)'}
+        >
+          <BookOpen size={13} style={{ color: 'var(--win-accent)' }} />
+          <span style={{ fontSize: '11px', fontWeight: 600 }}>Docs</span>
+        </button>
+      ),
+    },
+    {
       key: 'about',
       offline: true,
       el: (
@@ -634,6 +653,12 @@ export const TitleBar: React.FC<TitleBarProps> = ({
 
       {/* Right Section: Unified Right Toolbar Capsule + Window Controls */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0, ...({ WebkitAppRegion: 'no-drag' } as any) }}>
+        {/* Transaction thuộc về kết nối (một connection cho cả app) nên control nằm ở đây,
+            không ở toolbar của từng tab. Xem TxControl.tsx. */}
+        <TxControl
+          connected={hasConnection}
+          dbType={(connStatus?.dbType || activeConnectionInfo?.dbType || '').toLowerCase()}
+        />
         {renderCapsule(rightTools)}
 
         {!isMac && (
