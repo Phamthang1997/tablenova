@@ -310,6 +310,12 @@ fn spawn_iam_refresh(app: tauri::AppHandle, db_type: String, config: Value, gene
             if state.conn_generation.load(Ordering::SeqCst) != generation {
                 break; // đã connect/disconnect khác -> dừng
             }
+            // Replacing the pool would drop the connection an open manual transaction is pinned to,
+            // silently losing everything the user has not committed. The token is still valid for
+            // ~2 more minutes; wait for the next cycle instead.
+            if crate::tx_session::is_open() {
+                continue;
+            }
             match build_iam_conn(&db_type, &config).await {
                 Ok(new_conn) => {
                     if let Ok(mut m) = state.db_manager.lock() {
@@ -328,6 +334,13 @@ fn spawn_iam_refresh(app: tauri::AppHandle, db_type: String, config: Value, gene
 #[tauri::command]
 pub async fn connect_db(app: tauri::AppHandle, state: tauri::State<'_, crate::AppState>, config: Value) -> Result<Value, String> {
     let db_type = config.get("dbType").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+    // The old connection is about to be replaced: roll back and clear any manual transaction on it
+    // first. Isolation levels are dialect-specific, so the whole transaction preference resets.
+    {
+        let prev = state.db_manager.lock().ok().and_then(|m| m.connection.clone());
+        crate::tx_session::reset(prev.as_ref()).await;
+    }
 
     // Mỗi lần connect tăng generation -> vô hiệu task refresh IAM của kết nối trước đó
     let generation = state.conn_generation.fetch_add(1, Ordering::SeqCst) + 1;
@@ -377,6 +390,12 @@ pub async fn connect_db(app: tauri::AppHandle, state: tauri::State<'_, crate::Ap
 
 #[tauri::command]
 pub async fn disconnect_db(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
+    // Roll back an open manual transaction while the connection still exists. Dropping the pool
+    // with a transaction open leaves the server holding its locks until it notices the socket died.
+    {
+        let prev = state.db_manager.lock().ok().and_then(|m| m.connection.clone());
+        crate::tx_session::reset(prev.as_ref()).await;
+    }
     // Vô hiệu task refresh IAM (nếu có)
     state.conn_generation.fetch_add(1, Ordering::SeqCst);
     let mut manager = state.db_manager.lock().map_err(|e| e.to_string())?;
@@ -1286,7 +1305,7 @@ fn matches_delimiter(chars: &[char], i: usize, delim: &[char]) -> bool {
 ///     `-- Dumping data for table `store`` + newline + `LOCK TABLES `store` WRITE`
 /// là MỘT câu lệnh bắt đầu bằng "--". Phân loại theo text thô sẽ nhận sai hết:
 /// LOCK/UNLOCK TABLES không bị bỏ, `SET`/`USE` không được coi là lệnh cấp phiên.
-fn strip_leading_comments(stmt: &str) -> &str {
+pub(crate) fn strip_leading_comments(stmt: &str) -> &str {
     let b = stmt.as_bytes();
     let mut i = 0usize;
     loop {
@@ -1612,205 +1631,249 @@ async fn stream_one_statement(
     channel: &Channel<Value>,
     cancel: &Arc<AtomicBool>,
 ) -> Result<(), String> {
+    // Manual transaction mode: this is the SQL editor's path, so it is the one where the user
+    // actually types BEGIN/COMMIT. See tx_session.rs.
+    if crate::tx_session::should_route(conn, sql) {
+        return crate::tx_session::run_stream(conn, sql, params, stmt_index, channel, cancel).await;
+    }
     match conn {
-        DbConnection::Sqlite(conn_arc) => {
-            // rusqlite là đồng bộ -> chạy trong spawn_blocking để không chặn runtime async.
-            let conn_arc = conn_arc.clone();
-            let channel = channel.clone();
-            let cancel = cancel.clone();
-            let sql = sql.to_string();
-            let sqlite_params: Vec<rusqlite::types::Value> = params.iter().map(json_to_sqlite_value).collect();
-            tokio::task::spawn_blocking(move || -> Result<(), String> {
-                let c = conn_arc.lock().map_err(|e| e.to_string())?;
-                let mut stmt = c.prepare(&sql).map_err(|e| e.to_string())?;
-                let col_count = stmt.column_count();
-                // Câu lệnh không trả về cột (INSERT/UPDATE/DELETE/DDL...) -> execute và báo số dòng ảnh hưởng.
-                if col_count == 0 {
-                    let affected = stmt
-                        .execute(rusqlite::params_from_iter(sqlite_params.iter()))
-                        .map_err(|e| e.to_string())?;
-                    let _ = channel.send(json!({ "type": "affected", "stmtIndex": stmt_index, "query": sql, "affected": affected }));
-                    return Ok(());
-                }
-                let mut columns = Vec::with_capacity(col_count);
-                for i in 0..col_count {
-                    columns.push(stmt.column_name(i).map_err(|e| e.to_string())?.to_string());
-                }
-                uniquify_columns(&mut columns);
-                let _ = channel.send(json!({ "type": "columns", "stmtIndex": stmt_index, "query": sql, "columns": columns }));
-
-                let mut rows = stmt.query(rusqlite::params_from_iter(sqlite_params.iter())).map_err(|e| e.to_string())?;
-                let mut batch: Vec<Value> = Vec::with_capacity(STREAM_BATCH);
-                loop {
-                    if cancel.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    match rows.next().map_err(|e| e.to_string())? {
-                        Some(row) => {
-                            let mut map = serde_json::Map::new();
-                            for i in 0..col_count {
-                                let val: Value = match row.get_ref(i) {
-                                    Ok(rusqlite::types::ValueRef::Null) => Value::Null,
-                                    Ok(rusqlite::types::ValueRef::Integer(n)) => json!(n),
-                                    Ok(rusqlite::types::ValueRef::Real(r)) => json!(r),
-                                    Ok(rusqlite::types::ValueRef::Text(t)) => json!(String::from_utf8_lossy(t)),
-                                    Ok(rusqlite::types::ValueRef::Blob(b)) => json!(b),
-                                    _ => Value::Null,
-                                };
-                                map.insert(columns[i].clone(), val);
-                            }
-                            batch.push(Value::Object(map));
-                            if batch.len() >= STREAM_BATCH {
-                                let _ = channel.send(json!({ "type": "rows", "stmtIndex": stmt_index, "rows": std::mem::take(&mut batch) }));
-                            }
-                        }
-                        None => break,
-                    }
-                }
-                if !batch.is_empty() {
-                    let _ = channel.send(json!({ "type": "rows", "stmtIndex": stmt_index, "rows": batch }));
-                }
-                Ok(())
-            })
-            .await
-            .map_err(|e| e.to_string())?
-        }
+        DbConnection::Sqlite(conn_arc) => sqlite_stream(conn_arc, sql, params, stmt_index, channel, cancel).await,
         DbConnection::Postgres(pool) => {
-            let trimmed = sql.trim().to_uppercase();
-            if trimmed.starts_with("USE ") || trimmed.starts_with("CREATE DATABASE") {
-                let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
-                sqlx::query(sqlx::AssertSqlSafe(sql.to_string())).execute(&mut *conn).await.map_err(|e| e.to_string())?;
-                let _ = channel.send(json!({ "type": "columns", "stmtIndex": stmt_index, "query": sql, "columns": Vec::<String>::new() }));
-                return Ok(());
-            }
             let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
-            // Dò xem câu lệnh có trả về cột không (qua prepared statement). Nếu không -> execute + báo affected.
-            let returns_rows = match (&mut *conn).prepare(sqlx::AssertSqlSafe(sql.to_string()).into_sql_str()).await {
-                Ok(st) => !st.columns().is_empty(),
-                Err(_) => true, // prepare lỗi -> cứ thử fetch theo đường cũ
-            };
-            if !returns_rows {
-                let r = bind_pg_params(sqlx::query(sqlx::AssertSqlSafe(sql.to_string())), params)
-                    .execute(&mut *conn)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                let _ = channel.send(json!({ "type": "affected", "stmtIndex": stmt_index, "query": sql, "affected": r.rows_affected() }));
-                return Ok(());
-            }
-            let mut columns: Vec<String> = Vec::new();
-            let pg_query = bind_pg_params(sqlx::query(sqlx::AssertSqlSafe(sql.to_string())), params);
-            let mut stream = pg_query.fetch(&mut *conn);
-            let mut batch: Vec<Value> = Vec::with_capacity(STREAM_BATCH);
-            while let Some(r) = stream.try_next().await.map_err(|e| e.to_string())? {
-                if cancel.load(Ordering::Relaxed) {
-                    break;
-                }
-                if columns.is_empty() {
-                    for col in r.columns() {
-                        columns.push(col.name().to_string());
-                    }
-                    uniquify_columns(&mut columns);
-                    let _ = channel.send(json!({ "type": "columns", "stmtIndex": stmt_index, "query": sql, "columns": columns.clone() }));
-                }
-                let mut map = serde_json::Map::new();
-                // Read by index: `columns` now holds the de-duplicated names, and reading by
-                // name would hand back the first same-named column's value for every repeat.
-                for (i, col_name) in columns.iter().enumerate() {
-                    let val: Value = decode_pg_cell!(&r, i);
-                    map.insert(col_name.clone(), val);
-                }
-                batch.push(Value::Object(map));
-                if batch.len() >= STREAM_BATCH {
-                    let _ = channel.send(json!({ "type": "rows", "stmtIndex": stmt_index, "rows": std::mem::take(&mut batch) }));
-                }
-            }
-            if !batch.is_empty() {
-                let _ = channel.send(json!({ "type": "rows", "stmtIndex": stmt_index, "rows": batch }));
-            }
-            if columns.is_empty() {
-                if let Ok(stmt) = pool.prepare(sqlx::AssertSqlSafe(sql.to_string()).into_sql_str()).await {
-                    for col in stmt.columns() {
-                        columns.push(col.name().to_string());
-                    }
-                    uniquify_columns(&mut columns);
-                }
-                let _ = channel.send(json!({ "type": "columns", "stmtIndex": stmt_index, "query": sql, "columns": columns }));
-            }
-            Ok(())
+            pg_stream(&mut conn, sql, params, stmt_index, channel, cancel).await
         }
         DbConnection::Mysql(pool) => {
-            let trimmed = sql.trim().to_uppercase();
-            if trimmed.starts_with("USE ") || trimmed.starts_with("CREATE DATABASE") {
-                let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
-                sqlx::query(sqlx::AssertSqlSafe(sql.to_string())).execute(&mut *conn).await.map_err(|e| e.to_string())?;
-                let _ = channel.send(json!({ "type": "columns", "stmtIndex": stmt_index, "query": sql, "columns": Vec::<String>::new() }));
-                return Ok(());
-            }
             let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
-            // Dò xem câu lệnh có trả về cột không. Nếu không -> execute + báo affected.
-            let returns_rows = match (&mut *conn).prepare(sqlx::AssertSqlSafe(sql.to_string()).into_sql_str()).await {
-                Ok(st) => !st.columns().is_empty(),
-                Err(_) => {
-                    // Không prepare được (CREATE/DROP TRIGGER|PROCEDURE|FUNCTION|EVENT -> lỗi 1295,
-                    // hoặc cú pháp lỗi). Chạy bằng text protocol: đúng cho DDL, còn cú pháp sai thì
-                    // lỗi thật của server được trả về ở đây.
-                    let r = sqlx::raw_sql(sqlx::AssertSqlSafe(sql.to_string()))
-                        .execute(&mut *conn)
-                        .await
-                        .map_err(|e| e.to_string())?;
-                    let _ = channel.send(json!({ "type": "affected", "stmtIndex": stmt_index, "query": sql, "affected": r.rows_affected() }));
-                    return Ok(());
-                }
-            };
-            if !returns_rows {
-                let r = bind_mysql_params(sqlx::query(sqlx::AssertSqlSafe(sql.to_string())), params)
-                    .execute(&mut *conn)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                let _ = channel.send(json!({ "type": "affected", "stmtIndex": stmt_index, "query": sql, "affected": r.rows_affected() }));
-                return Ok(());
-            }
-            let mut columns: Vec<String> = Vec::new();
-            let mysql_query = bind_mysql_params(sqlx::query(sqlx::AssertSqlSafe(sql.to_string())), params);
-            let mut stream = mysql_query.fetch(&mut *conn);
-            let mut batch: Vec<Value> = Vec::with_capacity(STREAM_BATCH);
-            while let Some(r) = stream.try_next().await.map_err(|e| e.to_string())? {
-                if cancel.load(Ordering::Relaxed) {
-                    break;
-                }
-                if columns.is_empty() {
-                    for col in r.columns() {
-                        columns.push(col.name().to_string());
-                    }
-                    uniquify_columns(&mut columns);
-                    let _ = channel.send(json!({ "type": "columns", "stmtIndex": stmt_index, "query": sql, "columns": columns.clone() }));
-                }
-                let mut map = serde_json::Map::new();
-                // Read by index — see the Postgres branch above.
-                for (i, col_name) in columns.iter().enumerate() {
-                    let val: Value = decode_mysql_cell!(&r, i);
-                    map.insert(col_name.clone(), val);
-                }
-                batch.push(Value::Object(map));
-                if batch.len() >= STREAM_BATCH {
-                    let _ = channel.send(json!({ "type": "rows", "stmtIndex": stmt_index, "rows": std::mem::take(&mut batch) }));
-                }
-            }
-            if !batch.is_empty() {
-                let _ = channel.send(json!({ "type": "rows", "stmtIndex": stmt_index, "rows": batch }));
-            }
-            if columns.is_empty() {
-                if let Ok(stmt) = pool.prepare(sqlx::AssertSqlSafe(sql.to_string()).into_sql_str()).await {
-                    for col in stmt.columns() {
-                        columns.push(col.name().to_string());
-                    }
-                    uniquify_columns(&mut columns);
-                }
-                let _ = channel.send(json!({ "type": "columns", "stmtIndex": stmt_index, "query": sql, "columns": columns }));
-            }
-            Ok(())
+            mysql_stream(&mut conn, sql, params, stmt_index, channel, cancel).await
         }
     }
+}
+
+// Split out of `stream_one_statement` so the pinned transaction session runs the same body.
+// SQLite needs no pinning — `DbConnection::Sqlite` is one shared handle already.
+
+pub(crate) async fn sqlite_stream(
+    conn_arc: &Arc<Mutex<SqliteConnection>>,
+    sql: &str,
+    params: &[Value],
+    stmt_index: usize,
+    channel: &Channel<Value>,
+    cancel: &Arc<AtomicBool>,
+) -> Result<(), String> {
+    // rusqlite là đồng bộ -> chạy trong spawn_blocking để không chặn runtime async.
+    let conn_arc = conn_arc.clone();
+    let channel = channel.clone();
+    let cancel = cancel.clone();
+    let sql = sql.to_string();
+    let sqlite_params: Vec<rusqlite::types::Value> = params.iter().map(json_to_sqlite_value).collect();
+    tokio::task::spawn_blocking(move || -> Result<(), String> {
+        let c = conn_arc.lock().map_err(|e| e.to_string())?;
+        let mut stmt = c.prepare(&sql).map_err(|e| e.to_string())?;
+        let col_count = stmt.column_count();
+        // Câu lệnh không trả về cột (INSERT/UPDATE/DELETE/DDL...) -> execute và báo số dòng ảnh hưởng.
+        if col_count == 0 {
+            let affected = stmt
+                .execute(rusqlite::params_from_iter(sqlite_params.iter()))
+                .map_err(|e| e.to_string())?;
+            let _ = channel.send(json!({ "type": "affected", "stmtIndex": stmt_index, "query": sql, "affected": affected }));
+            return Ok(());
+        }
+        let mut columns = Vec::with_capacity(col_count);
+        for i in 0..col_count {
+            columns.push(stmt.column_name(i).map_err(|e| e.to_string())?.to_string());
+        }
+        uniquify_columns(&mut columns);
+        let _ = channel.send(json!({ "type": "columns", "stmtIndex": stmt_index, "query": sql, "columns": columns }));
+
+        let mut rows = stmt.query(rusqlite::params_from_iter(sqlite_params.iter())).map_err(|e| e.to_string())?;
+        let mut batch: Vec<Value> = Vec::with_capacity(STREAM_BATCH);
+        loop {
+            if cancel.load(Ordering::Relaxed) {
+                break;
+            }
+            match rows.next().map_err(|e| e.to_string())? {
+                Some(row) => {
+                    let mut map = serde_json::Map::new();
+                    for i in 0..col_count {
+                        let val: Value = match row.get_ref(i) {
+                            Ok(rusqlite::types::ValueRef::Null) => Value::Null,
+                            Ok(rusqlite::types::ValueRef::Integer(n)) => json!(n),
+                            Ok(rusqlite::types::ValueRef::Real(r)) => json!(r),
+                            Ok(rusqlite::types::ValueRef::Text(t)) => json!(String::from_utf8_lossy(t)),
+                            Ok(rusqlite::types::ValueRef::Blob(b)) => json!(b),
+                            _ => Value::Null,
+                        };
+                        map.insert(columns[i].clone(), val);
+                    }
+                    batch.push(Value::Object(map));
+                    if batch.len() >= STREAM_BATCH {
+                        let _ = channel.send(json!({ "type": "rows", "stmtIndex": stmt_index, "rows": std::mem::take(&mut batch) }));
+                    }
+                }
+                None => break,
+            }
+        }
+        if !batch.is_empty() {
+            let _ = channel.send(json!({ "type": "rows", "stmtIndex": stmt_index, "rows": batch }));
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+pub(crate) async fn pg_stream(
+    conn: &mut sqlx::PgConnection,
+    sql: &str,
+    params: &[Value],
+    stmt_index: usize,
+    channel: &Channel<Value>,
+    cancel: &Arc<AtomicBool>,
+) -> Result<(), String> {
+    let trimmed = sql.trim().to_uppercase();
+    if trimmed.starts_with("USE ") || trimmed.starts_with("CREATE DATABASE") {
+        sqlx::query(sqlx::AssertSqlSafe(sql.to_string())).execute(&mut *conn).await.map_err(|e| e.to_string())?;
+        let _ = channel.send(json!({ "type": "columns", "stmtIndex": stmt_index, "query": sql, "columns": Vec::<String>::new() }));
+        return Ok(());
+    }
+    // Dò xem câu lệnh có trả về cột không (qua prepared statement). Nếu không -> execute + báo affected.
+    let returns_rows = match (&mut *conn).prepare(sqlx::AssertSqlSafe(sql.to_string()).into_sql_str()).await {
+        Ok(st) => !st.columns().is_empty(),
+        Err(_) => true, // prepare lỗi -> cứ thử fetch theo đường cũ
+    };
+    if !returns_rows {
+        let r = bind_pg_params(sqlx::query(sqlx::AssertSqlSafe(sql.to_string())), params)
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| e.to_string())?;
+        let _ = channel.send(json!({ "type": "affected", "stmtIndex": stmt_index, "query": sql, "affected": r.rows_affected() }));
+        return Ok(());
+    }
+    let mut columns: Vec<String> = Vec::new();
+    let pg_query = bind_pg_params(sqlx::query(sqlx::AssertSqlSafe(sql.to_string())), params);
+    let mut stream = pg_query.fetch(&mut *conn);
+    let mut batch: Vec<Value> = Vec::with_capacity(STREAM_BATCH);
+    while let Some(r) = stream.try_next().await.map_err(|e| e.to_string())? {
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
+        if columns.is_empty() {
+            for col in r.columns() {
+                columns.push(col.name().to_string());
+            }
+            uniquify_columns(&mut columns);
+            let _ = channel.send(json!({ "type": "columns", "stmtIndex": stmt_index, "query": sql, "columns": columns.clone() }));
+        }
+        let mut map = serde_json::Map::new();
+        // Read by index: `columns` now holds the de-duplicated names, and reading by
+        // name would hand back the first same-named column's value for every repeat.
+        for (i, col_name) in columns.iter().enumerate() {
+            let val: Value = decode_pg_cell!(&r, i);
+            map.insert(col_name.clone(), val);
+        }
+        batch.push(Value::Object(map));
+        if batch.len() >= STREAM_BATCH {
+            let _ = channel.send(json!({ "type": "rows", "stmtIndex": stmt_index, "rows": std::mem::take(&mut batch) }));
+        }
+    }
+    // The row stream borrows the connection; it must be released before the connection can
+    // be used again for the column-name probe below.
+    drop(stream);
+    if !batch.is_empty() {
+        let _ = channel.send(json!({ "type": "rows", "stmtIndex": stmt_index, "rows": batch }));
+    }
+    if columns.is_empty() {
+        // Probe on THIS connection: inside a manual transaction a second pooled connection
+        // would block on the locks this one holds.
+        if let Ok(stmt) = (&mut *conn).prepare(sqlx::AssertSqlSafe(sql.to_string()).into_sql_str()).await {
+            for col in stmt.columns() {
+                columns.push(col.name().to_string());
+            }
+            uniquify_columns(&mut columns);
+        }
+        let _ = channel.send(json!({ "type": "columns", "stmtIndex": stmt_index, "query": sql, "columns": columns }));
+    }
+    Ok(())
+}
+
+pub(crate) async fn mysql_stream(
+    conn: &mut sqlx::MySqlConnection,
+    sql: &str,
+    params: &[Value],
+    stmt_index: usize,
+    channel: &Channel<Value>,
+    cancel: &Arc<AtomicBool>,
+) -> Result<(), String> {
+    let trimmed = sql.trim().to_uppercase();
+    if trimmed.starts_with("USE ") || trimmed.starts_with("CREATE DATABASE") {
+        sqlx::query(sqlx::AssertSqlSafe(sql.to_string())).execute(&mut *conn).await.map_err(|e| e.to_string())?;
+        let _ = channel.send(json!({ "type": "columns", "stmtIndex": stmt_index, "query": sql, "columns": Vec::<String>::new() }));
+        return Ok(());
+    }
+    // Dò xem câu lệnh có trả về cột không. Nếu không -> execute + báo affected.
+    let returns_rows = match (&mut *conn).prepare(sqlx::AssertSqlSafe(sql.to_string()).into_sql_str()).await {
+        Ok(st) => !st.columns().is_empty(),
+        Err(_) => {
+            // Không prepare được (CREATE/DROP TRIGGER|PROCEDURE|FUNCTION|EVENT -> lỗi 1295,
+            // hoặc cú pháp lỗi). Chạy bằng text protocol: đúng cho DDL, còn cú pháp sai thì
+            // lỗi thật của server được trả về ở đây.
+            let r = sqlx::raw_sql(sqlx::AssertSqlSafe(sql.to_string()))
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| e.to_string())?;
+            let _ = channel.send(json!({ "type": "affected", "stmtIndex": stmt_index, "query": sql, "affected": r.rows_affected() }));
+            return Ok(());
+        }
+    };
+    if !returns_rows {
+        let r = bind_mysql_params(sqlx::query(sqlx::AssertSqlSafe(sql.to_string())), params)
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| e.to_string())?;
+        let _ = channel.send(json!({ "type": "affected", "stmtIndex": stmt_index, "query": sql, "affected": r.rows_affected() }));
+        return Ok(());
+    }
+    let mut columns: Vec<String> = Vec::new();
+    let mysql_query = bind_mysql_params(sqlx::query(sqlx::AssertSqlSafe(sql.to_string())), params);
+    let mut stream = mysql_query.fetch(&mut *conn);
+    let mut batch: Vec<Value> = Vec::with_capacity(STREAM_BATCH);
+    while let Some(r) = stream.try_next().await.map_err(|e| e.to_string())? {
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
+        if columns.is_empty() {
+            for col in r.columns() {
+                columns.push(col.name().to_string());
+            }
+            uniquify_columns(&mut columns);
+            let _ = channel.send(json!({ "type": "columns", "stmtIndex": stmt_index, "query": sql, "columns": columns.clone() }));
+        }
+        let mut map = serde_json::Map::new();
+        // Read by index — see the Postgres branch above.
+        for (i, col_name) in columns.iter().enumerate() {
+            let val: Value = decode_mysql_cell!(&r, i);
+            map.insert(col_name.clone(), val);
+        }
+        batch.push(Value::Object(map));
+        if batch.len() >= STREAM_BATCH {
+            let _ = channel.send(json!({ "type": "rows", "stmtIndex": stmt_index, "rows": std::mem::take(&mut batch) }));
+        }
+    }
+    // See the Postgres branch: the stream borrows the connection.
+    drop(stream);
+    if !batch.is_empty() {
+        let _ = channel.send(json!({ "type": "rows", "stmtIndex": stmt_index, "rows": batch }));
+    }
+    if columns.is_empty() {
+        if let Ok(stmt) = (&mut *conn).prepare(sqlx::AssertSqlSafe(sql.to_string()).into_sql_str()).await {
+            for col in stmt.columns() {
+                columns.push(col.name().to_string());
+            }
+            uniquify_columns(&mut columns);
+        }
+        let _ = channel.send(json!({ "type": "columns", "stmtIndex": stmt_index, "query": sql, "columns": columns }));
+    }
+    Ok(())
 }
 
 // Lấy danh sách cột khóa chính của một bảng theo từng dialect (hỗ trợ cả khóa chính tổ hợp).
@@ -1982,9 +2045,39 @@ pub async fn commit_changes(state: tauri::State<'_, crate::AppState>, payload: V
         return Ok(json!({ "success": true, "preview": true, "sqls": sqls }));
     }
 
-    for sql in sqls {
-        execute_raw_sql_generic(&conn_type, sql).await?;
+    // Manual-commit mode: join the user's transaction instead of opening a nested one. They own the
+    // commit point, so a failure here leaves the earlier statements pending for them to roll back —
+    // which is the whole reason they turned auto-commit off.
+    //
+    // `use_session()`, NOT `is_open()`: the transaction does not exist until its first statement,
+    // and pressing Save right after switching to manual is exactly that case. Checking `is_open()`
+    // sent it down the auto-commit branch below and committed it.
+    if crate::tx_session::use_session() {
+        for sql in sqls {
+            execute_raw_sql_generic(&conn_type, sql).await?;
+        }
+        return Ok(json!({ "success": true }));
     }
+
+    // Auto-commit: the whole grid commit is one transaction, all or nothing.
+    //
+    // It used to run the statements one by one through `execute_raw_sql_generic`, which acquires a
+    // NEW pooled connection per call — so a `BEGIN` sent that way would have landed on a different
+    // session than the INSERT/UPDATEs and done nothing. `Exec` holds ONE connection for the whole
+    // batch, which is what makes the rollback below real.
+    //
+    // Only DML gets built above. Do not add DDL to this batch: MySQL commits implicitly on DDL, so
+    // the rollback would no longer undo everything.
+    let mut exec = Exec::acquire(&conn_type).await?;
+    let begin = if matches!(&conn_type, DbConnection::Mysql(_)) { "START TRANSACTION;" } else { "BEGIN;" };
+    exec.run(begin.to_string()).await?;
+    for sql in sqls {
+        if let Err(e) = exec.run(sql.clone()).await {
+            exec.try_run("ROLLBACK;").await;
+            return Err(format!("Lỗi tại câu lệnh:\n{}\n\nChi tiết: {}", sql, e));
+        }
+    }
+    exec.run("COMMIT;".to_string()).await?;
 
     Ok(json!({ "success": true }))
 }
@@ -2183,6 +2276,10 @@ pub async fn restore_backup(
     // không thoả CommandArg — frontend luôn tạo kênh, có cần dùng hay không thì tuỳ nó.
     on_progress: Channel<Value>,
 ) -> Result<Value, String> {
+    // Restore acquires its own connection and runs its own transaction. It would not corrupt the
+    // user's open transaction — different session — but it would block on the locks that
+    // transaction holds, and a frozen progress bar is a worse answer than a clear refusal.
+    crate::tx_session::reject_if_manual_or_open("phục hồi dữ liệu")?;
     let conn_type = {
         let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
         match manager.connection.as_ref() {
@@ -2602,23 +2699,73 @@ fn quote_ident(conn: &DbConnection, name: &str) -> String {
 // Bật/tắt kiểm tra khóa ngoại ở MỨC SESSION. Chỉ đúng khi mọi lệnh dùng chung một `Exec`.
 // Dùng try_run: server từ chối (Postgres `session_replication_role` cần superuser) thì lệnh
 // chính vẫn phải chạy, và lệnh khôi phục vẫn phải thử dù lệnh chính đã lỗi.
-async fn set_fk_checks(exec: &mut Exec, conn: &DbConnection, on: bool) {
+fn fk_checks_sql(conn: &DbConnection, on: bool) -> &'static str {
     match conn {
         DbConnection::Mysql(_) => {
-            exec.try_run(if on { "SET FOREIGN_KEY_CHECKS = 1" } else { "SET FOREIGN_KEY_CHECKS = 0" }).await
+            if on { "SET FOREIGN_KEY_CHECKS = 1" } else { "SET FOREIGN_KEY_CHECKS = 0" }
         }
         DbConnection::Postgres(_) => {
-            exec.try_run(if on {
-                "SET session_replication_role = 'origin'"
-            } else {
-                "SET session_replication_role = 'replica'"
-            })
-            .await
+            if on { "SET session_replication_role = 'origin'" } else { "SET session_replication_role = 'replica'" }
         }
         DbConnection::Sqlite(_) => {
-            exec.try_run(if on { "PRAGMA foreign_keys = ON" } else { "PRAGMA foreign_keys = OFF" }).await
+            if on { "PRAGMA foreign_keys = ON" } else { "PRAGMA foreign_keys = OFF" }
         }
     }
+}
+
+/// Runs a short sequence on ONE connection, optionally with foreign-key checks turned off around it.
+///
+/// Two requirements, and the pool satisfies neither on its own:
+///  - **One connection**, or `SET FOREIGN_KEY_CHECKS` lands on a different session than the
+///    statement it is meant to wrap and quietly does nothing.
+///  - **The pinned session when the user is in manual-commit mode.** Taking a fresh connection
+///    there would run the DROP/TRUNCATE outside their transaction and commit it — "manual commit"
+///    that commits by itself. Note this is `use_session()`, not `is_open()`: the transaction does
+///    not exist until its first statement, and this may well be that statement.
+///
+/// `optional` runs only if the main statement succeeded and its own failure is ignored.
+async fn run_fk_wrapped(
+    conn: &DbConnection,
+    disable_fk: bool,
+    sql: String,
+    optional: Option<String>,
+) -> Result<(), String> {
+    if crate::tx_session::use_session() {
+        // execute_raw_sql_generic routes to the pinned session, so all of these share one
+        // connection exactly like the `Exec` branch below.
+        if disable_fk {
+            let _ = execute_raw_sql_generic(conn, fk_checks_sql(conn, false).to_string()).await;
+        }
+        let result = execute_raw_sql_generic(conn, sql).await;
+        if result.is_ok() {
+            if let Some(extra) = optional {
+                let _ = execute_raw_sql_generic(conn, extra).await;
+            }
+        }
+        // Restore even on failure: the session lives on and later statements must not inherit a
+        // disabled foreign-key check.
+        if disable_fk {
+            let _ = execute_raw_sql_generic(conn, fk_checks_sql(conn, true).to_string()).await;
+        }
+        return result.map(|_| ());
+    }
+
+    let mut exec = Exec::acquire(conn).await?;
+    if disable_fk {
+        exec.try_run(fk_checks_sql(conn, false)).await;
+    }
+    let result = exec.run(sql).await;
+    if result.is_ok() {
+        if let Some(extra) = optional {
+            exec.try_run(&extra).await;
+        }
+    }
+    // Khôi phục kể cả khi lỗi: connection quay lại pool (hoặc là handle SQLite dùng chung),
+    // nếu không lệnh sau sẽ chạy trên session còn tắt kiểm tra khóa ngoại.
+    if disable_fk {
+        exec.try_run(fk_checks_sql(conn, true)).await;
+    }
+    result
 }
 
 // Xóa bảng/view. `cascade` và `ignore_fk` là 2 tuỳ chọn của dialog Delete ở sidebar.
@@ -2658,17 +2805,7 @@ pub async fn drop_table(
         if cascade { " CASCADE" } else { "" }
     );
 
-    let mut exec = Exec::acquire(&conn_type).await?;
-    if ignore_fk {
-        set_fk_checks(&mut exec, &conn_type, false).await;
-    }
-    let result = exec.run(sql).await;
-    // Khôi phục kể cả khi lỗi: connection quay lại pool (hoặc là handle SQLite dùng chung),
-    // nếu không lệnh sau sẽ chạy trên session còn tắt kiểm tra khóa ngoại.
-    if ignore_fk {
-        set_fk_checks(&mut exec, &conn_type, true).await;
-    }
-    result?;
+    run_fk_wrapped(&conn_type, ignore_fk, sql, None).await?;
 
     Ok(json!({ "success": true }))
 }
@@ -2758,20 +2895,7 @@ pub async fn truncate_table(
         ),
     };
 
-    let mut exec = Exec::acquire(&conn_type).await?;
-    if disable_fk {
-        set_fk_checks(&mut exec, &conn_type, false).await;
-    }
-    let result = exec.run(sql).await;
-    if result.is_ok() {
-        if let Some(extra) = optional {
-            exec.try_run(&extra).await;
-        }
-    }
-    if disable_fk {
-        set_fk_checks(&mut exec, &conn_type, true).await;
-    }
-    result?;
+    run_fk_wrapped(&conn_type, disable_fk, sql, optional).await?;
 
     Ok(json!({ "success": true }))
 }
@@ -2955,127 +3079,153 @@ fn is_mysql_unprepared_error(err_text: &str) -> bool {
 }
 
 pub(crate) async fn execute_raw_sql_generic(conn: &DbConnection, sql: String) -> Result<Vec<Value>, String> {
-    let mut results = Vec::new();
+    // Manual transaction mode: the statement must run on the connection the transaction was opened
+    // on, otherwise it neither sees nor joins the uncommitted work. See tx_session.rs.
+    if crate::tx_session::should_route(conn, &sql) {
+        return crate::tx_session::run_raw(conn, sql).await;
+    }
     match conn {
-        DbConnection::Sqlite(conn_arc) => {
-            let conn = conn_arc.lock().map_err(|e| e.to_string())?;
-            let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
-            let col_count = stmt.column_count();
-            let mut columns = Vec::new();
-            for i in 0..col_count {
-                columns.push(stmt.column_name(i).map_err(|e| e.to_string())?.to_string());
-            }
-            uniquify_columns(&mut columns);
-
-            let mut rows_json = Vec::new();
-            let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
-            while let Some(row) = rows.next().map_err(|e| e.to_string())? {
-                let mut map = serde_json::Map::new();
-                for i in 0..col_count {
-                    let col_name = columns[i].clone();
-                    let val: Value = match row.get_ref(i) {
-                        Ok(rusqlite::types::ValueRef::Null) => Value::Null,
-                        Ok(rusqlite::types::ValueRef::Integer(n)) => json!(n),
-                        Ok(rusqlite::types::ValueRef::Real(r)) => json!(r),
-                        Ok(rusqlite::types::ValueRef::Text(t)) => json!(String::from_utf8_lossy(t)),
-                        Ok(rusqlite::types::ValueRef::Blob(b)) => json!(b),
-                        _ => Value::Null,
-                    };
-                    map.insert(col_name, val);
-                }
-                rows_json.push(Value::Object(map));
-            }
-            results.push(json!({
-                "columns": columns,
-                "data": rows_json
-            }));
-        }
+        DbConnection::Sqlite(conn_arc) => sqlite_raw(conn_arc, &sql),
         DbConnection::Postgres(pool) => {
             let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
-            if sql.to_uppercase().trim().starts_with("USE ") || sql.to_uppercase().trim().starts_with("CREATE DATABASE") {
-                sqlx::query(sqlx::AssertSqlSafe(sql.clone())).execute(&mut *conn).await.map_err(|e| e.to_string())?;
-            } else {
-                let rows = sqlx::query(sqlx::AssertSqlSafe(sql.clone())).fetch_all(&mut *conn).await.map_err(|e| e.to_string())?;
-                let mut rows_json = Vec::new();
-                let mut columns = Vec::new();
-                if !rows.is_empty() {
-                    for col in rows[0].columns() {
-                        columns.push(col.name().to_string());
-                    }
-                    uniquify_columns(&mut columns);
-                    for r in rows {
-                        let mut map = serde_json::Map::new();
-                        // By index, not name — see decode_pg_cell!.
-                        for (i, col_name) in columns.iter().enumerate() {
-                            let val: Value = decode_pg_cell!(&r, i);
-                            map.insert(col_name.clone(), val);
-                        }
-                        rows_json.push(Value::Object(map));
-                    }
-                } else {
-                    if let Ok(stmt) = pool.prepare(sqlx::AssertSqlSafe(sql.clone()).into_sql_str()).await {
-                        for col in stmt.columns() {
-                            columns.push(col.name().to_string());
-                        }
-                        uniquify_columns(&mut columns);
-                    }
-                }
-                results.push(json!({
-                    "columns": columns,
-                    "data": rows_json
-                }));
-            }
+            pg_raw(&mut conn, &sql).await
         }
         DbConnection::Mysql(pool) => {
             // Lấy 1 connection duy nhất từ pool để chạy câu lệnh, đảm bảo SET FOREIGN_KEY_CHECKS hoạt động xuyên suốt phiên
             let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
-            if sql.to_uppercase().trim().starts_with("USE ") || sql.to_uppercase().trim().starts_with("CREATE DATABASE") {
-                sqlx::query(sqlx::AssertSqlSafe(sql.clone())).execute(&mut *conn).await.map_err(|e| e.to_string())?;
-            } else {
-                let rows = match sqlx::query(sqlx::AssertSqlSafe(sql.clone())).fetch_all(&mut *conn).await {
-                    Ok(r) => r,
-                    Err(e) if is_mysql_unprepared_error(&e.to_string()) => {
-                        // MySQL từ chối prepare một số lệnh (CREATE/DROP TRIGGER, PROCEDURE,
-                        // FUNCTION, EVENT...) -> chạy lại bằng text protocol.
-                        sqlx::raw_sql(sqlx::AssertSqlSafe(sql.clone()))
-                            .execute(&mut *conn)
-                            .await
-                            .map_err(|e| e.to_string())?;
-                        Vec::new()
-                    }
-                    Err(e) => return Err(e.to_string()),
-                };
-                let mut rows_json = Vec::new();
-                let mut columns = Vec::new();
-                if !rows.is_empty() {
-                    for col in rows[0].columns() {
-                        columns.push(col.name().to_string());
-                    }
-                    uniquify_columns(&mut columns);
-                    for r in rows {
-                        let mut map = serde_json::Map::new();
-                        // By index, not name — see decode_mysql_cell!.
-                        for (i, col_name) in columns.iter().enumerate() {
-                            let val: Value = decode_mysql_cell!(&r, i);
-                            map.insert(col_name.clone(), val);
-                        }
-                        rows_json.push(Value::Object(map));
-                    }
-                } else {
-                    if let Ok(stmt) = pool.prepare(sqlx::AssertSqlSafe(sql.clone()).into_sql_str()).await {
-                        for col in stmt.columns() {
-                            columns.push(col.name().to_string());
-                        }
-                        uniquify_columns(&mut columns);
-                    }
-                }
-                results.push(json!({
-                    "columns": columns,
-                    "data": rows_json
-                }));
-            }
+            mysql_raw(&mut conn, &sql).await
         }
     }
+}
+
+// The three functions below are the row-building bodies that used to sit inline in
+// `execute_raw_sql_generic`. They are split out so the SAME code runs whether the connection came
+// from the pool or from the pinned manual-transaction session (tx_session.rs) — duplicating them
+// would mean duplicating the two rules that every row-building site in this file must follow:
+// `uniquify_columns` before any row is assembled, and cell decoding BY INDEX.
+
+pub(crate) fn sqlite_raw(
+    conn_arc: &Arc<Mutex<SqliteConnection>>,
+    sql: &str,
+) -> Result<Vec<Value>, String> {
+    let conn = conn_arc.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+    let col_count = stmt.column_count();
+    let mut columns = Vec::new();
+    for i in 0..col_count {
+        columns.push(stmt.column_name(i).map_err(|e| e.to_string())?.to_string());
+    }
+    uniquify_columns(&mut columns);
+
+    let mut rows_json = Vec::new();
+    let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
+    while let Some(row) = rows.next().map_err(|e| e.to_string())? {
+        let mut map = serde_json::Map::new();
+        for i in 0..col_count {
+            let col_name = columns[i].clone();
+            let val: Value = match row.get_ref(i) {
+                Ok(rusqlite::types::ValueRef::Null) => Value::Null,
+                Ok(rusqlite::types::ValueRef::Integer(n)) => json!(n),
+                Ok(rusqlite::types::ValueRef::Real(r)) => json!(r),
+                Ok(rusqlite::types::ValueRef::Text(t)) => json!(String::from_utf8_lossy(t)),
+                Ok(rusqlite::types::ValueRef::Blob(b)) => json!(b),
+                _ => Value::Null,
+            };
+            map.insert(col_name, val);
+        }
+        rows_json.push(Value::Object(map));
+    }
+    Ok(vec![json!({ "columns": columns, "data": rows_json })])
+}
+
+pub(crate) async fn pg_raw(
+    conn: &mut sqlx::PgConnection,
+    sql: &str,
+) -> Result<Vec<Value>, String> {
+    let mut results = Vec::new();
+    if sql.to_uppercase().trim().starts_with("USE ") || sql.to_uppercase().trim().starts_with("CREATE DATABASE") {
+        sqlx::query(sqlx::AssertSqlSafe(sql.to_string())).execute(&mut *conn).await.map_err(|e| e.to_string())?;
+        return Ok(results);
+    }
+    let rows = sqlx::query(sqlx::AssertSqlSafe(sql.to_string())).fetch_all(&mut *conn).await.map_err(|e| e.to_string())?;
+    let mut rows_json = Vec::new();
+    let mut columns = Vec::new();
+    if !rows.is_empty() {
+        for col in rows[0].columns() {
+            columns.push(col.name().to_string());
+        }
+        uniquify_columns(&mut columns);
+        for r in rows {
+            let mut map = serde_json::Map::new();
+            // By index, not name — see decode_pg_cell!.
+            for (i, col_name) in columns.iter().enumerate() {
+                let val: Value = decode_pg_cell!(&r, i);
+                map.insert(col_name.clone(), val);
+            }
+            rows_json.push(Value::Object(map));
+        }
+    } else {
+        // Prepare on THIS connection, not on the pool: inside a manual transaction a second
+        // connection would block on the locks this one holds.
+        if let Ok(stmt) = (&mut *conn).prepare(sqlx::AssertSqlSafe(sql.to_string()).into_sql_str()).await {
+            for col in stmt.columns() {
+                columns.push(col.name().to_string());
+            }
+            uniquify_columns(&mut columns);
+        }
+    }
+    results.push(json!({ "columns": columns, "data": rows_json }));
+    Ok(results)
+}
+
+pub(crate) async fn mysql_raw(
+    conn: &mut sqlx::MySqlConnection,
+    sql: &str,
+) -> Result<Vec<Value>, String> {
+    let mut results = Vec::new();
+    if sql.to_uppercase().trim().starts_with("USE ") || sql.to_uppercase().trim().starts_with("CREATE DATABASE") {
+        sqlx::query(sqlx::AssertSqlSafe(sql.to_string())).execute(&mut *conn).await.map_err(|e| e.to_string())?;
+        return Ok(results);
+    }
+    let rows = match sqlx::query(sqlx::AssertSqlSafe(sql.to_string())).fetch_all(&mut *conn).await {
+        Ok(r) => r,
+        Err(e) if is_mysql_unprepared_error(&e.to_string()) => {
+            // MySQL từ chối prepare một số lệnh (CREATE/DROP TRIGGER, PROCEDURE,
+            // FUNCTION, EVENT...) -> chạy lại bằng text protocol.
+            sqlx::raw_sql(sqlx::AssertSqlSafe(sql.to_string()))
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| e.to_string())?;
+            Vec::new()
+        }
+        Err(e) => return Err(e.to_string()),
+    };
+    let mut rows_json = Vec::new();
+    let mut columns = Vec::new();
+    if !rows.is_empty() {
+        for col in rows[0].columns() {
+            columns.push(col.name().to_string());
+        }
+        uniquify_columns(&mut columns);
+        for r in rows {
+            let mut map = serde_json::Map::new();
+            // By index, not name — see decode_mysql_cell!.
+            for (i, col_name) in columns.iter().enumerate() {
+                let val: Value = decode_mysql_cell!(&r, i);
+                map.insert(col_name.clone(), val);
+            }
+            rows_json.push(Value::Object(map));
+        }
+    } else {
+        // Same reason as the Postgres branch: prepare on this connection.
+        if let Ok(stmt) = (&mut *conn).prepare(sqlx::AssertSqlSafe(sql.to_string()).into_sql_str()).await {
+            for col in stmt.columns() {
+                columns.push(col.name().to_string());
+            }
+            uniquify_columns(&mut columns);
+        }
+    }
+    results.push(json!({ "columns": columns, "data": rows_json }));
     Ok(results)
 }
 
@@ -3138,85 +3288,111 @@ impl Exec {
 // Chỉ dùng cho MỘT câu lệnh (vd EXPLAIN <query có :param>) — không tách nhiều câu lệnh.
 // SQL truyền vào phải đã dùng placeholder native (`?` cho SQLite/MySQL, `$1..$n` cho Postgres).
 async fn run_bound_query(conn: &DbConnection, sql: String, params: &[Value]) -> Result<Vec<Value>, String> {
-    let mut results = Vec::new();
+    if crate::tx_session::should_route(conn, &sql) {
+        return crate::tx_session::run_bound(conn, sql, params).await;
+    }
     match conn {
-        DbConnection::Sqlite(conn_arc) => {
-            let conn = conn_arc.lock().map_err(|e| e.to_string())?;
-            let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
-            let col_count = stmt.column_count();
-            let mut columns = Vec::new();
-            for i in 0..col_count {
-                columns.push(stmt.column_name(i).map_err(|e| e.to_string())?.to_string());
-            }
-            uniquify_columns(&mut columns);
-            let sqlite_params: Vec<rusqlite::types::Value> = params.iter().map(json_to_sqlite_value).collect();
-            let mut rows_json = Vec::new();
-            let mut rows = stmt.query(rusqlite::params_from_iter(sqlite_params.iter())).map_err(|e| e.to_string())?;
-            while let Some(row) = rows.next().map_err(|e| e.to_string())? {
-                let mut map = serde_json::Map::new();
-                for i in 0..col_count {
-                    let val: Value = match row.get_ref(i) {
-                        Ok(rusqlite::types::ValueRef::Null) => Value::Null,
-                        Ok(rusqlite::types::ValueRef::Integer(n)) => json!(n),
-                        Ok(rusqlite::types::ValueRef::Real(r)) => json!(r),
-                        Ok(rusqlite::types::ValueRef::Text(t)) => json!(String::from_utf8_lossy(t)),
-                        Ok(rusqlite::types::ValueRef::Blob(b)) => json!(b),
-                        _ => Value::Null,
-                    };
-                    map.insert(columns[i].clone(), val);
-                }
-                rows_json.push(Value::Object(map));
-            }
-            results.push(json!({ "columns": columns, "data": rows_json }));
-        }
+        DbConnection::Sqlite(conn_arc) => sqlite_bound(conn_arc, &sql, params),
         DbConnection::Postgres(pool) => {
             let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
-            let query = bind_pg_params(sqlx::query(sqlx::AssertSqlSafe(sql.clone())), params);
-            let rows = query.fetch_all(&mut *conn).await.map_err(|e| e.to_string())?;
-            let mut rows_json = Vec::new();
-            let mut columns = Vec::new();
-            if !rows.is_empty() {
-                for col in rows[0].columns() {
-                    columns.push(col.name().to_string());
-                }
-                uniquify_columns(&mut columns);
-                for r in rows {
-                    let mut map = serde_json::Map::new();
-                    // By index, not name — see decode_pg_cell!.
-                    for (i, col_name) in columns.iter().enumerate() {
-                        let val: Value = decode_pg_cell!(&r, i);
-                        map.insert(col_name.clone(), val);
-                    }
-                    rows_json.push(Value::Object(map));
-                }
-            }
-            results.push(json!({ "columns": columns, "data": rows_json }));
+            pg_bound(&mut conn, &sql, params).await
         }
         DbConnection::Mysql(pool) => {
             let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
-            let query = bind_mysql_params(sqlx::query(sqlx::AssertSqlSafe(sql.clone())), params);
-            let rows = query.fetch_all(&mut *conn).await.map_err(|e| e.to_string())?;
-            let mut rows_json = Vec::new();
-            let mut columns = Vec::new();
-            if !rows.is_empty() {
-                for col in rows[0].columns() {
-                    columns.push(col.name().to_string());
-                }
-                uniquify_columns(&mut columns);
-                for r in rows {
-                    let mut map = serde_json::Map::new();
-                    // By index, not name — see decode_mysql_cell!.
-                    for (i, col_name) in columns.iter().enumerate() {
-                        let val: Value = decode_mysql_cell!(&r, i);
-                        map.insert(col_name.clone(), val);
-                    }
-                    rows_json.push(Value::Object(map));
-                }
-            }
-            results.push(json!({ "columns": columns, "data": rows_json }));
+            mysql_bound(&mut conn, &sql, params).await
         }
     }
-    Ok(results)
+}
+
+// Split out of `run_bound_query` for the same reason as `pg_raw`/`mysql_raw`: the pinned
+// transaction session runs the identical body on its own connection.
+
+pub(crate) fn sqlite_bound(
+    conn_arc: &Arc<Mutex<SqliteConnection>>,
+    sql: &str,
+    params: &[Value],
+) -> Result<Vec<Value>, String> {
+    let conn = conn_arc.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+    let col_count = stmt.column_count();
+    let mut columns = Vec::new();
+    for i in 0..col_count {
+        columns.push(stmt.column_name(i).map_err(|e| e.to_string())?.to_string());
+    }
+    uniquify_columns(&mut columns);
+    let sqlite_params: Vec<rusqlite::types::Value> = params.iter().map(json_to_sqlite_value).collect();
+    let mut rows_json = Vec::new();
+    let mut rows = stmt.query(rusqlite::params_from_iter(sqlite_params.iter())).map_err(|e| e.to_string())?;
+    while let Some(row) = rows.next().map_err(|e| e.to_string())? {
+        let mut map = serde_json::Map::new();
+        for i in 0..col_count {
+            let val: Value = match row.get_ref(i) {
+                Ok(rusqlite::types::ValueRef::Null) => Value::Null,
+                Ok(rusqlite::types::ValueRef::Integer(n)) => json!(n),
+                Ok(rusqlite::types::ValueRef::Real(r)) => json!(r),
+                Ok(rusqlite::types::ValueRef::Text(t)) => json!(String::from_utf8_lossy(t)),
+                Ok(rusqlite::types::ValueRef::Blob(b)) => json!(b),
+                _ => Value::Null,
+            };
+            map.insert(columns[i].clone(), val);
+        }
+        rows_json.push(Value::Object(map));
+    }
+    Ok(vec![json!({ "columns": columns, "data": rows_json })])
+}
+
+pub(crate) async fn pg_bound(
+    conn: &mut sqlx::PgConnection,
+    sql: &str,
+    params: &[Value],
+) -> Result<Vec<Value>, String> {
+    let query = bind_pg_params(sqlx::query(sqlx::AssertSqlSafe(sql.to_string())), params);
+    let rows = query.fetch_all(&mut *conn).await.map_err(|e| e.to_string())?;
+    let mut rows_json = Vec::new();
+    let mut columns = Vec::new();
+    if !rows.is_empty() {
+        for col in rows[0].columns() {
+            columns.push(col.name().to_string());
+        }
+        uniquify_columns(&mut columns);
+        for r in rows {
+            let mut map = serde_json::Map::new();
+            // By index, not name — see decode_pg_cell!.
+            for (i, col_name) in columns.iter().enumerate() {
+                let val: Value = decode_pg_cell!(&r, i);
+                map.insert(col_name.clone(), val);
+            }
+            rows_json.push(Value::Object(map));
+        }
+    }
+    Ok(vec![json!({ "columns": columns, "data": rows_json })])
+}
+
+pub(crate) async fn mysql_bound(
+    conn: &mut sqlx::MySqlConnection,
+    sql: &str,
+    params: &[Value],
+) -> Result<Vec<Value>, String> {
+    let query = bind_mysql_params(sqlx::query(sqlx::AssertSqlSafe(sql.to_string())), params);
+    let rows = query.fetch_all(&mut *conn).await.map_err(|e| e.to_string())?;
+    let mut rows_json = Vec::new();
+    let mut columns = Vec::new();
+    if !rows.is_empty() {
+        for col in rows[0].columns() {
+            columns.push(col.name().to_string());
+        }
+        uniquify_columns(&mut columns);
+        for r in rows {
+            let mut map = serde_json::Map::new();
+            // By index, not name — see decode_mysql_cell!.
+            for (i, col_name) in columns.iter().enumerate() {
+                let val: Value = decode_mysql_cell!(&r, i);
+                map.insert(col_name.clone(), val);
+            }
+            rows_json.push(Value::Object(map));
+        }
+    }
+    Ok(vec![json!({ "columns": columns, "data": rows_json })])
 }
 
 // Pool tối giản chỉ để chạy 1 câu liệt kê database (1 connection, timeout ngắn).
@@ -3333,6 +3509,9 @@ pub async fn list_databases(state: tauri::State<'_, crate::AppState>) -> Result<
 // Đổi database đang dùng: kết nối lại bằng last_config với database mới (đi qua SSH tunnel nếu đang bật)
 #[tauri::command]
 pub async fn switch_database(state: tauri::State<'_, crate::AppState>, name: String) -> Result<Value, String> {
+    // Switching database replaces the pool, so an open transaction would die without a word.
+    // Refuse instead of choosing commit-or-rollback on the user's behalf.
+    crate::tx_session::reject_if_open("đổi database")?;
     let (last_conf_opt, db_type, tunnel_port) = {
         let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
         (manager.last_config.clone(), manager.db_type.clone(),

@@ -23,6 +23,7 @@ import { ExportTableDialog } from './components/ExportTableDialog';
 import { ExportDatabaseDialog } from './components/ExportDatabaseDialog';
 import type { DatabaseExportOptions } from './components/ExportDatabaseDialog';
 import { ImportDatabaseDialog } from './components/ImportDatabaseDialog';
+import { DocViewerModal } from './components/DocViewerModal';
 import { X } from 'lucide-react';
 import { getVersion } from '@tauri-apps/api/app';
 import { PostgresIcon, MySqlIcon, RedisIcon, SqliteIcon } from './components/DbIcons';
@@ -231,6 +232,19 @@ export const App: React.FC = () => {
     getVersion().then(setAppVersion).catch(() => { });
   }, []);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showDocModal, setShowDocModal] = useState(false);
+  const [docQuery] = useState('');
+
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'F1') {
+        e.preventDefault();
+        setShowDocModal(true);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
   // Profile đang kết nối: id để ghi ngược tên/màu xuống tf_connection_profiles,
   // tên + màu để popover chi tiết kết nối hiển thị và sửa tại chỗ. Kết nối không
   // đi qua profile nào (chưa lưu) thì id rỗng -> popover vẫn xem được, chỉ không lưu.
@@ -1272,8 +1286,9 @@ export const App: React.FC = () => {
         aiOpen={showAi}
         onToggleAiAssistant={() => setShowAi(prev => !prev)}
         onDatabaseChanged={handleDatabaseChanged}
-      onOpenAllDbStats={() => { setDbInfoTab('all'); setShowDbInfoModal(true); }}
-    />
+        onOpenAllDbStats={() => { setDbInfoTab('all'); setShowDbInfoModal(true); }}
+        onOpenDocs={() => setShowDocModal(true)}
+      />
   );
 
   return (
@@ -1901,6 +1916,13 @@ export const App: React.FC = () => {
             </ModalFooter>
         </Modal>
       )}
+
+      <DocViewerModal
+        isOpen={showDocModal}
+        onClose={() => setShowDocModal(false)}
+        initialQuery={docQuery}
+        initialEngine={connection?.dbType as any}
+      />
     </>
   );
 };

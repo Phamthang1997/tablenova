@@ -22,6 +22,21 @@ import i18n from '../i18n';
 /** Backend messages with no interpolation — matched whole, after trimming. */
 export const EXACT: Record<string, string> = {
   'Chưa kết nối CSDL': 'backend.notConnected',
+  // tx_session.rs — transaction thủ công
+  'Không có transaction nào đang mở': 'backend.txNotOpen',
+  'Transaction đã bị huỷ do lỗi trước đó, chỉ có thể rollback': 'backend.txAborted',
+  'Transaction đang mở — hãy commit hoặc rollback trước khi bật lại auto-commit': 'backend.txPendingAutocommit',
+  'Mức cô lập không hợp lệ cho hệ quản trị này': 'backend.txBadIsolation',
+  'Phiên transaction không sẵn sàng': 'backend.txSessionNotReady',
+  // Ba câu dưới đây là message TRỌN VẸN chứ không ghép động: một khung dịch được + phần đuôi
+  // tiếng Việt nội suy vào sẽ hiện nửa Anh nửa Việt trong UI EN/JA.
+  'Transaction đang mở — hãy commit hoặc rollback trước khi đổi database': 'backend.txOpenSwitchDb',
+  'Đang bật commit thủ công — hãy kết thúc transaction và chuyển về tự động trước khi phục hồi dữ liệu':
+    'backend.txOpenRestore',
+  'Đang bật commit thủ công — hãy kết thúc transaction và chuyển về tự động trước khi sinh dữ liệu':
+    'backend.txOpenGenerate',
+  'Kết nối không khớp với phiên transaction': 'backend.txConnMismatch',
+  'Tên savepoint chỉ gồm chữ, số và dấu gạch dưới, bắt đầu bằng chữ': 'backend.txBadSavepointName',
   'Chưa kết nối database': 'backend.notConnected',
   'Chưa kết nối Redis': 'backend.notConnectedRedis',
   'Chưa có cấu hình kết nối': 'backend.noConnConfig',
@@ -42,6 +57,7 @@ export const EXACT: Record<string, string> = {
   'Server không có module RedisJSON': 'backend.redisNoJsonModule',
   'Chưa có pattern để xoá': 'backend.redisNoPattern',
   'Chưa chọn channel để nghe': 'backend.redisNoChannel',
+  'mTLS cần cả chứng chỉ client và khoá client': 'backend.mtlsIncomplete',
   'IAM chỉ hỗ trợ postgres/mysql': 'backend.iamOnlyPgMysql',
   'MySQL không hỗ trợ đổi tên database.': 'backend.mysqlNoRenameDb',
   'SQLite không hỗ trợ đổi tên database.': 'backend.sqliteNoRenameDb',
@@ -123,8 +139,20 @@ export const PATTERNS: { re: RegExp; key: string; nested?: boolean }[] = [
     key: 'backend.redisBlockingCmd',
   },
   { re: /^Chưa hỗ trợ phân trang cho kiểu '([^']*)'$/, key: 'backend.redisNoPagingForType' },
-  { re: /^Không mở được kết nối riêng cho Redis: ([\s\S]*)$/, key: 'backend.redisPushConnFailed' },
+  // `nested` — the payload is one of our own TLS messages when the dedicated connection fails
+  // while building the client, so it has to go through the table instead of staying Vietnamese
+  // inside a translated frame.
+  {
+    re: /^Không mở được kết nối riêng cho Redis: ([\s\S]*)$/,
+    key: 'backend.redisPushConnFailed',
+    nested: true,
+  },
   { re: /^Chỉ phân tích ([\d]+) key lấy mẫu — số liệu là ước lượng\.$/, key: 'backend.redisAnalysisSampled' },
+  // redis_db.rs — chứng chỉ TLS của tab SSL
+  { re: /^Không đọc được chứng chỉ CA '([^']*)': ([\s\S]*)$/, key: 'backend.readCaCertFailed' },
+  { re: /^Không đọc được chứng chỉ client '([^']*)': ([\s\S]*)$/, key: 'backend.readClientCertFailed' },
+  { re: /^Không đọc được khoá client '([^']*)': ([\s\S]*)$/, key: 'backend.readClientKeyFailed' },
+  { re: /^Cấu hình TLS không hợp lệ: ([\s\S]*)$/, key: 'backend.tlsConfigInvalid', nested: true },
   { re: /^Không mở được kho bí mật của hệ điều hành: ([\s\S]*)$/, key: 'backend.secretStoreOpenFailed' },
   {
     re: /^Không lưu được '([^']*)' vào kho bí mật: ([\s\S]*)\. Bí mật quá dài \(private key lớn\) có thể vượt giới hạn của kho HĐH\.$/,

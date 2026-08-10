@@ -4,6 +4,8 @@ import * as monaco from 'monaco-editor';
 import * as catalog from './catalog';
 import { LANG_IDS } from './sqlLanguage';
 import { statementAt, resolveAliases } from './statements';
+import { getDoc, formatDocMarkdown } from '../utils/docsService';
+import { currentLanguage } from '../i18n';
 
 /** Tìm bảng theo tên, không phân biệt hoa/thường. Chỉ đọc cache đã nạp. */
 export async function findTable(name: string): Promise<{ name: string; type: string } | null> {
@@ -79,17 +81,26 @@ export function setupSqlHover(): void {
         return { range, contents: [{ value: tableMarkdown(table.name, table.type, schema) }] };
       }
 
-      // 2) Là cột — ưu tiên bảng suy ra từ tiền tố "alias." rồi tới các bảng trong câu lệnh
-      const text = model.getValue();
-      const stmt = statementAt(text, model.getOffsetAt(position));
-      const aliases = stmt ? resolveAliases(stmt.text) : new Map<string, string>();
-
+      // 1.5) Là hàm hoặc lệnh SQL/Database? (không có tiền tố dot alias)
       const lineStart = model.getValueInRange({
         startLineNumber: position.lineNumber, startColumn: 1,
         endLineNumber: position.lineNumber, endColumn: word.startColumn,
       });
       const dot = lineStart.match(/([A-Za-z_]\w*)\s*\.\s*$/);
       const prefix = dot ? dot[1].toLowerCase() : null;
+
+      if (!prefix) {
+        const langId = model.getLanguageId();
+        const docEntry = getDoc(name, langId);
+        if (docEntry) {
+          return { range, contents: [{ value: formatDocMarkdown(docEntry, currentLanguage()) }] };
+        }
+      }
+
+      // 2) Là cột — ưu tiên bảng suy ra từ tiền tố "alias." rồi tới các bảng trong câu lệnh
+      const text = model.getValue();
+      const stmt = statementAt(text, model.getOffsetAt(position));
+      const aliases = stmt ? resolveAliases(stmt.text) : new Map<string, string>();
 
       let candidates: string[];
       // cacheOnly: khi phải quét TOÀN BỘ bảng (câu lệnh chưa có FROM) thì chỉ đọc cache,

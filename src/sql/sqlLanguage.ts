@@ -11,6 +11,7 @@ import * as catalog from './catalog';
 import { buildJoinConditions } from './joinConditions';
 import { collectTableRefs, statementAt } from './statements';
 import { bumpUsage, rankSort } from './usageStats';
+import { getDoc, formatDocMarkdown } from '../utils/docsService';
 
 const BUMP_CMD = 'tablenova.bumpUsage';
 
@@ -65,12 +66,15 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
   // (nếu không, gõ 'S' sẽ ra SAVEPOINT/SECURITY trước cả SELECT), trong cùng tier
   // thì cái nào dùng nhiều xếp trước.
   const keywordSet = new Set<string>();
+  const langId = model.getLanguageId();
   for (const kw of keywords) {
     keywordSet.add(kw.toUpperCase());
+    const docEntry = getDoc(kw, langId);
     items.push({
       label: kw,
-      kind: monaco.languages.CompletionItemKind.Keyword,
-      detail: 'Từ khoá',
+      kind: docEntry ? monaco.languages.CompletionItemKind.Function : monaco.languages.CompletionItemKind.Keyword,
+      detail: docEntry ? `Hàm SQL (${docEntry.engine})` : 'Từ khoá',
+      documentation: docEntry ? { value: formatDocMarkdown(docEntry) } : undefined,
       insertText: kw,
       sortText: rankSort(COMMON_KEYWORDS.has(kw.toUpperCase()) ? '4' : '5', kw),
       command: bumpCommand(kw),

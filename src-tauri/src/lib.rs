@@ -11,6 +11,7 @@ pub mod local_terminal;
 pub mod aws_iam;
 pub mod export;
 pub mod secret_store;
+pub mod tx_session;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -80,6 +81,11 @@ pub fn run() {
             // Bỏ hẳn: macOS lấy lại menu mặc định, Windows/Linux thì WebView2/
             // WebKitGTK vốn tự xử lý clipboard trong input.
 
+            // The transaction state changes deep inside the SQL funnels, which have no AppHandle.
+            // Park one here so it can emit "tx-state-changed" instead of every command's response
+            // shape having to carry the state.
+            tx_session::set_app_handle(app.handle().clone());
+
             Ok(())
         })
         .manage(AppState {
@@ -109,6 +115,13 @@ pub fn run() {
             database::execute_multi_query,
             database::execute_query_stream,
             database::cancel_query,
+            tx_session::tx_status,
+            tx_session::tx_set_autocommit,
+            tx_session::tx_set_isolation,
+            tx_session::tx_commit,
+            tx_session::tx_rollback,
+            tx_session::tx_savepoint,
+            tx_session::tx_rollback_to,
             ssh_terminal::open_ssh_terminal,
             ssh_terminal::send_ssh_input,
             ssh_terminal::resize_ssh_terminal,

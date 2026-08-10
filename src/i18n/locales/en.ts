@@ -28,6 +28,35 @@ const en = {
     connectionError: 'Connection error: {{message}}',
   },
 
+  docs: {
+    title: 'Database Documentation & Reference',
+    searchPlaceholder: 'Search SQL functions, Redis commands, PRAGMAs...',
+    allEngines: 'All Engines',
+    allCategories: 'All Categories',
+    noResults: 'No documentation found matching your search.',
+    insertExample: 'Insert Example into Editor',
+    copiedExample: 'Example Copied!',
+    parameters: 'Parameters',
+    returns: 'Returns',
+    timeComplexity: 'Time Complexity',
+    since: 'Since Version',
+    officialDocs: 'Official Documentation',
+    examples: 'Usage Example',
+    catAll: 'All',
+    catDml: 'DML / Queries',
+    catDdl: 'DDL / Schema',
+    catTransaction: 'Transactions',
+    catString: 'String',
+    catDatetime: 'Date/Time',
+    catJson: 'JSON',
+    catAggregate: 'Aggregate',
+    catWindow: 'Window',
+    catMath: 'Math',
+    catSpatialVector: 'Vector / GIS',
+    catCommand: 'Commands',
+    catPragma: 'PRAGMAs',
+  },
+
   language: {
     label: 'Language',
     en: 'English',
@@ -355,6 +384,9 @@ const en = {
     warnRedisTls:
       '<strong>Remote</strong> Redis with TLS off — traffic is unencrypted (the server must support <strong>rediss://</strong>).',
     enableTls: 'Enable TLS',
+    warnRedisTlsOverSsh:
+      'Over an SSH tunnel the certificate is presented for <strong>127.0.0.1</strong>, so <strong>VERIFY_IDENTITY</strong> always fails. <strong>VERIFY_CA</strong> still checks the certificate chain and only skips the hostname.',
+    useVerifyCa: 'Use VERIFY_CA',
     warnSslDisabled:
       '<strong>Remote</strong> server but SSL is <strong>DISABLED</strong> — passwords and data travel unencrypted.',
     enableSsl: 'Enable SSL',
@@ -375,6 +407,8 @@ const en = {
     tlsSwitchLabel: 'TLS encryption (rediss://)',
     tlsSwitchHint:
       'Required by Redis Cloud, ElastiCache in-transit encryption and most remote Redis servers.',
+    tlsSwitchModeHint:
+      'Mode <strong>{{mode}}</strong> — CA certificate, mTLS and the verification level are on the SSL tab.',
 
     serverSection: 'Server',
     serverDesc: 'Host and port to reach {{db}}.',
@@ -419,6 +453,8 @@ const en = {
       'Postgres only: if you set a <strong>CA cert</strong>, REQUIRED verifies the certificate just like VERIFY_CA.',
     certHintMysql:
       'REQUIRED does not verify the server certificate, so <strong>CA cert</strong> has no effect here.',
+    certHintRedis:
+      'REQUIRED skips certificate checks entirely, so <strong>CA cert</strong> has no effect — only the client certificate and key are still sent, for mTLS.',
 
     sshSection: 'SSH Tunnel',
     sshDesc:
@@ -2134,6 +2170,53 @@ const en = {
    * `src/utils/backendErrors.ts`. `{{a}}`/`{{b}}` are the positional values Rust
    * interpolates (usually a driver error, left in the server's own language).
    */
+  // Manual transaction mode (TxControl.tsx). State comes from Rust — see tx_session.rs.
+  tx: {
+    auto: 'Auto-commit',
+    autoShort: 'Auto',
+    manualShort: 'Manual',
+    manual: 'Manual commit',
+    modeTitle: 'Transaction',
+    autoDesc: 'Every statement is committed as soon as it runs.',
+    manualDesc: 'Statements are held open until you commit or roll back.',
+    pending: '{{n}} stmt',
+    idle: 'no changes yet',
+    commit: 'Commit',
+    rollback: 'Rollback',
+    aborted: 'aborted',
+    abortedHint: 'A statement failed. On PostgreSQL the whole transaction is unusable — roll back, or roll back to a savepoint.',
+    implicitNotice: 'That DDL statement committed the transaction by itself (MySQL). Nothing before it can be rolled back any more.',
+    isolation: 'Isolation level',
+    lockMode: 'Locking mode',
+    isolationDefault: 'Server default',
+    isolationHint: 'Applied to the next transaction, not the one already open.',
+    readOnly: 'Read-only transaction',
+    readOnlyHint: 'The server rejects any write until this transaction ends.',
+    savepoints: 'Savepoints',
+    savepointPlaceholder: 'savepoint name',
+    savepointAdd: 'Add',
+    savepointRollback: 'Roll back to here',
+    savepointsEmpty: 'None yet.',
+    pendingTitle: 'You have pending changes…',
+    ranTimes: 'This statement ran {{n}} times',
+    staleBackend: 'The running backend did not send the statement list. It is older than this window — restart the app (or the dev build) to see the SQL.',
+    clickToManual: 'Switch to manual commit',
+    clickToAuto: 'Switch to auto-commit',
+    clickToReview: 'Review {{n}} pending statement(s)',
+    autoBlocked: 'Commit or discard the pending changes first.',
+    pendingEmpty: 'No changes yet — the transaction is open but only read statements have run.',
+    pendingTruncated: 'Showing {{n}} of {{b}} statements; the rest were left out to keep memory bounded.',
+    discard: 'Discard',
+    settings: 'Settings',
+    longOpen: 'Open for {{n}} — a long transaction keeps its locks on the server.',
+    sqliteLockNote: 'On SQLite a write transaction locks the whole database file.',
+    closeTitle: 'A transaction is still open',
+    closeMessage: '{{n}} statement(s) have not been committed. Closing now rolls them back.',
+    closeCommit: 'Commit and close',
+    closeRollback: 'Roll back and close',
+    elapsedSec: '{{n}}s',
+    elapsedMin: '{{n}}m {{b}}s',
+  },
   backend: {
     notConnected: 'No database connection.',
     notConnectedRedis: 'Not connected to Redis.',
@@ -2201,6 +2284,11 @@ const en = {
     redisNoPagingForType: "Paging is not supported for type '{{a}}'.",
     redisPushConnFailed: 'Could not open a dedicated Redis connection: {{a}}',
     redisAnalysisSampled: 'Analyzed a sample of {{a}} keys — the numbers are an estimate.',
+    mtlsIncomplete: 'mTLS needs both the client certificate and the client key.',
+    readCaCertFailed: "Could not read the CA certificate '{{a}}': {{b}}",
+    readClientCertFailed: "Could not read the client certificate '{{a}}': {{b}}",
+    readClientKeyFailed: "Could not read the client key '{{a}}': {{b}}",
+    tlsConfigInvalid: 'Invalid TLS configuration: {{a}}',
     secretStoreOpenFailed: 'Could not open the OS secret store: {{a}}',
     secretWriteFailed:
       "Could not save '{{a}}' to the secret store: {{b}}. An oversized secret (a large private key) may exceed the OS store's limit.",
@@ -2256,6 +2344,17 @@ const en = {
     dataGenCycle: "These tables reference each other in a cycle: {{a}}. Turn on 'Disable constraints'.",
     dataGenDeleteFailed: "Could not delete the existing rows of table '{{a}}': {{b}}",
     dataGenInsertFailed: "Failed to insert data into table '{{a}}': {{b}}",
+    // tx_session.rs — manual transaction mode
+    txNotOpen: 'No transaction is open.',
+    txAborted: 'The transaction was aborted by an earlier error; only rollback is possible.',
+    txPendingAutocommit: 'A transaction is open — commit or roll back before turning auto-commit back on.',
+    txOpenSwitchDb: 'A transaction is open — commit or roll back before switching database.',
+    txOpenRestore: 'Manual commit is on — end the transaction and switch back to auto-commit before restoring data.',
+    txOpenGenerate: 'Manual commit is on — end the transaction and switch back to auto-commit before generating data.',
+    txBadIsolation: 'That isolation level is not valid for this database engine.',
+    txSessionNotReady: 'The transaction session is not ready.',
+    txConnMismatch: 'The connection does not match the transaction session.',
+    txBadSavepointName: 'A savepoint name may only contain letters, digits and underscores, and must start with a letter.',
   },
 
   /** Strings produced by `dbHelper` itself, not by the backend. */

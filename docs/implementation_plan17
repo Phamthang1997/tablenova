@@ -1,5 +1,19 @@
 # Kế hoạch Thiết kế & Phát triển: Chế độ transaction thủ công (đối chiếu DataGrip)
 
+> **Trạng thái: Phase 0–4 đã code xong** (2026-08-10) — `src-tauri/src/tx_session.rs` (mới, 7 command),
+> ba phễu SQL đã tách helper + route qua session, `commit_changes` thành transaction thật,
+> `src/components/TxControl.tsx` (mới), 30 key i18n × EN/VI/JA, 11 literal lỗi mới trong
+> `backendErrors.ts`. `npx tsc -b` sạch, `npx oxlint` sạch, `npm test` 416/416, 63 assertion thuần
+> của `tx_effect`/`begin_statements`/`isolation_allowed`/`is_aborted_error` pass qua thủ thuật
+> `rustc` độc lập.
+>
+> **CHƯA verify: `cargo check`** — `tauri dev` đang chạy nên hook chặn (tranh khoá target dir).
+> Phần Rust cần build một lần trước khi chạy bộ manual test bên dưới.
+>
+> **Manual test (mục 📋) chưa chạy** — bắt buộc, cả ba dialect.
+>
+> Hai thay đổi so với kế hoạch ban đầu, ghi lại ở mục "Đã làm khác kế hoạch" cuối file.
+
 > Mục này được [plan16](implementation_plan16) đẩy ra ngoài phạm vi với ghi chú *"Gắn liền với vòng
 > đời connection"*. Plan này gỡ đúng chỗ đó — nhưng **không** chờ refactor `DatabaseManager` thành
 > map nhiều connection (xem quyết định kiến trúc #1).
@@ -356,6 +370,63 @@ Tách phần thuần ra file tạm + `fn main()` với assert, `rustc --edition 
 - Không sinh thêm cặp code phải đồng bộ tay (`tx_effect` chỉ tồn tại ở Rust).
 - Mọi chuỗi mới là key i18n × EN/VI/JA; literal lỗi mới của Rust đã có trong `backendErrors.ts`.
 - CLAUDE.md được cập nhật: mô hình transaction, và luật "mọi đường chạy SQL mới phải hỏi session".
+
+---
+
+## ✅ Đã làm khác kế hoạch (ghi lại để khỏi tra lại)
+
+**1. Trạng thái tx đi bằng sự kiện, không kèm theo mỗi kết quả.** Kế hoạch (quyết định #4) định thêm
+khối `tx` vào response của mọi command. Thực tế làm vậy phải sửa hình dạng trả về của ~60 command và
+mọi call site tương ứng ở `dbHelper`. Thay bằng: `lib.rs` cất `AppHandle` vào module lúc setup,
+`tx_session` phát sự kiện `tx-state-changed` mỗi lần trạng thái đổi, `TxControl` nghe sự kiện đó và
+gọi `tx_status` một lần lúc mount. Cùng kết quả (UI luôn đúng ngay sau mỗi câu lệnh), rẻ hơn nhiều.
+
+**2. Không tách phễu theo `sqlx::Executor` generic.** Hoá ra không cần: cả hai phía đều là
+`PoolConnection`, nên chỉ cần các helper nhận `&mut PgConnection` / `&mut MySqlConnection` là dùng
+chung được. Kèm theo một sửa nhỏ bắt buộc — chỗ dò tên cột khi kết quả rỗng trước đây gọi
+`pool.prepare(...)`, tức **lấy connection thứ hai**; trong transaction thì connection đó sẽ kẹt vào
+khoá của chính mình, nên đổi thành `(&mut *conn).prepare(...)`.
+
+**3. `tokens()` chỉ đọc 4 token đầu.** Ban đầu tách cả câu; `should_route` chạy trên **mọi** câu lệnh
+kể cả `INSERT` hàng megabyte, nên bản đầu cấp phát một `String` cho mỗi giá trị. `ROLLBACK TO
+SAVEPOINT <name>` là dạng dài nhất cần đọc → cắt ở 4.
+
+**4. Ba message "transaction đang mở" là ba câu trọn vẹn**, không phải một khung + đuôi nội suy.
+Khung dịch được mà đuôi vẫn tiếng Việt thì UI EN/JA hiện nửa Anh nửa Việt — `locales.test.ts` bắt
+đúng chỗ này.
+
+**5. UI gom về MỘT nút + hộp thoại "thay đổi đang chờ"** (theo thiết kế người dùng đưa). Bản đầu bày
+mode + bộ đếm + Commit + Rollback thành bốn thứ rời trên thanh tiêu đề: chiếm ~330px và bóp capsule
+trạng thái ở giữa (`flex: 1`) xuống còn một vòng tròn, lại dùng `.btn` (28px, vuông, nền đặc) giữa
+một thanh toàn `.tb-capsule-btn` 30px bo tròn. Nay: một `tb-capsule-btn` giữ nguyên dáng mặc định,
+bấm vào mở hộp thoại liệt kê **SQL của từng câu chưa commit** (Monaco chỉ đọc, cùng theme SQL
+Editor) + Discard/Commit. Kéo theo yêu cầu mới cho backend: giữ *text* câu lệnh chứ không chỉ đếm
+(`pendingSql`, có trần kích thước + cờ `sqlTruncated`).
+
+**6. `SELECT` không được đếm.** Câu đọc vẫn **mở** transaction (đó là cách đọc lại thứ mình vừa ghi,
+và là điều kiện để mức cô lập có nghĩa) nhưng không vào bộ đếm — con số cạnh nút Commit hứa "bấy
+nhiêu thay đổi đang chờ", chạy hai câu `SELECT` mà hiện "2 câu" là nói sai. Dạng không rõ (`WITH …`,
+`CALL …`) tính là ghi: báo thừa tốn một lần rollback, báo thiếu thì mất dữ liệu.
+
+**7. Savepoint ghi kèm mốc bộ đếm**, nên `ROLLBACK TO` lùi cả số câu lẫn danh sách SQL cho đúng,
+thay vì để bộ đếm mắc kẹt ở giá trị cũ như bản đầu.
+
+**8. `use_session()` chứ không phải `is_open()` — lỗi đã sửa.** Bản đầu cho `commit_changes`,
+`drop_table`, `truncate_table`, restore và Data Generator kiểm tra `is_open()`. Nhưng transaction
+**chưa tồn tại** cho tới câu lệnh đầu tiên, nên bật "Commit thủ công" rồi bấm Lưu ngay là rơi vào
+nhánh auto-commit và **tự commit** — đúng triệu chứng người dùng báo. Luật mới: mọi đường ghi nằm
+ngoài ba phễu phải hỏi `use_session()` (= `manual_mode() || is_open()`). `drop_table`/`truncate_table`
+dùng chung `run_fk_wrapped()`; restore/Data Generator từ chối chạy khi đang bật commit thủ công (chúng
+commit định kỳ theo thiết kế nên không thể nhập vào transaction của người dùng); `switch_database`
+vẫn chỉ chặn khi tx đang **mở** vì manual mà chưa mở thì đổi database vô hại.
+
+**9. Nút trên thanh là CÔNG TẮC, không phải dropdown.** Bỏ chevron. Tự động → bấm: sang thủ công;
+thủ công chưa có gì → bấm: về tự động; thủ công + N câu chờ → bấm: mở hộp thoại. Hộp thoại **chỉ**
+mở ở trạng thái cuối — đúng yêu cầu "popup chỉ mở khi chọn thủ công và có lệnh chờ". Nút "Tự động"
+trong hộp thoại bị vô hiệu khi còn câu chờ (backend vốn từ chối, bấm được chỉ tổ sinh lỗi).
+
+**10. Chưa làm:** đổi nhãn nút "Lưu" của `DataGrid`/`SqlEditor` khi ở chế độ manual (mục trang trí,
+không thuộc mục đích nào của plan).
 
 ---
 

@@ -126,6 +126,10 @@ interface ConnectionManagerProps {
 // the select instead of inside each <option> (a long option gets covered by the
 // select arrow and the native popup overflows) — see sslModeDesc() below.
 const SSL_MODES = ['DISABLED', 'PREFERRED', 'REQUIRED', 'VERIFY_CA', 'VERIFY_IDENTITY'] as const;
+// Redis has no STARTTLS-style negotiation — a port either speaks TLS or it does not — so
+// PREFERRED would be a mode that cannot be implemented honestly. `redis_ssl_mode` in
+// redis_db.rs maps it to VERIFY_IDENTITY if an old profile still carries it.
+const REDIS_SSL_MODES = ['DISABLED', 'REQUIRED', 'VERIFY_CA', 'VERIFY_IDENTITY'] as const;
 
 // Logo thật của từng hệ DB (xem DbIcons.tsx) + màu thương hiệu cho ô nền.
 const TYPE_META: Record<string, { label: string; color: string; Icon: React.FC<{ size?: number }> }> = {
@@ -847,6 +851,21 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
       setRedisPassword(config.password || '');
       setRedisDbIndex(config.dbIndex ?? 0);
       setSslEnabled(config.sslEnabled || false);
+      // Profile lưu trước khi có tab SSL chỉ có công tắc, và công tắc đó nghĩa là rediss://
+      // với kiểm tra chứng chỉ đầy đủ -> VERIFY_IDENTITY, không phải mức yếu nhất.
+      setSslMode(config.sslMode || (config.sslEnabled ? 'VERIFY_IDENTITY' : 'DISABLED'));
+      setSslKeyPath(config.sslKeyPath || '');
+      setSslCertPath(config.sslCertPath || '');
+      setSslCaPath(config.sslCaPath || '');
+      setSshEnabled(config.sshEnabled || false);
+      setSshHost(config.sshHost || '');
+      setSshPort(config.sshPort || 22);
+      setSshUser(config.sshUser || '');
+      setSshAuthType(config.sshAuthType || 'password');
+      setSshPassword(config.sshPassword || '');
+      setSshKeyPath(config.sshKeyPath || '');
+      setSshKeyContent(config.sshKeyContent || '');
+      setSshPassphrase(config.sshPassphrase || '');
     } else if (profile.type === 'postgres') {
       setPgHost(config.host || 'localhost');
       setPgPort(config.port || 5432);
@@ -904,6 +923,31 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     }
   };
 
+  // Ba chỗ cần đúng cùng một payload Redis (lưu profile, kết nối, test kết nối). Trước đây
+  // mỗi chỗ dựng riêng và nhánh lưu profile thì thiếu hẳn — profile Redis lưu ra config rỗng.
+  const buildRedisConfig = (): DbConnectionConfig => ({
+    type: 'redis',
+    host: redisHost,
+    port: redisPort,
+    user: redisUser,
+    password: redisPassword,
+    dbIndex: redisDbIndex,
+    sslEnabled,
+    sslMode,
+    sslKeyPath,
+    sslCertPath,
+    sslCaPath,
+    sshEnabled,
+    sshHost,
+    sshPort,
+    sshUser,
+    sshAuthType,
+    sshPassword,
+    sshKeyPath,
+    sshKeyContent,
+    sshPassphrase,
+  });
+
   const handleSaveProfile = async () => {
     if (!activeProfileId) return;
     const targetName = profileNameInput.trim() || t('connection.defaultProfileName');
@@ -911,6 +955,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     let config: any = {};
     if (activeType === 'sqlite') {
       config = { type: 'sqlite', sqlitePath };
+    } else if (activeType === 'redis') {
+      config = buildRedisConfig();
     } else if (activeType === 'postgres') {
       config = {
         type: 'postgres',
@@ -1088,15 +1134,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
       // localStorage dạng thô. Cấu hình kết nối chỉ còn sống trong profile (localStorage đã
       // bóc bí mật) và bí mật thì nằm trong kho bảo mật của HĐH (dbHelper.setSecrets).
     } else if (activeType === 'redis') {
-      config = {
-        type: 'redis',
-        host: redisHost,
-        port: redisPort,
-        user: redisUser,
-        password: redisPassword,
-        dbIndex: redisDbIndex,
-        sslEnabled,
-      };
+      config = buildRedisConfig();
     } else {
       config = {
         type: 'mysql',
@@ -1161,10 +1199,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
 
     // Redis: test bằng chính redis_connect (PING) qua dbHelper.connect.
     if (activeType === 'redis') {
-      const res = await dbHelper.connect({
-        type: 'redis', host: redisHost, port: redisPort, user: redisUser,
-        password: redisPassword, dbIndex: redisDbIndex, sslEnabled,
-      });
+      const res = await dbHelper.connect(buildRedisConfig());
       setLoading(false);
       setTestStatus(res.success ? 'ok' : 'fail');
       if (res.success) setSuccessMsg(t('connection.redisTestOk'));
@@ -1408,13 +1443,24 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
 
   const isBrMode = (activeType as any) === 'backup_restore';
   const isServerDb = activeType === 'postgres' || activeType === 'mysql';
+  const isRedis = activeType === 'redis';
+  // Ai có tab SSL + SSH Tunnel. SQLite là tệp cục bộ nên không có gì để mã hoá hay chuyển tiếp.
+  const hasNetTabs = isServerDb || isRedis;
+  const tlsOn = sslMode !== 'DISABLED';
+  // sslMode và sslEnabled phải luôn đi cùng nhau: backend hiểu sslEnabled=true là "bật TLS" kể
+  // cả khi mode là DISABLED (để profile cũ chỉ có công tắc vẫn chạy), nên để hai giá trị lệch
+  // nhau là bật mã hoá ngoài ý muốn của form.
+  const applySslMode = (mode: string) => {
+    setSslMode(mode);
+    setSslEnabled(mode !== 'DISABLED');
+  };
   const activeMeta = TYPE_META[activeType] || TYPE_META.sqlite;
   const hasProfile = !!activeProfileId && !isBrMode;
 
   // Connection string tóm tắt (không kèm mật khẩu) — hiển thị ở header để đối chiếu nhanh.
   const connectionUri = (() => {
     if (activeType === 'sqlite') return `sqlite://${sqlitePath}`;
-    if (activeType === 'redis') return `${sslEnabled ? 'rediss' : 'redis'}://${redisUser ? redisUser + '@' : ''}${redisHost}:${redisPort}/${redisDbIndex}`;
+    if (activeType === 'redis') return `${tlsOn ? 'rediss' : 'redis'}://${redisUser ? redisUser + '@' : ''}${redisHost}:${redisPort}/${redisDbIndex}`;
     if (activeType === 'postgres') return `postgres://${pgUser}@${pgHost}:${pgPort}/${pgDatabase}`;
     return `mysql://${myUser}@${myHost}:${myPort}/${myDatabase || ''}`;
   })();
@@ -1588,14 +1634,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
   // ——— Cảnh báo kết nối từ xa nhưng chưa bật mã hoá ———
   const renderSslWarning = () => {
     if (activeType === 'redis') {
-      if (sslEnabled || !isRemoteHost(redisHost)) return null;
+      if (tlsOn || !isRemoteHost(redisHost)) return null;
       return (
         <div className="cm-warn">
           <ShieldAlert size={15} style={{ flexShrink: 0 }} />
           <span style={{ flex: 1 }}>
             <Trans i18nKey="connection.warnRedisTls" components={{ strong: <b /> }} />
           </span>
-          <button type="button" className="cm-warn-btn" onClick={() => setSslEnabled(true)}>{t('connection.enableTls')}</button>
+          <button type="button" className="cm-warn-btn" onClick={() => applySslMode('VERIFY_IDENTITY')}>{t('connection.enableTls')}</button>
         </div>
       );
     }
@@ -1699,11 +1745,23 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                 />
               </div>
             </div>
+            {/* Công tắc một chạm cho trường hợp phổ biến; mức kiểm tra chứng chỉ, CA và mTLS
+                nằm ở tab SSL. Bật ở đây = VERIFY_IDENTITY, đúng bằng hành vi của công tắc
+                trước khi tab SSL tồn tại. */}
             <div className="cm-switch-row">
-              <button type="button" className={`cm-switch ${sslEnabled ? 'on' : ''}`} onClick={() => setSslEnabled(!sslEnabled)} aria-label={t('connection.enableTls')} />
+              <button type="button" className={`cm-switch ${tlsOn ? 'on' : ''}`} onClick={() => applySslMode(tlsOn ? 'DISABLED' : 'VERIFY_IDENTITY')} aria-label={t('connection.enableTls')} />
               <div style={{ flex: 1 }}>
                 <div className="cm-switch-label">{t('connection.tlsSwitchLabel')}</div>
                 <div className="cm-hint">{t('connection.tlsSwitchHint')}</div>
+                {tlsOn && (
+                  <div className="cm-hint">
+                    <Trans
+                      i18nKey="connection.tlsSwitchModeHint"
+                      values={{ mode: sslMode }}
+                      components={{ strong: <b /> }}
+                    />
+                  </div>
+                )}
               </div>
             </div>
             {renderSslWarning()}
@@ -1870,10 +1928,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     </>
   );
 
-  // ——— Tab "SSL" (Postgres / MySQL) ———
+  // ——— Tab "SSL" (Postgres / MySQL / Redis) ———
   const renderSslTab = () => {
-    const prefix = activeType === 'postgres' ? 'pg' : 'my';
-    const sslOn = sslMode !== 'DISABLED';
+    const prefix = isRedis ? 'redis' : activeType === 'postgres' ? 'pg' : 'my';
+    const sslOn = tlsOn;
     // Hai mode VERIFY_* mới thực sự kiểm tra chứng chỉ máy chủ -> CA cert lúc đó
     // là bắt buộc (nếu CA không nằm trong store của hệ thống). REQUIRED thì 3 ô
     // này chỉ phục vụ mTLS.
@@ -1887,11 +1945,24 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
         <div className="cm-fields">
           <div className="form-group">
             <label>{t('connection.sslModeLabel')}</label>
-            <select className="form-input" value={sslMode} onChange={(e) => setSslMode(e.target.value)} style={{ maxWidth: '240px' }}>
-              {SSL_MODES.map(m => <option key={m} value={m}>{m}</option>)}
+            <select className="form-input" value={sslMode} onChange={(e) => (isRedis ? applySslMode(e.target.value) : setSslMode(e.target.value))} style={{ maxWidth: '240px' }}>
+              {(isRedis ? REDIS_SSL_MODES : SSL_MODES).map(m => <option key={m} value={m}>{m}</option>)}
             </select>
             <span className="cm-hint">{sslModeDesc(sslMode)}</span>
           </div>
+
+          {/* Tunnel làm client kết nối tới 127.0.0.1, nên chứng chỉ của server được đối chiếu
+              với địa chỉ đó và VERIFY_IDENTITY chắc chắn hỏng. VERIFY_CA vẫn kiểm tra chuỗi
+              chứng chỉ, chỉ bỏ qua tên miền. */}
+          {isRedis && sshEnabled && sslMode === 'VERIFY_IDENTITY' && (
+            <div className="cm-warn">
+              <ShieldAlert size={15} style={{ flexShrink: 0 }} />
+              <span style={{ flex: 1 }}>
+                <Trans i18nKey="connection.warnRedisTlsOverSsh" components={{ strong: <b /> }} />
+              </span>
+              <button type="button" className="cm-warn-btn" onClick={() => applySslMode('VERIFY_CA')}>{t('connection.useVerifyCa')}</button>
+            </div>
+          )}
 
           {renderSslWarning()}
 
@@ -1929,6 +2000,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                 <Trans i18nKey="connection.certHintBase" components={{ strong: <b /> }} />{' '}
                 {needVerify ? (
                   <Trans i18nKey="connection.certHintVerify" components={{ strong: <b /> }} />
+                ) : isRedis ? (
+                  <Trans i18nKey="connection.certHintRedis" components={{ strong: <b /> }} />
                 ) : activeType === 'postgres' ? (
                   <Trans i18nKey="connection.certHintPostgres" components={{ strong: <b /> }} />
                 ) : (
@@ -2595,15 +2668,15 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                   </button>
                 </header>
 
-                {isServerDb && (
+                {hasNetTabs && (
                   <nav className="cm-tabs">
                     <button className={`cm-tab ${formTab === 'general' ? 'active' : ''}`} onClick={() => setFormTab('general')}>
                       <Server size={13} /> {t('connection.tabGeneral')}
-                      {authMethod === 'aws_iam' && <span className="cm-tab-dot" title={t('connection.tabDotAws')} />}
+                      {authMethod === 'aws_iam' && isServerDb && <span className="cm-tab-dot" title={t('connection.tabDotAws')} />}
                     </button>
                     <button className={`cm-tab ${formTab === 'ssl' ? 'active' : ''}`} onClick={() => setFormTab('ssl')}>
                       <ShieldCheck size={13} /> SSL
-                      {sslMode !== 'DISABLED' && <span className="cm-tab-dot" title={t('connection.tabDotSsl', { mode: sslMode })} />}
+                      {tlsOn && <span className="cm-tab-dot" title={t('connection.tabDotSsl', { mode: sslMode })} />}
                     </button>
                     <button className={`cm-tab ${formTab === 'ssh' ? 'active' : ''}`} onClick={() => setFormTab('ssh')}>
                       <Network size={13} /> SSH Tunnel
@@ -2660,9 +2733,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                         <div className="cm-hint">{t('connection.blankHint')}</div>
                       </div>
                     )
-                    : formTab === 'ssl' && isServerDb
+                    : formTab === 'ssl' && hasNetTabs
                       ? renderSslTab()
-                      : formTab === 'ssh' && isServerDb
+                      : formTab === 'ssh' && hasNetTabs
                         ? renderSshTab()
                         : renderGeneralTab()}
               </div>
