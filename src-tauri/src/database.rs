@@ -1,7 +1,8 @@
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use rusqlite::Connection as SqliteConnection;
-use sqlx::{PgPool, MySqlPool, Row, Column, Executor, Statement, SqlSafeStr};
+// ValueRef: cần cho nhánh dự phòng đọc byte thô trong decode_pg_cell!/decode_mysql_cell!.
+use sqlx::{PgPool, MySqlPool, Row, Column, Executor, Statement, SqlSafeStr, ValueRef};
 use serde_json::{Value, json};
 use tauri::ipc::Channel;
 use tauri::Manager;
@@ -45,7 +46,34 @@ macro_rules! decode_pg_cell {
         else if let Ok(v) = row.try_get::<Option<serde_json::Value>, _>(col) { v.map(|x| json!(x.to_string())).unwrap_or(Value::Null) }
         else if let Ok(v) = row.try_get::<Option<String>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
         else if let Ok(v) = row.try_get::<Option<Vec<u8>>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
-        else { Value::Null }
+        // Last resort: hand back the raw bytes the server sent.
+        //
+        // Every branch above asks sqlx to decode into a Rust type, and sqlx first checks that
+        // the column's type id is compatible — so a type it has no mapping for (MySQL GEOMETRY
+        // is the one that bit us: sakila's `address.location`) failed every branch and fell
+        // into `Value::Null`. The cell then exported as NULL, and re-importing that dump died
+        // on `location` being NOT NULL — silent data loss that only surfaced on the way back.
+        // `try_get` is what enforces that check; calling Decode directly on the raw value skips
+        // it, so anything the server sent survives as bytes. (`MySqlValueRef::as_bytes` is
+        // pub(crate) in sqlx 0.9, hence going through Decode rather than reading it off.)
+        else {
+            match row.try_get_raw(col) {
+                Ok(raw) if !raw.is_null() => {
+                    match <Vec<u8> as sqlx::Decode<'_, sqlx::Postgres>>::decode(raw) {
+                        // Postgres sends most of what lands here as text: an ENUM arrives as its
+                        // label, and so do inet/interval/tsvector. Handing those back as an array
+                        // of byte numbers would trade one wrong answer for another, so valid
+                        // UTF-8 becomes a string and only genuinely binary payloads stay bytes.
+                        Ok(b) => match std::str::from_utf8(&b) {
+                            Ok(s) => json!(s),
+                            Err(_) => json!(b),
+                        },
+                        Err(_) => Value::Null,
+                    }
+                }
+                _ => Value::Null,
+            }
+        }
     }};
 }
 
@@ -74,7 +102,27 @@ macro_rules! decode_mysql_cell {
         else if let Ok(v) = row.try_get::<Option<serde_json::Value>, _>(col) { v.map(|x| json!(x.to_string())).unwrap_or(Value::Null) }
         else if let Ok(v) = row.try_get::<Option<String>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
         else if let Ok(v) = row.try_get::<Option<Vec<u8>>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
-        else { Value::Null }
+        // Last resort: hand back the raw bytes the server sent.
+        //
+        // Every branch above asks sqlx to decode into a Rust type, and sqlx first checks that
+        // the column's type id is compatible — so a type it has no mapping for (MySQL GEOMETRY
+        // is the one that bit us: sakila's `address.location`) failed every branch and fell
+        // into `Value::Null`. The cell then exported as NULL, and re-importing that dump died
+        // on `location` being NOT NULL — silent data loss that only surfaced on the way back.
+        // `try_get` is what enforces that check; calling Decode directly on the raw value skips
+        // it, so anything the server sent survives as bytes. (`MySqlValueRef::as_bytes` is
+        // pub(crate) in sqlx 0.9, hence going through Decode rather than reading it off.)
+        else {
+            match row.try_get_raw(col) {
+                Ok(raw) if !raw.is_null() => {
+                    match <Vec<u8> as sqlx::Decode<'_, sqlx::MySql>>::decode(raw) {
+                        Ok(b) => json!(b),
+                        Err(_) => Value::Null,
+                    }
+                }
+                _ => Value::Null,
+            }
+        }
     }};
 }
 
@@ -567,7 +615,14 @@ pub async fn get_tables(state: tauri::State<'_, crate::AppState>) -> Result<Valu
             }
         }
         DbConnection::Postgres(pool) => {
-            let rows = sqlx::query("SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = 'public'")
+            // information_schema.tables has no materialized view in it (it is not in the SQL
+            // standard), so a matview used to be invisible everywhere in the app — sidebar,
+            // export, compare. pg_class.relkind = 'm' is the only place it shows up.
+            let rows = sqlx::query(
+                "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = 'public' \
+                 UNION ALL \
+                 SELECT c.relname, 'VIEW' FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+                 WHERE n.nspname = 'public' AND c.relkind = 'm'")
                 .fetch_all(&pool).await.map_err(|e| e.to_string())?;
             for r in rows {
                 let name: String = r.get(0);
@@ -817,11 +872,20 @@ pub async fn get_table_schema(state: tauri::State<'_, crate::AppState>, name: St
             // format_type() instead of information_schema.data_type: the latter drops
             // length/precision (`character varying`, `numeric`) so the structure editor
             // could neither show `varchar(45)` nor round-trip it into ALTER TABLE.
+            // Two different things, and a dump has to treat them differently:
+            //   attgenerated <> ''  = GENERATED ALWAYS AS (...) STORED — a computed column.
+            //     Postgres refuses any write to it, so it must be left OUT of the INSERT.
+            //   attidentity = 'a'   = GENERATED ALWAYS AS IDENTITY. It stays IN the INSERT
+            //     (dropping it would renumber the rows and break every foreign key pointing
+            //     at them), but the statement then needs OVERRIDING SYSTEM VALUE.
+            //     attidentity = 'd' (BY DEFAULT) accepts a plain INSERT.
             let sql = format!(
                 "SELECT a.attname::text AS column_name,
                         format_type(a.atttypid, a.atttypmod) AS data_type,
                         CASE WHEN a.attnotnull THEN 'NO' ELSE 'YES' END AS is_nullable,
-                        pg_get_expr(d.adbin, d.adrelid) AS column_default
+                        pg_get_expr(d.adbin, d.adrelid) AS column_default,
+                        a.attgenerated <> '' AS is_generated,
+                        a.attidentity = 'a' AS is_identity_always
                  FROM pg_attribute a
                  JOIN pg_class c ON c.oid = a.attrelid
                  JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -836,6 +900,8 @@ pub async fn get_table_schema(state: tauri::State<'_, crate::AppState>, name: St
                 let col_type: String = r.get("data_type");
                 let is_nullable: String = r.get("is_nullable");
                 let column_default: Option<String> = r.try_get("column_default").ok();
+                let is_generated: bool = r.try_get("is_generated").unwrap_or(false);
+                let is_identity_always: bool = r.try_get("is_identity_always").unwrap_or(false);
                 let is_pk = pk_cols.iter().any(|c| c == &col_name);
 
                 columns.push(json!({
@@ -845,7 +911,9 @@ pub async fn get_table_schema(state: tauri::State<'_, crate::AppState>, name: St
                     "isPrimaryKey": is_pk,
                     "defaultValue": column_default,
                     "autoIncrement": column_default.as_ref().map(|d| d.contains("nextval")).unwrap_or(false),
-                    "extra": serde_json::Value::Null
+                    "extra": serde_json::Value::Null,
+                    "generated": is_generated,
+                    "identityAlways": is_identity_always
                 }));
             }
 
@@ -938,6 +1006,9 @@ pub async fn get_table_schema(state: tauri::State<'_, crate::AppState>, name: St
                     "defaultValue": column_default,
                     "autoIncrement": extra.contains("auto_increment"),
                     "extra": if extra.trim().is_empty() { serde_json::Value::Null } else { serde_json::Value::String(extra.clone()) },
+                    // EXTRA reads "VIRTUAL GENERATED" / "STORED GENERATED". Writing such a
+                    // column is MySQL error 3105, so a dump must leave it out of the INSERT.
+                    "generated": extra.to_uppercase().contains("GENERATED"),
                     "characterSet": char_set,
                     "collation": collation
                 }));
@@ -1334,6 +1405,20 @@ pub(crate) fn strip_leading_comments(stmt: &str) -> &str {
     &stmt[i.min(stmt.len())..]
 }
 
+/// Phần đầu câu lệnh, in hoa — đủ để phân loại bằng `is_skipped_stmt`/`is_session_level_stmt`.
+///
+/// Chỉ 4-5 từ đầu quyết định loại câu lệnh, nên `to_uppercase()` trên CẢ câu là vô ích và đắt:
+/// nó cấp phát một bản copy của từng câu INSERT, tức là copy lại toàn bộ dump một lần nữa.
+/// Từ khoá dài nhất cần so là `START TRANSACTION` (17 ký tự) nên 32 byte là đủ rộng.
+fn upper_head(body: &str) -> String {
+    let mut end = body.len().min(32);
+    // Cắt theo byte thì phải lùi về biên ký tự UTF-8 (câu lệnh có thể mở đầu bằng ký tự nhiều byte).
+    while end > 0 && !body.is_char_boundary(end) {
+        end -= 1;
+    }
+    body[..end].to_uppercase()
+}
+
 // Lệnh của dump mà restore KHÔNG được chạy lại:
 //   - LOCK/UNLOCK TABLES: mysqldump thêm vào cho nhanh. `LOCK TABLES x WRITE` có tên bảng nên
 //     lọt qua bộ lọc, còn `UNLOCK TABLES` thì không -> khoá treo lại và bảng kế tiếp bị lỗi
@@ -1341,6 +1426,29 @@ pub(crate) fn strip_leading_comments(stmt: &str) -> &str {
 //     dùng chỉ chọn một phần bảng.
 //   - BEGIN/START TRANSACTION/COMMIT/ROLLBACK: transaction do chính hàm này quản lý; chạy lại
 //     lệnh của dump (nhất là ROLLBACK) có thể huỷ phần đã nhập.
+/// Statement text as it appears in an error message.
+///
+/// The framing is `Lỗi khi chạy lệnh SQL: {statement}. Chi tiết: {cause}` (kept verbatim so the
+/// regex in `backendErrors.ts` still matches), which puts the statement first — and a multi-row
+/// INSERT is now hundreds of KB, so the cause was pushed far below the visible area of the error
+/// dialog and users saw a wall of VALUES with no reason attached. Only the head is needed to
+/// recognise which statement failed.
+///
+/// The marker is a bare `…` on purpose: any word here would be a user-visible string escaping
+/// through the error channel untranslated, and `backendErrors.ts` matches this message with a
+/// regex that passes the interpolated text straight through.
+fn stmt_for_error(stmt: &str) -> String {
+    const MAX: usize = 400;
+    if stmt.len() <= MAX {
+        return stmt.to_string();
+    }
+    let mut end = MAX;
+    while end > 0 && !stmt.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &stmt[..end])
+}
+
 fn is_skipped_stmt(stmt_upper: &str) -> bool {
     stmt_upper.starts_with("LOCK TABLES")
         || stmt_upper.starts_with("UNLOCK TABLES")
@@ -1359,30 +1467,51 @@ fn is_skipped_stmt(stmt_upper: &str) -> bool {
 fn is_session_level_stmt(stmt_upper: &str) -> bool {
     stmt_upper.starts_with("USE ")
         || stmt_upper.starts_with("SET ")
+        // PRAGMA is the SQLite spelling of the same thing — the header this app writes opens
+        // with `PRAGMA foreign_keys = OFF;`, which names no table and would otherwise be
+        // filtered out. A PRAGMA the current server does not know must not abort the restore
+        // either, which is exactly what this list means.
+        || stmt_upper.starts_with("PRAGMA ")
         || stmt_upper.starts_with("CREATE DATABASE")
         || stmt_upper.starts_with("CREATE SCHEMA")
 }
 
 // Câu lệnh có nhắc tới một trong các bảng được chọn không (so khớp theo biên từ để
 // `film` không khớp `film_actor`).
-fn stmt_mentions_table(stmt_lower: &str, tables: &[String]) -> bool {
-    for t in tables {
-        let t_lower = t.to_lowercase();
-        let pattern = format!(r"\b{}\b", regex::escape(&t_lower));
-        match regex::Regex::new(&pattern) {
-            Ok(re) => {
-                if re.is_match(stmt_lower) {
-                    return true;
-                }
-            }
-            Err(_) => {
-                if stmt_lower.contains(&t_lower) {
-                    return true;
-                }
-            }
+//
+// Regex được biên dịch MỘT lần cho cả lần restore, không phải theo từng cặp (câu lệnh × bảng):
+// một dump 10MB có ~50.000 câu lệnh, nhân 22 bảng là hơn một triệu lần `Regex::new()` — bước
+// lọc này từng tốn nhiều thời gian hơn cả lúc chạy SQL thật, và nó xảy ra TRƯỚC khi gửi
+// `start` về UI nên người dùng chỉ thấy "Đang chuẩn bị..." đứng im.
+pub(crate) struct TableMatcher {
+    /// Một regex alternation cho tất cả bảng: quét mỗi câu lệnh một lượt thay vì một lượt/bảng.
+    re: Option<regex::Regex>,
+    /// Dự phòng khi regex không dựng được (tên bảng quá lạ / danh sách quá lớn).
+    lowered: Vec<String>,
+}
+
+impl TableMatcher {
+    pub(crate) fn new(tables: &[String]) -> Self {
+        if tables.is_empty() {
+            return Self { re: None, lowered: Vec::new() };
+        }
+        let alts: Vec<String> = tables.iter().map(|t| regex::escape(t)).collect();
+        // (?i) thay cho việc lowercase từng câu lệnh: `to_lowercase()` cấp phát một bản copy
+        // của mỗi câu INSERT, tức là copy lại cả dump.
+        let re = regex::Regex::new(&format!(r"(?i)\b(?:{})\b", alts.join("|"))).ok();
+        Self {
+            re,
+            lowered: tables.iter().map(|t| t.to_lowercase()).collect(),
         }
     }
-    false
+
+    pub(crate) fn matches(&self, stmt: &str) -> bool {
+        if let Some(re) = &self.re {
+            return re.is_match(stmt);
+        }
+        let lower = stmt.to_lowercase();
+        self.lowered.iter().any(|t| lower.contains(t))
+    }
 }
 
 // Tên database trong lệnh `USE <db>` (để reconnect sau khi restore xong).
@@ -1395,6 +1524,147 @@ fn use_db_name(stmt: &str) -> Option<String> {
         .trim_matches(|c| c == ';' || c == '`' || c == '"' || c == '\'')
         .to_string();
     if name.is_empty() { None } else { Some(name) }
+}
+
+// Statement head is `CREATE [OR REPLACE] [TEMP|TEMPORARY] [DEFINER=...] TRIGGER`.
+fn is_create_trigger_head(seg: &str) -> bool {
+    let head = strip_leading_comments(seg).trim_start();
+    let mut words = head.split_whitespace();
+    if !words.next().is_some_and(|w| w.eq_ignore_ascii_case("CREATE")) {
+        return false;
+    }
+    for w in words.take(4) {
+        if w.eq_ignore_ascii_case("TRIGGER") {
+            return true;
+        }
+        let is_modifier = w.eq_ignore_ascii_case("OR")
+            || w.eq_ignore_ascii_case("REPLACE")
+            || w.eq_ignore_ascii_case("TEMP")
+            || w.eq_ignore_ascii_case("TEMPORARY")
+            // MySQL writes the whole clause as one token: DEFINER=`root`@`localhost`
+            || w.get(..7).is_some_and(|p| p.eq_ignore_ascii_case("DEFINER"));
+        if !is_modifier {
+            return false;
+        }
+    }
+    false
+}
+
+/// Is this `;` still INSIDE a trigger body rather than the end of the statement?
+///
+/// A `BEGIN ... END` body carries its own `;`, so splitting on the first one yields a truncated
+/// `CREATE TRIGGER ... BEGIN UPDATE t SET ...;` — SQLite answers "incomplete input" and the whole
+/// restore rolls back. MySQL avoids this with the client-side `DELIMITER` command, SQLite has no
+/// such thing, so the rule has to live here. It is what `sqlite3_complete()` does: a statement
+/// starting with CREATE TRIGGER only ends at the `;` that directly follows the `END` keyword.
+///
+/// Requiring `BEGIN` matters: a Postgres trigger (`... EXECUTE FUNCTION f();`) and MySQL's
+/// single-statement form (`... FOR EACH ROW SET NEW.a = 1;`) have no BEGIN block, and making
+/// them wait for an `END` would swallow the rest of the dump into one statement.
+///
+/// Twin of `insideTriggerBody()` in src/sql/statements.ts — keep both in sync.
+fn trigger_stmt_incomplete(seg: &str) -> bool {
+    if !is_create_trigger_head(seg) {
+        return false;
+    }
+    let b: Vec<char> = seg.chars().collect();
+    let n = b.len();
+    let mut i = 0usize;
+    let mut has_begin = false;
+    let mut last_word_is_end = false;
+
+    while i < n {
+        let c = b[i];
+        let peek = if i + 1 < n { Some(b[i + 1]) } else { None };
+
+        if (c == '-' && peek == Some('-')) || (c == '#' && !matches!(peek, Some('>') | Some('-'))) {
+            while i < n && b[i] != '\n' {
+                i += 1;
+            }
+            continue;
+        }
+        if c == '/' && peek == Some('*') {
+            i += 2;
+            while i + 1 < n && !(b[i] == '*' && b[i + 1] == '/') {
+                i += 1;
+            }
+            i = (i + 2).min(n);
+            continue;
+        }
+        if c == '\'' || c == '"' || c == '`' {
+            let quote = c;
+            i += 1;
+            while i < n {
+                if b[i] == '\\' && quote != '`' {
+                    i += 2;
+                    continue;
+                }
+                if b[i] == quote {
+                    if quote == '\'' && i + 1 < n && b[i + 1] == '\'' {
+                        i += 2;
+                        continue;
+                    }
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            last_word_is_end = false;
+            continue;
+        }
+        if c.is_alphabetic() || c == '_' {
+            let s = i;
+            while i < n && (b[i].is_alphanumeric() || b[i] == '_' || b[i] == '$') {
+                i += 1;
+            }
+            let word: String = b[s..i].iter().collect();
+            if word.eq_ignore_ascii_case("BEGIN") {
+                has_begin = true;
+            }
+            last_word_is_end = word.eq_ignore_ascii_case("END");
+            continue;
+        }
+        if !c.is_whitespace() {
+            last_word_is_end = false;
+        }
+        i += 1;
+    }
+
+    has_begin && !last_word_is_end
+}
+
+// Cheap pre-check for the rule above: skip leading whitespace/comments and compare six chars.
+// A dump of INSERTs bails out on the first character instead of rebuilding every statement
+// into a String only to find it is not a trigger.
+fn seg_may_be_create(chars: &[char], from: usize, to: usize) -> bool {
+    let mut i = from;
+    loop {
+        while i < to && chars[i].is_whitespace() {
+            i += 1;
+        }
+        if i + 1 < to && chars[i] == '-' && chars[i + 1] == '-' {
+            while i < to && chars[i] != '\n' {
+                i += 1;
+            }
+            continue;
+        }
+        if i + 1 < to && chars[i] == '/' && chars[i + 1] == '*' {
+            i += 2;
+            while i + 1 < to && !(chars[i] == '*' && chars[i + 1] == '/') {
+                i += 1;
+            }
+            i = (i + 2).min(to);
+            continue;
+        }
+        break;
+    }
+    const KW: [char; 6] = ['C', 'R', 'E', 'A', 'T', 'E'];
+    if i + KW.len() > to {
+        return false;
+    }
+    KW.iter()
+        .enumerate()
+        .all(|(k, ch)| chars[i + k].to_ascii_uppercase() == *ch)
 }
 
 fn split_sql_statements(sql: &str) -> Vec<String> {
@@ -1476,6 +1746,18 @@ fn split_sql_statements(sql: &str) -> Vec<String> {
         }
         // Dấu kết thúc câu đang hiệu lực
         if matches_delimiter(&chars, i, &delim) {
+            // A ';' inside a trigger's BEGIN...END body is not the end of the statement. Only
+            // while the delimiter is still ';': a MySQL script that issued DELIMITER already
+            // protects the body that way.
+            if delim.len() == 1
+                && delim[0] == ';'
+                && seg_may_be_create(&chars, start, i)
+                && trigger_stmt_incomplete(&chars[start..i].iter().collect::<String>())
+            {
+                i += 1;
+                at_line_start = false;
+                continue;
+            }
             push_stmt(&mut out, start, i);
             i += delim.len();
             start = i;
@@ -2096,176 +2378,6 @@ pub async fn export_table(_state: tauri::State<'_, crate::AppState>, _name: Stri
 }
 
 #[tauri::command]
-pub async fn export_multi_tables(state: tauri::State<'_, crate::AppState>, payload: Value) -> Result<Value, String> {
-    let conn_type = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
-            Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
-            Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
-            Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        }
-    };
-
-    let tables = payload.get("tables").and_then(|v| v.as_array()).ok_or("Thiếu danh sách bảng")?;
-    let filename = payload.get("filename").and_then(|v| v.as_str()).unwrap_or("backup.sql");
-    let sql_options = payload.get("sqlOptions");
-    
-    let drop_table = sql_options.and_then(|o| o.get("dropTable")).and_then(|v| v.as_bool()).unwrap_or(true);
-    let include_structure = sql_options.and_then(|o| o.get("includeStructure")).and_then(|v| v.as_bool()).unwrap_or(true);
-    let include_content = sql_options.and_then(|o| o.get("includeContent")).and_then(|v| v.as_bool()).unwrap_or(true);
-    let compress_gzip = payload.get("compressGzip").and_then(|v| v.as_bool()).unwrap_or(false);
-
-    let mut sql_out = String::new();
-    sql_out.push_str("-- Database Backup generated by TableNova\n");
-    sql_out.push_str(&format!("-- Date: {}\n\n", chrono::Local::now().to_rfc3339()));
-
-    for table_val in tables {
-        let table_name = table_val.as_str().unwrap_or("");
-        if table_name.is_empty() { continue; }
-
-        if drop_table {
-            sql_out.push_str(&format!("DROP TABLE IF EXISTS `{}`;\n", table_name));
-        }
-
-        // Lấy cấu trúc bảng
-        if include_structure {
-            sql_out.push_str(&format!("-- Structure for table `{}`\n", table_name));
-            match &conn_type {
-                DbConnection::Sqlite(conn_arc) => {
-                    let conn = conn_arc.lock().map_err(|e| e.to_string())?;
-                    let mut stmt = conn.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").map_err(|e| e.to_string())?;
-                    let mut rows = stmt.query([table_name]).map_err(|e| e.to_string())?;
-                    if let Some(row) = rows.next().map_err(|e| e.to_string())? {
-                        let create_sql: String = row.get(0).map_err(|e| e.to_string())?;
-                        sql_out.push_str(&format!("{};\n\n", create_sql));
-                    }
-                }
-                DbConnection::Mysql(pool) => {
-                    let show_sql = format!("SHOW CREATE TABLE `{}`", table_name);
-                    if let Ok(row) = sqlx::query(sqlx::AssertSqlSafe(show_sql)).fetch_one(pool).await {
-                        let create_sql: String = row.get("Create Table");
-                        sql_out.push_str(&format!("{};\n\n", create_sql));
-                    }
-                }
-                DbConnection::Postgres(pool) => {
-                    // Đơn giản hóa đối với Postgres bằng cách dựng câu lệnh thô cơ bản
-                    sql_out.push_str(&format!("CREATE TABLE \"{}\" (\n", table_name));
-                    // format_type() keeps length/precision — see get_table_schema for why.
-                    let info_sql = format!(
-                        "SELECT a.attname::text AS column_name, \
-                                format_type(a.atttypid, a.atttypmod) AS data_type, \
-                                CASE WHEN a.attnotnull THEN 'NO' ELSE 'YES' END AS is_nullable \
-                         FROM pg_attribute a \
-                         JOIN pg_class c ON c.oid = a.attrelid \
-                         JOIN pg_namespace n ON n.oid = c.relnamespace \
-                         WHERE n.nspname = 'public' AND c.relname = '{}' \
-                           AND a.attnum > 0 AND NOT a.attisdropped \
-                         ORDER BY a.attnum",
-                        table_name.replace('\'', "''")
-                    );
-                    if let Ok(rows) = sqlx::query(sqlx::AssertSqlSafe(info_sql)).fetch_all(pool).await {
-                        let mut cols_defs = Vec::new();
-                        for r in rows {
-                            let name: String = r.get("column_name");
-                            let col_type: String = r.get("data_type");
-                            let nullable: String = r.get("is_nullable");
-                            let null_str = if nullable == "YES" { "" } else { " NOT NULL" };
-                            cols_defs.push(format!("  \"{}\" {}{}", name, col_type, null_str));
-                        }
-                        sql_out.push_str(&cols_defs.join(",\n"));
-                    }
-                    sql_out.push_str("\n);\n\n");
-                }
-            }
-        }
-
-        // Lấy nội dung bảng
-        if include_content {
-            sql_out.push_str(&format!("-- Data for table `{}`\n", table_name));
-            let select_sql = format!("SELECT * FROM `{}`", table_name);
-            let query_sql = match &conn_type {
-                DbConnection::Postgres(_) => select_sql.replace("`", "\""),
-                _ => select_sql,
-            };
-
-            let res = execute_raw_sql_generic(&conn_type, query_sql).await?;
-            if let Some(first_res) = res.get(0) {
-                if let Some(rows) = first_res.get("data").and_then(|v| v.as_array()) {
-                    for row in rows {
-                        if let Some(obj) = row.as_object() {
-                            let mut cols = Vec::new();
-                            let mut vals = Vec::new();
-                            for (k, v) in obj {
-                                cols.push(format!("`{}`", k));
-                                if v.is_null() {
-                                    vals.push("NULL".to_string());
-                                } else if v.is_string() {
-                                    vals.push(format!("'{}'", v.as_str().unwrap().replace("'", "''")));
-                                } else {
-                                    vals.push(v.to_string());
-                                }
-                            }
-                            sql_out.push_str(&format!(
-                                "INSERT INTO `{}` ({}) VALUES ({});\n",
-                                table_name,
-                                cols.join(", "),
-                                vals.join(", ")
-                            ));
-                        }
-                    }
-                }
-            }
-            sql_out.push_str("\n");
-        }
-    }
-
-    // Ghi file
-    if compress_gzip {
-        use flate2::write::GzEncoder;
-        use flate2::Compression;
-        use std::io::Write;
-        
-        let path = std::path::Path::new(filename);
-        let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
-        let mut encoder = GzEncoder::new(file, Compression::default());
-        encoder.write_all(sql_out.as_bytes()).map_err(|e| e.to_string())?;
-        encoder.finish().map_err(|e| e.to_string())?;
-    } else {
-        std::fs::write(filename, sql_out).map_err(|e| e.to_string())?;
-    }
-
-    Ok(json!({ "success": true }))
-}
-
-#[tauri::command]
-pub async fn parse_backup_tables(file_path: String) -> Result<Value, String> {
-    use std::io::Read;
-    let mut sql_content = String::new();
-
-    if file_path.ends_with(".gz") {
-        use flate2::read::GzDecoder;
-        let file = std::fs::File::open(&file_path).map_err(|e| e.to_string())?;
-        let mut decoder = GzDecoder::new(file);
-        decoder.read_to_string(&mut sql_content).map_err(|e| e.to_string())?;
-    } else {
-        sql_content = std::fs::read_to_string(&file_path).map_err(|e| e.to_string())?;
-    }
-
-    // Đọc danh sách bảng từ câu lệnh CREATE TABLE hoặc INSERT INTO
-    let mut tables = Vec::new();
-    let re = regex::Regex::new(r##"(?i)(?:CREATE\s+TABLE|INSERT\s+INTO|DROP\s+TABLE\s+IF\s+EXISTS)\s+(?:IF\s+NOT\s+EXISTS\s+)?[`"']?([a-zA-Z0-9_]+)[`"']?"##).unwrap();
-    for cap in re.captures_iter(&sql_content) {
-        let table_name = cap[1].to_string();
-        if !tables.contains(&table_name) {
-            tables.push(table_name);
-        }
-    }
-
-    Ok(json!({ "success": true, "tables": tables }))
-}
-
-#[tauri::command]
 pub async fn restore_backup(
     state: tauri::State<'_, crate::AppState>,
     sql_content: String,
@@ -2275,7 +2387,20 @@ pub async fn restore_backup(
     // Bắt buộc (không dùng Option): Channel không impl Deserialize nên `Option<Channel<_>>`
     // không thoả CommandArg — frontend luôn tạo kênh, có cần dùng hay không thì tuỳ nó.
     on_progress: Channel<Value>,
+    // Gặp lệnh lỗi thì bỏ qua và chạy tiếp, thay vì rollback toàn bộ (giống `mysql --force`).
+    //
+    // KHÔNG phải "tắt kiểm tra toàn vẹn": khoá ngoại vốn đã tắt sẵn ở mọi lần restore
+    // (`SET FOREIGN_KEY_CHECKS = 0` / `SET CONSTRAINTS ALL DEFERRED` / `PRAGMA foreign_keys OFF`).
+    // Thứ thật sự làm hỏng cả lần nhập là những lỗi không tắt được: `CREATE VIEW` đọc bảng
+    // không có trong tệp, routine gọi hàm chưa tồn tại, kiểu dữ liệu server này không hiểu.
+    // Chế độ này cứu lấy phần chạy được, đổi lại mất tính nguyên tử.
+    continue_on_error: Option<bool>,
 ) -> Result<Value, String> {
+    let continue_on_error = continue_on_error.unwrap_or(false);
+    // Câu lệnh lỗi đã bỏ qua: đếm hết, nhưng chỉ giữ vài cái đầu để hiện cho người dùng.
+    let mut failed_count: usize = 0;
+    let mut failed_samples: Vec<Value> = Vec::new();
+    const FAILED_SAMPLES_MAX: usize = 5;
     // Restore acquires its own connection and runs its own transaction. It would not corrupt the
     // user's open transaction — different session — but it would block on the locks that
     // transaction holds, and a frozen progress bar is a worse answer than a clear refusal.
@@ -2300,11 +2425,12 @@ pub async fn restore_backup(
     // Lọc TRƯỚC để biết tổng số câu lệnh sẽ chạy -> báo được phần trăm thật thay vì thanh vô định.
     // bool đi kèm = lệnh cấp phiên/schema (lỗi của nó không huỷ cả lần restore).
     let mut to_run: Vec<(String, bool)> = Vec::new();
+    let matcher = TableMatcher::new(&tables);
     for q in statements {
         // Phân loại theo phần SAU comment đầu câu: dump của mysqldump luôn có
         // `-- Dumping data for table x` dán liền trước LOCK TABLES / INSERT.
         let body = strip_leading_comments(&q);
-        let head = body.to_uppercase();
+        let head = upper_head(body);
         if is_skipped_stmt(&head) {
             continue;
         }
@@ -2324,10 +2450,33 @@ pub async fn restore_backup(
                     last_use_db = Some(db);
                 }
             }
-        } else if !stmt_mentions_table(&q.to_lowercase(), &tables) {
+        } else if !matcher.matches(&q) {
             continue;
         }
         to_run.push((q, session_level));
+    }
+
+    // Đẩy mọi câu CREATE VIEW xuống cuối.
+    //
+    // Dump ghi view xen kẽ với bảng theo thứ tự alphabet — view `actor_info` của sakila đứng
+    // ngay sau bảng `actor`, trước cả bảng `film` mà nó đọc — trong khi `CREATE VIEW` được
+    // kiểm tra NGAY lúc chạy: MySQL trả 1146 "Table doesn't exist" và cả lần nhập bị rollback.
+    // Bên xuất đã được sửa để ghi view sau bảng, nhưng những tệp dump đã có sẵn (và dump của
+    // công cụ khác) thì không sửa được nữa, nên chỗ chạy cũng phải chịu được thứ tự sai.
+    //
+    // Chỉ CREATE VIEW được dời, và thứ tự tương đối giữa chúng được giữ nguyên (một view có thể
+    // đọc view khác; export của app xếp sẵn theo phụ thuộc — xem `orderViewsByDependency`).
+    // `DROP VIEW` nằm lại chỗ cũ là vô hại. Dời thêm loại câu lệnh khác thì có thể đổi nghĩa
+    // của dump — ví dụ dump nào INSERT qua một updatable view sẽ hỏng.
+    if let Ok(create_view_re) = regex::Regex::new(
+        r"(?i)^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:ALGORITHM\s*=\s*\w+\s+)?(?:DEFINER\s*=\s*\S+\s+)?(?:SQL\s+SECURITY\s+\w+\s+)?VIEW\b",
+    ) {
+        // partition giữ nguyên thứ tự trong từng nhóm.
+        let (rest, views): (Vec<_>, Vec<_>) = to_run
+            .into_iter()
+            .partition(|(q, _)| !create_view_re.is_match(strip_leading_comments(q)));
+        to_run = rest;
+        to_run.extend(views);
     }
 
     let total = to_run.len();
@@ -2365,11 +2514,20 @@ pub async fn restore_backup(
                 if let Err(e) = sqlx::raw_sql(sqlx::AssertSqlSafe(q.clone())).execute(&mut *conn).await {
                     // Lệnh cấp phiên/schema lỗi thì bỏ qua; lỗi thật thì Rollback rồi trả lỗi.
                     if !session_level {
+                        if continue_on_error {
+                            // Lỗi một câu KHÔNG huỷ transaction của MySQL, nên phần đã ghi vẫn
+                            // còn và chạy tiếp được ngay.
+                            failed_count += 1;
+                            if failed_samples.len() < FAILED_SAMPLES_MAX {
+                                failed_samples.push(json!({ "sql": stmt_for_error(q), "error": e.to_string() }));
+                            }
+                            continue;
+                        }
                         let _ = sqlx::query("ROLLBACK;").execute(&mut *conn).await;
                         // Trả connection về pool ở trạng thái sạch, không để khoá/FK-check treo lại.
                         let _ = sqlx::raw_sql("UNLOCK TABLES;").execute(&mut *conn).await;
                         let _ = sqlx::query("SET FOREIGN_KEY_CHECKS = 1;").execute(&mut *conn).await;
-                        return Err(format!("Lỗi khi chạy lệnh SQL: {}. Chi tiết: {}", q, e));
+                        return Err(format!("Lỗi khi chạy lệnh SQL: {}. Chi tiết: {}", stmt_for_error(q), e));
                     }
                     continue;
                 }
@@ -2408,7 +2566,25 @@ pub async fn restore_backup(
                     DbConnection::Postgres(_) => q.replace("`", "\""),
                     _ => q.clone(),
                 };
+                // Postgres: một lỗi làm cả transaction chuyển sang trạng thái aborted (25P02),
+                // mọi câu sau đó đều lỗi "current transaction is aborted". Muốn chạy tiếp thì
+                // phải có điểm lùi cho từng câu. Chỉ trả giá 2 round trip khi người dùng bật
+                // chế độ này; MySQL và SQLite không cần vì lỗi một câu không huỷ transaction.
+                let pg_savepoint = continue_on_error && matches!(&conn_type, DbConnection::Postgres(_));
+                if pg_savepoint {
+                    let _ = execute_raw_sql_generic(&conn_type, "SAVEPOINT tn_restore_sp;".to_string()).await;
+                }
                 if let Err(e) = execute_raw_sql_generic(&conn_type, exec_sql).await {
+                    if !session_level && continue_on_error {
+                        if pg_savepoint {
+                            let _ = execute_raw_sql_generic(&conn_type, "ROLLBACK TO SAVEPOINT tn_restore_sp;".to_string()).await;
+                        }
+                        failed_count += 1;
+                        if failed_samples.len() < FAILED_SAMPLES_MAX {
+                            failed_samples.push(json!({ "sql": stmt_for_error(q), "error": e.to_string() }));
+                        }
+                        continue;
+                    }
                     if !session_level {
                         // Rollback nếu có lỗi
                         match &conn_type {
@@ -2423,9 +2599,13 @@ pub async fn restore_backup(
                             }
                             _ => {}
                         }
-                        return Err(format!("Lỗi khi chạy lệnh SQL: {}. Chi tiết: {}", q, e));
+                        return Err(format!("Lỗi khi chạy lệnh SQL: {}. Chi tiết: {}", stmt_for_error(q), e));
                     }
                     continue;
+                }
+                // Giải phóng điểm lùi ngay khi câu chạy xong, không để savepoint dồn lại.
+                if pg_savepoint {
+                    let _ = execute_raw_sql_generic(&conn_type, "RELEASE SAVEPOINT tn_restore_sp;".to_string()).await;
                 }
                 statements_count += 1;
                 if idx % PROGRESS_EVERY == 0 || idx + 1 == total {
@@ -2502,7 +2682,11 @@ pub async fn restore_backup(
     Ok(json!({
         "success": true,
         "statementsCount": statements_count,
-        "activeDatabase": last_use_db
+        "activeDatabase": last_use_db,
+        // Chỉ khác 0 khi bật continue_on_error — UI phải nói rõ "đã nhập nhưng thiếu ngần này",
+        // im lặng ở đây thì người dùng tin là nhập trọn vẹn.
+        "failedCount": failed_count,
+        "failedSamples": failed_samples
     }))
 }
 
@@ -2934,6 +3118,42 @@ pub async fn get_table_definition(state: tauri::State<'_, crate::AppState>, name
             format!("{};", s)
         }
         DbConnection::Postgres(_) => {
+            // A view is NOT a table here. This branch used to hand-build `CREATE TABLE` for
+            // every name it was given, so exporting a Postgres database emitted a CREATE TABLE
+            // for each of its views — the re-import then had a real table shadowing the view
+            // and none of the view logic. relkind decides: 'v' = view, 'm' = materialized view
+            // (which CREATE ... WITH DATA populates on the spot, so no REFRESH is needed as
+            // long as it is written after the tables it reads — which the dump order does).
+            let relkind = {
+                let sql = format!(
+                    "SELECT c.relkind::text AS kind FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+                     WHERE n.nspname = 'public' AND c.relname = '{}' LIMIT 1",
+                    name.replace('\'', "''")
+                );
+                execute_raw_sql_generic(&conn_type, sql)
+                    .await
+                    .ok()
+                    .and_then(|r| all_string_values(&r).into_iter().next())
+                    .unwrap_or_default()
+            };
+            if relkind == "v" || relkind == "m" {
+                let sql = format!(
+                    "SELECT pg_get_viewdef('\"{}\"'::regclass, true) AS def",
+                    name.replace('"', "\"\"")
+                );
+                let results = execute_raw_sql_generic(&conn_type, sql).await?;
+                let body = all_string_values(&results)
+                    .into_iter()
+                    .next()
+                    .ok_or("Không lấy được định nghĩa đối tượng")?;
+                let body = body.trim().trim_end_matches(';');
+                let kw = if relkind == "m" { "MATERIALIZED VIEW" } else { "VIEW" };
+                return Ok(json!({
+                    "success": true,
+                    "sql": format!("CREATE {} \"{}\" AS\n{};", kw, name.replace('"', "\"\""), body)
+                }));
+            }
+
             // Postgres không có SHOW CREATE TABLE -> dựng lại từ metadata (cột + NOT NULL + DEFAULT + PRIMARY KEY)
             let pk_cols = get_primary_key_columns(&conn_type, &name).await;
             // format_type() keeps length/precision — see get_table_schema for why.
@@ -3688,7 +3908,13 @@ pub async fn get_database_objects(state: tauri::State<'_, crate::AppState>) -> R
             // SQLite không có hàm/thủ tục do người dùng định nghĩa
         }
         DbConnection::Postgres(_) => {
-            let tv = execute_raw_sql_generic(&conn_type, "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name".to_string()).await?;
+            // Materialized views: see the note in get_tables — information_schema has none.
+            let tv = execute_raw_sql_generic(&conn_type,
+                "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = 'public' \
+                 UNION ALL \
+                 SELECT c.relname, 'VIEW' FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+                 WHERE n.nspname = 'public' AND c.relkind = 'm' \
+                 ORDER BY 1".to_string()).await?;
             split_tables_views(&tv, "table_name", "table_type", "VIEW", &mut tables, &mut views);
 
             let rt = execute_raw_sql_generic(&conn_type,
@@ -3725,12 +3951,32 @@ pub async fn get_database_objects(state: tauri::State<'_, crate::AppState>) -> R
         }
     }
 
+    // MySQL scheduled EVENTs. Only MySQL has them, and they are dumped like a routine (their
+    // body carries its own `;`, so the export wraps them in a DELIMITER block).
+    let mut events: Vec<String> = Vec::new();
+    if matches!(conn_type, DbConnection::Mysql(_)) {
+        let ev = execute_raw_sql_generic(
+            &conn_type,
+            "SELECT EVENT_NAME AS name FROM information_schema.EVENTS WHERE EVENT_SCHEMA = DATABASE() ORDER BY EVENT_NAME".to_string(),
+        )
+        .await
+        .unwrap_or_default();
+        for row in result_rows(&ev) {
+            if let Some(name) = row_str(row, "name") {
+                if !name.is_empty() {
+                    events.push(name.to_string());
+                }
+            }
+        }
+    }
+
     Ok(json!({
         "success": true,
         "tables": tables,
         "views": views,
         "functions": functions,
-        "procedures": procedures
+        "procedures": procedures,
+        "events": events
     }))
 }
 
@@ -3753,10 +3999,12 @@ pub async fn get_object_definition(state: tauri::State<'_, crate::AppState>, nam
                 "function" => format!("SHOW CREATE FUNCTION `{}`", name),
                 "procedure" => format!("SHOW CREATE PROCEDURE `{}`", name),
                 "view" => format!("SHOW CREATE VIEW `{}`", name),
+                "event" => format!("SHOW CREATE EVENT `{}`", name),
                 _ => format!("SHOW CREATE TABLE `{}`", name),
             };
             let row = sqlx::query(sqlx::AssertSqlSafe(stmt)).fetch_one(pool).await.map_err(|e| e.to_string())?;
-            let s: String = row.try_get("Create Function")
+            let s: String = row.try_get("Create Event")
+                .or_else(|_| row.try_get("Create Function"))
                 .or_else(|_| row.try_get("Create Procedure"))
                 .or_else(|_| row.try_get("Create View"))
                 .or_else(|_| row.try_get("Create Table"))
@@ -4135,6 +4383,34 @@ pub async fn get_connection_status(
 // ADVANCED SCHEMA & OBJECT MANAGEMENT (Triggers, Sequences, Partitions, Check Constraints, Routines, Views)
 // -------------------------------------------------------------
 
+// Rows of `execute_raw_sql_generic` are JSON OBJECTS keyed by column name
+// (`{ columns: [...], data: [{col: val}] }`), never positional arrays. The four commands
+// below used to read them with `row.as_array()`, which is always `None`: the loop body never
+// ran, so every one of them returned an empty list on all three dialects and the matching UI
+// (Structure > Triggers / Partitions / Check constraints, Sequence Manager) looked as if the
+// database had no such objects. Read through these helpers, and address columns by the alias
+// each query already declares.
+fn result_rows(results: &[Value]) -> &[Value] {
+    results
+        .first()
+        .and_then(|r| r.get("data"))
+        .and_then(|d| d.as_array())
+        .map(|v| v.as_slice())
+        .unwrap_or(&[])
+}
+
+fn row_str<'a>(row: &'a Value, col: &str) -> Option<&'a str> {
+    row.get(col).and_then(|v| v.as_str())
+}
+
+// Counters arrive as a number on some drivers and as a string on others (MySQL BIGINT via
+// information_schema, Postgres ::bigint) — accept both, like the code this replaces did.
+fn row_i64(row: &Value, col: &str) -> i64 {
+    row.get(col)
+        .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+        .unwrap_or(0)
+}
+
 #[tauri::command]
 pub async fn get_table_triggers(state: tauri::State<'_, crate::AppState>, table_name: String) -> Result<Value, String> {
     let conn_type = {
@@ -4162,21 +4438,199 @@ pub async fn get_table_triggers(state: tauri::State<'_, crate::AppState>, table_
 
     let results = execute_raw_sql_generic(&conn_type, sql).await?;
     let mut triggers: Vec<Value> = Vec::new();
-    if let Some(data) = results.get(0).and_then(|r| r.get("data")).and_then(|d| d.as_array()) {
-        for row in data {
-            if let Some(arr) = row.as_array() {
-                let name = arr.get(0).and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let timing = arr.get(1).and_then(|v| v.as_str()).unwrap_or("AFTER").to_string();
-                let event = arr.get(2).and_then(|v| v.as_str()).unwrap_or("INSERT").to_string();
-                let statement = arr.get(3).and_then(|v| v.as_str()).unwrap_or("").to_string();
-                triggers.push(json!({
-                    "name": name,
-                    "timing": timing,
-                    "event": event,
-                    "statement": statement
-                }));
-            }
+    for row in result_rows(&results) {
+        triggers.push(json!({
+            "name": row_str(row, "name").unwrap_or(""),
+            "timing": row_str(row, "timing").unwrap_or("AFTER"),
+            "event": row_str(row, "event").unwrap_or("INSERT"),
+            "statement": row_str(row, "statement").unwrap_or("")
+        }));
+    }
+
+    Ok(json!({ "success": true, "triggers": triggers }))
+}
+
+// Rebuild a runnable CREATE TRIGGER from what MySQL's information_schema exposes.
+//
+// MySQL is the only dialect that does not hand back the original statement: Postgres has
+// pg_get_triggerdef() and SQLite stores the source in sqlite_master.sql, but
+// INFORMATION_SCHEMA.TRIGGERS only has the pieces. `SHOW CREATE TRIGGER` would return the
+// whole thing, yet it is one round trip per trigger and its output carries a DEFINER clause
+// the dump has to strip anyway, so assembling it here costs one query for the whole database.
+// ACTION_ORIENTATION is always 'ROW' in MySQL, hence the fixed FOR EACH ROW.
+fn mysql_trigger_ddl(name: &str, table: &str, timing: &str, event: &str, body: &str) -> String {
+    format!(
+        "CREATE TRIGGER `{}` {} {} ON `{}` FOR EACH ROW\n{}",
+        name,
+        timing.trim(),
+        event.trim(),
+        table,
+        body.trim()
+    )
+}
+
+/// Everything that belongs to a table but does NOT live inside that dialect's CREATE TABLE.
+///
+/// MySQL needs nothing: `SHOW CREATE TABLE` already carries indexes, foreign keys, CHECKs and
+/// AUTO_INCREMENT. SQLite keeps indexes as their own `sqlite_master` rows. Postgres has no
+/// SHOW CREATE TABLE at all, so `get_table_definition` hand-builds one from columns + PK only —
+/// index, FK/UNIQUE/CHECK, comments and the sequence behind a `serial` column are all missing,
+/// and a dump without the sequence fails to restore outright ("relation x_id_seq does not exist").
+///
+/// Grouped by WHERE the statement has to run, which is the whole point:
+///   - `sequences`  before its CREATE TABLE (the column DEFAULT references it),
+///   - `indexes` / `comments`  right after CREATE TABLE,
+///   - `constraints`  after EVERY table (a foreign key points at another table),
+///   - `sequence_values`  after the data (setval reads MAX() of the rows just inserted).
+#[tauri::command]
+pub async fn get_table_ddl_extras(
+    state: tauri::State<'_, crate::AppState>,
+    table_name: String,
+) -> Result<Value, String> {
+    let conn_type = {
+        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
+        match manager.connection.as_ref() {
+            Some(c) => c.clone(),
+            None => return Err("Chưa kết nối CSDL".to_string()),
         }
+    };
+    let esc = table_name.replace('\'', "''");
+
+    // Runs a query whose single column is a ready-to-run statement; a dialect that does not
+    // support one of these (older server, missing catalog) yields an empty list instead of
+    // failing the whole export.
+    async fn ddl_list(conn: &DbConnection, sql: String) -> Vec<String> {
+        match execute_raw_sql_generic(conn, sql).await {
+            Ok(results) => all_string_values(&results),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    let mut sequences: Vec<String> = Vec::new();
+    let mut indexes: Vec<String> = Vec::new();
+    let mut constraints: Vec<String> = Vec::new();
+    let mut comments: Vec<String> = Vec::new();
+    let mut sequence_values: Vec<String> = Vec::new();
+
+    match &conn_type {
+        DbConnection::Mysql(_) => {}
+        DbConnection::Sqlite(_) => {
+            // sql IS NULL for the indexes SQLite creates itself (UNIQUE / AUTOINCREMENT):
+            // they come back with the table and must not be replayed.
+            indexes = ddl_list(
+                &conn_type,
+                format!(
+                    "SELECT sql || ';' FROM sqlite_master WHERE type = 'index' AND tbl_name = '{}' AND sql IS NOT NULL",
+                    esc
+                ),
+            )
+            .await;
+        }
+        DbConnection::Postgres(_) => {
+            sequences = ddl_list(&conn_type, format!(
+                "SELECT 'CREATE SEQUENCE IF NOT EXISTS ' || quote_ident(s.relname) || ';' \
+                 FROM pg_class s JOIN pg_depend d ON d.objid = s.oid AND d.deptype = 'a' \
+                 JOIN pg_class t ON t.oid = d.refobjid JOIN pg_namespace n ON n.oid = t.relnamespace \
+                 WHERE s.relkind = 'S' AND n.nspname = 'public' AND t.relname = '{}'", esc)).await;
+
+            // Skip every index that merely backs a constraint — PRIMARY KEY is already inside
+            // CREATE TABLE and UNIQUE comes back below as ALTER TABLE ADD CONSTRAINT.
+            indexes = ddl_list(&conn_type, format!(
+                "SELECT pg_get_indexdef(i.indexrelid) || ';' \
+                 FROM pg_index i JOIN pg_class c ON c.oid = i.indrelid \
+                 JOIN pg_namespace n ON n.oid = c.relnamespace \
+                 WHERE n.nspname = 'public' AND c.relname = '{}' \
+                   AND NOT EXISTS (SELECT 1 FROM pg_constraint con WHERE con.conindid = i.indexrelid)", esc)).await;
+
+            // contype: f = foreign key, u = unique, c = check. 'p' (primary key) is skipped.
+            constraints = ddl_list(&conn_type, format!(
+                "SELECT 'ALTER TABLE ' || quote_ident(c.relname) || ' ADD CONSTRAINT ' \
+                     || quote_ident(con.conname) || ' ' || pg_get_constraintdef(con.oid) || ';' \
+                 FROM pg_constraint con JOIN pg_class c ON c.oid = con.conrelid \
+                 JOIN pg_namespace n ON n.oid = c.relnamespace \
+                 WHERE n.nspname = 'public' AND c.relname = '{}' AND con.contype IN ('f','u','c') \
+                 ORDER BY con.contype DESC, con.conname", esc)).await;
+
+            comments = ddl_list(&conn_type, format!(
+                "SELECT 'COMMENT ON TABLE ' || quote_ident(c.relname) || ' IS ' \
+                     || quote_literal(obj_description(c.oid)) || ';' \
+                 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+                 WHERE n.nspname = 'public' AND c.relname = '{}' AND obj_description(c.oid) IS NOT NULL \
+                 UNION ALL \
+                 SELECT 'COMMENT ON COLUMN ' || quote_ident(c.relname) || '.' || quote_ident(a.attname) \
+                     || ' IS ' || quote_literal(col_description(c.oid, a.attnum)) || ';' \
+                 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+                 JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped \
+                 WHERE n.nspname = 'public' AND c.relname = '{}' \
+                   AND col_description(c.oid, a.attnum) IS NOT NULL", esc, esc)).await;
+
+            // setval computed from the restored rows instead of the value read at export time:
+            // the dump stays correct no matter how long it sits on disk before being replayed.
+            sequence_values = ddl_list(&conn_type, format!(
+                "SELECT 'SELECT setval(' || quote_literal(quote_ident(s.relname)) || ', COALESCE((SELECT MAX(' \
+                     || quote_ident(a.attname) || ') FROM ' || quote_ident(t.relname) || '), 1), true);' \
+                 FROM pg_class s JOIN pg_depend d ON d.objid = s.oid AND d.deptype = 'a' \
+                 JOIN pg_class t ON t.oid = d.refobjid \
+                 JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = d.refobjsubid \
+                 JOIN pg_namespace n ON n.oid = t.relnamespace \
+                 WHERE s.relkind = 'S' AND n.nspname = 'public' AND t.relname = '{}'", esc)).await;
+        }
+    }
+
+    Ok(json!({
+        "success": true,
+        "sequences": sequences,
+        "indexes": indexes,
+        "constraints": constraints,
+        "comments": comments,
+        "sequenceValues": sequence_values,
+    }))
+}
+
+/// Every trigger of the current database, with a statement a dump can replay as-is.
+///
+/// `get_table_triggers` answers per table and is what the Structure tab uses; the export path
+/// needs the whole database in one call, plus the owning table name (Postgres cannot drop a
+/// trigger without `ON <table>`).
+#[tauri::command]
+pub async fn get_all_triggers(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
+    let conn_type = {
+        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
+        match manager.connection.as_ref() {
+            Some(c) => c.clone(),
+            None => return Err("Chưa kết nối CSDL".to_string()),
+        }
+    };
+
+    let sql = match &conn_type {
+        DbConnection::Mysql(_) => "SELECT TRIGGER_NAME AS name, EVENT_OBJECT_TABLE AS tbl, ACTION_TIMING AS timing, EVENT_MANIPULATION AS event, ACTION_STATEMENT AS statement FROM INFORMATION_SCHEMA.TRIGGERS WHERE TRIGGER_SCHEMA = DATABASE() ORDER BY EVENT_OBJECT_TABLE, ACTION_ORDER, TRIGGER_NAME".to_string(),
+        DbConnection::Postgres(_) => "SELECT tr.tgname AS name, c.relname AS tbl, '' AS timing, '' AS event, pg_get_triggerdef(tr.oid) AS statement FROM pg_trigger tr JOIN pg_class c ON c.oid = tr.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND NOT tr.tgisinternal ORDER BY c.relname, tr.tgname".to_string(),
+        // sql IS NULL for objects SQLite creates itself; those cannot be replayed anyway.
+        DbConnection::Sqlite(_) => "SELECT name, tbl_name AS tbl, '' AS timing, '' AS event, sql AS statement FROM sqlite_master WHERE type = 'trigger' AND sql IS NOT NULL ORDER BY tbl_name, name".to_string(),
+    };
+
+    let results = execute_raw_sql_generic(&conn_type, sql).await?;
+    let is_mysql = matches!(conn_type, DbConnection::Mysql(_));
+    let mut triggers: Vec<Value> = Vec::new();
+    for row in result_rows(&results) {
+        let name = row_str(row, "name").unwrap_or("");
+        let table = row_str(row, "tbl").unwrap_or("");
+        let statement = row_str(row, "statement").unwrap_or("");
+        if name.is_empty() || statement.is_empty() {
+            continue;
+        }
+        let ddl = if is_mysql {
+            mysql_trigger_ddl(
+                name,
+                table,
+                row_str(row, "timing").unwrap_or("BEFORE"),
+                row_str(row, "event").unwrap_or("INSERT"),
+                statement,
+            )
+        } else {
+            statement.to_string()
+        };
+        triggers.push(json!({ "name": name, "table": table, "statement": ddl }));
     }
 
     Ok(json!({ "success": true, "triggers": triggers }))
@@ -4247,20 +4701,16 @@ pub async fn get_sequences(state: tauri::State<'_, crate::AppState>) -> Result<V
 
     let results = execute_raw_sql_generic(&conn_type, sql).await?;
     let mut sequences: Vec<Value> = Vec::new();
-    if let Some(data) = results.get(0).and_then(|r| r.get("data")).and_then(|d| d.as_array()) {
-        for row in data {
-            if let Some(arr) = row.as_array() {
-                sequences.push(json!({
-                    "name": arr.get(0).and_then(|v| v.as_str()).unwrap_or(""),
-                    "dataType": arr.get(1).and_then(|v| v.as_str()).unwrap_or("bigint"),
-                    "startValue": arr.get(2).and_then(|v| v.as_str()).unwrap_or("1"),
-                    "minVal": arr.get(3).and_then(|v| v.as_str()).unwrap_or("1"),
-                    "maxVal": arr.get(4).and_then(|v| v.as_str()).unwrap_or(""),
-                    "incrementBy": arr.get(5).and_then(|v| v.as_str()).unwrap_or("1"),
-                    "cycle": arr.get(6).and_then(|v| v.as_str()).map(|c| c == "YES").unwrap_or(false)
-                }));
-            }
-        }
+    for row in result_rows(&results) {
+        sequences.push(json!({
+            "name": row_str(row, "name").unwrap_or(""),
+            "dataType": row_str(row, "data_type").unwrap_or("bigint"),
+            "startValue": row_str(row, "start_value").unwrap_or("1"),
+            "minVal": row_str(row, "min_val").unwrap_or("1"),
+            "maxVal": row_str(row, "max_val").unwrap_or(""),
+            "incrementBy": row_str(row, "increment").unwrap_or("1"),
+            "cycle": row_str(row, "cycle").map(|c| c == "YES").unwrap_or(false)
+        }));
     }
 
     Ok(json!({ "success": true, "sequences": sequences }))
@@ -4323,19 +4773,15 @@ pub async fn get_table_partitions(state: tauri::State<'_, crate::AppState>, tabl
 
     let results = execute_raw_sql_generic(&conn_type, sql).await?;
     let mut partitions: Vec<Value> = Vec::new();
-    if let Some(data) = results.get(0).and_then(|r| r.get("data")).and_then(|d| d.as_array()) {
-        for row in data {
-            if let Some(arr) = row.as_array() {
-                partitions.push(json!({
-                    "name": arr.get(0).and_then(|v| v.as_str()).unwrap_or(""),
-                    "method": arr.get(1).and_then(|v| v.as_str()).unwrap_or(""),
-                    "expression": arr.get(2).and_then(|v| v.as_str()).unwrap_or(""),
-                    "description": arr.get(3).and_then(|v| v.as_str()).unwrap_or(""),
-                    "tableRows": arr.get(4).and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))).unwrap_or(0),
-                    "dataLength": arr.get(5).and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))).unwrap_or(0)
-                }));
-            }
-        }
+    for row in result_rows(&results) {
+        partitions.push(json!({
+            "name": row_str(row, "name").unwrap_or(""),
+            "method": row_str(row, "method").unwrap_or(""),
+            "expression": row_str(row, "expression").unwrap_or(""),
+            "description": row_str(row, "description").unwrap_or(""),
+            "tableRows": row_i64(row, "table_rows"),
+            "dataLength": row_i64(row, "data_length")
+        }));
     }
 
     Ok(json!({ "success": true, "partitions": partitions }))
@@ -4365,16 +4811,12 @@ pub async fn get_check_constraints(state: tauri::State<'_, crate::AppState>, tab
 
     let results = execute_raw_sql_generic(&conn_type, sql).await?;
     let mut constraints: Vec<Value> = Vec::new();
-    if let Some(data) = results.get(0).and_then(|r| r.get("data")).and_then(|d| d.as_array()) {
-        for row in data {
-            if let Some(arr) = row.as_array() {
-                constraints.push(json!({
-                    "name": arr.get(0).and_then(|v| v.as_str()).unwrap_or(""),
-                    "expression": arr.get(1).and_then(|v| v.as_str()).unwrap_or(""),
-                    "enforced": arr.get(2).and_then(|v| v.as_str()).map(|s| s == "YES").unwrap_or(true)
-                }));
-            }
-        }
+    for row in result_rows(&results) {
+        constraints.push(json!({
+            "name": row_str(row, "name").unwrap_or(""),
+            "expression": row_str(row, "expression").unwrap_or(""),
+            "enforced": row_str(row, "enforced").map(|s| s == "YES").unwrap_or(true)
+        }));
     }
 
     Ok(json!({ "success": true, "constraints": constraints }))

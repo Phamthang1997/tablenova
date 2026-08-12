@@ -776,44 +776,58 @@ body {
 /* Track 3px padding + pill bo 6px = ngoài bo 9px, hai đường cong đồng tâm. */
 .cm-seg {
   display: inline-flex;
-  gap: 2px;
-  padding: 3px;
-  border-radius: 9px;
-  border: 1px solid var(--win-border);
-  background: var(--win-bg-hover);
+  gap: 4px;
+  padding: 0;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
   flex-shrink: 0;
+  align-items: center;
 }
 
 .cm-seg button {
   height: 24px;
-  padding: 0 12px;
+  padding: 0 10px;
   border: none;
   border-radius: 6px;
   background: transparent;
   color: var(--win-text-secondary);
   font-family: var(--win-font-sans);
   font-size: 11.5px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition: all 0.12s ease;
 }
 
 .cm-seg button:hover:not(.on) {
   color: var(--win-text-primary);
+  background: rgba(0, 0, 0, 0.04);
 }
 
-/* Mục đang chọn nổi lên bằng pill sáng + đổ bóng mảnh (kiểu segmented control
-   của macOS) thay vì đổi chữ sang màu accent — dễ đọc và bớt rối hơn. */
+[data-theme='dark'] .cm-seg button:hover:not(.on) {
+  background: rgba(255, 255, 255, 0.06);
+}
+
 .cm-seg button.on {
   background: var(--win-bg-card);
   color: var(--win-text-primary);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
 }
 
 [data-theme='light'] .cm-seg button.on {
   background: #ffffff;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.10), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
+  color: #0f172a;
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
+}
+
+[data-theme='dark'] .cm-seg button.on {
+  background: rgba(255, 255, 255, 0.14);
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
 .form-group {
@@ -1007,6 +1021,70 @@ select.form-input {
   height: calc(100vh - 34px);
 }
 
+/* Database rail: the narrow column of databases sitting left of the sidebar.
+   Fixed width — it is NOT resizable like the sidebar, so a name longer than the
+   cell is clipped by .db-rail-name and the full name stays in the tooltip. */
+.db-rail {
+  flex: 0 0 auto;
+  width: 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 4px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--win-bg-sidebar);
+  border-right: 1px solid var(--win-border);
+}
+
+.db-rail-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 2px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--win-text-secondary);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.db-rail-item:hover {
+  background: var(--win-bg-hover);
+  color: var(--win-text-primary);
+}
+
+.db-rail-item.is-on {
+  background: var(--win-accent-glow);
+  border-color: var(--win-border-strong);
+  color: var(--win-text-primary);
+}
+
+/* One line, clipped: two databases whose names differ only at the end are still
+   told apart by the tooltip, and the rail never grows to fit a long name. */
+.db-rail-name {
+  max-width: 100%;
+  font-size: 10.5px;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.db-rail-status {
+  padding: 4px 2px;
+  font-size: 9.5px;
+  text-align: center;
+  color: var(--win-text-disabled);
+}
+
+.workspace-container .db-rail {
+  background: var(--ws-glass-strong);
+  box-shadow: inset 0 1px 0 var(--ws-hairline);
+}
+
 /* Sidebar matches TablePlus Sidebar exactly */
 /* `width` is only the fallback: Sidebar.tsx sets it inline from the dragged value
    stored in localStorage. `flex: 0 0 auto` keeps the flex row from shrinking it
@@ -1157,7 +1235,6 @@ select.form-input {
 .sidebar-list-container {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 10px;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -5562,32 +5639,9 @@ input.rename-input {
   }
 }
 
-/* Segmented control trên nền kính ---------------------------------------
-   Track là một "rãnh" lõm trong suốt (inset shadow), mục đang chọn là chip
-   kính nổi lên — cùng ngôn ngữ với item active ở sidebar. Bản cũ tô xám đặc
-   nên trông như miếng nhựa dán lên kính. */
+/* Segmented control dùng chung ngôn ngữ thiết kế với sidebar & toolbar */
 .connection-manager-container .cm-seg {
-  background: rgba(255, 255, 255, 0.22);
-  border-color: rgba(255, 255, 255, 0.55);
-  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.10);
-  backdrop-filter: blur(10px) saturate(180%);
-  -webkit-backdrop-filter: blur(10px) saturate(180%);
-}
-
-.connection-manager-container .cm-seg button.on {
-  background: linear-gradient(rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.76));
-  box-shadow: 0 2px 6px var(--cm-glass-shadow), inset 0 1px 0 rgba(255, 255, 255, 1);
-}
-
-[data-theme='dark'] .connection-manager-container .cm-seg {
-  background: rgba(0, 0, 0, 0.26);
-  border-color: rgba(255, 255, 255, 0.10);
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
-}
-
-[data-theme='dark'] .connection-manager-container .cm-seg button.on {
-  background: linear-gradient(rgba(255, 255, 255, 0.17), rgba(255, 255, 255, 0.09));
-  box-shadow: 0 2px 6px var(--cm-glass-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  border-radius: 8px;
 }
 
 

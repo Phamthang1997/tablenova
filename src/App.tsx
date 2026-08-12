@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { TitleBar } from './components/TitleBar';
 import { ConnectionManager } from './components/ConnectionManager';
 import { Sidebar } from './components/Sidebar';
+import { DbRail } from './components/DbRail';
 import { DatabaseInfoModal } from './components/DatabaseInfoModal';
 import { TabManager } from './components/TabManager';
 import type { TabInfo } from './components/TabManager';
@@ -38,7 +39,8 @@ import { parseXlsx } from './utils/xlsxReader';
 import { collectColumns, inferColType } from './utils/importPreview';
 import { addExistsHint } from './utils/dumpPreview';
 import { ProgressBar, type ProgressState } from './components/ProgressBar';
-import { buildDatabaseFile, buildSql } from './utils/exportHelper';
+import { buildDatabaseFile } from './utils/exportHelper';
+import { buildDump, readTableRows } from './utils/dumpBuilder';
 import { gzipText, openInFileManager, saveExportFile } from './utils/fileSave';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { Modal, ModalBody, ModalFooter } from './components/Modal';
@@ -79,13 +81,13 @@ const QueryTabPanel = React.memo(function QueryTabPanel(props: QueryTabPanelProp
         active
           ? { flex: 1, display: 'flex', overflow: 'hidden' }
           : {
-              position: 'absolute',
-              inset: 0,
-              display: 'flex',
-              overflow: 'hidden',
-              visibility: 'hidden',
-              pointerEvents: 'none',
-            }
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            overflow: 'hidden',
+            visibility: 'hidden',
+            pointerEvents: 'none',
+          }
       }
     >
       <SqlEditor
@@ -95,11 +97,13 @@ const QueryTabPanel = React.memo(function QueryTabPanel(props: QueryTabPanelProp
         initialSql={(tab as any).sql || ''}
         initialSql2={(tab as any).sql2 || ''}
         initialSplitMode={(tab as any).splitMode || 'none'}
+        initialEditorHeight={(tab as any).customEditorHeight}
         theme={props.theme}
         readOnly={props.readOnly}
         onSqlChange={(val) => onPatch(tab.id, { sql: val } as any)}
         onSql2Change={(val) => onPatch(tab.id, { sql2: val } as any)}
         onSplitModeChange={(val) => onPatch(tab.id, { splitMode: val } as any)}
+        onEditorHeightChange={(val) => onPatch(tab.id, { customEditorHeight: val } as any)}
       />
     </div>
   );
@@ -107,8 +111,6 @@ const QueryTabPanel = React.memo(function QueryTabPanel(props: QueryTabPanelProp
 
 /** Số dòng mỗi lô khi nhập dữ liệu vào bảng có sẵn (để báo được tiến độ). */
 const IMPORT_BATCH_SIZE = 500;
-/** Số dòng mỗi lần đọc khi xuất nhiều bảng (để báo tiến độ và không giới hạn tổng số dòng). */
-const EXPORT_PAGE_SIZE = 2000;
 
 function parseCSV(text: string): string[][] {
   const result: string[][] = [];
@@ -345,44 +347,13 @@ export const App: React.FC = () => {
     try {
       const totalTables = opts.tables.length;
 
-      /**
-       * Đọc hết dòng của một bảng theo trang.
-       * Tiến độ: mức ngoài là số bảng đã xong (cộng phần trăm của bảng đang chạy),
-       * dòng phụ là % dòng trong bảng đó.
-       */
-      const readTableRows = async (table: string, tableIndex: number): Promise<any[]> => {
-        const rows: any[] = [];
-        let page = 1;
-        let totalRows = 0;
-        for (;;) {
-          const data = await dbHelper.getTableData(table, page, EXPORT_PAGE_SIZE);
-          const batch = data.rows || [];
-          rows.push(...batch);
-          if (!totalRows && data.totalCount) totalRows = data.totalCount;
-          const inner = totalRows ? Math.min(1, rows.length / totalRows) : 0;
-          onProgress({
-            label: t('app.exportTableProgress', { i: tableIndex + 1, total: totalTables, table }),
-            current: tableIndex + inner,
-            total: totalTables,
-            detail: totalRows
-              ? t('app.exportRowsPct', { rows: fmtNum(rows.length), total: fmtNum(totalRows), pct: Math.round(inner * 100) })
-              : t('app.exportRows', { rows: fmtNum(rows.length) }),
-          });
-          if (batch.length < EXPORT_PAGE_SIZE) break;
-          if (totalRows && rows.length >= totalRows) break;
-          page++;
-        }
-        return rows;
-      };
-
       // Dữ liệu (XLSX/JSON/CSV): dựng file client-side.
       if (opts.format !== 'sql') {
         const sheets: XlsxSheet[] = [];
         for (let i = 0; i < opts.tables.length; i++) {
           const table = opts.tables[i];
           const schema = await dbHelper.getTableSchema(table);
-          // Đọc theo trang: trước đây giới hạn 100.000 dòng nên bảng lớn bị xuất thiếu mà không báo.
-          const rows = await readTableRows(table, i);
+          const rows = await readTableRows(dbHelper, table, i, totalTables, onProgress);
           const colNames = (schema.columns || []).map(c => c.name);
           const finalCols = colNames.length ? colNames : (rows[0] ? Object.keys(rows[0]) : []);
           sheets.push({ name: table, colNames: finalCols, rows });
@@ -401,61 +372,17 @@ export const App: React.FC = () => {
         return true;
       }
 
-      // SQL: dựng dump ngay ở frontend (dùng get_table_definition + get_table_data) để báo
-      // được tiến độ từng bảng. Backend export_multi_tables làm tất cả trong một lần gọi
-      // nên không báo được % — và nó ghi theo đường dẫn tương đối vào CWD của tiến trình.
-      const q = connection?.dbType === 'mysql' ? '`' : '"';
-      const parts: string[] = [
-        '-- Database Backup generated by TableNova',
-        `-- Date: ${new Date().toISOString()}`,
-        '',
-      ];
-
-      for (let i = 0; i < opts.tables.length; i++) {
-        const table = opts.tables[i];
-        onProgress({
-          label: t('app.exportTableProgress', { i: i + 1, total: totalTables, table }),
-          current: i,
-          total: totalTables,
-          detail: t('app.exportReadingSchema'),
-        });
-
-        if (opts.sqlOptions.dropTable) {
-          parts.push(`DROP TABLE IF EXISTS ${q}${table}${q};`);
-        }
-        if (opts.sqlOptions.includeStructure) {
-          const def = await dbHelper.getTableDefinition(table);
-          if (def.success && def.sql) {
-            parts.push(`-- Structure for table ${q}${table}${q}`);
-            parts.push(def.sql.trim().endsWith(';') ? def.sql.trim() : def.sql.trim() + ';');
-          } else {
-            parts.push(t('app.exportSchemaFailed', {
-              table: `${q}${table}${q}`,
-              message: def.error || t('app.exportUnknownReason'),
-            }));
-          }
-          parts.push('');
-        }
-        if (opts.sqlOptions.includeContent) {
-          const rows = await readTableRows(table, i);
-          if (rows.length > 0) {
-            const schema = await dbHelper.getTableSchema(table);
-            const colNames = (schema.columns || []).map(c => c.name);
-            const cols = colNames.length ? colNames : Object.keys(rows[0]);
-            parts.push(t('app.exportDataComment', { table: `${q}${table}${q}`, rows: rows.length }));
-            parts.push(buildSql(table, cols, rows, connection?.dbType || 'sqlite'));
-            parts.push('');
-          }
-        }
-        onProgress({
-          label: t('app.exportTableProgress', { i: i + 1, total: totalTables, table }),
-          current: i + 1,
-          total: totalTables,
-          detail: t('app.exportTableDone'),
-        });
-      }
-
-      const sqlText = parts.join('\n');
+      // SQL: dump được dựng ở dumpBuilder.ts — dùng chung với nút Backup của Connection
+      // Manager, để mọi thay đổi về thứ tự câu lệnh chỉ phải sửa ở MỘT chỗ.
+      const sqlText = await buildDump({
+        dbType: connection?.dbType || 'sqlite',
+        tables: opts.tables,
+        views: opts.views,
+        routines: opts.routines,
+        triggers: opts.triggers,
+        sqlOptions: opts.sqlOptions,
+        onProgress,
+      }, dbHelper);
       const ext = opts.compressGzip ? '.sql.gz' : '.sql';
       const base = opts.filename.replace(/\.(sql|sql\.gz|gz)$/i, '');
       const fileName = base + ext;
@@ -487,7 +414,7 @@ export const App: React.FC = () => {
   const extractTableNameFromSql = (sql: string): string | null => {
     const createMatch = sql.match(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:[`"']?([a-zA-Z0-9_]+)[`"']?)/i);
     if (createMatch && createMatch[1]) return createMatch[1];
-    
+
     const dropMatch = sql.match(/DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:[`"']?([a-zA-Z0-9_]+)[`"']?)/i);
     if (dropMatch && dropMatch[1]) return dropMatch[1];
 
@@ -503,18 +430,18 @@ export const App: React.FC = () => {
     const filtered = queries.filter(q => {
       const trimmed = q.trim().toUpperCase();
       if (!trimmed) return false;
-      const isStructure = trimmed.startsWith('CREATE TABLE') || 
-                          trimmed.startsWith('DROP TABLE') || 
-                          trimmed.startsWith('ALTER TABLE') || 
-                          trimmed.startsWith('CREATE INDEX') || 
-                          trimmed.startsWith('CREATE UNIQUE INDEX') || 
-                          trimmed.startsWith('DROP INDEX');
-      const isData = trimmed.startsWith('INSERT INTO') || 
-                     trimmed.startsWith('UPDATE') || 
-                     trimmed.startsWith('DELETE FROM') || 
-                     trimmed.startsWith('TRUNCATE TABLE') || 
-                     trimmed.startsWith('TRUNCATE') ||
-                     trimmed.startsWith('INSERT');
+      const isStructure = trimmed.startsWith('CREATE TABLE') ||
+        trimmed.startsWith('DROP TABLE') ||
+        trimmed.startsWith('ALTER TABLE') ||
+        trimmed.startsWith('CREATE INDEX') ||
+        trimmed.startsWith('CREATE UNIQUE INDEX') ||
+        trimmed.startsWith('DROP INDEX');
+      const isData = trimmed.startsWith('INSERT INTO') ||
+        trimmed.startsWith('UPDATE') ||
+        trimmed.startsWith('DELETE FROM') ||
+        trimmed.startsWith('TRUNCATE TABLE') ||
+        trimmed.startsWith('TRUNCATE') ||
+        trimmed.startsWith('INSERT');
       if (mode === 'structure') {
         return isStructure || (!isData && !trimmed.startsWith('REPLACE'));
       }
@@ -543,7 +470,7 @@ export const App: React.FC = () => {
     try {
       if (globalImportFileType === 'sql') {
         let filteredSql = filterSqlQueries(globalImportSqlContent, globalImportSqlMode);
-        
+
         if (globalImportTargetTable) {
           const originalTable = extractTableNameFromSql(globalImportSqlContent);
           if (originalTable && originalTable !== globalImportTargetTable) {
@@ -617,7 +544,8 @@ export const App: React.FC = () => {
     sqlText: string,
     tables: string[],
     targetDb: string,
-    onProgress?: (msg: { type: string; done?: number; total?: number }) => void
+    onProgress?: (msg: { type: string; done?: number; total?: number }) => void,
+    continueOnError = false
   ): Promise<boolean> => {
     try {
       const wantDb = targetDb.trim();
@@ -644,9 +572,23 @@ export const App: React.FC = () => {
         invalidateCatalog();
       }
 
-      const resData = await dbHelper.restoreBackup(sqlText, tables, onProgress);
+      const resData = await dbHelper.restoreBackup(sqlText, tables, onProgress, continueOnError);
       if (resData.success) {
-        alert(t('app.importDbSuccess', { n: resData.statementsCount || 0 }));
+        // Có câu lệnh bị bỏ qua thì PHẢI nói ra: báo "thành công" trơn trong khi thiếu vài chục
+        // câu là để người dùng tin nhầm rằng database đã đầy đủ.
+        if (resData.failedCount) {
+          const detail = (resData.failedSamples || [])
+            .map((f) => `• ${f.error}\n  ${f.sql}`)
+            .join('\n\n');
+          alert(
+            t('app.importDbPartial', {
+              n: resData.statementsCount || 0,
+              failed: resData.failedCount,
+            }) + (detail ? `\n\n${detail}` : '')
+          );
+        } else {
+          alert(t('app.importDbSuccess', { n: resData.statementsCount || 0 }));
+        }
         if (resData.activeDatabase) {
           const activeDb = resData.activeDatabase;
           setConnection(prev => prev ? { ...prev, dbName: activeDb } : null);
@@ -1123,7 +1065,7 @@ export const App: React.FC = () => {
           return t;
         })
       );
-      
+
       // Force remount or change value by passing key to Monaco
       // We can append a timestamp or change tab ID, but simple update is fine.
     } else {
@@ -1137,7 +1079,7 @@ export const App: React.FC = () => {
       };
       // Pre-populate sql property
       (newTab as any).sql = sql;
-      
+
       setTabs([...tabs, newTab]);
       setActiveTabId(tabId);
       setQueryCount(queryCount + 1);
@@ -1257,38 +1199,38 @@ export const App: React.FC = () => {
   const titleBar = (
     <TitleBar
       hasConnection={!!connection}
-        readOnly={readOnly}
-        onToggleReadOnly={toggleReadOnly}
-        // version/tls không còn ở đây: TitleBar đọc số thật từ get_connection_status,
-        // các trường này chỉ là giá trị lùi cho nhịp trước khi lần ping đầu về.
-        activeConnectionInfo={{
-          host: activeConnConfig?.host || 'LOCAL',
-          dbType: connection?.dbType?.toUpperCase() || 'MYSQL',
-          dbName: connection?.dbName,
-        }}
-        activeProfileName={activeProfile.name}
-        activeProfileColor={activeProfile.color}
-        onProfileChange={handleProfileChange}
-        theme={theme}
-        onThemeChange={applyTheme}
-        onReconnect={handleReconnect}
-        activeTableName={activeTable}
-        onNewConnection={handleDisconnect}
-        onDisconnect={handleDisconnect}
-        onNewQuery={handleNewQueryTab}
-        onExportDatabase={() => setShowExportDbDialog(true)}
-        onImportDatabase={() => setShowImportDbDialog(true)}
-        onToggleSidebar={() => setShowSidebar(prev => !prev)}
-        onToggleTheme={toggleTheme}
-        onShowShortcuts={() => setShowShortcuts(true)}
-        onShowAbout={() => setShowAbout(true)}
-        onToggleTerminal={() => {}}
-        aiOpen={showAi}
-        onToggleAiAssistant={() => setShowAi(prev => !prev)}
-        onDatabaseChanged={handleDatabaseChanged}
-        onOpenAllDbStats={() => { setDbInfoTab('all'); setShowDbInfoModal(true); }}
-        onOpenDocs={() => setShowDocModal(true)}
-      />
+      readOnly={readOnly}
+      onToggleReadOnly={toggleReadOnly}
+      // version/tls không còn ở đây: TitleBar đọc số thật từ get_connection_status,
+      // các trường này chỉ là giá trị lùi cho nhịp trước khi lần ping đầu về.
+      activeConnectionInfo={{
+        host: activeConnConfig?.host || 'LOCAL',
+        dbType: connection?.dbType?.toUpperCase() || 'MYSQL',
+        dbName: connection?.dbName,
+      }}
+      activeProfileName={activeProfile.name}
+      activeProfileColor={activeProfile.color}
+      onProfileChange={handleProfileChange}
+      theme={theme}
+      onThemeChange={applyTheme}
+      onReconnect={handleReconnect}
+      activeTableName={activeTable}
+      onNewConnection={handleDisconnect}
+      onDisconnect={handleDisconnect}
+      onNewQuery={handleNewQueryTab}
+      onExportDatabase={() => setShowExportDbDialog(true)}
+      onImportDatabase={() => setShowImportDbDialog(true)}
+      onToggleSidebar={() => setShowSidebar(prev => !prev)}
+      onToggleTheme={toggleTheme}
+      onShowShortcuts={() => setShowShortcuts(true)}
+      onShowAbout={() => setShowAbout(true)}
+      onToggleTerminal={() => { }}
+      aiOpen={showAi}
+      onToggleAiAssistant={() => setShowAi(prev => !prev)}
+      onDatabaseChanged={handleDatabaseChanged}
+      onOpenAllDbStats={() => { setDbInfoTab('all'); setShowDbInfoModal(true); }}
+      onOpenDocs={() => setShowDocModal(true)}
+    />
   );
 
   return (
@@ -1317,6 +1259,19 @@ export const App: React.FC = () => {
         <>
           {titleBar}
           <div className="workspace-container">
+            {/* Database column left of the sidebar. Tied to the sidebar (Ctrl+P is about
+                reclaiming space, hiding half of it makes no sense) and only shown from 2
+                connections up. `connection` is ONE object, not a list — the backend holds a
+                single connection too — so this is always 1 and the rail stays hidden until
+                multi-connection lands. */}
+            {showSidebar && (
+              <DbRail
+                dbName={connection.dbName}
+                connectionCount={connection ? 1 : 0}
+                onDatabaseChanged={handleDatabaseChanged}
+              />
+            )}
+
             {showSidebar && (
               <Sidebar
                 dbName={connection.dbName}
@@ -1536,6 +1491,7 @@ export const App: React.FC = () => {
         open={showExportDbDialog}
         onClose={() => setShowExportDbDialog(false)}
         onSubmit={handleExportDatabase}
+        dbName={connection?.dbName || ''}
       />
 
       {/* Nhập cả database từ tệp dump (Import Database) */}
@@ -1570,201 +1526,201 @@ export const App: React.FC = () => {
           width="640px"
           zIndex={9999}
         >
-            <ModalBody>
+          <ModalBody>
+            <div className="form-group">
+              <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)' }}>
+                {globalImportTargetTable ? t('app.importTargetExisting') : t('app.importTargetNew')}
+              </label>
+              <input
+                type="text"
+                className="form-input"
+                value={globalImportTargetTable || globalImportTableName}
+                onChange={(e) => !globalImportTargetTable && setGlobalImportTableName(e.target.value)}
+                disabled={!!globalImportTargetTable}
+                placeholder={t('createTable.tableNamePlaceholder')}
+                style={{ height: '30px', fontSize: '11px', background: globalImportTargetTable ? 'var(--win-bg-hover)' : undefined }}
+              />
+            </div>
+
+            {globalImportFileType === 'sql' && (
               <div className="form-group">
-                <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)' }}>
-                  {globalImportTargetTable ? t('app.importTargetExisting') : t('app.importTargetNew')}
+                <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)', marginBottom: '6px', display: 'block' }}>
+                  {t('app.importSqlPick')}
                 </label>
-                <input 
-                  type="text" 
-                  className="form-input"
-                  value={globalImportTargetTable || globalImportTableName} 
-                  onChange={(e) => !globalImportTargetTable && setGlobalImportTableName(e.target.value)}
-                  disabled={!!globalImportTargetTable}
-                  placeholder={t('createTable.tableNamePlaceholder')}
-                  style={{ height: '30px', fontSize: '11px', background: globalImportTargetTable ? 'var(--win-bg-hover)' : undefined }}
-                />
-              </div>
-
-              {globalImportFileType === 'sql' && (
-                <div className="form-group">
-                  <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)', marginBottom: '6px', display: 'block' }}>
-                    {t('app.importSqlPick')}
+                <div style={{ display: 'flex', gap: '16px' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}>
+                    <input
+                      type="radio"
+                      name="sqlImportMode"
+                      checked={globalImportSqlMode === 'both'}
+                      onChange={() => setGlobalImportSqlMode('both')}
+                    />
+                    <span>{t('app.importSqlBoth')}</span>
                   </label>
-                  <div style={{ display: 'flex', gap: '16px' }}>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}>
-                      <input 
-                        type="radio" 
-                        name="sqlImportMode" 
-                        checked={globalImportSqlMode === 'both'} 
-                        onChange={() => setGlobalImportSqlMode('both')} 
-                      />
-                      <span>{t('app.importSqlBoth')}</span>
-                    </label>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}>
-                      <input 
-                        type="radio" 
-                        name="sqlImportMode" 
-                        checked={globalImportSqlMode === 'structure'} 
-                        onChange={() => setGlobalImportSqlMode('structure')} 
-                      />
-                      <span>{t('app.importSqlStructure')}</span>
-                    </label>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}>
-                      <input 
-                        type="radio" 
-                        name="sqlImportMode" 
-                        checked={globalImportSqlMode === 'data'} 
-                        onChange={() => setGlobalImportSqlMode('data')} 
-                      />
-                      <span>{t('app.importSqlData')}</span>
-                    </label>
-                  </div>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}>
+                    <input
+                      type="radio"
+                      name="sqlImportMode"
+                      checked={globalImportSqlMode === 'structure'}
+                      onChange={() => setGlobalImportSqlMode('structure')}
+                    />
+                    <span>{t('app.importSqlStructure')}</span>
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}>
+                    <input
+                      type="radio"
+                      name="sqlImportMode"
+                      checked={globalImportSqlMode === 'data'}
+                      onChange={() => setGlobalImportSqlMode('data')}
+                    />
+                    <span>{t('app.importSqlData')}</span>
+                  </label>
                 </div>
-              )}
-
-              <div>
-                <span style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>
-                  {globalImportFileType === 'sql' ? (
-                    <span>{t('app.importSqlNote')}</span>
-                  ) : (
-                    <span>
-                      <Trans
-                        i18nKey="app.importSummary"
-                        values={{
-                          format: globalImportFileType.toUpperCase(),
-                          rows: globalImportPendingRows.length,
-                          cols: globalImportCols.length,
-                        }}
-                        components={{ strong: <b /> }}
-                      />
-                    </span>
-                  )}
-                </span>
               </div>
+            )}
 
-              {/* Tab xem trước: cấu trúc (cột + kiểu suy ra) | dữ liệu (10 dòng đầu) */}
-              {globalImportFileType !== 'sql' && (
-                <div style={{ display: 'flex', gap: '4px' }}>
-                  {([
-                    { id: 'structure', label: t('app.importTabStructure', { n: globalImportCols.length }) },
-                    { id: 'data', label: t('app.importTabData', { n: globalImportPendingRows.length }) },
-                  ] as const).map(t => (
-                    <button
-                      key={t.id}
-                      onClick={() => setGlobalImportTab(t.id)}
-                      style={{
-                        padding: '4px 12px',
-                        fontSize: '11px',
-                        borderRadius: '4px',
-                        border: '1px solid var(--win-border)',
-                        cursor: 'pointer',
-                        background: globalImportTab === t.id ? 'var(--win-accent)' : 'transparent',
-                        color: globalImportTab === t.id ? '#fff' : 'var(--win-text-secondary)',
-                        fontWeight: 600
+            <div>
+              <span style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>
+                {globalImportFileType === 'sql' ? (
+                  <span>{t('app.importSqlNote')}</span>
+                ) : (
+                  <span>
+                    <Trans
+                      i18nKey="app.importSummary"
+                      values={{
+                        format: globalImportFileType.toUpperCase(),
+                        rows: globalImportPendingRows.length,
+                        cols: globalImportCols.length,
                       }}
-                    >
-                      {t.label}
-                    </button>
-                  ))}
-                </div>
-              )}
+                      components={{ strong: <b /> }}
+                    />
+                  </span>
+                )}
+              </span>
+            </div>
 
-              {globalImportFileType === 'sql' ? (
-                <textarea
-                  readOnly
-                  value={globalImportSqlContent.slice(0, 5000)}
-                  style={{
-                    width: '100%',
-                    height: '200px',
-                    background: 'var(--win-bg-window)',
-                    border: '1px solid var(--win-border)',
-                    color: 'var(--win-text-primary)',
-                    fontFamily: 'monospace',
-                    fontSize: '11px',
-                    padding: '10px',
-                    borderRadius: '4px',
-                    resize: 'none'
-                  }}
-                />
-              ) : (
-                <div style={{
+            {/* Tab xem trước: cấu trúc (cột + kiểu suy ra) | dữ liệu (10 dòng đầu) */}
+            {globalImportFileType !== 'sql' && (
+              <div style={{ display: 'flex', gap: '4px' }}>
+                {([
+                  { id: 'structure', label: t('app.importTabStructure', { n: globalImportCols.length }) },
+                  { id: 'data', label: t('app.importTabData', { n: globalImportPendingRows.length }) },
+                ] as const).map(t => (
+                  <button
+                    key={t.id}
+                    onClick={() => setGlobalImportTab(t.id)}
+                    style={{
+                      padding: '4px 12px',
+                      fontSize: '11px',
+                      borderRadius: '4px',
+                      border: '1px solid var(--win-border)',
+                      cursor: 'pointer',
+                      background: globalImportTab === t.id ? 'var(--win-accent)' : 'transparent',
+                      color: globalImportTab === t.id ? '#fff' : 'var(--win-text-secondary)',
+                      fontWeight: 600
+                    }}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {globalImportFileType === 'sql' ? (
+              <textarea
+                readOnly
+                value={globalImportSqlContent.slice(0, 5000)}
+                style={{
+                  width: '100%',
                   height: '200px',
-                  overflow: 'auto',
+                  background: 'var(--win-bg-window)',
                   border: '1px solid var(--win-border)',
+                  color: 'var(--win-text-primary)',
+                  fontFamily: 'monospace',
+                  fontSize: '11px',
+                  padding: '10px',
                   borderRadius: '4px',
-                  background: 'var(--win-bg-window)'
-                }}>
-                  {globalImportPendingRows.length === 0 ? null : globalImportTab === 'structure' ? (
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
-                      <thead>
-                        <tr style={{ background: 'var(--win-bg-hover)', borderBottom: '1px solid var(--win-border)' }}>
-                          {[t('app.colInFile'), t('app.colInferredType'), t('app.colSampleValue')].map(h => (
-                            <th key={h} style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 600, borderRight: '1px solid var(--win-border)' }}>{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {globalImportCols.map(col => {
-                          const sample = globalImportPendingRows.find(r => r?.[col] !== null && r?.[col] !== undefined && r?.[col] !== '');
-                          return (
-                            <tr key={col} style={{ borderBottom: '1px solid var(--win-border)' }}>
-                              <td style={{ padding: '6px 8px', borderRight: '1px solid var(--win-border)', fontFamily: 'monospace', color: 'var(--win-text-primary)' }}>{col}</td>
-                              <td style={{ padding: '6px 8px', borderRight: '1px solid var(--win-border)', color: 'var(--win-text-secondary)' }}>{inferColType(globalImportPendingRows, col)}</td>
-                              <td style={{ padding: '6px 8px', color: 'var(--win-text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '260px' }}>
-                                {sample ? String(sample[col]) : '—'}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  ) : (
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
-                      <thead>
-                        <tr style={{ background: 'var(--win-bg-hover)', borderBottom: '1px solid var(--win-border)' }}>
-                          {globalImportCols.map(col => (
-                            <th key={col} style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 600, borderRight: '1px solid var(--win-border)' }}>
-                              {col}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {globalImportPendingRows.slice(0, 10).map((row, rIdx) => (
-                          <tr key={rIdx} style={{ borderBottom: '1px solid var(--win-border)' }}>
-                            {globalImportCols.map(col => (
-                              <td key={col} style={{ padding: '6px 8px', color: 'var(--win-text-primary)', borderRight: '1px solid var(--win-border)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '160px' }}>
-                                {row[col] === null || row[col] === undefined
-                                  ? <span style={{ color: 'var(--win-text-disabled)', fontStyle: 'italic' }}>NULL</span>
-                                  : String(row[col])}
-                              </td>
-                            ))}
-                          </tr>
+                  resize: 'none'
+                }}
+              />
+            ) : (
+              <div style={{
+                height: '200px',
+                overflow: 'auto',
+                border: '1px solid var(--win-border)',
+                borderRadius: '4px',
+                background: 'var(--win-bg-window)'
+              }}>
+                {globalImportPendingRows.length === 0 ? null : globalImportTab === 'structure' ? (
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
+                    <thead>
+                      <tr style={{ background: 'var(--win-bg-hover)', borderBottom: '1px solid var(--win-border)' }}>
+                        {[t('app.colInFile'), t('app.colInferredType'), t('app.colSampleValue')].map(h => (
+                          <th key={h} style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 600, borderRight: '1px solid var(--win-border)' }}>{h}</th>
                         ))}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
-              )}
-            </ModalBody>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {globalImportCols.map(col => {
+                        const sample = globalImportPendingRows.find(r => r?.[col] !== null && r?.[col] !== undefined && r?.[col] !== '');
+                        return (
+                          <tr key={col} style={{ borderBottom: '1px solid var(--win-border)' }}>
+                            <td style={{ padding: '6px 8px', borderRight: '1px solid var(--win-border)', fontFamily: 'monospace', color: 'var(--win-text-primary)' }}>{col}</td>
+                            <td style={{ padding: '6px 8px', borderRight: '1px solid var(--win-border)', color: 'var(--win-text-secondary)' }}>{inferColType(globalImportPendingRows, col)}</td>
+                            <td style={{ padding: '6px 8px', color: 'var(--win-text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '260px' }}>
+                              {sample ? String(sample[col]) : '—'}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                ) : (
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
+                    <thead>
+                      <tr style={{ background: 'var(--win-bg-hover)', borderBottom: '1px solid var(--win-border)' }}>
+                        {globalImportCols.map(col => (
+                          <th key={col} style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 600, borderRight: '1px solid var(--win-border)' }}>
+                            {col}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {globalImportPendingRows.slice(0, 10).map((row, rIdx) => (
+                        <tr key={rIdx} style={{ borderBottom: '1px solid var(--win-border)' }}>
+                          {globalImportCols.map(col => (
+                            <td key={col} style={{ padding: '6px 8px', color: 'var(--win-text-primary)', borderRight: '1px solid var(--win-border)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '160px' }}>
+                              {row[col] === null || row[col] === undefined
+                                ? <span style={{ color: 'var(--win-text-disabled)', fontStyle: 'italic' }}>NULL</span>
+                                : String(row[col])}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )}
+          </ModalBody>
 
-            <ModalFooter>
-              <button
-                className="btn btn-secondary"
-                onClick={() => setShowGlobalImportModal(false)}
-              >
-                {t('common.cancel')}
-              </button>
-              <button
-                className="btn btn-primary"
-                onClick={confirmGlobalImport}
-                disabled={globalImportLoading || (!globalImportTableName.trim() && globalImportFileType !== 'sql')}
-                style={{ background: 'var(--win-accent)', color: '#fff', border: 'none' }}
-              >
-                {globalImportLoading ? t('app.importProcessing') : t('app.importConfirm')}
-              </button>
-            </ModalFooter>
+          <ModalFooter>
+            <button
+              className="btn btn-secondary"
+              onClick={() => setShowGlobalImportModal(false)}
+            >
+              {t('common.cancel')}
+            </button>
+            <button
+              className="btn btn-primary"
+              onClick={confirmGlobalImport}
+              disabled={globalImportLoading || (!globalImportTableName.trim() && globalImportFileType !== 'sql')}
+              style={{ background: 'var(--win-accent)', color: '#fff', border: 'none' }}
+            >
+              {globalImportLoading ? t('app.importProcessing') : t('app.importConfirm')}
+            </button>
+          </ModalFooter>
         </Modal>
       )}
 
@@ -1859,61 +1815,61 @@ export const App: React.FC = () => {
           width="450px"
           zIndex={9999}
         >
-            <ModalBody style={{ gap: '12px', maxHeight: '380px' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-accent)', borderBottom: '1px solid var(--win-border)', paddingBottom: '3px' }}>{t('app.shortcutsGeneral')}</span>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', alignItems: 'center' }}>
-                  <span style={{ color: 'var(--win-text-primary)' }}>{t('app.shortcutSearchTables')}</span>
-                  <kbd style={{ fontSize: '10px', background: 'var(--win-bg-tab-bar)', padding: '2px 6px', borderRadius: '3px', border: '1px solid var(--win-border-strong)', color: 'var(--win-text-primary)' }}>Ctrl + P / Ctrl + K</kbd>
-                </div>
+          <ModalBody style={{ gap: '12px', maxHeight: '380px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-accent)', borderBottom: '1px solid var(--win-border)', paddingBottom: '3px' }}>{t('app.shortcutsGeneral')}</span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', alignItems: 'center' }}>
+                <span style={{ color: 'var(--win-text-primary)' }}>{t('app.shortcutSearchTables')}</span>
+                <kbd style={{ fontSize: '10px', background: 'var(--win-bg-tab-bar)', padding: '2px 6px', borderRadius: '3px', border: '1px solid var(--win-border-strong)', color: 'var(--win-text-primary)' }}>Ctrl + P / Ctrl + K</kbd>
               </div>
+            </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-accent)', borderBottom: '1px solid var(--win-border)', paddingBottom: '3px' }}>{t('app.shortcutsGrid')}</span>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', alignItems: 'center' }}>
-                  <span style={{ color: 'var(--win-text-primary)' }}>{t('app.shortcutOpenFilter')}</span>
-                  <kbd style={{ fontSize: '10px', background: 'var(--win-bg-tab-bar)', padding: '2px 6px', borderRadius: '3px', border: '1px solid var(--win-border-strong)', color: 'var(--win-text-primary)' }}>Ctrl + F</kbd>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', alignItems: 'center' }}>
-                  <span style={{ color: 'var(--win-text-primary)' }}>{t('app.shortcutAddRow')}</span>
-                  <kbd style={{ fontSize: '10px', background: 'var(--win-bg-tab-bar)', padding: '2px 6px', borderRadius: '3px', border: '1px solid var(--win-border-strong)', color: 'var(--win-text-primary)' }}>Ctrl + I</kbd>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', alignItems: 'center' }}>
-                  <span style={{ color: 'var(--win-text-primary)' }}>{t('app.shortcutSaveToDb')}</span>
-                  <kbd style={{ fontSize: '10px', background: 'var(--win-bg-tab-bar)', padding: '2px 6px', borderRadius: '3px', border: '1px solid var(--win-border-strong)', color: 'var(--win-text-primary)' }}>Ctrl + S</kbd>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', alignItems: 'center' }}>
-                  <span style={{ color: 'var(--win-text-primary)' }}>{t('app.shortcutDeleteRow')}</span>
-                  <kbd style={{ fontSize: '10px', background: 'var(--win-bg-tab-bar)', padding: '2px 6px', borderRadius: '3px', border: '1px solid var(--win-border-strong)', color: 'var(--win-text-primary)' }}>Delete / Backspace</kbd>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', alignItems: 'center' }}>
-                  <span style={{ color: 'var(--win-text-primary)' }}>{t('app.shortcutNextPage')}</span>
-                  <kbd style={{ fontSize: '10px', background: 'var(--win-bg-tab-bar)', padding: '2px 6px', borderRadius: '3px', border: '1px solid var(--win-border-strong)', color: 'var(--win-text-primary)' }}>Ctrl + ]</kbd>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', alignItems: 'center' }}>
-                  <span style={{ color: 'var(--win-text-primary)' }}>{t('app.shortcutPrevPage')}</span>
-                  <kbd style={{ fontSize: '10px', background: 'var(--win-bg-tab-bar)', padding: '2px 6px', borderRadius: '3px', border: '1px solid var(--win-border-strong)', color: 'var(--win-text-primary)' }}>Ctrl + [</kbd>
-                </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-accent)', borderBottom: '1px solid var(--win-border)', paddingBottom: '3px' }}>{t('app.shortcutsGrid')}</span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', alignItems: 'center' }}>
+                <span style={{ color: 'var(--win-text-primary)' }}>{t('app.shortcutOpenFilter')}</span>
+                <kbd style={{ fontSize: '10px', background: 'var(--win-bg-tab-bar)', padding: '2px 6px', borderRadius: '3px', border: '1px solid var(--win-border-strong)', color: 'var(--win-text-primary)' }}>Ctrl + F</kbd>
               </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-accent)', borderBottom: '1px solid var(--win-border)', paddingBottom: '3px' }}>{t('app.shortcutsSqlEditor')}</span>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', alignItems: 'center' }}>
-                  <span style={{ color: 'var(--win-text-primary)' }}>{t('app.shortcutRunQuery')}</span>
-                  <kbd style={{ fontSize: '10px', background: 'var(--win-bg-tab-bar)', padding: '2px 6px', borderRadius: '3px', border: '1px solid var(--win-border-strong)', color: 'var(--win-text-primary)' }}>Ctrl + Enter / F5</kbd>
-                </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', alignItems: 'center' }}>
+                <span style={{ color: 'var(--win-text-primary)' }}>{t('app.shortcutAddRow')}</span>
+                <kbd style={{ fontSize: '10px', background: 'var(--win-bg-tab-bar)', padding: '2px 6px', borderRadius: '3px', border: '1px solid var(--win-border-strong)', color: 'var(--win-text-primary)' }}>Ctrl + I</kbd>
               </div>
-            </ModalBody>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', alignItems: 'center' }}>
+                <span style={{ color: 'var(--win-text-primary)' }}>{t('app.shortcutSaveToDb')}</span>
+                <kbd style={{ fontSize: '10px', background: 'var(--win-bg-tab-bar)', padding: '2px 6px', borderRadius: '3px', border: '1px solid var(--win-border-strong)', color: 'var(--win-text-primary)' }}>Ctrl + S</kbd>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', alignItems: 'center' }}>
+                <span style={{ color: 'var(--win-text-primary)' }}>{t('app.shortcutDeleteRow')}</span>
+                <kbd style={{ fontSize: '10px', background: 'var(--win-bg-tab-bar)', padding: '2px 6px', borderRadius: '3px', border: '1px solid var(--win-border-strong)', color: 'var(--win-text-primary)' }}>Delete / Backspace</kbd>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', alignItems: 'center' }}>
+                <span style={{ color: 'var(--win-text-primary)' }}>{t('app.shortcutNextPage')}</span>
+                <kbd style={{ fontSize: '10px', background: 'var(--win-bg-tab-bar)', padding: '2px 6px', borderRadius: '3px', border: '1px solid var(--win-border-strong)', color: 'var(--win-text-primary)' }}>Ctrl + ]</kbd>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', alignItems: 'center' }}>
+                <span style={{ color: 'var(--win-text-primary)' }}>{t('app.shortcutPrevPage')}</span>
+                <kbd style={{ fontSize: '10px', background: 'var(--win-bg-tab-bar)', padding: '2px 6px', borderRadius: '3px', border: '1px solid var(--win-border-strong)', color: 'var(--win-text-primary)' }}>Ctrl + [</kbd>
+              </div>
+            </div>
 
-            <ModalFooter>
-              <button
-                className="btn btn-secondary"
-                onClick={() => setShowShortcuts(false)}
-                style={{ padding: '6px 20px', fontSize: '11px', borderRadius: '4px', cursor: 'pointer' }}
-              >
-                {t('common.close')}
-              </button>
-            </ModalFooter>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-accent)', borderBottom: '1px solid var(--win-border)', paddingBottom: '3px' }}>{t('app.shortcutsSqlEditor')}</span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', alignItems: 'center' }}>
+                <span style={{ color: 'var(--win-text-primary)' }}>{t('app.shortcutRunQuery')}</span>
+                <kbd style={{ fontSize: '10px', background: 'var(--win-bg-tab-bar)', padding: '2px 6px', borderRadius: '3px', border: '1px solid var(--win-border-strong)', color: 'var(--win-text-primary)' }}>Ctrl + Enter / F5</kbd>
+              </div>
+            </div>
+          </ModalBody>
+
+          <ModalFooter>
+            <button
+              className="btn btn-secondary"
+              onClick={() => setShowShortcuts(false)}
+              style={{ padding: '6px 20px', fontSize: '11px', borderRadius: '4px', cursor: 'pointer' }}
+            >
+              {t('common.close')}
+            </button>
+          </ModalFooter>
         </Modal>
       )}
 

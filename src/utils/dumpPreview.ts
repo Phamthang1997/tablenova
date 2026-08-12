@@ -70,6 +70,33 @@ function splitTopLevel(body: string, sep = ','): string[] {
   return out.map((s) => s.trim()).filter(Boolean);
 }
 
+/**
+ * Vị trí dấu ')' đóng cặp ngoặc mở tại `start` (bỏ qua ngoặc lồng và ngoặc trong chuỗi),
+ * -1 nếu không đóng. `start` phải trỏ vào một dấu '('.
+ */
+function matchingParen(s: string, start: number): number {
+  let depth = 0;
+  let quote: string | null = null;
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i];
+    if (quote) {
+      if (ch === '\\') { i++; continue; }
+      if (ch === quote) {
+        if (s[i + 1] === quote) { i++; continue; }
+        quote = null;
+      }
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') { quote = ch; continue; }
+    if (ch === '(') depth++;
+    else if (ch === ')') {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
 /** Lấy nội dung trong cặp ngoặc ngoài cùng đầu tiên. */
 function outerParens(stmt: string): string | null {
   const start = stmt.indexOf('(');
@@ -180,7 +207,15 @@ const SKIPPED_HEAD_RE = /^(?:LOCK\s+TABLES|UNLOCK\s+TABLES|START\s+TRANSACTION|B
  * LOCK/UNLOCK TABLES và các lệnh transaction. Dùng để đếm số câu lệnh sẽ chạy cho khớp backend.
  */
 export function isSkippedDumpStatement(stmt: string): boolean {
-  return SKIPPED_HEAD_RE.test(stripLeadingSqlComments(stmt));
+  return isSkippedDumpBody(stripLeadingSqlComments(stmt));
+}
+
+/**
+ * Như `isSkippedDumpStatement` nhưng nhận sẵn phần đã bỏ comment đầu — để nơi nào đã strip rồi
+ * thì không strip lại lần nữa (một tệp dump có hàng chục nghìn câu lệnh).
+ */
+export function isSkippedDumpBody(body: string): boolean {
+  return SKIPPED_HEAD_RE.test(body);
 }
 
 /**
@@ -188,9 +223,64 @@ export function isSkippedDumpStatement(stmt: string): boolean {
  * vẫn là lệnh thật nên có chạy; comment thường thì không.
  */
 export function isCommentOnlyStatement(stmt: string): { commentOnly: boolean; willRun: boolean } {
-  const body = stripLeadingSqlComments(stmt);
+  return commentOnlyFromBody(stmt, stripLeadingSqlComments(stmt));
+}
+
+/** Như `isCommentOnlyStatement` nhưng nhận sẵn phần đã bỏ comment đầu (khỏi strip hai lần). */
+export function commentOnlyFromBody(stmt: string, body: string): { commentOnly: boolean; willRun: boolean } {
   if (body.length > 0) return { commentOnly: false, willRun: true };
   return { commentOnly: true, willRun: stmt.includes('/*!') };
+}
+
+/**
+ * Đầu câu lệnh giới thiệu một đối tượng của dump, ngay trước tên của nó.
+ *
+ * Có cả VIEW: dump ghi view bằng `CREATE ... VIEW` / `DROP VIEW IF EXISTS` (không phải
+ * `DROP TABLE`), nên nếu chỉ dò bảng thì view không lọt vào danh sách chọn — và backend chỉ
+ * chạy câu lệnh nào có nhắc một tên trong danh sách đó (`stmt_mentions_table`), tức là lệnh
+ * `DROP VIEW` của view bị loại và lần nhập lại lỗi "view already exists".
+ */
+const OBJECT_HEAD =
+  '(?:CREATE\\s+TABLE|INSERT\\s+INTO|DROP\\s+(?:TABLE|VIEW|TRIGGER|PROCEDURE|FUNCTION)\\s+IF\\s+EXISTS' +
+  '|CREATE\\s+(?:OR\\s+REPLACE\\s+)?(?:ALGORITHM\\s*=\\s*\\S+\\s+)?(?:DEFINER\\s*=\\s*\\S+\\s+)?' +
+  '(?:SQL\\s+SECURITY\\s+\\w+\\s+)?(?:VIEW|TRIGGER|PROCEDURE|FUNCTION))';
+
+const OBJECT_NAME_SRC = `${OBJECT_HEAD}\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?[\`"']?([a-zA-Z0-9_]+)[\`"']?`;
+
+// Bảng TẠM khai báo trong thân procedure/function — không phải bảng của database.
+const TEMP_TABLE_SRC = 'CREATE\\s+TEMPORARY\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?[`"\']?([a-zA-Z0-9_]+)[`"\']?';
+
+/**
+ * Tên các bảng/view mà tệp dump nhắc tới, theo thứ tự xuất hiện.
+ *
+ * Đây là danh sách để người dùng chọn nhập một phần, và cũng chính là bộ lọc truyền xuống
+ * `restore_backup`. Bảng tạm bên trong thân procedure/function bị loại: chúng lọt vào qua
+ * `INSERT INTO <temp>` nhưng không phải đối tượng của database.
+ */
+export function parseDumpTableNames(sql: string): string[] {
+  const temps = new Set<string>();
+  const tempRe = new RegExp(TEMP_TABLE_SRC, 'gi');
+  let t: RegExpExecArray | null;
+  while ((t = tempRe.exec(sql)) !== null) temps.add(t[1].toLowerCase());
+
+  const found: string[] = [];
+  const seen = new Set<string>();
+  const re = new RegExp(OBJECT_NAME_SRC, 'gi');
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(sql)) !== null) {
+    const name = m[1];
+    if (temps.has(name.toLowerCase())) continue;
+    if (seen.has(name)) continue;
+    seen.add(name);
+    found.push(name);
+  }
+  return found;
+}
+
+/** Tên bảng/view của MỘT câu lệnh (để lọc preview theo bảng đang chọn); null nếu không dò được. */
+export function dumpStatementObject(stmt: string): string | null {
+  const m = new RegExp(OBJECT_NAME_SRC, 'i').exec(stmt);
+  return m ? m[1] : null;
 }
 
 /** Các đối tượng mà tệp dump sẽ tạo — dùng để xoá cái trùng tên trước khi chạy lại. */
@@ -295,18 +385,18 @@ export function parseInsert(stmt: string): DumpRows | null {
   const rows: string[][] = [];
   if (valuesIdx >= 0) {
     const tuplesPart = afterName.slice(valuesIdx).replace(/^\s*VALUES?\b/i, '');
-    // Mỗi tuple là một cặp ngoặc ở mức ngoài cùng: (...),(...)
-    let rest = tuplesPart;
-    while (rest.trim().startsWith('(') || rest.includes('(')) {
-      const tuple = outerParens(rest);
-      if (tuple === null) break;
-      rows.push(splitTopLevel(tuple).map(literalToText));
-      const close = rest.indexOf(')', rest.indexOf('(') + tuple.length);
-      if (close < 0) break;
-      rest = rest.slice(close + 1);
-      if (!rest.includes('(')) break;
-      // Chỉ tiếp tục nếu phần còn lại vẫn là danh sách tuple (tránh ăn vào ON DUPLICATE...)
-      if (!/^\s*,/.test(rest)) break;
+    // Mỗi tuple là một cặp ngoặc ở mức ngoài cùng: (...),(...). Đi bằng chỉ số thay vì cắt
+    // dần phần còn lại: export gộp tới 500 dòng vào một INSERT, và slice theo từng tuple làm
+    // việc này thành O(n²) trên một câu lệnh dài hàng trăm nghìn ký tự.
+    let i = 0;
+    while (i < tuplesPart.length) {
+      while (i < tuplesPart.length && /[\s,]/.test(tuplesPart[i])) i++;
+      // Không còn tuple nào -> phần đuôi là thứ khác (ON DUPLICATE KEY UPDATE, RETURNING...).
+      if (tuplesPart[i] !== '(') break;
+      const end = matchingParen(tuplesPart, i);
+      if (end < 0) break;
+      rows.push(splitTopLevel(tuplesPart.slice(i + 1, end)).map(literalToText));
+      i = end + 1;
     }
   }
 

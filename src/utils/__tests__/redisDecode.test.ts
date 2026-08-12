@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   phpUnserialize,
+  igbinaryUnserialize,
+  looksLikeIgbinary,
   decodeRedisValue,
   toHexDump,
   parseHexDump,
@@ -81,6 +83,308 @@ describe('decodeRedisValue format override', () => {
     expect((await decodeRedisValue(enc('i:5;'))).format).toBe('php-serialize');
     expect((await decodeRedisValue(enc('[1,2]'))).format).toBe('json');
     expect((await decodeRedisValue(enc('plain'))).format).toBe('raw');
+  });
+});
+
+/**
+ * igbinary fixtures are written byte by byte rather than captured from a real key, because the
+ * point of each test is one rule of the format (big-endian widths, the shared string table, the
+ * reference table) and a captured blob exercises all of them at once while pinning none.
+ *
+ * The writer's string table is modelled by hand: every `str8`/`obj8` here interns one string, in
+ * source order starting at 0, and `strId8`/`objId8` index into that.
+ */
+const ig = {
+  header: [0x00, 0x00, 0x00, 0x02],
+  headerV1: [0x00, 0x00, 0x00, 0x01],
+  null: [0x00],
+  true: [0x05],
+  false: [0x04],
+  emptyStr: [0x0d],
+  long8p: (n: number) => [0x06, n],
+  long8n: (n: number) => [0x07, n],
+  long16p: (n: number) => [0x08, (n >> 8) & 0xff, n & 0xff],
+  long32p: (n: number) => [0x0a, (n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff],
+  long64p: (hi: number[], lo: number[]) => [0x20, ...hi, ...lo],
+  double: (v: number) => {
+    const b = new Uint8Array(8);
+    new DataView(b.buffer).setFloat64(0, v, false);
+    return [0x0c, ...b];
+  },
+  str8: (s: string) => {
+    const b = [...new TextEncoder().encode(s)];
+    return [0x11, b.length, ...b];
+  },
+  strId8: (id: number) => [0x0e, id],
+  arr8: (n: number) => [0x14, n],
+  obj8: (cls: string) => {
+    const b = [...new TextEncoder().encode(cls)];
+    return [0x17, b.length, ...b];
+  },
+  objId8: (id: number) => [0x1a, id],
+  objSer8: (payload: string) => {
+    const b = [...new TextEncoder().encode(payload)];
+    return [0x1d, b.length, ...b];
+  },
+  objref8: (id: number) => [0x22, id],
+};
+const bin = (...parts: number[][]): Uint8Array => new Uint8Array(parts.flat());
+
+// PHP prefixes a non-public property name with NUL-wrapped visibility. Built with fromCharCode(0)
+// rather than an escape, matching redisDecode.ts: no NUL byte in the source file.
+const NUL = String.fromCharCode(0);
+const prot = (name: string) => `${NUL}*${NUL}${name}`;
+const priv = (cls: string, name: string) => `${NUL}${cls}${NUL}${name}`;
+
+describe('igbinaryUnserialize', () => {
+  it('reads the scalar types, big-endian', () => {
+    const v = igbinaryUnserialize(
+      bin(
+        ig.header,
+        ig.arr8(8),
+        ig.str8('nul'), ig.null,
+        ig.str8('t'), ig.true,
+        ig.str8('f'), ig.false,
+        ig.str8('i'), ig.long8p(42),
+        ig.str8('neg'), ig.long8n(42),
+        ig.str8('wide'), ig.long16p(300),
+        ig.str8('wider'), ig.long32p(70000),
+        ig.str8('d'), ig.double(1.5),
+      ),
+    );
+    expect(v).toEqual({
+      nul: null, t: true, f: false, i: 42, neg: -42, wide: 300, wider: 70000, d: 1.5,
+    });
+  });
+
+  it('keeps a 64-bit long that a JS number cannot hold exactly as text', () => {
+    // 2^62 = 4611686018427387904, well past Number.MAX_SAFE_INTEGER.
+    const v = igbinaryUnserialize(
+      bin(ig.header, ig.long64p([0x40, 0x00, 0x00, 0x00], [0x00, 0x00, 0x00, 0x00])),
+    );
+    expect(v).toBe('4611686018427387904');
+    // …while one inside the safe range stays a number.
+    expect(igbinaryUnserialize(bin(ig.header, ig.long64p([0, 0, 0, 0], [0, 0, 0x01, 0x00])))).toBe(256);
+  });
+
+  it('resolves a repeated string through the string table', () => {
+    const v = igbinaryUnserialize(
+      bin(
+        ig.header,
+        ig.arr8(2),
+        ig.str8('a'), ig.str8('dup'), //   'a' -> id 0, 'dup' -> id 1
+        ig.str8('b'), ig.strId8(1), //     'b' -> id 2, then reuse 'dup'
+      ),
+    );
+    expect(v).toEqual({ a: 'dup', b: 'dup' });
+  });
+
+  it('reads the empty string, a type of its own that is never interned', () => {
+    const v = igbinaryUnserialize(
+      bin(
+        ig.header,
+        ig.arr8(3),
+        ig.str8('a'), ig.emptyStr, //   'a' -> id 0, and the empty value takes no id
+        ig.str8('b'), ig.str8('x'), //  'b' -> id 1, 'x' -> id 2
+        ig.emptyStr, ig.strId8(2), //   an empty *key*, then id 2 still resolves to 'x'
+      ),
+    );
+    expect(v).toEqual({ a: '', b: 'x', '': 'x' });
+  });
+
+  it('interns class names in the same table as data strings', () => {
+    const v = igbinaryUnserialize(
+      bin(
+        ig.header,
+        ig.arr8(2),
+        ig.str8('first'), //                        id 0
+        ig.obj8('Node'), ig.arr8(0), //             id 1 = 'Node'
+        ig.str8('second'), //                       id 2
+        ig.objId8(1), ig.arr8(0), //                class name read back by id
+      ),
+    );
+    expect(v).toEqual({ first: { __class: 'Node' }, second: { __class: 'Node' } });
+  });
+
+  it('builds a JS array for sequential integer keys and an object otherwise', () => {
+    const list = igbinaryUnserialize(
+      bin(
+        ig.header, ig.arr8(3),
+        ig.long8p(0), ig.str8('x'),
+        ig.long8p(1), ig.str8('y'),
+        ig.long8p(2), ig.str8('z'),
+      ),
+    );
+    expect(list).toEqual(['x', 'y', 'z']);
+    const sparse = igbinaryUnserialize(
+      bin(ig.header, ig.arr8(2), ig.long8p(0), ig.str8('x'), ig.long8p(7), ig.str8('y')),
+    );
+    expect(sparse).toEqual({ 0: 'x', 7: 'y' });
+    expect(igbinaryUnserialize(bin(ig.header, ig.arr8(0)))).toEqual({});
+  });
+
+  it('strips the NUL-wrapped visibility prefix off property names', () => {
+    const v = igbinaryUnserialize(
+      bin(
+        ig.header,
+        ig.obj8('Z3\\MOUVEMENT\\Domain\\Model\\Token\\PasswordUrlToken'),
+        ig.arr8(2),
+        ig.str8(prot('token')), ig.str8('5cd909a5'), //          protected
+        ig.str8(priv('Token', 'customerId')), ig.str8('devtest62728'), // private
+      ),
+    );
+    expect(v).toEqual({
+      __class: 'Z3\\MOUVEMENT\\Domain\\Model\\Token\\PasswordUrlToken',
+      token: '5cd909a5',
+      customerId: 'devtest62728',
+    });
+  });
+
+  it('decodes a DateTimeImmutable the way PHP stores it', () => {
+    const v = igbinaryUnserialize(
+      bin(
+        ig.header,
+        ig.obj8('DateTimeImmutable'),
+        ig.arr8(3),
+        ig.str8('date'), ig.str8('2026-08-08 04:41:17.760585'),
+        ig.str8('timezone_type'), ig.long8p(3),
+        ig.str8('timezone'), ig.str8('Asia/Tokyo'),
+      ),
+    );
+    expect(v).toEqual({
+      __class: 'DateTimeImmutable',
+      date: '2026-08-08 04:41:17.760585',
+      timezone_type: 3,
+      timezone: 'Asia/Tokyo',
+    });
+  });
+
+  it('runs a Serializable payload through the serialize() parser', () => {
+    const v = igbinaryUnserialize(
+      bin(ig.header, ig.obj8('Ser'), ig.objSer8('a:2:{s:1:"a";i:1;s:1:"b";b:1;}')),
+    );
+    expect(v).toEqual({ __class: 'Ser', __serialized: { a: 1, b: true } });
+  });
+
+  it('keeps a Serializable payload as text when it is neither format', () => {
+    const v = igbinaryUnserialize(bin(ig.header, ig.obj8('Ser'), ig.objSer8('not serialized')));
+    expect(v).toEqual({ __class: 'Ser', __serialized: 'not serialized' });
+  });
+
+  it('resolves an object reference to the same object, cycle included', () => {
+    const v = igbinaryUnserialize(
+      bin(
+        ig.header,
+        ig.obj8('Node'), ig.arr8(2),
+        ig.str8('name'), ig.str8('root'),
+        ig.str8('self'), ig.objref8(0),
+      ),
+    );
+    expect(v.name).toBe('root');
+    expect(v.self).toBe(v); // the same object, not a copy
+  });
+
+  it('numbers reference slots parent-before-child, like the writer does', () => {
+    const v = igbinaryUnserialize(
+      bin(
+        ig.header,
+        ig.obj8('Outer'), ig.arr8(2), //                              refs[0] = Outer
+        ig.str8('a'), ig.obj8('Inner'), ig.arr8(1), ig.str8('v'), ig.long8p(1), // refs[1] = Inner
+        ig.str8('b'), ig.objref8(1),
+      ),
+    );
+    expect(v.a.v).toBe(1);
+    expect(v.b).toBe(v.a);
+  });
+
+  it('rejects a bad header, an unknown type and a truncated buffer', () => {
+    expect(() => igbinaryUnserialize(new TextEncoder().encode('O:4:"User":0:{}'))).toThrow();
+    expect(() => igbinaryUnserialize(bin(ig.header))).toThrow(); // header only, no value
+    expect(() => igbinaryUnserialize(bin(ig.header, [0x7f]))).toThrow(); // no such type
+    expect(() => igbinaryUnserialize(bin(ig.header, [0x11, 0x40, 0x61]))).toThrow(); // len 64, 1 byte
+    expect(() => igbinaryUnserialize(bin(ig.header, ig.strId8(9)))).toThrow(); // empty string table
+    expect(() => igbinaryUnserialize(bin(ig.header, ig.objref8(9)))).toThrow(); // no such ref
+  });
+
+  it('accepts format version 1 as well as 2', () => {
+    expect(igbinaryUnserialize(bin(ig.headerV1, ig.str8('hi')))).toBe('hi');
+    expect(looksLikeIgbinary(bin(ig.header, ig.true))).toBe(true);
+    expect(looksLikeIgbinary(bin(ig.headerV1, ig.true))).toBe(true);
+    // Four NULs on their own are not a value, and a v3 header is not something this can read.
+    expect(looksLikeIgbinary(new Uint8Array([0, 0, 0, 2]))).toBe(false);
+    expect(looksLikeIgbinary(bin([0x00, 0x00, 0x00, 0x03], ig.true))).toBe(false);
+  });
+});
+
+describe('decodeRedisValue with igbinary', () => {
+  const token = bin(
+    ig.header,
+    ig.obj8('PasswordUrlToken'), ig.arr8(2),
+    ig.str8(prot('token')), ig.str8('5cd909a5'),
+    ig.str8(prot('createdDate')),
+    ig.obj8('DateTimeImmutable'), ig.arr8(1), ig.str8('date'), ig.str8('2026-08-08 04:41:17'),
+  );
+
+  it('auto sniffs the header and decodes without being told', async () => {
+    const d = await decodeRedisValue(token);
+    expect(d.ok).toBe(true);
+    expect(d.format).toBe('igbinary');
+    expect(JSON.parse(d.text)).toEqual({
+      __class: 'PasswordUrlToken',
+      token: '5cd909a5',
+      createdDate: { __class: 'DateTimeImmutable', date: '2026-08-08 04:41:17' },
+    });
+  });
+
+  it('honours the explicit format and reports failure on other data', async () => {
+    const d = await decodeRedisValue(token, 'igbinary');
+    expect(d.ok).toBe(true);
+    expect(d.format).toBe('igbinary');
+    const bad = await decodeRedisValue(new TextEncoder().encode('i:5;'), 'igbinary');
+    expect(bad.ok).toBe(false);
+    expect(bad.text).toBe('i:5;');
+  });
+
+  it('falls back to raw when the header matches but the body does not parse', async () => {
+    const d = await decodeRedisValue(bin(ig.header, [0x7f, 0x7f]));
+    expect(d.ok).toBe(true);
+    expect(d.format).toBe('raw');
+  });
+
+  it('prints a cycle instead of throwing, and a shared sibling in full', async () => {
+    const cyclic = bin(
+      ig.header, ig.obj8('Node'), ig.arr8(1), ig.str8('self'), ig.objref8(0),
+    );
+    const d = await decodeRedisValue(cyclic);
+    expect(d.ok).toBe(true);
+    expect(d.text).toContain('[circular]');
+
+    const shared = bin(
+      ig.header, ig.obj8('Outer'), ig.arr8(2),
+      ig.str8('a'), ig.obj8('Inner'), ig.arr8(1), ig.str8('v'), ig.long8p(1),
+      ig.str8('b'), ig.objref8(1),
+    );
+    const s = await decodeRedisValue(shared);
+    expect(s.text).not.toContain('[circular]');
+    expect(JSON.parse(s.text)).toEqual({
+      __class: 'Outer',
+      a: { __class: 'Inner', v: 1 },
+      b: { __class: 'Inner', v: 1 },
+    });
+  });
+
+  it('decompresses first, so a compressed igbinary value still decodes', async () => {
+    const cs = new CompressionStream('deflate');
+    const stream = new Response(token as any).body!.pipeThrough(cs);
+    const z = new Uint8Array(await new Response(stream).arrayBuffer());
+    const d = await decodeRedisValue(z);
+    expect(d.format).toBe('zlib + igbinary');
+    expect(JSON.parse(d.text).token).toBe('5cd909a5');
+  });
+
+  it('byte views still show the stored bytes, not the decoded object', async () => {
+    const d = await decodeRedisValue(token, 'hex');
+    expect(parseHexDump(d.text)).toEqual(token);
   });
 });
 

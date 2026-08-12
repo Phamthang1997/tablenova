@@ -26,6 +26,7 @@ import {
 } from '../sql/statements';
 import * as catalog from '../sql/catalog';
 import { resolveResultEditability, type ResultEditability, type NotEditableReason } from '../sql/editableResult';
+import { SqlSnippetPanel } from './SqlSnippetPanel';
 
 // Configure Monaco Environment for Vite native web workers
 (window as any).MonacoEnvironment = {
@@ -157,12 +158,14 @@ interface SqlEditorProps {
   initialSql?: string;
   initialSql2?: string;
   initialSplitMode?: 'none' | 'vertical' | 'horizontal';
+  initialEditorHeight?: number;
   onRunSuccess?: () => void;
   theme?: 'dark' | 'light';
   readOnly?: boolean;
   onSqlChange?: (sql: string) => void;
   onSql2Change?: (sql2: string) => void;
   onSplitModeChange?: (mode: 'none' | 'vertical' | 'horizontal') => void;
+  onEditorHeightChange?: (height: number) => void;
 }
 
 // Bộ lọc phạm vi của ngăn lịch sử. Bảng hằng ở mức module nên giữ KEY dịch,
@@ -226,12 +229,14 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   initialSql = '',
   initialSql2 = '',
   initialSplitMode = 'none',
+  initialEditorHeight,
   onRunSuccess,
   theme = 'dark',
   readOnly = false,
   onSqlChange,
   onSql2Change,
   onSplitModeChange,
+  onEditorHeightChange,
 }) => {
   const { t, i18n } = useTranslation();
   // Dates and thousands separators follow the active UI language.
@@ -248,7 +253,26 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   const [splitRatio, setSplitRatio] = useState<number>(50);
   const [isDraggingSplit, setIsDraggingSplit] = useState<boolean>(false);
   const [focusedEditor, setFocusedEditor] = useState<1 | 2>(1);
+  const [showSnippetPanel, setShowSnippetPanel] = useState<boolean>(false);
   const editorRef2 = useRef<any>(null);
+
+  const insertSnippetAtCursor = (template: string, targetPaneId?: 1 | 2) => {
+    const activePane = targetPaneId || focusedEditor || 1;
+    const ed = activePane === 1 ? editorRef.current : editorRef2.current;
+    if (!ed) return;
+
+    const selection = ed.getSelection();
+    if (selection) {
+      ed.executeEdits('snippet-panel', [
+        {
+          range: selection,
+          text: template,
+          forceMoveMarkers: true,
+        },
+      ]);
+      ed.focus();
+    }
+  };
 
   const [results, setResults] = useState<any[]>([]);
   const [columns, setColumns] = useState<string[]>([]);
@@ -277,7 +301,10 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   const [showCopyDropdown2, setShowCopyDropdown2] = useState(false);
   const [runningQueryId2, setRunningQueryId2] = useState<string | null>(null);
 
-  const [paneEditorHeight, setPaneEditorHeight] = useState<number>(220);
+  const [userEditorHeight, setUserEditorHeight] = useState<number | null>(
+    initialEditorHeight ?? null
+  );
+  const [userEditorHeight2, setUserEditorHeight2] = useState<number | null>(null);
   const [isDraggingResizer, setIsDraggingResizer] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [historyList, setHistoryList] = useState<HistoryEntry[]>([]);
@@ -363,16 +390,27 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     setMenuPane(prev => prev === paneId ? null : paneId);
   };
 
-  const handleInnerResizerMouseDown = (e: React.MouseEvent) => {
+  const handleInnerResizerMouseDown = (e: React.MouseEvent, paneId: 1 | 2 = 1) => {
     e.preventDefault();
     setIsDraggingResizer(true);
     const startY = e.clientY;
-    const startHeight = paneEditorHeight;
+
+    const paneEl = paneId === 1 ? pane1Ref.current : pane2Ref.current;
+    const editorEl = (paneEl?.querySelector('.monaco-editor-wrapper') as HTMLElement) || (paneEl?.firstElementChild as HTMLElement);
+    const currentHeight = editorEl ? editorEl.clientHeight : 220;
+    const startHeight = (paneId === 1 ? userEditorHeight : userEditorHeight2) ?? currentHeight;
 
     const onMouseMove = (moveEvent: MouseEvent) => {
       const deltaY = moveEvent.clientY - startY;
-      const newHeight = Math.max(60, Math.min(window.innerHeight - 180, startHeight + deltaY));
-      setPaneEditorHeight(newHeight);
+      const maxH = paneEl ? paneEl.clientHeight - 100 : window.innerHeight - 180;
+      const newHeight = Math.max(60, Math.min(maxH, startHeight + deltaY));
+
+      if (paneId === 1) {
+        setUserEditorHeight(newHeight);
+        onEditorHeightChange?.(newHeight);
+      } else {
+        setUserEditorHeight2(newHeight);
+      }
     };
 
     const onMouseUp = () => {
@@ -416,6 +454,12 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   const [activeTabType1, setActiveTabType1] = useState<'data' | 'explain'>('data');
   const [activeTabType2, setActiveTabType2] = useState<'data' | 'explain'>('data');
 
+  const pane1Ref = useRef<HTMLDivElement>(null);
+  const pane2Ref = useRef<HTMLDivElement>(null);
+
+  const hasResult1 = loading || hasRun || errorMsg !== null || explainResult1 !== null;
+  const hasResult2 = loading2 || hasRun2 || errorMsg2 !== null || explainResult2 !== null;
+
   // ─── Sửa trực tiếp trên bảng kết quả ───────────────────────────────────────────────
   // Only the edit buffer is split per pane: at most one cell is being typed into and at
   // most one preview dialog is open at a time, so those stay single.
@@ -444,14 +488,14 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     return () => window.removeEventListener(HISTORY_CHANGED_EVENT, reload);
   }, []);
 
-  // Recalculate Monaco editor layout when history drawer, split mode, or height changes
+  // Recalculate Monaco editor layout when history drawer, split mode, height, or results change
   useEffect(() => {
     const timer = setTimeout(() => {
       if (editorRef.current) editorRef.current.layout();
       if (editorRef2.current) editorRef2.current.layout();
     }, 50);
     return () => clearTimeout(timer);
-  }, [showHistory, splitMode, paneEditorHeight]);
+  }, [showHistory, splitMode, userEditorHeight, userEditorHeight2, hasResult1, hasResult2]);
 
   /** Trả về id dòng lịch sử để `runRawSql` ghi kết quả lên đó khi chạy xong. */
   const addToHistory = (queryText: string): string => {
@@ -667,7 +711,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     if (editorRef2.current) {
       setTimeout(() => editorRef2.current?.layout(), 50);
     }
-  }, [splitMode, splitRatio, paneEditorHeight]);
+  }, [splitMode, splitRatio, userEditorHeight, userEditorHeight2, hasResult1, hasResult2]);
 
   const handleEditorDidMount = (editor: any, editorId: 1 | 2) => {
     if (editorId === 1) {
@@ -1705,6 +1749,17 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
               )}
             </div>
 
+            {/* Nút Snippets (Mẫu SQL) */}
+            <button
+              className={`btn ${showSnippetPanel ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setShowSnippetPanel(!showSnippetPanel)}
+              style={{ padding: '0 8px', fontSize: '11.5px', height: '26px', display: 'flex', alignItems: 'center', gap: '4px' }}
+              title="Mở thư viện mẫu SQL Snippet"
+            >
+              <span style={{ fontWeight: 700, fontSize: '12px', color: showSnippetPanel ? '#ffffff' : '#10b981' }}>( )</span>
+              <span>Snippets</span>
+            </button>
+
             {/* Split button: Chạy SQL / Tùy chọn chạy ở GÓC NGOÀI CÙNG BÊN PHẢI */}
             <div style={{ position: 'relative', display: 'flex' }}>
               <button
@@ -1826,7 +1881,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
 
         {/* Đường kẻ kéo resizer (isDraggingResizer) nằm ở ĐƯỜNG KẺ DƯỚI giữa action bar và kết quả */}
         <div
-          onMouseDown={handleInnerResizerMouseDown}
+          onMouseDown={(e) => handleInnerResizerMouseDown(e, paneId)}
           style={{
             height: '4px',
             cursor: 'row-resize',
@@ -2222,7 +2277,17 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     const pEditCount = countEdits(paneId);
 
     return (
-      <div className="sql-results-wrapper" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', borderTop: 'none' }}>
+      <div
+        className="sql-results-wrapper"
+        style={{
+          flex: (paneId === 1 ? userEditorHeight : userEditorHeight2) !== null ? 1 : '1 1 0%',
+          minHeight: '60px',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          borderTop: 'none'
+        }}
+      >
         <div className="sql-results-tabs" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--win-bg-window)', borderBottom: '1px solid var(--win-border-light, rgba(229,231,235,0.4))', overflow: 'visible', paddingRight: '8px', height: '28px', flexShrink: 0 }}>
           <div style={{ display: 'flex', gap: '2px', overflowX: 'auto', flex: 1, height: '100%', alignItems: 'center', scrollbarWidth: 'none' }}>
             {pAllResults.length > 0 ? (
@@ -2675,6 +2740,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       }}>
         {/* Pane 1 */}
         <div 
+          ref={pane1Ref}
           className="sql-pane"
           style={{ 
             flex: splitMode === 'none' ? '1 1 100%' : 'none',
@@ -2687,7 +2753,17 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
           }}
         >
           {/* Editor 1 Section */}
-          <div style={{ height: `${paneEditorHeight}px`, flex: 'none', position: 'relative', overflow: 'hidden' }}>
+          <div
+            className="monaco-editor-wrapper"
+            style={{
+              flex: userEditorHeight !== null
+                ? `0 0 ${userEditorHeight}px`
+                : '2 1 0%',
+              minHeight: '60px',
+              position: 'relative',
+              overflow: 'hidden'
+            }}
+          >
             <Editor
               height="100%"
               language={langId}
@@ -2729,6 +2805,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
         {/* Pane 2 (Rendered when splitMode !== 'none') */}
         {splitMode !== 'none' && (
           <div 
+            ref={pane2Ref}
             className="sql-pane"
             style={{ 
               flex: '1 1 0%',
@@ -2742,7 +2819,17 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
             }}
           >
             {/* Editor 2 Section */}
-            <div style={{ height: `${paneEditorHeight}px`, flex: 'none', position: 'relative', overflow: 'hidden' }}>
+            <div
+              className="monaco-editor-wrapper"
+              style={{
+                flex: userEditorHeight2 !== null
+                  ? `0 0 ${userEditorHeight2}px`
+                  : '2 1 0%',
+                minHeight: '60px',
+                position: 'relative',
+                overflow: 'hidden'
+              }}
+            >
               <button 
                 className="split-pane-close-btn"
                 onClick={() => {
@@ -2784,6 +2871,14 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
           </div>
         )}
       </div>
+
+      {showSnippetPanel && (
+        <SqlSnippetPanel
+          dbType={dbType}
+          onInsertSnippet={(template) => insertSnippetAtCursor(template)}
+          onClose={() => setShowSnippetPanel(false)}
+        />
+      )}
 
       {showHistory && (
         <div className="sql-history-panel">
