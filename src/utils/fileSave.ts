@@ -52,6 +52,67 @@ export async function pickExportFolder(defaultPath?: string): Promise<string | n
   }
 }
 
+/**
+ * Mở hộp thoại "Lưu tệp" (Save As) của hệ điều hành.
+ * Cho phép người dùng chọn thư mục VÀ đặt/sửa tên tệp.
+ */
+export async function pickSaveFilePath(
+  defaultName: string,
+  ext: string,
+  filterName = 'Tệp'
+): Promise<string | null> {
+  try {
+    const fullName = defaultName.endsWith(`.${ext}`) ? defaultName : `${defaultName}.${ext}`;
+    const lastDir = getLastExportDir();
+    const defaultPath = lastDir ? joinPath(lastDir, fullName) : fullName;
+
+    const res = await invoke<string | null>('plugin:dialog|save', {
+      options: {
+        title: 'Lưu tệp',
+        defaultPath,
+        filters: [
+          {
+            name: filterName,
+            extensions: [ext],
+          },
+        ],
+      },
+    });
+    if (res) {
+      const sepIdx = Math.max(res.lastIndexOf('/'), res.lastIndexOf('\\'));
+      if (sepIdx > 0) {
+        rememberExportDir(res.substring(0, sepIdx));
+      }
+    }
+    return res || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Ghi dữ liệu trực tiếp tới đường dẫn đầy đủ do Save As dialog trả về. */
+export async function saveExportFileAtPath(
+  filePath: string,
+  data: Uint8Array | string,
+  mime = 'application/octet-stream'
+): Promise<boolean> {
+  try {
+    const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;
+    await invoke('plugin:fs|write_file', bytes, {
+      headers: {
+        path: encodeURIComponent(filePath),
+        options: JSON.stringify({}),
+      },
+    });
+    return true;
+  } catch {
+    const sepIdx = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'));
+    const fileName = sepIdx >= 0 ? filePath.substring(sepIdx + 1) : filePath;
+    downloadViaWebview(fileName, data, mime);
+    return false;
+  }
+}
+
 /** Nối thư mục + tên tệp, giữ đúng dấu phân cách của đường dẫn đang dùng. */
 export function joinPath(dir: string, name: string): string {
   const sep = dir.includes('\\') && !dir.includes('/') ? '\\' : '/';

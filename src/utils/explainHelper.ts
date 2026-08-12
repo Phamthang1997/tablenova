@@ -506,6 +506,26 @@ function parseAnalyzeTextPlan(rawText: string): ExplainNode | null {
     const indexName = indexMatch ? indexMatch[1].replace(/[`"]/g, '') : undefined;
 
     const titleUpper = opTitle.toUpperCase();
+    const titleLower = opTitle.toLowerCase();
+
+    let accessType: string | undefined = undefined;
+    if (titleLower.includes('single-row index lookup') || titleLower.includes('unique index lookup')) {
+      accessType = 'eq_ref';
+    } else if (titleLower.includes('index lookup') || titleLower.includes('ref lookup')) {
+      accessType = 'ref';
+    } else if (titleLower.includes('table scan') || titleLower.includes('seq scan')) {
+      accessType = 'ALL';
+    } else if (titleLower.includes('index range scan') || titleLower.includes('range scan')) {
+      accessType = 'range';
+    } else if (titleLower.includes('full index scan') || titleLower.includes('index scan')) {
+      accessType = 'index';
+    } else if (titleLower.includes('constant') || titleLower.includes('system row')) {
+      accessType = 'const';
+    }
+
+    const condMatch = opTitle.match(/\(([^()]+=[^()]+)\)/);
+    const filterCond = condMatch ? condMatch[1] : undefined;
+
     let costSeverity: 'low' | 'medium' | 'high' = 'low';
     if (titleUpper.includes('TABLE SCAN') || titleUpper.includes('SEQ SCAN') || titleUpper.includes('FULL SCAN')) {
       costSeverity = 'high';
@@ -516,6 +536,11 @@ function parseAnalyzeTextPlan(rawText: string): ExplainNode | null {
     } else if (cost && cost.total > 10) {
       costSeverity = 'medium';
     }
+
+    const detailsObj: Record<string, any> = { rawLine: line };
+    if (accessType) detailsObj.access_type = accessType;
+    if (indexName) detailsObj.used_key_parts = [indexName];
+    if (filterCond) detailsObj.attached_condition = filterCond;
 
     const node: ExplainNode = {
       id: '',
@@ -530,7 +555,8 @@ function parseAnalyzeTextPlan(rawText: string): ExplainNode | null {
       actualTime,
       actualRows,
       actualLoops,
-      details: { rawLine: line }
+      filter: filterCond,
+      details: detailsObj
     };
     if (neverExecuted) addFlag(node, 'neverExecuted');
 

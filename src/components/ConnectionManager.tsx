@@ -8,12 +8,17 @@ import { PostgresIcon, MySqlIcon, RedisIcon, SqliteIcon } from './DbIcons';
 import { encryptConnectionExport, decryptConnectionExport } from '../utils/cryptoHelper';
 import {
   parseDumpObjects,
+  parseDumpTableNames,
   buildDropStatements,
   addExistsHint,
-  isSkippedDumpStatement,
-  isCommentOnlyStatement,
+  dumpStatementObject,
+  stripLeadingSqlComments,
+  isSkippedDumpBody,
+  commentOnlyFromBody,
 } from '../utils/dumpPreview';
 import { splitStatements } from '../sql/statements';
+import { buildDump } from '../utils/dumpBuilder';
+import { gzipText, getLastExportDir, saveExportFile } from '../utils/fileSave';
 import { ProgressBar, type ProgressState } from './ProgressBar';
 import { ConfirmDialog } from './ConfirmDialog';
 
@@ -275,6 +280,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
   const [brFile, setBrFile] = useState<File | null>(null);
   // Xoá đối tượng trùng tên trước khi chạy dump (nếu không sẽ lỗi "already exists")
   const [brOverwrite, setBrOverwrite] = useState(false);
+  // Bỏ qua câu lệnh lỗi thay vì rollback toàn bộ — cùng nghĩa với ô ở popup Nhập.
+  const [brContinueOnError, setBrContinueOnError] = useState(false);
   // Bản tóm tắt xác nhận + tiến độ thật của lần phục hồi
   const [brConfirm, setBrConfirm] = useState(false);
   const [brProgress, setBrProgress] = useState<ProgressState | null>(null);
@@ -441,15 +448,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
             const text = event.target?.result as string;
             setBrSqlText(text);
 
-            const tables: string[] = [];
-            const re = /(?:CREATE\s+TABLE|INSERT\s+INTO|DROP\s+TABLE\s+IF\s+EXISTS)\s+(?:IF\s+NOT\s+EXISTS\s+)?[`"']?([a-zA-Z0-9_]+)[`"']?/gi;
-            let match;
-            while ((match = re.exec(text)) !== null) {
-              const table = match[1];
-              if (!tables.includes(table)) {
-                tables.push(table);
-              }
-            }
+            // Dùng chung bộ dò với popup Nhập: nó nhận cả VIEW (dump ghi view bằng
+            // CREATE VIEW / DROP VIEW, không phải DROP TABLE) và loại bảng tạm trong routine.
+            const tables = parseDumpTableNames(text);
             setBrParsedTables(tables);
             setBrSelectedTables(tables);
           } catch (e) {
@@ -1335,29 +1336,49 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
       }
 
       if (brAction === 'backup') {
+        // Dump dựng bằng đúng code của popup "Xuất Cơ sở dữ liệu" (buildDump): trước đây chỗ
+        // này gọi lệnh Rust `export_multi_tables`, vốn coi view là bảng (sinh DROP TABLE và
+        // INSERT INTO cho view), ghi một INSERT cho mỗi dòng, và không hề có routine/trigger.
         const list = await dbHelper.getTables();
         const tables = list.map(item => item.name);
         if (tables.length === 0) {
           throw new Error(t('connection.errNoTablesToBackup'));
         }
+        const [dbObjs, triggers] = await Promise.all([
+          dbHelper.getDatabaseObjects(),
+          dbHelper.getAllTriggers(),
+        ]);
 
-        const res = await dbHelper.exportMultiTables({
-          format: 'sql',
+        const sqlText = await buildDump({
+          dbType: config.type,
           tables,
-          filename: brFilename,
+          views: list.filter(item => item.type === 'view').map(item => item.name),
+          routines: [
+            ...dbObjs.functions.map((name) => ({ name, kind: 'function' as const })),
+            ...dbObjs.procedures.map((name) => ({ name, kind: 'procedure' as const })),
+          ],
+          triggers: triggers.map((tr) => tr.name),
+          events: dbObjs.events,
           sqlOptions: {
             dropTable: brDropTable,
             includeStructure: brIncludeStructure,
-            includeContent: brIncludeContent
+            includeContent: brIncludeContent,
           },
-          compressGzip: brCompressGzip
-        });
+          onProgress: setBrProgress,
+        }, dbHelper);
 
-        if (res.success) {
-          setSuccessMsg(t('connection.backupSuccess'));
-        } else {
-          throw new Error(res.error || t('connection.errBackup'));
-        }
+        const base = (brFilename.trim() || 'database_backup').replace(/\.(sql|sql\.gz|gz)$/i, '');
+        const fileName = base + (brCompressGzip ? '.sql.gz' : '.sql');
+        setBrProgress({ label: t('app.exportWriting') });
+        const payload = brCompressGzip ? await gzipText(sqlText) : sqlText;
+        const saved = await saveExportFile(
+          getLastExportDir() || null,
+          fileName,
+          payload,
+          brCompressGzip ? 'application/gzip' : 'text/plain;charset=utf-8'
+        );
+        setBrProgress(null);
+        setSuccessMsg(`${t('connection.backupSuccess')} — ${saved.path || fileName}`);
       } else {
         if (!brFile || !brSqlText) {
           throw new Error(t('connection.errNoBackupFile'));
@@ -1366,7 +1387,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
         // Ghi đè: chèn DROP ... IF EXISTS lên đầu, và cho các tên đó qua bộ lọc theo bảng
         // của backend (nó chỉ chạy câu lệnh có nhắc tên trong danh sách truyền vào).
         const objs = brOverwrite ? parseDumpObjects(brSqlText) : null;
-        const drops = objs ? buildDropStatements(objs, brType) : [];
+        const drops = brOverwrite ? brDropStatements : [];
         const sqlToRun = drops.length ? `${drops.join('\n')}\n${brSqlText}` : brSqlText;
         const tablesToRun = objs
           ? [...new Set([...brSelectedTables, ...objs.views, ...objs.triggers, ...objs.procedures, ...objs.functions])]
@@ -1394,10 +1415,15 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
               ? t('connection.restoreDetailEta', { ...counts, eta: formatRestoreEta(t, remain) })
               : t('connection.restoreDetail', counts),
           });
-        });
+        }, brContinueOnError);
         setBrProgress(null);
         if (resData.success) {
-          setSuccessMsg(t('connection.restoreSuccess', { n: resData.statementsCount || 0 }));
+          // Có câu bị bỏ qua thì không được báo "thành công" trơn — database chưa đầy đủ.
+          setSuccessMsg(
+            resData.failedCount
+              ? t('app.importDbPartial', { n: resData.statementsCount || 0, failed: resData.failedCount })
+              : t('connection.restoreSuccess', { n: resData.statementsCount || 0 })
+          );
           if (resData.activeDatabase) {
             if (brType === 'postgres') {
               setBrPgDatabase(resData.activeDatabase);
@@ -1419,6 +1445,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     } finally {
       await dbHelper.disconnect();
       setBrLoading(false);
+      // Lỗi giữa chừng thì thanh tiến độ phải tắt, nếu không nó đứng lại ở % cuối cùng và
+      // che luôn chỗ hiện thông báo lỗi.
+      setBrProgress(null);
     }
   };
 
@@ -2139,25 +2168,45 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     </div>
   );
 
+  // Cắt dump MỘT lần cho mỗi tệp và ghi sẵn thứ cần cho bộ lọc. Trước đây phần đếm cắt lại
+  // cả tệp mỗi khi danh sách bảng chọn đổi, nên với dump lớn thì mỗi cái tick treo giao diện.
+  const brStatements = React.useMemo(() => {
+    if (!brSqlText) return [];
+    return splitStatements(brSqlText).map(({ text }) => {
+      const body = stripLeadingSqlComments(text);
+      const { commentOnly, willRun } = commentOnlyFromBody(text, body);
+      return {
+        table: dumpStatementObject(body),
+        skipped: isSkippedDumpBody(body),
+        commentOnly,
+        commentRuns: willRun,
+      };
+    });
+  }, [brSqlText]);
+
+  // Không phụ thuộc `brOverwrite`: bật/tắt ô ghi đè không phải quét lại cả tệp.
+  const brDropStatements = React.useMemo(
+    () => (brSqlText ? buildDropStatements(parseDumpObjects(brSqlText), brType) : []),
+    [brSqlText, brType]
+  );
+
   // Số câu lệnh sẽ chạy khi phục hồi (cùng bộ lọc theo bảng với backend) để ước tính thời gian.
   const brPlannedStatements = React.useMemo(() => {
-    if (!brSqlText) return 0;
-    const objs = brOverwrite ? parseDumpObjects(brSqlText) : null;
-    const extra = objs ? buildDropStatements(objs, brType).length : 0;
-    const lower = brSelectedTables.map(t => t.toLowerCase());
-    const tableOf = /(?:CREATE\s+TABLE|INSERT\s+INTO|DROP\s+TABLE\s+IF\s+EXISTS)\s+(?:IF\s+NOT\s+EXISTS\s+)?[`"']?([a-zA-Z0-9_]+)/i;
-    const keep = splitStatements(brSqlText).filter(({ text }) => {
+    // Không đặt tên tham số là `t` — đó là hàm dịch.
+    const selectedLower = new Set(brSelectedTables.map((name) => name.toLowerCase()));
+    let n = brOverwrite ? brDropStatements.length : 0;
+    for (const s of brStatements) {
       // Cùng luật với backend: bỏ LOCK/UNLOCK TABLES + lệnh transaction của dump...
-      if (isSkippedDumpStatement(text)) return false;
-      const { commentOnly, willRun } = isCommentOnlyStatement(text);
-      if (commentOnly) return willRun;
-      if (brParsedTables.length === 0) return true;
-      const m = tableOf.exec(text);
+      if (s.skipped) continue;
+      if (s.commentOnly) {
+        if (s.commentRuns) n++;
+        continue;
+      }
       // ...câu không nhắc bảng nào (SET/USE...) vẫn chạy; còn lại phải thuộc bảng đã chọn.
-      return !m || lower.includes(m[1].toLowerCase());
-    });
-    return keep.length + extra;
-  }, [brSqlText, brOverwrite, brType, brParsedTables.length, brSelectedTables]);
+      if (brParsedTables.length === 0 || !s.table || selectedLower.has(s.table.toLowerCase())) n++;
+    }
+    return n;
+  }, [brStatements, brDropStatements, brOverwrite, brParsedTables.length, brSelectedTables]);
 
   const brTargetDb = brType === 'postgres' ? brPgDatabase : brType === 'mysql' ? brMyDatabase : brSqlitePath;
 
@@ -2438,6 +2487,24 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                     {t('connection.brOverwriteLabel')}
                     <span className="cm-hint" style={{ display: 'block' }}>
                       {t('connection.brOverwriteHint')}
+                    </span>
+                  </span>
+                </label>
+              )}
+
+              {/* Cùng tuỳ chọn với popup Nhập — dùng chung key dịch để hai chỗ không mô tả
+                  cùng một hành vi bằng hai lời khác nhau. */}
+              {brFile && (
+                <label className="cm-check" style={{ alignItems: 'flex-start' }}>
+                  <input
+                    type="checkbox"
+                    checked={brContinueOnError}
+                    onChange={(e) => setBrContinueOnError(e.target.checked)}
+                  />
+                  <span>
+                    {t('importDialog.continueOnErrorLabel')}
+                    <span className="cm-hint" style={{ display: 'block' }}>
+                      {t('importDialog.continueOnErrorHint')}
                     </span>
                   </span>
                 </label>

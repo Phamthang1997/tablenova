@@ -187,6 +187,17 @@ export interface ColumnInfo {
   autoIncrement?: boolean;
   comment?: string | null;
   extra?: string | null;
+  /**
+   * Cột do database TỰ TÍNH (`GENERATED ALWAYS AS (...)`). Ghi vào là lỗi (MySQL 3105), nên
+   * dump phải bỏ hẳn khỏi danh sách cột của INSERT.
+   */
+  generated?: boolean;
+  /**
+   * Postgres `GENERATED ALWAYS AS IDENTITY`. Khác `generated`: cột này VẪN phải nằm trong
+   * INSERT (bỏ đi là đánh số lại toàn bộ và mọi khoá ngoại trỏ tới nó sai theo), chỉ là câu
+   * lệnh cần thêm `OVERRIDING SYSTEM VALUE`.
+   */
+  identityAlways?: boolean;
   characterSet?: string | null;
   collation?: string | null;
 }
@@ -470,7 +481,14 @@ export const dbHelper = {
     }
   },
 
-  async getDatabaseObjects(): Promise<{ tables: string[]; views: string[]; functions: string[]; procedures: string[] }> {
+  async getDatabaseObjects(): Promise<{
+    tables: string[];
+    views: string[];
+    functions: string[];
+    procedures: string[];
+    /** MySQL scheduled event; luôn rỗng ở Postgres/SQLite (hai hệ này không có). */
+    events: string[];
+  }> {
     try {
       const res: any = await invoke('get_database_objects');
       return {
@@ -478,15 +496,19 @@ export const dbHelper = {
         views: res.views || [],
         functions: res.functions || [],
         procedures: res.procedures || [],
+        events: res.events || [],
       };
-    } catch {
-      return { tables: [], views: [], functions: [], procedures: [] };
+    } catch (err) {
+      // Nuốt lỗi im lặng ở đây từng làm popup Xuất hiện ra một danh sách thiếu routine mà
+      // không có dấu hiệu nào — log lại để còn dò được.
+      console.warn('[dbHelper] get_database_objects failed:', err);
+      return { tables: [], views: [], functions: [], procedures: [], events: [] };
     }
   },
 
 
 
-  async getObjectDefinition(name: string, kind: 'view' | 'function' | 'procedure' | 'table'): Promise<{ success: boolean; sql?: string; error?: string }> {
+  async getObjectDefinition(name: string, kind: 'view' | 'function' | 'procedure' | 'table' | 'event'): Promise<{ success: boolean; sql?: string; error?: string }> {
     try {
       const res: any = await invoke('get_object_definition', { name, kind });
       return { success: !!res.success, sql: res.sql, error: res.message };
@@ -501,6 +523,51 @@ export const dbHelper = {
       return res.triggers || [];
     } catch {
       return [];
+    }
+  },
+
+  /**
+   * Mọi trigger của database hiện tại, kèm câu `CREATE TRIGGER` chạy lại được.
+   *
+   * Khác `getTableTriggers` (theo từng bảng, dùng cho tab Structure): bản này cho đường xuất
+   * dump — một lần gọi cho cả database, và có tên bảng chủ vì Postgres không DROP được trigger
+   * nếu thiếu `ON <table>`.
+   */
+  async getAllTriggers(): Promise<{ name: string; table: string; statement: string }[]> {
+    try {
+      const res: any = await invoke('get_all_triggers');
+      return res.triggers || [];
+    } catch (err) {
+      console.warn('[dbHelper] get_all_triggers failed:', err);
+      return [];
+    }
+  },
+
+  /**
+   * Những câu lệnh đi kèm một bảng nhưng không nằm trong CREATE TABLE của dialect đó
+   * (index, FK/UNIQUE/CHECK, comment, sequence). Nhóm theo VỊ TRÍ phải chạy — xem
+   * `get_table_ddl_extras` bên Rust.
+   */
+  async getTableDdlExtras(tableName: string): Promise<{
+    sequences: string[];
+    indexes: string[];
+    constraints: string[];
+    comments: string[];
+    sequenceValues: string[];
+  }> {
+    const empty = { sequences: [], indexes: [], constraints: [], comments: [], sequenceValues: [] };
+    try {
+      const res: any = await invoke('get_table_ddl_extras', { tableName });
+      return {
+        sequences: res.sequences || [],
+        indexes: res.indexes || [],
+        constraints: res.constraints || [],
+        comments: res.comments || [],
+        sequenceValues: res.sequenceValues || [],
+      };
+    } catch (err) {
+      console.warn('[dbHelper] get_table_ddl_extras failed:', err);
+      return empty;
     }
   },
 
@@ -1098,38 +1165,41 @@ export const dbHelper = {
     }
   },
 
-  async parseBackupTables(filePath: string): Promise<{ success: boolean; tables: string[]; error?: string }> {
-    try {
-      const res: any = await invoke('parse_backup_tables', { filePath });
-      return { success: !!res.success, tables: res.tables || [], error: res.message };
-    } catch (err: any) {
-      return { success: false, tables: [], error: err.toString() };
-    }
-  },
-
-  async exportMultiTables(payload: any): Promise<{ success: boolean; error?: string }> {
-    try {
-      const res: any = await invoke('export_multi_tables', { payload });
-      return { success: !!res.success, error: res.message };
-    } catch (err: any) {
-      return { success: false, error: err.toString() };
-    }
-  },
-
   // onProgress: nhận {type:'start'|'progress'|'done', done, total} do backend gửi qua Channel
   // sau mỗi ~20 câu lệnh, để UI vẽ thanh tiến độ thật thay vì thanh vô định.
   async restoreBackup(
     sqlContent: string,
     tables: string[],
-    onProgress?: (msg: { type: string; done?: number; total?: number; statementsCount?: number }) => void
-  ): Promise<{ success: boolean; statementsCount?: number; activeDatabase?: string; error?: string }> {
+    onProgress?: (msg: { type: string; done?: number; total?: number; statementsCount?: number }) => void,
+    /** Gặp lệnh lỗi thì bỏ qua và chạy tiếp thay vì rollback toàn bộ (xem `restore_backup`). */
+    continueOnError?: boolean
+  ): Promise<{
+    success: boolean;
+    statementsCount?: number;
+    activeDatabase?: string;
+    error?: string;
+    failedCount?: number;
+    failedSamples?: { sql: string; error: string }[];
+  }> {
     try {
       // Luôn tạo kênh: tham số onProgress ở Rust là Channel bắt buộc (Channel không impl
       // Deserialize nên không dùng được Option<Channel>). Không có callback thì bỏ tin nhắn đi.
       const channel = new Channel<any>();
       if (onProgress) channel.onmessage = onProgress;
-      const res: any = await invoke('restore_backup', { sqlContent, tables, onProgress: channel });
-      return { success: !!res.success, statementsCount: res.statementsCount, activeDatabase: res.activeDatabase, error: res.message };
+      const res: any = await invoke('restore_backup', {
+        sqlContent,
+        tables,
+        onProgress: channel,
+        continueOnError: !!continueOnError,
+      });
+      return {
+        success: !!res.success,
+        statementsCount: res.statementsCount,
+        activeDatabase: res.activeDatabase,
+        error: res.message,
+        failedCount: res.failedCount || 0,
+        failedSamples: res.failedSamples || [],
+      };
     } catch (err: any) {
       return { success: false, error: err.toString() };
     }

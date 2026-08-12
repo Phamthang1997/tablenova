@@ -4,15 +4,17 @@ import type { ExplainResult } from '../utils/explainHelper';
 import { ExplainDiagramView } from './ExplainDiagramView';
 import { ExplainGridView } from './ExplainGridView';
 import { ExplainTreeView } from './ExplainTreeView';
+import { ExplainStatsView } from './ExplainStatsView';
 import { ExplainRawView } from './ExplainRawView';
-import { Network, GitFork, FileText, Clock, Zap, Grid3x3 } from 'lucide-react';
+import { Network, GitFork, FileText, Clock, Zap, Grid3x3, BarChart3 } from 'lucide-react';
 
-type ViewMode = 'diagram' | 'plan' | 'tree' | 'raw';
+type ViewMode = 'diagram' | 'plan' | 'tree' | 'stats' | 'raw';
 
-const VIEW_TABS: { mode: ViewMode; labelKey: 'explain.tabDiagram' | 'explain.tabPlan' | 'explain.tabTree' | 'explain.tabRaw'; Icon: typeof Network }[] = [
+const VIEW_TABS: { mode: ViewMode; labelKey: 'explain.tabDiagram' | 'explain.tabPlan' | 'explain.tabTree' | 'explain.tabStats' | 'explain.tabRaw'; Icon: typeof Network }[] = [
   { mode: 'diagram', labelKey: 'explain.tabDiagram', Icon: Network },
   { mode: 'plan', labelKey: 'explain.tabPlan', Icon: Grid3x3 },
   { mode: 'tree', labelKey: 'explain.tabTree', Icon: GitFork },
+  { mode: 'stats', labelKey: 'explain.tabStats', Icon: BarChart3 },
   { mode: 'raw', labelKey: 'explain.tabRaw', Icon: FileText },
 ];
 
@@ -102,6 +104,9 @@ export const ExplainViewer: React.FC<ExplainViewerProps> = ({ explainResult, onR
         {viewMode === 'tree' && (
           rootNode ? <ExplainTreeView rootNode={rootNode} /> : <ExplainRawView rawText={rawText} />
         )}
+        {viewMode === 'stats' && (
+          rootNode ? <ExplainStatsView rootNode={rootNode} /> : <ExplainRawView rawText={rawText} />
+        )}
         {viewMode === 'raw' && (
           <ExplainRawView rawText={rawText} />
         )}
@@ -109,3 +114,4 @@ export const ExplainViewer: React.FC<ExplainViewerProps> = ({ explainResult, onR
     </div>
   );
 };
+

@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { useTranslation } from 'react-i18next';
+import { Trans, useTranslation } from 'react-i18next';
 import {
   Minus, Square, X, Plus, Unplug, FileCode, HardDriveDownload, HardDriveUpload,
-  PanelLeft, SunMoon, RotateCw, Info, Keyboard, Check, Eye, Sliders, Database,
+  PanelLeft, SunMoon, RotateCw, Info, Keyboard, Check, Database,
   GitBranch, PanelBottom, Bot, Lock, LockOpen, ChevronUp, ChevronRight, ChevronLeft, Trash2, BarChart3, BookOpen,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -15,6 +15,7 @@ import { ConnectionInfoPopover } from './ConnectionInfoPopover';
 import { dbHelper } from '../utils/dbHelper';
 import type { ConnectionStatus } from '../utils/dbHelper';
 import { Modal, ModalBody, ModalFooter } from './Modal';
+import { ConfirmDialog } from './ConfirmDialog';
 
 interface TitleBarProps {
   hasConnection: boolean;
@@ -51,6 +52,7 @@ interface TitleBarProps {
   onDatabaseChanged?: (dbName: string) => void;
   onOpenAllDbStats?: () => void;
   onOpenDocs?: () => void;
+  onOpenCompare?: () => void;
 }
 
 export const TitleBar: React.FC<TitleBarProps> = ({
@@ -80,6 +82,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
   onDatabaseChanged,
   onOpenAllDbStats,
   onOpenDocs,
+  onOpenCompare,
 }) => {
   const { t, i18n } = useTranslation();
   // Cascading menu: the root panel only lists category names; the items of a
@@ -94,6 +97,8 @@ export const TitleBar: React.FC<TitleBarProps> = ({
   const [dbLoading, setDbLoading] = useState(false);
   const [dbFilter, setDbFilter] = useState('');
   const [showCreateDbModal, setShowCreateDbModal] = useState(false);
+  /** Database awaiting drop confirmation — see handleDropDb. */
+  const [dropDbTarget, setDropDbTarget] = useState<string | null>(null);
   const [newDbName, setNewDbName] = useState('');
 
   // Connection details popover state
@@ -175,23 +180,36 @@ export const TitleBar: React.FC<TitleBarProps> = ({
     }
   };
 
-  const handleDropDb = async (name: string, e: React.MouseEvent) => {
+  /**
+   * Opens the drop-database confirmation.
+   *
+   * Deliberately NOT `window.confirm`: inside the Tauri webview it is replaced by a call to
+   * `plugin:dialog|confirm`, and dialog 2.7.2 only ships `message`/`open`/`save` — the call
+   * throws "Command not found" and the user sees nothing at all. `alert()` still works
+   * because it maps to `message`. Use the app's ConfirmDialog, like every other delete.
+   */
+  const handleDropDb = (name: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (readOnly) {
-      alert('Read-only mode active.');
+      alert(t('sidebar.errReadOnly'));
       return;
     }
     if (name === activeConnectionInfo?.dbName) {
-      alert('Cannot drop the currently active database.');
+      alert(t('sidebar.errDropCurrentDb'));
       return;
     }
-    if (confirm(`Are you sure you want to drop database "${name}"?`)) {
-      const res = await dbHelper.dropDatabase(name);
-      if (res.success) {
-        setDbList(prev => prev.filter(d => d !== name));
-      } else {
-        alert(`Error dropping database: ${res.error}`);
-      }
+    setDropDbTarget(name);
+  };
+
+  const confirmDropDb = async () => {
+    const name = dropDbTarget;
+    setDropDbTarget(null);
+    if (!name) return;
+    const res = await dbHelper.dropDatabase(name);
+    if (res.success) {
+      setDbList(prev => prev.filter(d => d !== name));
+    } else {
+      alert(t('sidebar.errDropDb', { message: res.error || '' }));
     }
   };
 
@@ -397,39 +415,39 @@ export const TitleBar: React.FC<TitleBarProps> = ({
                   ? <ChevronLeft size={13} className="tb-menu-cat-arrow" />
                   : <ChevronRight size={13} className="tb-menu-cat-arrow" />}
 
-                  {openCategory === cat.title && (
-                    <div className="title-bar-dropdown tb-menu-sub">
-                      {cat.items.map(item => (
-                        <React.Fragment key={item.label}>
-                          {item.separatorBefore && <div className="title-bar-dropdown-sep" />}
-                          <div
-                            className={`title-bar-dropdown-item ${item.danger ? 'danger' : ''} ${item.disabled ? 'disabled' : ''}`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (item.disabled) return;
-                              if (item.onClick) item.onClick();
-                              setMenuOpen(false);
-                              setOpenCategory(null);
-                            }}
-                          >
-                            {item.checked === undefined ? (
-                              <item.Icon size={14} className="title-bar-dropdown-icon" />
-                            ) : (
-                              <span className="title-bar-dropdown-icon" style={{ width: '14px', display: 'inline-flex' }}>
-                                {item.checked && <Check size={14} />}
-                              </span>
-                            )}
-                            <span className="title-bar-dropdown-label">{item.label}</span>
-                            {item.shortcut && <span className="title-bar-dropdown-shortcut">{item.shortcut}</span>}
-                          </div>
-                        </React.Fragment>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
+                {openCategory === cat.title && (
+                  <div className="title-bar-dropdown tb-menu-sub">
+                    {cat.items.map(item => (
+                      <React.Fragment key={item.label}>
+                        {item.separatorBefore && <div className="title-bar-dropdown-sep" />}
+                        <div
+                          className={`title-bar-dropdown-item ${item.danger ? 'danger' : ''} ${item.disabled ? 'disabled' : ''}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (item.disabled) return;
+                            if (item.onClick) item.onClick();
+                            setMenuOpen(false);
+                            setOpenCategory(null);
+                          }}
+                        >
+                          {item.checked === undefined ? (
+                            <item.Icon size={14} className="title-bar-dropdown-icon" />
+                          ) : (
+                            <span className="title-bar-dropdown-icon" style={{ width: '14px', display: 'inline-flex' }}>
+                              {item.checked && <Check size={14} />}
+                            </span>
+                          )}
+                          <span className="title-bar-dropdown-label">{item.label}</span>
+                          {item.shortcut && <span className="title-bar-dropdown-shortcut">{item.shortcut}</span>}
+                        </div>
+                      </React.Fragment>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     ),
   };
@@ -457,22 +475,6 @@ export const TitleBar: React.FC<TitleBarProps> = ({
       el: (
         <button className="tb-capsule-btn" onClick={onDisconnect} disabled={!hasConnection} title={t('titlebar.disconnect')}>
           <X size={14} />
-        </button>
-      ),
-    },
-    {
-      key: 'preview',
-      el: (
-        <button className="tb-capsule-btn" disabled={!hasConnection} title={t('titlebar.previewDefinition')}>
-          <Eye size={14} />
-        </button>
-      ),
-    },
-    {
-      key: 'filter',
-      el: (
-        <button className="tb-capsule-btn" disabled={!hasConnection} title={t('titlebar.filter')}>
-          <Sliders size={14} />
         </button>
       ),
     },
@@ -536,23 +538,14 @@ export const TitleBar: React.FC<TitleBarProps> = ({
       ),
     },
     {
-      key: 'about',
-      offline: true,
+      key: 'compare',
       el: (
         <button
           className="tb-capsule-btn"
-          onClick={onShowAbout}
-          style={{ color: '#f59e0b', padding: '0 6px' }}
-          title={t('titlebar.about')}
+          disabled={!hasConnection}
+          onClick={onOpenCompare}
+          title={t('titlebar.schemaCompare')}
         >
-          <Info size={14} />
-        </button>
-      ),
-    },
-    {
-      key: 'compare',
-      el: (
-        <button className="tb-capsule-btn" disabled={!hasConnection} title={t('titlebar.schemaCompare')}>
           <GitBranch size={13} />
         </button>
       ),
@@ -584,9 +577,6 @@ export const TitleBar: React.FC<TitleBarProps> = ({
       ),
     },
     {
-      // AI Copilot: trước đây là một nút riêng nằm ở đầu thanh tab (App.tsx),
-      // nay gộp vào cụm nút phải cho thống nhất. Dùng icon Bot chứ không phải
-      // PanelRight vì nút này bật một tính năng, không phải bật một khung panel.
       key: 'ai',
       el: (
         <button
@@ -917,6 +907,21 @@ export const TitleBar: React.FC<TitleBarProps> = ({
           </ModalFooter>
         </Modal>
       )}
+
+      {/* Drop-database confirmation. requireText: the name must be typed — dropping a
+          database loses every table and row, and the trash icon sits right next to the
+          selected row, which makes a misclick easy. */}
+      <ConfirmDialog
+        open={!!dropDbTarget}
+        danger
+        title={t('sidebar.confirmDropDbTitle')}
+        message={<Trans i18nKey="sidebar.confirmDropDbMessage" values={{ name: dropDbTarget || '' }} />}
+        note={t('sidebar.confirmIrreversible')}
+        requireText={dropDbTarget || undefined}
+        confirmLabel={t('sidebar.dropDatabase')}
+        onConfirm={confirmDropDb}
+        onCancel={() => setDropDbTarget(null)}
+      />
     </div>
   );
 };

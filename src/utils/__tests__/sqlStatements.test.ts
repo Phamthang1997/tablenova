@@ -153,6 +153,65 @@ describe('splitStatements — lệnh DELIMITER của MySQL', () => {
   });
 });
 
+// SQLite không có lệnh DELIMITER, nên thân trigger phải được nhận diện ngay ở bộ tách —
+// nếu không, dump xuất ra có trigger sẽ không nhập lại được ("incomplete input").
+describe('splitStatements — thân trigger BEGIN...END', () => {
+  it('giữ nguyên một câu CREATE TRIGGER dù thân có nhiều dấu ;', () => {
+    const sql = [
+      'CREATE TRIGGER audit_ins AFTER INSERT ON film BEGIN',
+      "  UPDATE stat SET n = n + 1;",
+      "  INSERT INTO log VALUES ('added');",
+      'END;',
+      'SELECT 1;',
+    ].join('\n');
+    const stmts = splitStatements(sql).map((s) => s.text);
+    expect(stmts).toHaveLength(2);
+    expect(stmts[0]).toContain('BEGIN');
+    expect(stmts[0]).toContain("INSERT INTO log VALUES ('added')");
+    expect(stmts[0].trimEnd().endsWith('END')).toBe(true);
+    expect(stmts[1]).toBe('SELECT 1');
+  });
+
+  it('trigger Postgres không có BEGIN thì kết thúc ngay ở dấu ; (không nuốt phần sau)', () => {
+    const sql = [
+      'CREATE TRIGGER t_upd AFTER UPDATE ON film FOR EACH ROW EXECUTE FUNCTION f();',
+      'SELECT 2;',
+    ].join('\n');
+    expect(splitStatements(sql).map((s) => s.text)).toEqual([
+      'CREATE TRIGGER t_upd AFTER UPDATE ON film FOR EACH ROW EXECUTE FUNCTION f()',
+      'SELECT 2',
+    ]);
+  });
+
+  it('trigger MySQL một lệnh (không BEGIN) cũng kết thúc bình thường', () => {
+    const sql = 'CREATE TRIGGER t BEFORE INSERT ON x FOR EACH ROW SET NEW.a = 1;\nSELECT 3;';
+    expect(splitStatements(sql)).toHaveLength(2);
+  });
+
+  it('dạng có DEFINER và OR REPLACE vẫn được nhận là trigger', () => {
+    const sql =
+      'CREATE DEFINER=`root`@`localhost` TRIGGER `t` AFTER INSERT ON `x` FOR EACH ROW BEGIN SET @a = 1; END;\nSELECT 4;';
+    const stmts = splitStatements(sql).map((s) => s.text);
+    expect(stmts).toHaveLength(2);
+    expect(stmts[0]).toContain('SET @a = 1;');
+  });
+
+  it('BEGIN trong chuỗi/comment không kích hoạt luật', () => {
+    const sql = "CREATE TRIGGER t AFTER INSERT ON x FOR EACH ROW SELECT 'BEGIN';\nSELECT 5;";
+    expect(splitStatements(sql)).toHaveLength(2);
+  });
+
+  it('câu khác mở đầu bằng CREATE không bị ảnh hưởng', () => {
+    const sql = 'CREATE TABLE t (a int);\nCREATE VIEW v AS SELECT 1;\nSELECT 6;';
+    expect(splitStatements(sql)).toHaveLength(3);
+  });
+
+  it('END rồi comment rồi ; vẫn kết thúc đúng chỗ', () => {
+    const sql = 'CREATE TRIGGER t AFTER INSERT ON x BEGIN UPDATE y SET a = 1; END /* xong */;\nSELECT 7;';
+    expect(splitStatements(sql)).toHaveLength(2);
+  });
+});
+
 describe('resolveAliases', () => {
   it('lấy alias có/không có AS', () => {
     const m = resolveAliases('SELECT * FROM orders o JOIN users AS u ON u.id = o.user_id');

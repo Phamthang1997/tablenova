@@ -174,6 +174,51 @@ function matchDelimiterCommand(
   return { delim: m[1], end: nl === -1 ? text.length : nl + 1 };
 }
 
+// Đầu một câu CREATE TRIGGER (SQLite/MySQL/Postgres đều cùng dạng mở đầu này).
+// Khớp trên văn bản GỐC chứ không phải bản mask: MySQL viết `DEFINER=`root`@`localhost``,
+// mà mask xoá ruột hai cặp backtick thành khoảng trắng nên `\S+` không còn khớp được.
+const TRIGGER_HEAD = /^CREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMP(?:ORARY)?\s+)?(?:DEFINER\s*=\s*\S+\s+)?TRIGGER\b/i;
+// `BEGIN` như một TỪ trong phần code (đã mask nên BEGIN trong chuỗi/comment không tính).
+const BEGIN_WORD = /\bBEGIN\b/i;
+
+/**
+ * Đoạn [from, to) có kết thúc bằng từ khoá `END` không (bỏ qua khoảng trắng/comment ở cuối).
+ *
+ * Đọc trên bản đã mask nên `-- END` hay chuỗi 'END' không tính.
+ */
+function endsWithEndKeyword(mask: string, from: number, to: number): boolean {
+  let e = to;
+  while (e > from && /\s/.test(mask[e - 1])) e--;
+  if (e - from < 3) return false;
+  if (mask.slice(e - 3, e).toUpperCase() !== 'END') return false;
+  const before = e - 4 >= from ? mask[e - 4] : ' ';
+  return !/[A-Za-z0-9_$]/.test(before);
+}
+
+/**
+ * Dấu ';' này có nằm GIỮA thân một trigger không?
+ *
+ * Thân trigger dạng `BEGIN ... END` chứa dấu ';' của riêng nó, nên cắt theo ';' sẽ tạo ra một
+ * câu `CREATE TRIGGER ... BEGIN UPDATE t SET ...;` cụt — SQLite báo "incomplete input" và cả
+ * lần nhập dump bị rollback. MySQL né chuyện này bằng lệnh `DELIMITER`, còn SQLite thì không
+ * có, nên phải nhận diện ngay ở đây: đây đúng là quy tắc của `sqlite3_complete()` — một câu
+ * mở đầu bằng CREATE TRIGGER chỉ kết thúc ở dấu ';' đứng ngay sau từ khoá `END`.
+ *
+ * Điều kiện `BEGIN` là bắt buộc: trigger của Postgres (`... EXECUTE FUNCTION f();`) và dạng
+ * một lệnh của MySQL (`... FOR EACH ROW SET NEW.a = 1;`) không có thân BEGIN...END, và nếu
+ * bắt chúng chờ `END` thì dấu ';' thật bị bỏ qua và phần còn lại của dump bị nuốt sạch.
+ */
+function insideTriggerBody(text: string, mask: string, from: number, to: number): boolean {
+  // Ký tự code thật đầu tiên: mask đã biến comment thành khoảng trắng nên bỏ qua luôn được
+  // phần comment đứng trước câu lệnh.
+  let s = from;
+  while (s < to && /\s/.test(mask[s])) s++;
+  if (!TRIGGER_HEAD.test(text.slice(s, to))) return false;
+  // BEGIN/END thì đọc trên bản mask: chữ 'BEGIN' trong chuỗi hay comment không tính.
+  if (!BEGIN_WORD.test(mask.slice(s, to))) return false;
+  return !endsWithEndKeyword(mask, s, to);
+}
+
 /**
  * Lõi chung: mask văn bản 1 lần rồi cắt thành các ĐOẠN theo dấu kết thúc câu đang hiệu lực
  * (mặc định ';', đổi được bằng lệnh `DELIMITER` của MySQL). Giữ cả đoạn trống vì cần chúng
@@ -203,6 +248,13 @@ function scanSegments(text: string): { mask: string; segments: [number, number][
       }
     }
     if (matchesDelimiter(text, mask, i, delim)) {
+      // Chỉ áp dụng khi delimiter vẫn là ';': script MySQL đã đổi delimiter thì thân trigger
+      // được bảo vệ bằng chính cơ chế đó rồi.
+      if (delim === ';' && insideTriggerBody(text, mask, from, i)) {
+        i += 1;
+        atLineStart = false;
+        continue;
+      }
       segments.push([from, i]);
       i += delim.length;
       from = i;

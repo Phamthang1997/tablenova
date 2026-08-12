@@ -1,8 +1,9 @@
 // Giải mã value chuỗi của Redis để hiển thị đẹp:
 //   1) Nếu gzip (magic 1f 8b) hoặc zlib (PHP gzcompress) -> giải nén bằng DecompressionStream native.
 //   2) Nếu là PHP serialize (Laravel cache/model, Neos Flow VariableFrontend) -> unserialize -> JSON.
-//   3) Nếu là JSON -> format.
-//   4) Còn lại -> text thô.
+//   3) Nếu là igbinary (magic 00 00 00 02) -> unserialize -> JSON.
+//   4) Nếu là JSON -> format.
+//   5) Còn lại -> text thô.
 // Không phụ thuộc thư viện ngoài.
 
 import i18n from '../i18n';
@@ -44,6 +45,19 @@ async function decompressIfNeeded(
 function cleanPropName(k: string): string {
   const parts = k.split(String.fromCharCode(0));
   return parts.length > 1 ? parts[parts.length - 1] : k;
+}
+
+/**
+ * A PHP array is one type covering both a list and a map, so the shape has to be decided from the
+ * keys: sequential `0..n-1` becomes a JS array, anything else an object. Shared by both parsers so
+ * the same input produces the same JSON whether it arrived as `serialize()` or as igbinary.
+ */
+function arrayFromEntries(entries: [unknown, unknown][]): any {
+  const isList = entries.length > 0 && entries.every(([k], idx) => k === idx);
+  if (isList) return entries.map(([, v]) => v);
+  const obj: any = {};
+  for (const [k, v] of entries) obj[String(k)] = v;
+  return obj;
 }
 
 // Parser PHP serialize -> giá trị JS. Hoạt động trên byte (đúng với s:LEN là độ dài BYTE, hỗ trợ UTF-8).
@@ -95,11 +109,7 @@ export function phpUnserialize(bytes: Uint8Array): any {
           entries.push([key, val]);
         }
         i++; // '}'
-        const isList = entries.length > 0 && entries.every(([k], idx) => k === idx);
-        if (isList) return entries.map(([, v]) => v);
-        const obj: any = {};
-        for (const [k, v] of entries) obj[String(k)] = v;
-        return obj;
+        return arrayFromEntries(entries);
       }
       case 0x4f: { // O:LEN:"CLASS":N:{...}
         const cls = readLenString();
@@ -122,6 +132,277 @@ export function phpUnserialize(bytes: Uint8Array): any {
   return parse();
 }
 
+/**
+ * igbinary — the binary serializer PHP's `igbinary` extension provides, and what Neos Flow's
+ * `VariableFrontend` writes into Redis when the extension is loaded (`serialize()` otherwise, which
+ * `phpUnserialize` above already reads).
+ *
+ * Two properties of the format make it impossible to read by scanning the bytes for text, which is
+ * worth stating because that is the tempting shortcut:
+ *
+ *  - **Every string is interned.** A name appears once, and every later use is a `string_id` holding
+ *    an index into a table built in order of first appearance — class names included, since the
+ *    serializer registers them in that same table. Reading is therefore strictly sequential: skip a
+ *    type and every id after it resolves to the wrong string.
+ *  - **Lengths are byte counts, big-endian**, and the payload may contain NUL bytes (PHP writes a
+ *    private property as `\0Class\0prop` and a protected one as `\0*\0prop`), so no scan can tell a
+ *    length byte from data.
+ *
+ * Type bytes are `enum igbinary_type` in igbinary's `igbinary.h`. Format version 1 and 2 share the
+ * enum, so both headers are accepted.
+ *
+ * Deliberately strict: an unknown type, a truncated buffer or an out-of-range id throws rather than
+ * returning a partial object, because callers fall back to showing the raw bytes and a half-decoded
+ * object that *looks* complete is worse than an obvious failure.
+ */
+export function igbinaryUnserialize(bytes: Uint8Array): any {
+  const td = new TextDecoder();
+  let i = 0;
+
+  /** Interned strings, in order of first appearance. Class names share this table with data. */
+  const strings: string[] = [];
+  /**
+   * Containers in creation order — the targets of `ref*`/`objref*`. Objects are registered before
+   * their properties are read, so a cycle through an object graph (a Doctrine parent ↔ child) comes
+   * out as a real cycle; arrays are registered as a placeholder and filled in afterwards, since the
+   * list-vs-map shape is only known once the keys are read. A slot therefore keeps its index — the
+   * writer numbers parents before children and the reader must agree — but an array that contains
+   * *itself* resolves to null. That needs a PHP `&` reference to an array to happen at all, and no
+   * cache payload does it.
+   */
+  const refs: any[] = [];
+
+  const need = (n: number): void => {
+    if (i + n > bytes.length) throw new Error(i18n.t('errors.igbinaryTruncated', { n: i }));
+  };
+  const u8 = (): number => {
+    need(1);
+    return bytes[i++];
+  };
+  /** Big-endian unsigned, 1/2/4 bytes — every length, id and count in the format. */
+  const uint = (width: number): number => {
+    need(width);
+    let v = 0;
+    for (let k = 0; k < width; k++) v = v * 256 + bytes[i++];
+    return v;
+  };
+  /** 64-bit longs go through BigInt: a PHP int can exceed what a JS number holds exactly. */
+  const long64 = (negative: boolean): number | string => {
+    need(8);
+    let v = 0n;
+    for (let k = 0; k < 8; k++) v = (v << 8n) | BigInt(bytes[i++]);
+    if (negative) v = -v;
+    // A value outside the safe range is kept as text: rounding it would silently corrupt an id,
+    // and JSON.stringify cannot serialize a BigInt at all.
+    return v >= BigInt(Number.MIN_SAFE_INTEGER) && v <= BigInt(Number.MAX_SAFE_INTEGER)
+      ? Number(v)
+      : v.toString();
+  };
+  const double = (): number => {
+    need(8);
+    const dv = new DataView(bytes.buffer, bytes.byteOffset + i, 8);
+    i += 8;
+    return dv.getFloat64(0, false); // big-endian, like every other multi-byte field
+  };
+  /** An inline string: read it *and* intern it, exactly as the serializer did. */
+  const inlineString = (width: number): string => {
+    const len = uint(width);
+    need(len);
+    const s = td.decode(bytes.subarray(i, i + len));
+    i += len;
+    strings.push(s);
+    return s;
+  };
+  const internedString = (width: number): string => {
+    const id = uint(width);
+    if (id >= strings.length) throw new Error(i18n.t('errors.igbinaryStringId', { n: id }));
+    return strings[id];
+  };
+  const deref = (width: number): any => {
+    const id = uint(width);
+    if (id >= refs.length) throw new Error(i18n.t('errors.igbinaryRefId', { n: id }));
+    return refs[id];
+  };
+  const unsupported = (t: number, at: number): never => {
+    throw new Error(i18n.t('errors.igbinaryUnsupportedType', { token: hex2(t), n: at }));
+  };
+
+  /** An array/property key is a long or a string — never a container. */
+  const readKey = (): string | number => {
+    const at = i;
+    const t = u8();
+    switch (t) {
+      case 0x06: return uint(1);
+      case 0x07: return -uint(1);
+      case 0x08: return uint(2);
+      case 0x09: return -uint(2);
+      case 0x0a: return uint(4);
+      case 0x0b: return -uint(4);
+      case 0x20: return Number(long64(false));
+      case 0x21: return Number(long64(true));
+      case 0x0d: return '';
+      case 0x0e: return internedString(1);
+      case 0x0f: return internedString(2);
+      case 0x10: return internedString(4);
+      case 0x11: return inlineString(1);
+      case 0x12: return inlineString(2);
+      case 0x13: return inlineString(4);
+      default: return unsupported(t, at);
+    }
+  };
+
+  const readArray = (width: number): any => {
+    const slot = refs.length;
+    refs.push(null);
+    const n = uint(width);
+    const entries: [string | number, any][] = [];
+    for (let k = 0; k < n; k++) {
+      const key = readKey();
+      entries.push([key, readValue()]);
+    }
+    const built = arrayFromEntries(entries);
+    refs[slot] = built;
+    return built;
+  };
+
+  /**
+   * The class name is already consumed by the caller (inline for `object*`, interned for
+   * `object_id*`); what follows is either the property array or a `Serializable`/`__serialize`
+   * payload, which igbinary hands to PHP's own `unserialize` handler and is therefore in
+   * `serialize()` format.
+   */
+  const readObject = (cls: string): any => {
+    const obj: Record<string, any> = { __class: cls };
+    refs.push(obj);
+    const at = i;
+    const t = u8();
+    if (t === 0x1d || t === 0x1e || t === 0x1f) {
+      const len = uint(t === 0x1d ? 1 : t === 0x1e ? 2 : 4);
+      need(len);
+      const payload = bytes.subarray(i, i + len);
+      i += len;
+      obj.__serialized = decodeSerializedPayload(payload);
+      return obj;
+    }
+    if (t !== 0x14 && t !== 0x15 && t !== 0x16) unsupported(t, at);
+    const n = uint(t === 0x14 ? 1 : t === 0x15 ? 2 : 4);
+    for (let k = 0; k < n; k++) {
+      const key = cleanPropName(String(readKey()));
+      obj[key] = readValue();
+    }
+    return obj;
+  };
+
+  function readValue(): any {
+    const at = i;
+    const t = u8();
+    switch (t) {
+      case 0x00: return null;
+      case 0x04: return false;
+      case 0x05: return true;
+      case 0x06: return uint(1);
+      case 0x07: return -uint(1);
+      case 0x08: return uint(2);
+      case 0x09: return -uint(2);
+      case 0x0a: return uint(4);
+      case 0x0b: return -uint(4);
+      case 0x20: return long64(false);
+      case 0x21: return long64(true);
+      case 0x0c: return double();
+      case 0x0d: return '';
+      case 0x0e: return internedString(1);
+      case 0x0f: return internedString(2);
+      case 0x10: return internedString(4);
+      case 0x11: return inlineString(1);
+      case 0x12: return inlineString(2);
+      case 0x13: return inlineString(4);
+      case 0x14: return readArray(1);
+      case 0x15: return readArray(2);
+      case 0x16: return readArray(4);
+      case 0x17: return readObject(inlineString(1));
+      case 0x18: return readObject(inlineString(2));
+      case 0x19: return readObject(inlineString(4));
+      case 0x1a: return readObject(internedString(1));
+      case 0x1b: return readObject(internedString(2));
+      case 0x1c: return readObject(internedString(4));
+      case 0x01: return deref(1);
+      case 0x02: return deref(2);
+      case 0x03: return deref(4);
+      case 0x22: return deref(1);
+      case 0x23: return deref(2);
+      case 0x24: return deref(4);
+      // "Simple reference" — a marker saying the value that follows was a PHP `&`. JSON has no
+      // such thing, so the value itself is the whole answer.
+      case 0x25: return readValue();
+      default: return unsupported(t, at);
+    }
+  }
+
+  if (!looksLikeIgbinary(bytes)) {
+    const head = Array.from(bytes.subarray(0, 4), hex2).join(' ');
+    throw new Error(i18n.t('errors.igbinaryBadHeader', { token: head }));
+  }
+  i = 4;
+  return readValue();
+}
+
+/**
+ * A `Serializable::serialize()` payload is normally a `serialize()` string, but a class is free to
+ * return anything from it (Flow proxies have been seen returning igbinary again). Tried in that
+ * order, with the text as the last resort so the bytes are never dropped — this is one property of
+ * one object, and failing it must not fail the whole value.
+ */
+function decodeSerializedPayload(payload: Uint8Array): any {
+  try {
+    return phpUnserialize(payload);
+  } catch {
+    /* not serialize() format */
+  }
+  try {
+    return igbinaryUnserialize(payload);
+  } catch {
+    /* not igbinary either */
+  }
+  return new TextDecoder().decode(payload);
+}
+
+/**
+ * Header is a big-endian format version, 1 or 2. Requires a byte after it as well: four bytes on
+ * their own carry no value, and `00 00 00 02` is also just four NULs, which a non-igbinary binary
+ * value can plausibly start with.
+ */
+export function looksLikeIgbinary(bytes: Uint8Array): boolean {
+  return (
+    bytes.length >= 5 &&
+    bytes[0] === 0x00 &&
+    bytes[1] === 0x00 &&
+    bytes[2] === 0x00 &&
+    (bytes[3] === 0x01 || bytes[3] === 0x02)
+  );
+}
+
+/**
+ * `JSON.stringify` with cycles rendered as `"[circular]"` instead of throwing — igbinary can
+ * express an object graph that refers back to itself, and the point of the viewer is to show what
+ * the key holds. The ancestor stack is tracked through the replacer's `this` (the holder), so an
+ * object that merely appears twice as a *sibling* still prints in full; only a real cycle is cut.
+ */
+function stringifyDecoded(value: unknown): string {
+  const stack: unknown[] = [];
+  return JSON.stringify(
+    value,
+    function (this: unknown, _key: string, val: unknown) {
+      while (stack.length > 0 && stack[stack.length - 1] !== this) stack.pop();
+      if (val !== null && typeof val === 'object') {
+        if (stack.includes(val)) return '[circular]';
+        stack.push(val);
+      }
+      return val;
+    },
+    2,
+  );
+}
+
 export interface DecodedRedis {
   ok: boolean;
   format: string;
@@ -134,9 +415,11 @@ export interface DecodedRedis {
  * cannot be sniffed reliably — a picked format must therefore be honoured even if the guess
  * would have said otherwise.
  */
-export type RedisFormat = 'auto' | 'raw' | 'json' | 'php' | 'hex' | 'ascii' | 'binary';
+export type RedisFormat = 'auto' | 'raw' | 'json' | 'php' | 'igbinary' | 'hex' | 'ascii' | 'binary';
 
-export const REDIS_FORMATS: RedisFormat[] = ['auto', 'raw', 'json', 'php', 'hex', 'ascii', 'binary'];
+export const REDIS_FORMATS: RedisFormat[] = [
+  'auto', 'raw', 'json', 'php', 'igbinary', 'hex', 'ascii', 'binary',
+];
 
 const HEX = '0123456789abcdef';
 
@@ -254,7 +537,31 @@ export async function decodeRedisValue(
       return { ok: false, format: prefix + 'php-serialize', text };
     }
   }
+  if (format === 'igbinary') {
+    try {
+      return {
+        ok: true,
+        format: prefix + 'igbinary',
+        text: stringifyDecoded(igbinaryUnserialize(bytes)),
+      };
+    } catch {
+      return { ok: false, format: prefix + 'igbinary', text };
+    }
+  }
 
+  // Sniffed before the text formats: the header is four NUL bytes, so the decoded `text` is empty
+  // up to the first real byte and none of the regexes below could ever match it.
+  if (looksLikeIgbinary(bytes)) {
+    try {
+      return {
+        ok: true,
+        format: prefix + 'igbinary',
+        text: stringifyDecoded(igbinaryUnserialize(bytes)),
+      };
+    } catch {
+      /* rơi xuống raw */
+    }
+  }
   if (/^(N;|[abisdO]:)/.test(trimmed)) {
     try {
       const val = phpUnserialize(bytes);

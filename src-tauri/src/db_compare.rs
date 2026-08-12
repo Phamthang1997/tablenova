@@ -940,16 +940,83 @@ fn fk_changes(a: &FkMeta, b: &FkMeta) -> Vec<&'static str> {
     ch
 }
 
-/// So sánh định nghĩa view sau khi bỏ khoảng trắng — hai server format khác nhau là
-/// chuyện thường, chỉ nội dung mới đáng báo.
-fn view_def_differs(a: Option<&String>, b: Option<&String>) -> bool {
-    fn squash(s: Option<&String>) -> String {
-        s.map(|v| v.split_whitespace().collect::<Vec<_>>().join(" "))
-            .unwrap_or_default()
+/// So sánh định nghĩa view sau khi bỏ khoảng trắng, ngoặc đơn, quotes, typecast, schema qualification —
+/// hai server format khác nhau là chuyện thường, chỉ nội dung SQL thực sự khác mới đáng báo.
+fn view_def_differs(
+    a: Option<&String>,
+    b: Option<&String>,
+    src_db: &str,
+    tgt_db: &str,
+    name: &str,
+) -> bool {
+    fn squash(s: Option<&String>, db_name: &str) -> String {
+        let mut str_val = match s {
+            Some(v) => v.as_str().trim(),
+            None => return String::new(),
+        };
+        if str_val.is_empty() {
+            return String::new();
+        }
+
+        let lower = str_val.to_ascii_lowercase();
+        // Cắt bỏ phần tiền tố "CREATE [OR REPLACE] [ALGORITHM=...] [DEFINER=...] VIEW view_name AS "
+        if let Some(v_idx) = lower.find("view ") {
+            let after_view = &lower[v_idx + 5..];
+            if let Some(as_idx) = after_view.find(" as ") {
+                let cut_offset = v_idx + 5 + as_idx + 4;
+                if cut_offset < str_val.len() {
+                    str_val = &str_val[cut_offset..];
+                }
+            }
+        } else if let Some(as_idx) = lower.find(" as ") {
+            if lower.starts_with("create") || lower.starts_with("replace") {
+                str_val = &str_val[as_idx + 4..];
+            }
+        }
+
+        let mut cleaned = str_val
+            .replace('"', "")
+            .replace('`', "")
+            .replace("public.", "")
+            .replace("PUBLIC.", "")
+            .replace("dbo.", "")
+            .replace("DBO.", "")
+            .replace("::text", "")
+            .replace("::character varying", "")
+            .replace("::varchar", "")
+            .replace("::integer", "")
+            .replace("::int4", "")
+            .replace("::int", "")
+            .replace("::bigint", "")
+            .replace("::int8", "")
+            .replace("::boolean", "")
+            .replace("::bool", "");
+
+        if !db_name.is_empty() {
+            let pfx1 = format!("{}.", db_name.trim());
+            let pfx2 = pfx1.to_ascii_lowercase();
+            cleaned = cleaned.replace(&pfx1, "").replace(&pfx2, "");
+        }
+
+        cleaned = cleaned.replace('(', " ").replace(')', " ");
+
+        cleaned
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
             .trim_end_matches(';')
             .to_ascii_lowercase()
     }
-    squash(a) != squash(b)
+    let sa = squash(a, src_db);
+    let sb = squash(b, tgt_db);
+    if sa.is_empty() || sb.is_empty() {
+        return false;
+    }
+    let differs = sa != sb;
+    if differs {
+        eprintln!("[VIEW DIFF] {}\n  SA: {}\n  SB: {}", name, sa, sb);
+    }
+    differs
 }
 
 // ===================== Sinh SQL đồng bộ =====================
@@ -1409,308 +1476,328 @@ async fn compare_schemas_inner(
                 }));
             }
             (Some(s), Some(t)) => {
-                let mut table_sql: Vec<String> = Vec::new();
-                let mut destructive_sql: Vec<String> = Vec::new();
-                let mut paired_sql: Vec<(String, String)> = Vec::new();
-                let mut changes: Vec<&str> = Vec::new();
-                let mut diff_count = 0usize;
+                if s.is_view || t.is_view {
+                    let is_kind_mismatch = s.is_view != t.is_view;
+                    let view_differs = !is_kind_mismatch && view_def_differs(s.view_def.as_ref(), t.view_def.as_ref(), &src.schema, &tgt.schema, name);
+                    let status = if is_kind_mismatch || view_differs { "different" } else { "identical" };
 
-                // ---- Cột ----
-                let mut cols_json: Vec<Value> = Vec::new();
-                let col_names: Vec<String> = s
-                    .columns
-                    .iter()
-                    .map(|c| c.name.clone())
-                    .chain(t.columns.iter().filter(|c| s.column(&c.name).is_none()).map(|c| c.name.clone()))
-                    .collect();
-                for cn in &col_names {
-                    match (s.column(cn), t.column(cn)) {
-                        (Some(sc), None) => {
-                            c_only_src += 1;
-                            diff_count += 1;
-                            cols_json.push(json!({
-                                "name": cn, "status": "onlySource", "changes": [],
-                                "source": col_json(sc), "target": Value::Null
-                            }));
-                            if !t.is_view {
+                    let mut changes: Vec<String> = Vec::new();
+                    if is_kind_mismatch {
+                        changes.push("kind".to_string());
+                    }
+                    if view_differs {
+                        changes.push("viewDefinition".to_string());
+                    }
+
+                    if status == "identical" {
+                        identical += 1;
+                    } else {
+                        different += 1;
+                        sql.blank();
+                        sql.note(format!("View differs: {}", name));
+                        if is_kind_mismatch {
+                            sql.note(format!(
+                                "{} is a {} in source but a {} in target - handle manually.",
+                                name,
+                                if s.is_view { "view" } else { "table" },
+                                if t.is_view { "view" } else { "table" }
+                            ));
+                        } else if view_differs {
+                            let def = s.view_def.clone().unwrap_or_default();
+                            let body = def.trim().trim_end_matches(';').to_string();
+                            if body.is_empty() {
+                                sql.note(format!("Could not read the definition of view {}", name));
+                            } else if tgt.dialect == "sqlite" {
+                                sql.paired(
+                                    format!("DROP VIEW {};", qualified(&tgt.dialect, &tgt.schema, name)),
+                                    if body.to_ascii_uppercase().starts_with("CREATE ") {
+                                        format!("{};", body)
+                                    } else {
+                                        format!(
+                                            "CREATE VIEW {} AS {};",
+                                            qualified(&tgt.dialect, &tgt.schema, name),
+                                            body
+                                        )
+                                    },
+                                );
+                            } else {
+                                sql.push(format!(
+                                    "CREATE OR REPLACE VIEW {} AS {};",
+                                    qualified(&tgt.dialect, &tgt.schema, name),
+                                    body
+                                ));
+                            }
+                        }
+                    }
+
+                    tables_json.push(json!({
+                        "name": name,
+                        "kind": if s.is_view { "view" } else { "table" },
+                        "status": status,
+                        "changes": changes,
+                        "diffCount": if status == "identical" { 0 } else { 1 },
+                        "columns": Vec::<Value>::new(),
+                        "indexes": Vec::<Value>::new(),
+                        "foreignKeys": Vec::<Value>::new(),
+                        "primaryKey": { "source": s.pk, "target": t.pk, "differs": false },
+                        "viewDefinitionDiffers": view_differs,
+                    }));
+                } else {
+                    let mut table_sql: Vec<String> = Vec::new();
+                    let mut destructive_sql: Vec<String> = Vec::new();
+                    let mut paired_sql: Vec<(String, String)> = Vec::new();
+                    let mut changes: Vec<&str> = Vec::new();
+                    let mut diff_count = 0usize;
+
+                    // ---- Cột ----
+                    let mut cols_json: Vec<Value> = Vec::new();
+                    let col_names: Vec<String> = s
+                        .columns
+                        .iter()
+                        .map(|c| c.name.clone())
+                        .chain(t.columns.iter().filter(|c| s.column(&c.name).is_none()).map(|c| c.name.clone()))
+                        .collect();
+                    for cn in &col_names {
+                        match (s.column(cn), t.column(cn)) {
+                            (Some(sc), None) => {
+                                c_only_src += 1;
+                                diff_count += 1;
+                                cols_json.push(json!({
+                                    "name": cn, "status": "onlySource", "changes": [],
+                                    "source": col_json(sc), "target": Value::Null
+                                }));
                                 table_sql.push(format!(
                                     "ALTER TABLE {} ADD COLUMN {};",
                                     qualified(&tgt.dialect, &tgt.schema, name),
                                     column_clause(sc, &src.dialect, &tgt.dialect, false)
                                 ));
                             }
-                        }
-                        (None, Some(tc)) => {
-                            c_only_tgt += 1;
-                            diff_count += 1;
-                            cols_json.push(json!({
-                                "name": cn, "status": "onlyTarget", "changes": [],
-                                "source": Value::Null, "target": col_json(tc)
-                            }));
-                            if !t.is_view {
+                            (None, Some(tc)) => {
+                                c_only_tgt += 1;
+                                diff_count += 1;
+                                cols_json.push(json!({
+                                    "name": cn, "status": "onlyTarget", "changes": [],
+                                    "source": Value::Null, "target": col_json(tc)
+                                }));
                                 destructive_sql.push(format!(
                                     "ALTER TABLE {} DROP COLUMN {};",
                                     qualified(&tgt.dialect, &tgt.schema, name),
                                     q_ident(&tgt.dialect, cn)
                                 ));
                             }
-                        }
-                        (Some(sc), Some(tc)) => {
-                            let ch = column_changes(sc, tc);
-                            if ch.is_empty() {
-                                cols_json.push(json!({
-                                    "name": cn, "status": "identical", "changes": [],
-                                    "source": col_json(sc), "target": col_json(tc)
-                                }));
-                            } else {
-                                c_diff += 1;
-                                diff_count += 1;
-                                cols_json.push(json!({
-                                    "name": cn, "status": "different", "changes": ch.clone(),
-                                    "source": col_json(sc), "target": col_json(tc)
-                                }));
-                                // Khác duy nhất ở vị trí cột thì không sinh ALTER: sắp xếp lại
-                                // cột không đổi dữ liệu mà rủi ro cao.
-                                if !t.is_view && ch.iter().any(|c| *c != "position") {
-                                    table_sql.extend(alter_column_stmts(
-                                        name, sc, tc, &ch, &src.dialect, &tgt.dialect, &tgt.schema,
-                                    ));
+                            (Some(sc), Some(tc)) => {
+                                let ch = column_changes(sc, tc);
+                                if ch.is_empty() {
+                                    cols_json.push(json!({
+                                        "name": cn, "status": "identical", "changes": [],
+                                        "source": col_json(sc), "target": col_json(tc)
+                                    }));
+                                } else {
+                                    c_diff += 1;
+                                    diff_count += 1;
+                                    cols_json.push(json!({
+                                        "name": cn, "status": "different", "changes": ch.clone(),
+                                        "source": col_json(sc), "target": col_json(tc)
+                                    }));
+                                    if ch.iter().any(|c| *c != "position") {
+                                        table_sql.extend(alter_column_stmts(
+                                            name, sc, tc, &ch, &src.dialect, &tgt.dialect, &tgt.schema,
+                                        ));
+                                    }
                                 }
                             }
+                            (None, None) => {}
                         }
-                        (None, None) => {}
                     }
-                }
-                if cols_json.iter().any(|c| c.get("status").and_then(|v| v.as_str()) != Some("identical")) {
-                    changes.push("columns");
-                }
+                    if cols_json.iter().any(|c| c.get("status").and_then(|v| v.as_str()) != Some("identical")) {
+                        changes.push("columns");
+                    }
 
-                // ---- Index ----
-                let mut idx_json_list: Vec<Value> = Vec::new();
-                let idx_names: Vec<String> = s
-                    .indexes
-                    .iter()
-                    .map(|i| i.name.clone())
-                    .chain(
-                        t.indexes
-                            .iter()
-                            .filter(|i| !s.indexes.iter().any(|x| x.name == i.name))
-                            .map(|i| i.name.clone()),
-                    )
-                    .collect();
-                for iname in &idx_names {
-                    let si = s.indexes.iter().find(|i| &i.name == iname);
-                    let ti = t.indexes.iter().find(|i| &i.name == iname);
-                    match (si, ti) {
-                        (Some(si), None) => {
-                            idx_diffs += 1;
-                            diff_count += 1;
-                            idx_json_list.push(json!({
-                                "name": iname, "status": "onlySource", "changes": [],
-                                "source": idx_json(si), "target": Value::Null
-                            }));
-                            table_sql.push(create_index_sql(si, name, &tgt.dialect, &tgt.schema));
-                        }
-                        (None, Some(ti)) => {
-                            idx_diffs += 1;
-                            diff_count += 1;
-                            idx_json_list.push(json!({
-                                "name": iname, "status": "onlyTarget", "changes": [],
-                                "source": Value::Null, "target": idx_json(ti)
-                            }));
-                            destructive_sql.push(drop_index_sql(ti, name, &tgt.dialect, &tgt.schema));
-                        }
-                        (Some(si), Some(ti)) => {
-                            let ch = index_changes(si, ti);
-                            if ch.is_empty() {
-                                idx_json_list.push(json!({
-                                    "name": iname, "status": "identical", "changes": [],
-                                    "source": idx_json(si), "target": idx_json(ti)
-                                }));
-                            } else {
+                    // ---- Index ----
+                    let mut idx_json_list: Vec<Value> = Vec::new();
+                    let idx_names: Vec<String> = s
+                        .indexes
+                        .iter()
+                        .map(|i| i.name.clone())
+                        .chain(
+                            t.indexes
+                                .iter()
+                                .filter(|i| !s.indexes.iter().any(|x| x.name == i.name))
+                                .map(|i| i.name.clone()),
+                        )
+                        .collect();
+                    for iname in &idx_names {
+                        let si = s.indexes.iter().find(|i| &i.name == iname);
+                        let ti = t.indexes.iter().find(|i| &i.name == iname);
+                        match (si, ti) {
+                            (Some(si), None) => {
                                 idx_diffs += 1;
                                 diff_count += 1;
                                 idx_json_list.push(json!({
-                                    "name": iname, "status": "different", "changes": ch,
-                                    "source": idx_json(si), "target": idx_json(ti)
+                                    "name": iname, "status": "onlySource", "changes": [],
+                                    "source": idx_json(si), "target": Value::Null
                                 }));
-                                paired_sql.push((
-                                    drop_index_sql(ti, name, &tgt.dialect, &tgt.schema),
-                                    create_index_sql(si, name, &tgt.dialect, &tgt.schema),
-                                ));
+                                table_sql.push(create_index_sql(si, name, &tgt.dialect, &tgt.schema));
                             }
+                            (None, Some(ti)) => {
+                                idx_diffs += 1;
+                                diff_count += 1;
+                                idx_json_list.push(json!({
+                                    "name": iname, "status": "onlyTarget", "changes": [],
+                                    "source": Value::Null, "target": idx_json(ti)
+                                }));
+                                destructive_sql.push(drop_index_sql(ti, name, &tgt.dialect, &tgt.schema));
+                            }
+                            (Some(si), Some(ti)) => {
+                                let ch = index_changes(si, ti);
+                                if ch.is_empty() {
+                                    idx_json_list.push(json!({
+                                        "name": iname, "status": "identical", "changes": [],
+                                        "source": idx_json(si), "target": idx_json(ti)
+                                    }));
+                                } else {
+                                    idx_diffs += 1;
+                                    diff_count += 1;
+                                    idx_json_list.push(json!({
+                                        "name": iname, "status": "different", "changes": ch,
+                                        "source": idx_json(si), "target": idx_json(ti)
+                                    }));
+                                    paired_sql.push((
+                                        drop_index_sql(ti, name, &tgt.dialect, &tgt.schema),
+                                        create_index_sql(si, name, &tgt.dialect, &tgt.schema),
+                                    ));
+                                }
+                            }
+                            (None, None) => {}
                         }
-                        (None, None) => {}
                     }
-                }
-                if idx_json_list.iter().any(|i| i.get("status").and_then(|v| v.as_str()) != Some("identical")) {
-                    changes.push("indexes");
-                }
+                    if idx_json_list.iter().any(|i| i.get("status").and_then(|v| v.as_str()) != Some("identical")) {
+                        changes.push("indexes");
+                    }
 
-                // ---- Khóa ngoại ----
-                let mut fk_json_list: Vec<Value> = Vec::new();
-                let fk_names: Vec<String> = s
-                    .fks
-                    .iter()
-                    .map(|f| f.name.clone())
-                    .chain(
-                        t.fks
-                            .iter()
-                            .filter(|f| !s.fks.iter().any(|x| x.name == f.name))
-                            .map(|f| f.name.clone()),
-                    )
-                    .collect();
-                for fname in &fk_names {
-                    let sf = s.fks.iter().find(|f| &f.name == fname);
-                    let tf = t.fks.iter().find(|f| &f.name == fname);
-                    match (sf, tf) {
-                        (Some(sf), None) => {
-                            fk_diffs += 1;
-                            diff_count += 1;
-                            fk_json_list.push(json!({
-                                "name": fname, "status": "onlySource", "changes": [],
-                                "source": fk_json(sf), "target": Value::Null
-                            }));
-                            table_sql.push(fk_stmt_or_note(
-                                &tgt.dialect,
-                                name,
-                                fname,
-                                add_fk_sql(sf, name, &tgt.dialect, &tgt.schema),
-                            ));
-                        }
-                        (None, Some(tf)) => {
-                            fk_diffs += 1;
-                            diff_count += 1;
-                            fk_json_list.push(json!({
-                                "name": fname, "status": "onlyTarget", "changes": [],
-                                "source": Value::Null, "target": fk_json(tf)
-                            }));
-                            if tgt.dialect == "sqlite" {
-                                table_sql.push(fk_stmt_or_note(&tgt.dialect, name, fname, String::new()));
-                            } else {
-                                destructive_sql.push(drop_fk_sql(tf, name, &tgt.dialect, &tgt.schema));
-                            }
-                        }
-                        (Some(sf), Some(tf)) => {
-                            let ch = fk_changes(sf, tf);
-                            if ch.is_empty() {
-                                fk_json_list.push(json!({
-                                    "name": fname, "status": "identical", "changes": [],
-                                    "source": fk_json(sf), "target": fk_json(tf)
-                                }));
-                            } else {
+                    // ---- Khóa ngoại ----
+                    let mut fk_json_list: Vec<Value> = Vec::new();
+                    let fk_names: Vec<String> = s
+                        .fks
+                        .iter()
+                        .map(|f| f.name.clone())
+                        .chain(
+                            t.fks
+                                .iter()
+                                .filter(|f| !s.fks.iter().any(|x| x.name == f.name))
+                                .map(|f| f.name.clone()),
+                        )
+                        .collect();
+                    for fname in &fk_names {
+                        let sf = s.fks.iter().find(|f| &f.name == fname);
+                        let tf = t.fks.iter().find(|f| &f.name == fname);
+                        match (sf, tf) {
+                            (Some(sf), None) => {
                                 fk_diffs += 1;
                                 diff_count += 1;
                                 fk_json_list.push(json!({
-                                    "name": fname, "status": "different", "changes": ch,
-                                    "source": fk_json(sf), "target": fk_json(tf)
+                                    "name": fname, "status": "onlySource", "changes": [],
+                                    "source": fk_json(sf), "target": Value::Null
+                                }));
+                                table_sql.push(fk_stmt_or_note(
+                                    &tgt.dialect,
+                                    name,
+                                    fname,
+                                    add_fk_sql(sf, name, &tgt.dialect, &tgt.schema),
+                                ));
+                            }
+                            (None, Some(tf)) => {
+                                fk_diffs += 1;
+                                diff_count += 1;
+                                fk_json_list.push(json!({
+                                    "name": fname, "status": "onlyTarget", "changes": [],
+                                    "source": Value::Null, "target": fk_json(tf)
                                 }));
                                 if tgt.dialect == "sqlite" {
                                     table_sql.push(fk_stmt_or_note(&tgt.dialect, name, fname, String::new()));
                                 } else {
-                                    paired_sql.push((
-                                        drop_fk_sql(tf, name, &tgt.dialect, &tgt.schema),
-                                        add_fk_sql(sf, name, &tgt.dialect, &tgt.schema),
-                                    ));
+                                    destructive_sql.push(drop_fk_sql(tf, name, &tgt.dialect, &tgt.schema));
                                 }
                             }
-                        }
-                        (None, None) => {}
-                    }
-                }
-                if fk_json_list.iter().any(|f| f.get("status").and_then(|v| v.as_str()) != Some("identical")) {
-                    changes.push("foreignKeys");
-                }
-
-                // ---- Khóa chính / view ----
-                let pk_differs = s.pk != t.pk;
-                if pk_differs {
-                    diff_count += 1;
-                    changes.push("primaryKey");
-                }
-                let view_differs = (s.is_view || t.is_view)
-                    && view_def_differs(s.view_def.as_ref(), t.view_def.as_ref());
-                if view_differs {
-                    diff_count += 1;
-                    changes.push("viewDefinition");
-                }
-                if s.is_view != t.is_view {
-                    diff_count += 1;
-                    changes.push("kind");
-                }
-
-                let status = if diff_count == 0 { "identical" } else { "different" };
-                if status == "identical" {
-                    identical += 1;
-                } else {
-                    different += 1;
-
-                    sql.blank();
-                    sql.note(format!("Table differs: {}", name));
-                    if s.is_view != t.is_view {
-                        sql.note(format!(
-                            "{} is a {} in source but a {} in target - handle manually.",
-                            name,
-                            if s.is_view { "view" } else { "table" },
-                            if t.is_view { "view" } else { "table" }
-                        ));
-                    } else if view_differs {
-                        let def = s.view_def.clone().unwrap_or_default();
-                        let body = def.trim().trim_end_matches(';').to_string();
-                        if body.is_empty() {
-                            sql.note(format!("Could not read the definition of view {}", name));
-                        } else if tgt.dialect == "sqlite" {
-                            sql.paired(
-                                format!("DROP VIEW {};", qualified(&tgt.dialect, &tgt.schema, name)),
-                                if body.to_ascii_uppercase().starts_with("CREATE ") {
-                                    format!("{};", body)
+                            (Some(sf), Some(tf)) => {
+                                let ch = fk_changes(sf, tf);
+                                if ch.is_empty() {
+                                    fk_json_list.push(json!({
+                                        "name": fname, "status": "identical", "changes": [],
+                                        "source": fk_json(sf), "target": fk_json(tf)
+                                    }));
                                 } else {
-                                    format!(
-                                        "CREATE VIEW {} AS {};",
-                                        qualified(&tgt.dialect, &tgt.schema, name),
-                                        body
-                                    )
-                                },
-                            );
-                        } else {
-                            sql.push(format!(
-                                "CREATE OR REPLACE VIEW {} AS {};",
-                                qualified(&tgt.dialect, &tgt.schema, name),
-                                body
+                                    fk_diffs += 1;
+                                    diff_count += 1;
+                                    fk_json_list.push(json!({
+                                        "name": fname, "status": "different", "changes": ch,
+                                        "source": fk_json(sf), "target": fk_json(tf)
+                                    }));
+                                    if tgt.dialect == "sqlite" {
+                                        table_sql.push(fk_stmt_or_note(&tgt.dialect, name, fname, String::new()));
+                                    } else {
+                                        paired_sql.push((
+                                            drop_fk_sql(tf, name, &tgt.dialect, &tgt.schema),
+                                            add_fk_sql(sf, name, &tgt.dialect, &tgt.schema),
+                                        ));
+                                    }
+                                }
+                            }
+                            (None, None) => {}
+                        }
+                    }
+                    if fk_json_list.iter().any(|f| f.get("status").and_then(|v| v.as_str()) != Some("identical")) {
+                        changes.push("foreignKeys");
+                    }
+
+                    // ---- Khóa chính ----
+                    let pk_differs = s.pk != t.pk;
+                    if pk_differs {
+                        diff_count += 1;
+                        changes.push("primaryKey");
+                    }
+
+                    let status = if diff_count == 0 { "identical" } else { "different" };
+
+                    if status == "identical" {
+                        identical += 1;
+                    } else {
+                        different += 1;
+
+                        sql.blank();
+                        sql.note(format!("Table differs: {}", name));
+                        if pk_differs {
+                            sql.note(format!(
+                                "Primary key differs ({}: [{}] / [{}]) - no statement generated, changing a PK needs a data review.",
+                                name,
+                                s.pk.join(", "),
+                                t.pk.join(", ")
                             ));
                         }
+                        for stmt in table_sql {
+                            sql.push(stmt);
+                        }
+                        for stmt in destructive_sql {
+                            sql.destructive(stmt);
+                        }
+                        for (d, c) in paired_sql {
+                            sql.paired(d, c);
+                        }
                     }
-                    if pk_differs {
-                        sql.note(format!(
-                            "Primary key differs ({}: [{}] / [{}]) - no statement generated, changing a PK needs a data review.",
-                            name,
-                            s.pk.join(", "),
-                            t.pk.join(", ")
-                        ));
-                    }
-                    for stmt in table_sql {
-                        sql.push(stmt);
-                    }
-                    for stmt in destructive_sql {
-                        sql.destructive(stmt);
-                    }
-                    for (d, c) in paired_sql {
-                        sql.paired(d, c);
-                    }
-                }
 
-                tables_json.push(json!({
-                    "name": name,
-                    "kind": if s.is_view { "view" } else { "table" },
-                    "status": status,
-                    "changes": changes,
-                    "diffCount": diff_count,
-                    "columns": if status == "identical" { Vec::new() } else { cols_json },
-                    "indexes": if status == "identical" { Vec::new() } else { idx_json_list },
-                    "foreignKeys": if status == "identical" { Vec::new() } else { fk_json_list },
-                    "primaryKey": { "source": s.pk, "target": t.pk, "differs": pk_differs },
-                    "viewDefinitionDiffers": view_differs,
-                }));
+                    tables_json.push(json!({
+                        "name": name,
+                        "kind": "table",
+                        "status": status,
+                        "changes": if status == "identical" { Vec::<String>::new() } else { changes.iter().map(|s| s.to_string()).collect() },
+                        "diffCount": if status == "identical" { 0 } else { diff_count },
+                        "columns": if status == "identical" { Vec::new() } else { cols_json },
+                        "indexes": if status == "identical" { Vec::new() } else { idx_json_list },
+                        "foreignKeys": if status == "identical" { Vec::new() } else { fk_json_list },
+                        "primaryKey": { "source": s.pk, "target": t.pk, "differs": pk_differs },
+                        "viewDefinitionDiffers": false,
+                    }));
+                }
             }
             (None, None) => {}
         }

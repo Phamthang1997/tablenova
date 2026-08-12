@@ -2,8 +2,8 @@ import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallba
 import { Trans, useTranslation } from 'react-i18next';
 import { clampMenu, type MenuRect } from '../utils/menuPosition';
 import { dbHelper } from '../utils/dbHelper';
-import type { TableItem, ColumnInfo } from '../utils/dbHelper';
-import { Search, Table, Terminal, TerminalSquare, RefreshCw, Layers, Plus, ChevronDown, ChevronRight, Braces, Cog, Info, Key, Sliders, FileCode, Trash2, CheckCircle2, Copy, AlertTriangle, History, Bookmark } from 'lucide-react';
+import type { TableItem, SchemaInfo, TriggerInfo, CheckConstraintInfo } from '../utils/dbHelper';
+import { Search, Table, Terminal, TerminalSquare, RefreshCw, Layers, Plus, ChevronDown, ChevronRight, Braces, Cog, Info, Key, Sliders, FileCode, Trash2, CheckCircle2, Copy, AlertTriangle, History, Bookmark, Columns3, ArrowDownAZ, Link2, Zap } from 'lucide-react';
 import { CreateTableModal } from './CreateTableModal';
 import { Modal, ModalBody, ModalFooter } from './Modal';
 import { GitCompare, ArrowLeftRight, HardDriveDownload, HardDriveUpload, Wand2 } from 'lucide-react';
@@ -100,8 +100,7 @@ const ObjectName: React.FC<{ name: string }> = ({ name }) => {
  */
 const ROW_WRAP_STYLE: React.CSSProperties = { display: 'flex', flexDirection: 'column' };
 const ROW_STYLE: React.CSSProperties = {
-  borderRadius: '6px',
-  margin: '1px 4px',
+  borderRadius: '4px',
   padding: '4px 8px',
   display: 'flex',
   alignItems: 'center',
@@ -135,8 +134,52 @@ const NAME_STYLE_ACTIVE: React.CSSProperties = { fontWeight: 600, flex: 1, minWi
 const COLS_WRAP_STYLE: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
-  paddingLeft: '28px',
+  paddingLeft: '14px',
   margin: '2px 0 4px',
+};
+/** Header row of a group node (Fields / Indexes / Foreign Keys / Checks / Triggers). */
+const GROUP_ROW_STYLE: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '6px',
+  padding: '2px 6px',
+  fontSize: '11.5px',
+  fontWeight: 500,
+  borderRadius: '4px',
+  cursor: 'pointer',
+  color: 'var(--win-text-secondary)',
+};
+/** Members of a group sit one level deeper than their header. */
+const GROUP_ITEMS_STYLE: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  paddingLeft: '14px',
+};
+/** Box listing object names in the Truncate/Drop dialogs. Those two dialogs used to name no
+ *  table at all — with a multi-selection that is information the user must have. */
+const NAME_LIST_LABEL_STYLE: React.CSSProperties = {
+  fontSize: '12px',
+  fontWeight: 500,
+  color: 'var(--win-text-primary)',
+  marginBottom: '6px',
+};
+const NAME_LIST_BOX_STYLE: React.CSSProperties = {
+  maxHeight: '140px',
+  overflowY: 'auto',
+  padding: '8px 10px',
+  borderRadius: '6px',
+  border: '1px solid var(--win-border)',
+  background: 'var(--win-bg-hover)',
+  fontFamily: 'var(--win-font-mono)',
+  fontSize: '11.5px',
+  lineHeight: 1.6,
+  whiteSpace: 'pre-line',
+  color: 'var(--win-text-primary)',
+};
+const GROUP_COUNT_STYLE: React.CSSProperties = {
+  fontSize: '10px',
+  color: 'var(--win-text-disabled)',
+  flexShrink: 0,
 };
 const COLS_HINT_STYLE: React.CSSProperties = {
   fontSize: '10.5px',
@@ -193,18 +236,227 @@ const SEG_TABS = [
   ['tools', 'sidebar.tabTools'],
 ] as const;
 
+type DetailGroup = 'fields' | 'indexes' | 'fks' | 'checks' | 'triggers';
+
+interface GroupNodeProps {
+  open: boolean;
+  icon: React.ReactNode;
+  label: string;
+  /** undefined = not known yet (lazy group, never opened) -> no count shown. */
+  count?: number;
+  onToggle: () => void;
+}
+
+/** Header of one group inside an expanded table. The members are rendered by the
+ *  caller (only when open) so a closed group costs nothing to build. */
+const GroupNode: React.FC<GroupNodeProps> = ({ open, icon, label, count, onToggle }) => (
+  <div style={GROUP_ROW_STYLE} onClick={onToggle} title={label}>
+    <span style={CHEVRON_STYLE}>{open ? <ChevronDown size={11} /> : <ChevronRight size={11} />}</span>
+    {icon}
+    <span style={NAME_STYLE}>{label}</span>
+    {count !== undefined && <span style={GROUP_COUNT_STYLE}>{count}</span>}
+  </div>
+);
+
+/**
+ * Detail tree of an expanded table: Fields / Indexes / Foreign Keys / Checks / Triggers.
+ *
+ * Which groups are open is local state here rather than state in Sidebar: lifting it up
+ * would make every row in the list re-compare its props on each group toggle, and
+ * React.memo on ObjectItem would stop earning its keep.
+ *
+ * Fields/Indexes/Foreign Keys come from the `get_table_schema` call already made when the
+ * table was expanded. Checks and Triggers are two SEPARATE backend commands, so they only
+ * run when the user opens that group — expanding a table still costs exactly one call.
+ */
+const TableDetailTree: React.FC<{ tableName: string; schema: SchemaInfo }> = ({ tableName, schema }) => {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState<Record<DetailGroup, boolean>>({
+    fields: true, indexes: false, fks: false, checks: false, triggers: false,
+  });
+  // null = not loaded yet (distinct from [] = loaded and the table has none).
+  const [checks, setChecks] = useState<CheckConstraintInfo[] | null>(null);
+  const [triggers, setTriggers] = useState<TriggerInfo[] | null>(null);
+  const [loadingExtra, setLoadingExtra] = useState<{ checks: boolean; triggers: boolean }>({ checks: false, triggers: false });
+
+  const toggle = (g: DetailGroup) => {
+    const willOpen = !open[g];
+    setOpen((prev) => ({ ...prev, [g]: willOpen }));
+    if (!willOpen) return;
+    if (g === 'checks' && checks === null && !loadingExtra.checks) {
+      setLoadingExtra((p) => ({ ...p, checks: true }));
+      dbHelper.getCheckConstraints(tableName)
+        .then(setChecks)
+        .finally(() => setLoadingExtra((p) => ({ ...p, checks: false })));
+    }
+    if (g === 'triggers' && triggers === null && !loadingExtra.triggers) {
+      setLoadingExtra((p) => ({ ...p, triggers: true }));
+      dbHelper.getTableTriggers(tableName)
+        .then(setTriggers)
+        .finally(() => setLoadingExtra((p) => ({ ...p, triggers: false })));
+    }
+  };
+
+  const emptyHint = <div style={COLS_HINT_STYLE}>{t('sidebar.groupEmpty')}</div>;
+  const loadingHint = <div style={COLS_HINT_STYLE}>{t('sidebar.groupLoading')}</div>;
+
+  const detailRow = (key: string, icon: React.ReactNode, name: string, meta: string, title: string) => (
+    <div key={key} style={COL_ROW_STYLE} title={title}>
+      <div style={COL_LEFT_STYLE}>
+        <span style={COL_KEY_SLOT_STYLE}>{icon}</span>
+        <span style={COL_NAME_STYLE}>{name}</span>
+      </div>
+      {meta && <span style={COL_TYPE_STYLE}>{meta}</span>}
+    </div>
+  );
+
+  return (
+    <>
+      <GroupNode
+        open={open.fields}
+        icon={<Columns3 size={12} className="icon-table" />}
+        label={t('sidebar.groupFields')}
+        count={schema.columns.length}
+        onToggle={() => toggle('fields')}
+      />
+      {open.fields && (
+        <div style={GROUP_ITEMS_STYLE}>
+          {schema.columns.length === 0
+            ? <div style={COLS_HINT_STYLE}>{t('sidebar.noColumns')}</div>
+            : schema.columns.map((col) => (
+              <div
+                key={col.name}
+                style={COL_ROW_STYLE}
+                title={`${col.name} (${col.type}) ${col.isPrimaryKey ? '[PK]' : ''}`}
+              >
+                <div style={COL_LEFT_STYLE}>
+                  <span style={COL_KEY_SLOT_STYLE}>
+                    {col.isPrimaryKey ? (
+                      <Key size={11} color="#f59e0b" style={COL_KEY_ICON_STYLE} />
+                    ) : (
+                      <span style={COL_KEY_SPACER_STYLE} />
+                    )}
+                  </span>
+                  <span style={COL_NAME_STYLE}>{col.name}</span>
+                </div>
+
+                <span style={COL_TYPE_STYLE}>{col.type}</span>
+              </div>
+            ))}
+        </div>
+      )}
+
+      <GroupNode
+        open={open.indexes}
+        icon={<ArrowDownAZ size={12} className="icon-table" />}
+        label={t('sidebar.groupIndexes')}
+        count={schema.indexes.length}
+        onToggle={() => toggle('indexes')}
+      />
+      {open.indexes && (
+        <div style={GROUP_ITEMS_STYLE}>
+          {schema.indexes.length === 0
+            ? emptyHint
+            : schema.indexes.map((idx) => detailRow(
+              idx.name,
+              <ArrowDownAZ size={11} style={COL_KEY_ICON_STYLE} />,
+              idx.name,
+              idx.columns,
+              `${idx.name} (${idx.columns})${idx.unique ? ' [UNIQUE]' : ''}`,
+            ))}
+        </div>
+      )}
+
+      <GroupNode
+        open={open.fks}
+        icon={<Link2 size={12} className="icon-view" />}
+        label={t('sidebar.groupForeignKeys')}
+        count={schema.foreignKeys.length}
+        onToggle={() => toggle('fks')}
+      />
+      {open.fks && (
+        <div style={GROUP_ITEMS_STYLE}>
+          {schema.foreignKeys.length === 0
+            ? emptyHint
+            : schema.foreignKeys.map((fk, i) => detailRow(
+              `${fk.name || fk.column}_${i}`,
+              <Link2 size={11} style={COL_KEY_ICON_STYLE} />,
+              fk.name || fk.column,
+              `${fk.refTable}.${fk.refColumn}`,
+              `${fk.column} -> ${fk.refTable}.${fk.refColumn}`,
+            ))}
+        </div>
+      )}
+
+      <GroupNode
+        open={open.checks}
+        icon={<CheckCircle2 size={12} color="#22c55e" />}
+        label={t('sidebar.groupChecks')}
+        count={checks?.length}
+        onToggle={() => toggle('checks')}
+      />
+      {open.checks && (
+        <div style={GROUP_ITEMS_STYLE}>
+          {loadingExtra.checks || checks === null
+            ? loadingHint
+            : checks.length === 0
+              ? emptyHint
+              : checks.map((c, i) => detailRow(
+                `${c.name}_${i}`,
+                <CheckCircle2 size={11} color="#22c55e" style={COL_KEY_ICON_STYLE} />,
+                c.name,
+                c.expression,
+                `${c.name}: ${c.expression}`,
+              ))}
+        </div>
+      )}
+
+      <GroupNode
+        open={open.triggers}
+        icon={<Zap size={12} color="#f59e0b" />}
+        label={t('sidebar.groupTriggers')}
+        count={triggers?.length}
+        onToggle={() => toggle('triggers')}
+      />
+      {open.triggers && (
+        <div style={GROUP_ITEMS_STYLE}>
+          {loadingExtra.triggers || triggers === null
+            ? loadingHint
+            : triggers.length === 0
+              ? emptyHint
+              : triggers.map((tr, i) => detailRow(
+                `${tr.name}_${i}`,
+                <Zap size={11} color="#f59e0b" style={COL_KEY_ICON_STYLE} />,
+                tr.name,
+                `${tr.timing} ${tr.event}`.trim(),
+                `${tr.name} (${tr.timing} ${tr.event})`,
+              ))}
+        </div>
+      )}
+    </>
+  );
+};
+
+/** The block a row lives in — also the scope of a selection (see `selection` in Sidebar). */
+type ObjectSection = 'tables' | 'views';
+
 interface ObjectItemProps {
   item: TableItem;
+  /** Block, and position within it: Shift+click needs both to take the range from the anchor. */
+  section: ObjectSection;
+  index: number;
   isHighlighted: boolean;
   isActive: boolean;
+  isSelected: boolean;
   isExpanded: boolean;
-  /** undefined = chưa mở hoặc chưa nạp xong. Không truyền `[]` mặc định: một mảng
-   *  rỗng mới mỗi lần render sẽ phá memo của MỌI dòng đang đóng. */
-  columns: ColumnInfo[] | undefined;
+  /** undefined = chưa mở hoặc chưa nạp xong. Không truyền object mặc định: một object
+   *  mới mỗi lần render sẽ phá memo của MỌI dòng đang đóng. */
+  schema: SchemaInfo | undefined;
   isLoadingCols: boolean;
   highlightRef: React.RefObject<HTMLDivElement | null>;
-  onSelect: (name: string) => void;
-  onContextMenu: (e: React.MouseEvent, name: string) => void;
+  /** Takes the mouse event too: Ctrl/Cmd and Shift decide toggle-one vs take-the-range. */
+  onSelect: (name: string, section: ObjectSection, index: number, e: React.MouseEvent) => void;
+  onContextMenu: (e: React.MouseEvent, name: string, section: ObjectSection, index: number) => void;
   onToggleExpand: (name: string, isExpanded: boolean, e: React.MouseEvent) => void;
   onRequestDrop: (item: TableItem) => void;
 }
@@ -218,10 +470,13 @@ interface ObjectItemProps {
  */
 const ObjectItem = memo(function ObjectItem({
   item,
+  section,
+  index,
   isHighlighted,
   isActive,
+  isSelected,
   isExpanded,
-  columns,
+  schema,
   isLoadingCols,
   highlightRef,
   onSelect,
@@ -241,8 +496,8 @@ const ObjectItem = memo(function ObjectItem({
         ref={isHighlighted ? highlightRef : undefined}
         className={`sidebar-item ${isActive ? 'active' : ''}${isHighlighted ? ' is-highlighted' : ''}`}
         tabIndex={0}
-        onClick={() => onSelect(item.name)}
-        onContextMenu={(e) => onContextMenu(e, item.name)}
+        onClick={(e) => onSelect(item.name, section, index, e)}
+        onContextMenu={(e) => onContextMenu(e, item.name, section, index)}
         onKeyDown={(e) => {
           if (e.key === 'Delete') {
             e.preventDefault();
@@ -251,7 +506,9 @@ const ObjectItem = memo(function ObjectItem({
           }
         }}
         title={t('sidebar.tableItemHint', { name: item.name })}
-        style={isActive ? ROW_STYLE_ACTIVE : ROW_STYLE}
+        // A selected row shares its background with the open row; what tells the two apart
+        // is the border + shadow from the `.active` class in index.css, not the background.
+        style={isActive || isSelected ? ROW_STYLE_ACTIVE : ROW_STYLE}
       >
         {!isView && (
           <span onClick={(e) => onToggleExpand(item.name, isExpanded, e)} style={CHEVRON_STYLE}>
@@ -276,29 +533,10 @@ const ObjectItem = memo(function ObjectItem({
         <div style={COLS_WRAP_STYLE}>
           {isLoadingCols ? (
             <div style={COLS_HINT_STYLE}>{t('sidebar.loadingColumns')}</div>
-          ) : !columns || columns.length === 0 ? (
+          ) : !schema ? (
             <div style={COLS_HINT_STYLE}>{t('sidebar.noColumns')}</div>
           ) : (
-            columns.map((col) => (
-              <div
-                key={col.name}
-                style={COL_ROW_STYLE}
-                title={`${col.name} (${col.type}) ${col.isPrimaryKey ? '[PK]' : ''}`}
-              >
-                <div style={COL_LEFT_STYLE}>
-                  <span style={COL_KEY_SLOT_STYLE}>
-                    {col.isPrimaryKey ? (
-                      <Key size={11} color="#f59e0b" style={COL_KEY_ICON_STYLE} />
-                    ) : (
-                      <span style={COL_KEY_SPACER_STYLE} />
-                    )}
-                  </span>
-                  <span style={COL_NAME_STYLE}>{col.name}</span>
-                </div>
-
-                <span style={COL_TYPE_STYLE}>{col.type}</span>
-              </div>
-            ))
+            <TableDetailTree tableName={item.name} schema={schema} />
           )}
         </div>
       )}
@@ -431,16 +669,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [collapsed, setCollapsed] = useState<{ tables: boolean; views: boolean; functions: boolean; procedures: boolean }>({ tables: false, views: true, functions: true, procedures: true });
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Table column tree view state (expand/collapse table to see columns)
+  // Table detail tree state (expand/collapse table to see fields/indexes/FKs/checks/triggers)
   const [expandedTables, setExpandedTables] = useState<Record<string, boolean>>({});
-  const [tableColumnsMap, setTableColumnsMap] = useState<Record<string, ColumnInfo[]>>({});
+  const [tableSchemaMap, setTableSchemaMap] = useState<Record<string, SchemaInfo>>({});
   const [loadingColumns, setLoadingColumns] = useState<Record<string, boolean>>({});
 
   // Hai map này chỉ được ĐỌC để quyết định có gọi backend hay không. Đọc qua ref nên
   // toggleTableExpanded giữ nguyên identity; nếu để chúng trong deps thì mỗi lần mở một
   // bảng là callback đổi -> mọi dòng re-render và React.memo ở ObjectItem thành vô nghĩa.
-  const columnsMapRef = useRef(tableColumnsMap);
-  columnsMapRef.current = tableColumnsMap;
+  const columnsMapRef = useRef(tableSchemaMap);
+  columnsMapRef.current = tableSchemaMap;
   const loadingColumnsRef = useRef(loadingColumns);
   loadingColumnsRef.current = loadingColumns;
 
@@ -454,7 +692,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       setLoadingColumns(prev => ({ ...prev, [tableName]: true }));
       try {
         const schema = await dbHelper.getTableSchema(tableName);
-        setTableColumnsMap(prev => ({ ...prev, [tableName]: schema.columns || [] }));
+        setTableSchemaMap(prev => ({ ...prev, [tableName]: schema }));
       } catch (err) {
         console.error(`Failed to fetch schema for ${tableName}:`, err);
       } finally {
@@ -501,7 +739,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
     x: number;
     y: number;
     tableName: string;
+    /** What the menu acts on. 1 entry = the normal menu, more = the bulk menu. */
+    names: string[];
   } | null>(null);
+
+  /**
+   * Multi-selection: Ctrl/Cmd+click toggles one row, Shift+click takes the range, Ctrl+A
+   * selects the whole block, Esc clears it.
+   *
+   * A selection lives **inside one block** (tables OR views) and never spans both: the bulk
+   * operations differ between the two (a view cannot be truncated, and DROP is a different
+   * statement), so a mixed selection could only produce a half-usable menu. Clicking into
+   * the other block replaces the selection.
+   */
+  const [selection, setSelection] = useState<{ section: ObjectSection; names: string[] }>({ section: 'tables', names: [] });
+  const selectionSet = useMemo(() => new Set(selection.names), [selection]);
+  const selectionRef = useRef(selection);
+  selectionRef.current = selection;
+  /** Shift+click anchor: index of the last plain/Ctrl click, -1 = none yet. */
+  const anchorRef = useRef(-1);
+  /** The VISIBLE list of each block — reassigned every render and read from stable
+   *  callbacks (see handleRowSelect), which is why it cannot live in their deps. */
+  const sectionListsRef = useRef<Record<ObjectSection, TableItem[]>>({ tables: [], views: [] });
 
   // Vị trí menu chuột phải sau khi đo kích thước thật (tránh tràn khỏi cửa sổ)
   const menuRef = useRef<HTMLDivElement>(null);
@@ -527,15 +786,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [creatingView, setCreatingView] = useState(false);
   const [createViewError, setCreateViewError] = useState<string | null>(null);
   // Truncate Table & Drop Table Modals (matching Images 1 & 2)
+  // `names` rather than a single name: one dialog serves both a single object and a whole
+  // selection, so the options (RESTART IDENTITY, CASCADE...) cannot end up differing
+  // between objects within one run.
   const [truncateModal, setTruncateModal] = useState<{
-    tableName: string;
+    names: string[];
     restartIdentity: boolean;
     disableFkCheck: boolean;
     cascade: boolean;
   } | null>(null);
 
   const [dropModal, setDropModal] = useState<{
-    tableName: string;
+    names: string[];
     isView: boolean;
     ignoreFkCheck: boolean;
     cascade: boolean;
@@ -616,6 +878,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   useEffect(() => {
     fetchTables();
+    // After a database switch the old selection points at names that no longer exist —
+    // clear it, and drop the Shift anchor so no range is taken against the previous list.
+    setSelection({ section: 'tables', names: [] });
+    anchorRef.current = -1;
   }, [dbName]);
 
   useEffect(() => {
@@ -652,12 +918,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return () => window.removeEventListener('click', closeMenu);
   }, []);
 
-  const handleTableContextMenu = useCallback((e: React.MouseEvent, tableName: string) => {
+  // Right-clicking a row OUTSIDE the selection drops that selection and the menu speaks
+  // only about that row — otherwise the menu would silently act on rows the user cannot
+  // see (scrolled away). Right-clicking INSIDE the selection keeps the whole selection.
+  const handleTableContextMenu = useCallback((e: React.MouseEvent, tableName: string, section: ObjectSection, index: number) => {
     e.preventDefault();
+    const sel = selectionRef.current;
+    const inSelection = sel.section === section && sel.names.includes(tableName);
+    if (!inSelection) {
+      anchorRef.current = index;
+      setSelection({ section, names: [tableName] });
+    }
     setContextMenu({
       x: e.clientX,
       y: e.clientY,
-      tableName
+      tableName,
+      names: inSelection ? sel.names : [tableName],
     });
   }, []);
 
@@ -666,14 +942,72 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // cùng cách App.tsx đã dùng cho selectTableRef.
   const onSelectTableRef = useRef(onSelectTable);
   onSelectTableRef.current = onSelectTable;
-  const handleRowSelect = useCallback((name: string) => onSelectTableRef.current(name), []);
+
+  /**
+   * Clicking a row. Three branches, matching what every file manager does: Shift = the
+   * range from the anchor to here, Ctrl/Cmd = toggle one row, plain click = start a fresh
+   * selection AND open the table. The two modifier branches deliberately do NOT open a
+   * tab: gathering a group to drop is unusable if every click opens another tab.
+   */
+  const handleRowSelect = useCallback((name: string, section: ObjectSection, index: number, e: React.MouseEvent) => {
+    const list = sectionListsRef.current[section];
+    if (e.shiftKey && anchorRef.current >= 0 && selectionRef.current.section === section) {
+      const from = Math.min(anchorRef.current, index);
+      const to = Math.max(anchorRef.current, index);
+      setSelection({ section, names: list.slice(from, to + 1).map((it) => it.name) });
+      return;
+    }
+    if (e.ctrlKey || e.metaKey) {
+      anchorRef.current = index;
+      setSelection((prev) => {
+        if (prev.section !== section) return { section, names: [name] };
+        return prev.names.includes(name)
+          ? { section, names: prev.names.filter((n) => n !== name) }
+          : { section, names: [...prev.names, name] };
+      });
+      return;
+    }
+    anchorRef.current = index;
+    setSelection({ section, names: [name] });
+    onSelectTableRef.current(name);
+  }, []);
 
   // blockedByReadOnly đọc prop readOnly và t nên cũng đổi identity mỗi render.
   const blockedByReadOnlyRef = useRef(blockedByReadOnly);
   blockedByReadOnlyRef.current = blockedByReadOnly;
   const handleRowRequestDrop = useCallback((item: TableItem) => {
     if (blockedByReadOnlyRef.current()) return;
-    setDropModal({ tableName: item.name, isView: item.type === 'view', ignoreFkCheck: false, cascade: false });
+    // Delete on a row inside the selection drops the whole selection — what is highlighted.
+    const sel = selectionRef.current;
+    const section: ObjectSection = item.type === 'view' ? 'views' : 'tables';
+    const names = sel.section === section && sel.names.includes(item.name) ? sel.names : [item.name];
+    setDropModal({ names, isView: item.type === 'view', ignoreFkCheck: false, cascade: false });
+  }, []);
+
+  /**
+   * Ctrl+A (select the whole block) and Esc (clear), only while focus is inside the
+   * sidebar — the listener is on window but filtered by `rootRef.contains`, otherwise it
+   * would steal Ctrl+A from the data grid and the SQL editor. Inside the search box Ctrl+A
+   * still means select all TEXT.
+   */
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const root = rootRef.current;
+      if (!root || !(e.target instanceof Node) || !root.contains(e.target)) return;
+      const inTextField = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+        if (inTextField) return;
+        e.preventDefault();
+        const section = selectionRef.current.section;
+        setSelection({ section, names: sectionListsRef.current[section].map((it) => it.name) });
+        return;
+      }
+      if (e.key === 'Escape' && !inTextField) {
+        setSelection((prev) => (prev.names.length ? { section: prev.section, names: [] } : prev));
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
   const handleRenameTable = (tableName: string) => {
@@ -744,26 +1078,37 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const handleConfirmTruncate = async () => {
     if (!truncateModal) return;
     if (blockedByReadOnly()) return;
-    const { tableName, restartIdentity, disableFkCheck, cascade } = truncateModal;
+    const { names, restartIdentity, disableFkCheck, cascade } = truncateModal;
     setTruncateModal(null);
 
     try {
-      // Cả cụm lệnh chạy trong backend trên một connection duy nhất: các lệnh tắt/bật kiểm tra
-      // khóa ngoại ở mức session sẽ vô hiệu nếu gửi thành nhiều lời gọi invoke riêng.
-      const res = await dbHelper.truncateTable(tableName, {
-        restartIdentity,
-        disableFk: disableFkCheck,
-        cascade,
-      });
-      const success = !!res.success;
-      const error = res.error || '';
+      // One call per table: the backend runs the whole statement group of ONE table on a
+      // single connection (session-level foreign-key toggles are void if split across
+      // several invokes), so batching tables into one call would be the backend's job, not
+      // this one's. A failure on one table does not stop the rest — reported in full below.
+      const failed: string[] = [];
+      for (const name of names) {
+        const res = await dbHelper.truncateTable(name, {
+          restartIdentity,
+          disableFk: disableFkCheck,
+          cascade,
+        });
+        if (!res.success) failed.push(`${name}: ${res.error || ''}`);
+      }
 
-      if (success) {
-        alert(t('sidebar.truncateSuccess'));
-        window.dispatchEvent(new CustomEvent('database-restored'));
-        fetchTables();
+      window.dispatchEvent(new CustomEvent('database-restored'));
+      fetchTables();
+
+      if (failed.length === 0) {
+        alert(names.length > 1
+          ? t('sidebar.bulkTruncateDone', { n: names.length, total: names.length })
+          : t('sidebar.truncateSuccess'));
+      } else if (names.length === 1) {
+        alert(t('sidebar.errTruncate', { message: failed[0] }));
       } else {
-        alert(t('sidebar.errTruncate', { message: error }));
+        const done = t('sidebar.bulkTruncateDone', { n: names.length - failed.length, total: names.length });
+        const err = t('sidebar.bulkFailed', { names: failed.join('\n') });
+        alert([done, err].join('\n'));
       }
     } catch (e: any) {
       alert(t('common.connectionError', { message: e.message }));
@@ -773,23 +1118,34 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const handleConfirmDrop = async () => {
     if (!dropModal) return;
     if (blockedByReadOnly()) return;
-    const { tableName, isView, ignoreFkCheck, cascade } = dropModal;
+    const { names, isView, ignoreFkCheck, cascade } = dropModal;
     setDropModal(null);
 
     const object = isView ? t('sidebar.objectView') : t('sidebar.objectTable');
 
     try {
-      // Xem ghi chú ở handleConfirmTruncate: backend chạy cả cụm trên một connection.
-      const res = await dbHelper.dropTable(tableName, { isView, cascade, ignoreFk: ignoreFkCheck });
-      const success = !!res.success;
-      const error = res.error || '';
+      // See the note in handleConfirmTruncate: one call per object, a failure does not stop
+      // the rest. onTableDropped fires per dropped object so App closes exactly those tabs.
+      const failed: string[] = [];
+      for (const name of names) {
+        const res = await dbHelper.dropTable(name, { isView, cascade, ignoreFk: ignoreFkCheck });
+        if (res.success) onTableDropped?.(name);
+        else failed.push(`${name}: ${res.error || ''}`);
+      }
 
-      if (success) {
-        alert(t('sidebar.dropSuccess', { object }));
-        if (onTableDropped) onTableDropped(tableName);
-        fetchTables();
+      fetchTables();
+      setSelection((prev) => ({ section: prev.section, names: [] }));
+
+      if (failed.length === 0) {
+        alert(names.length > 1
+          ? t('sidebar.bulkDropDone', { n: names.length, total: names.length })
+          : t('sidebar.dropSuccess', { object }));
+      } else if (names.length === 1) {
+        alert(t('sidebar.errDrop', { object, message: failed[0] }));
       } else {
-        alert(t('sidebar.errDrop', { object, message: error }));
+        const done = t('sidebar.bulkDropDone', { n: names.length - failed.length, total: names.length });
+        const err = t('sidebar.bulkFailed', { names: failed.join('\n') });
+        alert([done, err].join('\n'));
       }
     } catch (e: any) {
       alert(t('common.connectionError', { message: e.message }));
@@ -827,6 +1183,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
     ...(isOpen('views') ? filteredViews : []),
   ];
   const viewNavOffset = isOpen('tables') ? filteredTables.length : 0;
+
+  // The single source for Shift+click and Ctrl+A. A collapsed block is left empty: Ctrl+A
+  // must not select rows nobody can see, and Shift+click indices must match what was drawn.
+  sectionListsRef.current = {
+    tables: isOpen('tables') ? filteredTables : [],
+    views: isOpen('views') ? filteredViews : [],
+  };
+
   const [highlight, setHighlight] = useState(-1);
   const highlightRef = useRef<HTMLDivElement>(null);
 
@@ -862,18 +1226,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  const renderObjectItem = (item: TableItem, navIndex: number) => {
+  /** `navIndex` is the position in the ↑/↓ run (tables then views), `index` the position
+   *  within the BLOCK — two different numbers, and Shift+click needs the second one. */
+  const renderObjectItem = (item: TableItem, navIndex: number, section: ObjectSection, index: number) => {
     const isExpanded = !!expandedTables[item.name];
     return (
       <ObjectItem
         key={item.name}
         item={item}
+        section={section}
+        index={index}
         isHighlighted={navIndex === highlight}
         isActive={activeTable === item.name}
+        isSelected={selection.section === section && selectionSet.has(item.name)}
         isExpanded={isExpanded}
-        // Chỉ truyền khi đang mở: `tableColumnsMap[name] || []` tạo mảng rỗng mới mỗi
-        // render và sẽ phá memo của mọi dòng đang đóng.
-        columns={isExpanded ? tableColumnsMap[item.name] : undefined}
+        // Chỉ truyền khi đang mở: một giá trị mặc định mới mỗi render sẽ phá memo của
+        // mọi dòng đang đóng.
+        schema={isExpanded ? tableSchemaMap[item.name] : undefined}
         isLoadingCols={!!loadingColumns[item.name]}
         highlightRef={highlightRef}
         onSelect={handleRowSelect}
@@ -929,9 +1298,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
             className="sidebar-search-input"
             placeholder={
               activeTab === 'items' ? "Search for item..." :
-              activeTab === 'queries' ? "Search queries..." :
-              activeTab === 'history' ? "Search history..." :
-              "Search tools..."
+                activeTab === 'queries' ? "Search queries..." :
+                  activeTab === 'history' ? "Search history..." :
+                    "Search tools..."
             }
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -1044,7 +1413,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       {t('sidebar.noTables')}
                     </div>
                   ) : (
-                    filteredTables.map((item, i) => renderObjectItem(item, i))
+                    filteredTables.map((item, i) => renderObjectItem(item, i, 'tables', i))
                   )}
                 </div>
               )}
@@ -1090,7 +1459,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </div>
                 {isOpen('views') && (
                   <div className="sidebar-list">
-                    {filteredViews.map((item, i) => renderObjectItem(item, viewNavOffset + i))}
+                    {filteredViews.map((item, i) => renderObjectItem(item, viewNavOffset + i, 'views', i))}
                   </div>
                 )}
               </div>
@@ -1632,6 +2001,77 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {contextMenu && (() => {
         const isView = tables.find(item => item.name === contextMenu.tableName)?.type === 'view';
         const object = isView ? t('sidebar.objectView') : t('sidebar.objectTable');
+        const names = contextMenu.names;
+        const menuStyle: React.CSSProperties = {
+          position: 'fixed',
+          top: menuPos ? menuPos.top : contextMenu.y,
+          left: menuPos ? menuPos.left : contextMenu.x,
+          // Chưa đo xong thì ẩn để không thấy menu nhảy chỗ
+          visibility: menuPos ? 'visible' : 'hidden',
+          zIndex: 99999,
+          minWidth: '170px',
+        };
+        const itemStyle: React.CSSProperties = { padding: '6px 12px', fontSize: '11px', cursor: 'pointer' };
+
+        /**
+         * Menu for a multi-selection. Only what genuinely runs in bulk: opening a tab,
+         * renaming, generating data and import/export all need per-table input, so they are
+         * absent here — showing them and acting on one table only would be worse than not.
+         */
+        if (names.length > 1) {
+          return (
+            <div ref={menuRef} className="ws-menu" style={menuStyle}>
+              <div style={{
+                padding: '6px 12px',
+                fontSize: '10px',
+                fontWeight: 600,
+                color: 'var(--win-text-secondary)',
+                borderBottom: '1px solid var(--win-border)',
+                marginBottom: '4px',
+              }}>
+                {t('sidebar.ctxSelectedCount', { n: names.length })}
+              </div>
+              <div
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setContextMenu(null);
+                  navigator.clipboard?.writeText(names.join(', '));
+                }}
+                style={{ ...itemStyle, color: 'var(--win-text-primary)' }}
+                className="sidebar-context-item"
+              >
+                {t('sidebar.ctxCopyNames')}
+              </div>
+              {!isView && (
+                <div
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setContextMenu(null);
+                    if (blockedByReadOnly()) return;
+                    setTruncateModal({ names, restartIdentity: false, disableFkCheck: false, cascade: false });
+                  }}
+                  style={{ ...itemStyle, color: 'var(--st-warn)' }}
+                  className="sidebar-context-item"
+                >
+                  {t('sidebar.ctxTruncateSelected', { n: names.length })}
+                </div>
+              )}
+              <div
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setContextMenu(null);
+                  if (blockedByReadOnly()) return;
+                  setDropModal({ names, isView, ignoreFkCheck: false, cascade: false });
+                }}
+                style={{ ...itemStyle, color: 'var(--win-accent)' }}
+                className="sidebar-context-item"
+              >
+                {t('sidebar.ctxDropSelected', { n: names.length })}
+              </div>
+            </div>
+          );
+        }
+
         return (
           <div ref={menuRef} className="ws-menu" style={{
             position: 'fixed',
@@ -1668,7 +2108,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             >
               {t('sidebar.ctxOpenData')}
             </div>
-            <div 
+            <div
               onClick={(e) => {
                 e.stopPropagation();
                 setContextMenu(null);
@@ -1680,7 +2120,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               {t('sidebar.ctxOpenStructure', { object })}
             </div>
             <div style={{ height: '1px', background: 'var(--win-border)', margin: '4px 0' }} />
-            <div 
+            <div
               onClick={(e) => {
                 e.stopPropagation();
                 setContextMenu(null);
@@ -1692,7 +2132,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             >
               {t('sidebar.ctxImport')}
             </div>
-            <div 
+            <div
               onClick={(e) => {
                 e.stopPropagation();
                 setContextMenu(null);
@@ -1720,7 +2160,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
             )}
             <div style={{ height: '1px', background: 'var(--win-border)', margin: '4px 0' }} />
-            <div 
+            <div
               onClick={(e) => {
                 e.stopPropagation();
                 setContextMenu(null);
@@ -1739,7 +2179,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   setContextMenu(null);
                   if (blockedByReadOnly()) return;
                   setTruncateModal({
-                    tableName: contextMenu.tableName,
+                    names: [contextMenu.tableName],
                     restartIdentity: false,
                     disableFkCheck: false,
                     cascade: false,
@@ -1757,7 +2197,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 setContextMenu(null);
                 if (blockedByReadOnly()) return;
                 setDropModal({
-                  tableName: contextMenu.tableName,
+                  names: [contextMenu.tableName],
                   isView,
                   ignoreFkCheck: false,
                   cascade: false,
@@ -2028,6 +2468,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
           zIndex={999999}
         >
           <ModalBody style={{ gap: '16px', padding: '16px 20px' }}>
+            <div>
+              <div style={NAME_LIST_LABEL_STYLE}>
+                {t('sidebar.truncateModalObjects', { n: truncateModal.names.length })}
+              </div>
+              <div style={NAME_LIST_BOX_STYLE}>{truncateModal.names.join('\n')}</div>
+            </div>
+
             <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer', userSelect: 'none' }}>
               <input
                 type="checkbox"
@@ -2114,6 +2561,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
           zIndex={999999}
         >
           <ModalBody style={{ gap: '16px', padding: '16px 20px' }}>
+            <div>
+              <div style={NAME_LIST_LABEL_STYLE}>
+                {t('sidebar.dropModalObjects', { n: dropModal.names.length })}
+              </div>
+              <div style={NAME_LIST_BOX_STYLE}>{dropModal.names.join('\n')}</div>
+            </div>
+
             <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer', userSelect: 'none' }}>
               <input
                 type="checkbox"

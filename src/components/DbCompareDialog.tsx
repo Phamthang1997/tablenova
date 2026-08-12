@@ -1,27 +1,31 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  AlertTriangle,
-  ArrowLeft,
   ArrowLeftRight,
+  ChevronDown,
+  ChevronRight,
+  ChevronUp,
   Columns3,
   Copy,
   Database,
   Download,
   FileCode,
-  GitCompare,
   Hash,
   Loader,
   Play,
-  RefreshCw,
   Search,
+  CheckCircle2,
+  Table as TableIcon,
+  Plus,
+  X,
+  ArrowRight,
+  CheckSquare,
+  Square,
+  MinusSquare,
+  Eye,
 } from 'lucide-react';
 import { dbHelper } from '../utils/dbHelper';
 import {
-  columnChangeKey,
-  describeColumn,
-  describeForeignKey,
-  describeIndex,
   filterTableDiffs,
   formatCell,
   hasRunnableSql,
@@ -29,27 +33,19 @@ import {
   statusLabelKey,
   statusTone,
   syncSqlFileName,
-  totalDiffCount,
-  type ColumnMeta,
   type CompareSide,
   type DataCompareResult,
   type DataOverviewResult,
   type DiffStatus,
-  type ForeignKeyMeta,
-  type IndexMeta,
-  type ItemDiff,
   type SchemaCompareResult,
   type TableDiff,
 } from '../utils/compareHelper';
 import { Modal, ModalBody } from './Modal';
 
 interface DbCompareDialogProps {
-  /** `sqlite` | `postgres` | `mysql` — quyết định phía nào chọn tệp, phía nào chọn database. */
   dbType: string;
-  /** Database đang mở, dùng làm mặc định cho phía nguồn. */
   currentDb?: string;
   onClose: () => void;
-  /** Mở script đồng bộ trong một tab SQL Editor mới. */
   onOpenInSqlEditor?: (sql: string) => void;
 }
 
@@ -65,8 +61,8 @@ const input: React.CSSProperties = {
   background: 'var(--win-bg-window)',
   border: '1px solid var(--win-border)',
   color: 'var(--win-text-primary)',
-  borderRadius: '4px',
-  padding: '5px 7px',
+  borderRadius: '5px',
+  padding: '5px 8px',
   fontSize: '11.5px',
   outline: 'none',
   width: '100%',
@@ -78,10 +74,10 @@ const Badge: React.FC<{ tone: string; children: React.ReactNode }> = ({ tone, ch
     style={{
       fontSize: '10px',
       fontWeight: 600,
-      color: TONE_COLOR[tone],
-      border: `1px solid ${TONE_COLOR[tone]}`,
-      borderRadius: '3px',
-      padding: '1px 5px',
+      color: TONE_COLOR[tone] || 'var(--win-text-secondary)',
+      border: `1px solid ${TONE_COLOR[tone] || 'var(--win-border)'}`,
+      borderRadius: '4px',
+      padding: '1px 6px',
       whiteSpace: 'nowrap',
     }}
   >
@@ -89,20 +85,125 @@ const Badge: React.FC<{ tone: string; children: React.ReactNode }> = ({ tone, ch
   </span>
 );
 
-const Chip: React.FC<{ tone?: string; children: React.ReactNode }> = ({ tone = 'muted', children }) => (
-  <span
-    style={{
-      fontSize: '11px',
-      color: TONE_COLOR[tone],
-      background: 'var(--win-bg-window)',
-      border: '1px solid var(--win-border)',
-      borderRadius: '4px',
-      padding: '2px 7px',
-    }}
-  >
-    {children}
-  </span>
-);
+/** Helper to generate pseudo-DDL string for side-by-side comparison */
+function generateTableDdl(tb: TableDiff, side: 'source' | 'target'): string {
+  const isSource = side === 'source';
+  if (tb.kind === 'view') {
+    return `-- View: ${tb.name}\nCREATE VIEW \`${tb.name}\` AS SELECT * FROM ...;`;
+  }
+
+  const lines: string[] = [];
+  lines.push(`CREATE TABLE \`${tb.name}\` (`);
+
+  const colLines: string[] = [];
+  tb.columns.forEach((it) => {
+    const col = isSource ? it.source : it.target;
+    if (col) {
+      let line = `  \`${col.name}\` ${col.type}`;
+      if (!col.nullable) line += ' NOT NULL';
+      if (col.autoIncrement) line += ' AUTO_INCREMENT';
+      if (col.default !== null && col.default !== undefined && col.default !== '') {
+        line += ` DEFAULT ${col.default}`;
+      }
+      if (col.comment) line += ` COMMENT '${col.comment}'`;
+      colLines.push(line);
+    }
+  });
+
+  const pk = isSource ? tb.primaryKey.source : tb.primaryKey.target;
+  if (pk && pk.length > 0) {
+    colLines.push(`  PRIMARY KEY (\`${pk.join('`, `')}\`)`);
+  }
+
+  tb.indexes.forEach((it) => {
+    const idx = isSource ? it.source : it.target;
+    if (idx) {
+      colLines.push(`  ${idx.unique ? 'UNIQUE ' : ''}KEY \`${idx.name}\` (\`${idx.columns.join('`, `')}\`)`);
+    }
+  });
+
+  tb.foreignKeys.forEach((it) => {
+    const fk = isSource ? it.source : it.target;
+    if (fk) {
+      let line = `  CONSTRAINT \`${fk.name}\` FOREIGN KEY (\`${fk.columns.join('`, `')}\`) REFERENCES \`${fk.refTable}\` (\`${fk.refColumns.join('`, `')}\`)`;
+      if (fk.onDelete) line += ` ON DELETE ${fk.onDelete}`;
+      if (fk.onUpdate) line += ` ON UPDATE ${fk.onUpdate}`;
+      colLines.push(line);
+    }
+  });
+
+  lines.push(colLines.join(',\n'));
+  lines.push(`);`);
+
+  return lines.join('\n');
+}
+
+/** Diff Progress Bar Component */
+const DiffProgressBar: React.FC<{
+  summary: SchemaCompareResult['summary'];
+}> = ({ summary }) => {
+  const { t } = useTranslation();
+  const totalTables =
+    summary.tablesOnlySource + summary.tablesOnlyTarget + summary.tablesDifferent + summary.tablesIdentical;
+
+  if (totalTables === 0) return null;
+
+  const diffCount = summary.tablesOnlySource + summary.tablesOnlyTarget + summary.tablesDifferent;
+  const pSource = (summary.tablesOnlySource / totalTables) * 100;
+  const pTarget = (summary.tablesOnlyTarget / totalTables) * 100;
+  const pDiff = (summary.tablesDifferent / totalTables) * 100;
+  const pIdentical = (summary.tablesIdentical / totalTables) * 100;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1, minWidth: '220px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px' }}>
+        <span style={{ fontWeight: 600, color: diffCount > 0 ? 'var(--win-status-modified-border)' : 'var(--st-ok)' }}>
+          {diffCount > 0 ? `${diffCount}/${totalTables} ${t('compare.diffTablesLabel', { defaultValue: 'bảng khác biệt' })}` : t('compare.identicalSchema')}
+        </span>
+        <span style={{ color: 'var(--win-text-disabled)', fontSize: '10.5px' }}>
+          {summary.tablesDifferent > 0 && `${summary.tablesDifferent} cần sửa `}
+          {summary.tablesOnlySource > 0 && `${summary.tablesOnlySource} tạo mới `}
+          {summary.tablesOnlyTarget > 0 && `${summary.tablesOnlyTarget} xoá `}
+        </span>
+      </div>
+      <div
+        style={{
+          display: 'flex',
+          height: '6px',
+          borderRadius: '3px',
+          overflow: 'hidden',
+          background: 'var(--win-border)',
+          width: '100%',
+        }}
+      >
+        {pDiff > 0 && (
+          <div
+            style={{ width: `${pDiff}%`, background: 'var(--win-status-modified-border)' }}
+            title={t('compare.summaryDifferent', { n: summary.tablesDifferent })}
+          />
+        )}
+        {pSource > 0 && (
+          <div
+            style={{ width: `${pSource}%`, background: 'var(--win-status-added-border)' }}
+            title={t('compare.summaryOnlySource', { n: summary.tablesOnlySource })}
+          />
+        )}
+        {pTarget > 0 && (
+          <div
+            style={{ width: `${pTarget}%`, background: 'var(--win-status-deleted-border)' }}
+            title={t('compare.summaryOnlyTarget', { n: summary.tablesOnlyTarget })}
+          />
+        )}
+        {pIdentical > 0 && (
+          <div
+            style={{ width: `${pIdentical}%`, background: 'rgba(255, 255, 255, 0.15)' }}
+            title={t('compare.summaryIdentical', { n: summary.tablesIdentical })}
+          />
+        )}
+      </div>
+    </div>
+  );
+};
 
 export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
   dbType,
@@ -128,16 +229,37 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<Set<DiffStatus>>(new Set());
-  const [rightTab, setRightTab] = useState<'diff' | 'sql'>('diff');
+  const [bottomTab, setBottomTab] = useState<'ddl' | 'sql'>('ddl');
+
+  const toggleStatus = (s: DiffStatus) => {
+    setStatusFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(s)) next.delete(s);
+      else next.add(s);
+      return next;
+    });
+  };
+
+  // Tree expanded & checked states (Navicat style)
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({
+    different: true,
+    onlySource: true,
+    onlyTarget: true,
+    identical: false,
+  });
+  const [expandedTables, setExpandedTables] = useState<Record<string, boolean>>({});
+  const [checkedTables, setCheckedTables] = useState<Set<string>>(new Set());
 
   const [overview, setOverview] = useState<DataOverviewResult | null>(null);
   const [dataTable, setDataTable] = useState<string | null>(null);
-  const [keyText, setKeyText] = useState('');
-  const [rowLimit, setRowLimit] = useState(20000);
+  const [, setKeyText] = useState('');
+  const [rowLimit] = useState(20000);
   const [dataResult, setDataResult] = useState<DataCompareResult | null>(null);
   const [dataTab, setDataTab] = useState<'rows' | 'sql'>('rows');
+  const [checkedDataTables, setCheckedDataTables] = useState<Set<string>>(new Set());
+  const [showBottomPane, setShowBottomPane] = useState(false);
 
-  // Danh sách database của server để chọn hai phía (SQLite thì mỗi phía là một tệp).
+  // Load available databases
   useEffect(() => {
     if (isSqlite) return;
     let alive = true;
@@ -170,8 +292,16 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
     try {
       const res = await dbHelper.compareSchemas(source, target, includeDrops);
       setSchemaResult(res);
-      setSelectedTable(res.tables.find((x) => x.status !== 'identical')?.name ?? res.tables[0]?.name ?? null);
-      setRightTab('diff');
+      const diffTb = res.tables.find((x) => x.status !== 'identical') ?? res.tables[0] ?? null;
+      setSelectedTable(diffTb?.name ?? null);
+
+      // Select all non-identical tables by default
+      const checked = new Set<string>();
+      res.tables.forEach((t) => {
+        if (t.status !== 'identical') checked.add(t.name);
+      });
+      setCheckedTables(checked);
+      setBottomTab('ddl');
     } catch (err: any) {
       setSchemaResult(null);
       setError(t('compare.errRun', { message: String(err) }));
@@ -187,6 +317,7 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
     try {
       const res = await dbHelper.compareDataOverview(source, target);
       setOverview(res);
+      setCheckedDataTables(new Set(res.tables.map((tbl) => tbl.name)));
       setDataTable(null);
       setDataResult(null);
     } catch (err: any) {
@@ -196,6 +327,28 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
       setBusy('');
     }
   }, [source, target, t]);
+
+  const toggleDataTableChecked = (tableName: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setCheckedDataTables((prev) => {
+      const next = new Set(prev);
+      if (next.has(tableName)) next.delete(tableName);
+      else next.add(tableName);
+      return next;
+    });
+  };
+
+  const toggleAllDataTablesChecked = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    if (!overview) return;
+    const allNames = overview.tables.map((t) => t.name);
+    const allChecked = allNames.every((n) => checkedDataTables.has(n));
+    if (allChecked) {
+      setCheckedDataTables(new Set());
+    } else {
+      setCheckedDataTables(new Set(allNames));
+    }
+  };
 
   const runDataCompare = useCallback(
     async (table: string, keys: string[]) => {
@@ -249,34 +402,61 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
-  const filtered = useMemo(
+  const filteredTables = useMemo(
     () => (schemaResult ? filterTableDiffs(schemaResult.tables, { statuses: statusFilter, search }) : []),
     [schemaResult, statusFilter, search],
   );
-  const selected = filtered.find((x) => x.name === selectedTable) ?? schemaResult?.tables.find((x) => x.name === selectedTable) ?? null;
+  const selectedTableObj = schemaResult?.tables.find((x) => x.name === selectedTable) ?? null;
 
-  // Số bảng theo từng trạng thái: nút lọc nào không có bảng thì hiện (0) và bị khoá,
-  // để không ai bấm vào rồi tưởng nút hỏng khi danh sách trống.
-  const statusCounts = useMemo(() => {
-    const counts: Record<DiffStatus, number> = { onlySource: 0, onlyTarget: 0, different: 0, identical: 0 };
-    schemaResult?.tables.forEach((tb) => {
-      counts[tb.status] += 1;
+  // Group tables by operation status (Navicat style)
+  const groupedTables = useMemo(() => {
+    const groups = {
+      different: [] as TableDiff[],
+      onlySource: [] as TableDiff[],
+      onlyTarget: [] as TableDiff[],
+      identical: [] as TableDiff[],
+    };
+    filteredTables.forEach((tb) => {
+      groups[tb.status].push(tb);
     });
-    return counts;
-  }, [schemaResult]);
+    return groups;
+  }, [filteredTables]);
 
-  const toggleStatus = (s: DiffStatus) => {
-    setStatusFilter((prev) => {
+  const toggleGroupExpand = (grpKey: string) => {
+    setExpandedGroups((prev) => ({ ...prev, [grpKey]: !prev[grpKey] }));
+  };
+
+  const toggleTableExpand = (tableName: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setExpandedTables((prev) => ({ ...prev, [tableName]: !prev[tableName] }));
+  };
+
+  const toggleTableChecked = (tableName: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setCheckedTables((prev) => {
       const next = new Set(prev);
-      if (next.has(s)) next.delete(s);
-      else next.add(s);
+      if (next.has(tableName)) next.delete(tableName);
+      else next.add(tableName);
+      return next;
+    });
+  };
+
+  const toggleAllCheckedInGroup = (grpTables: TableDiff[], e: React.MouseEvent) => {
+    e.stopPropagation();
+    const allChecked = grpTables.every((t) => checkedTables.has(t.name));
+    setCheckedTables((prev) => {
+      const next = new Set(prev);
+      grpTables.forEach((t) => {
+        if (allChecked) next.delete(t.name);
+        else next.add(t.name);
+      });
       return next;
     });
   };
 
   const num = (n: number | null | undefined) => (n === null || n === undefined ? '—' : n.toLocaleString(i18n.language));
 
-  // ---- Chọn phía ----
+  // ---- Database Connection Banner ----
   const sideCard = (which: 'source' | 'target') => {
     const value = which === 'source' ? source : target;
     const setValue = which === 'source' ? setSource : setTarget;
@@ -286,35 +466,70 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
       setOverview(null);
       setDataResult(null);
     };
+
+    const isSrc = which === 'source';
+    const accentColor = isSrc ? '#10b981' : '#3b82f6';
+    const bgBadge = isSrc ? 'rgba(16, 185, 129, 0.12)' : 'rgba(59, 130, 246, 0.12)';
+
     return (
       <div
         style={{
           flex: 1,
           minWidth: 0,
-          border: '1px solid var(--win-border)',
-          borderRadius: '6px',
-          padding: '8px 10px',
-          background: 'var(--win-bg-window)',
+          border: `1px solid ${isSrc ? 'rgba(16, 185, 129, 0.25)' : 'rgba(59, 130, 246, 0.25)'}`,
+          borderRadius: '8px',
+          padding: '5px 10px',
+          background: 'var(--win-bg-card)',
           display: 'flex',
-          flexDirection: 'column',
-          gap: '6px',
+          alignItems: 'center',
+          gap: '10px',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.03)',
+          transition: 'all 0.15s ease',
         }}
       >
-        <div style={{ ...label, display: 'flex', alignItems: 'center', gap: '5px' }}>
-          <Database size={12} />
-          {which === 'source' ? t('compare.sourceLabel') : t('compare.targetLabel')}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            padding: '3px 10px',
+            borderRadius: '6px',
+            background: bgBadge,
+            color: accentColor,
+            fontWeight: 600,
+            fontSize: '11px',
+            whiteSpace: 'nowrap',
+            flexShrink: 0,
+          }}
+        >
+          <Database size={13} />
+          <span>{isSrc ? t('compare.sourceLabel') : t('compare.targetLabel')}</span>
         </div>
+
         {isSqlite ? (
           <input
             type="text"
-            style={input}
+            style={{ ...input, flex: 1, height: '30px' }}
             value={value.filePath || ''}
             placeholder={t('compare.sqlitePathPlaceholder')}
             onChange={(e) => patch({ filePath: e.target.value })}
           />
         ) : (
-          <>
-            <select style={input} value={value.database || ''} onChange={(e) => patch({ database: e.target.value })}>
+          <div style={{ display: 'flex', gap: '6px', flex: 1, minWidth: 0 }}>
+            <select
+              style={{
+                ...input,
+                flex: 1,
+                height: '30px',
+                fontWeight: 600,
+                color: 'var(--win-text-primary)',
+                background: 'var(--win-bg-hover)',
+                borderRadius: '6px',
+                cursor: 'pointer',
+              }}
+              value={value.database || ''}
+              onChange={(e) => patch({ database: e.target.value })}
+            >
               <option value="">{t('compare.currentDatabase')}</option>
               {databases.map((d) => (
                 <option key={d} value={d}>
@@ -325,92 +540,81 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
             {isPostgres && (
               <input
                 type="text"
-                style={input}
+                style={{ ...input, width: '110px', height: '30px' }}
                 value={value.schema || ''}
                 placeholder={t('compare.schemaPlaceholder')}
                 onChange={(e) => patch({ schema: e.target.value })}
               />
             )}
-          </>
+          </div>
         )}
       </div>
     );
   };
 
-  // ---- Bảng chi tiết của một mục (cột / index / FK) ----
-  const detailRows = <T,>(
-    items: ItemDiff<T>[],
-    describe: (v: T | null) => string,
-    title: string,
-    icon: React.ReactNode,
-  ) => {
-    const shown = items.filter((i) => i.status !== 'identical');
-    if (shown.length === 0) return null;
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-        <div style={{ ...label, display: 'flex', alignItems: 'center', gap: '5px' }}>
-          {icon}
-          {title} ({shown.length})
+  // ---- DDL Side-by-Side Comparison Code Pane ----
+  const ddlPane = useMemo(() => {
+    if (!selectedTableObj) {
+      return (
+        <div style={{ padding: '24px', textAlign: 'center', color: 'var(--win-text-disabled)', fontSize: '12px' }}>
+          {t('compare.pickTable', { defaultValue: 'Chọn một bảng trong danh sách để xem so sánh DDL' })}
         </div>
-        <div style={{ border: '1px solid var(--win-border)', borderRadius: '4px', overflow: 'hidden' }}>
-          {shown.map((it) => (
-            <div
-              key={it.name}
-              style={{
-                display: 'grid',
-                gridTemplateColumns: '160px 1fr 1fr',
-                gap: '8px',
-                padding: '5px 8px',
-                borderBottom: '1px solid var(--win-border)',
-                alignItems: 'start',
-                fontSize: '11px',
-              }}
-            >
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', minWidth: 0 }}>
-                <span style={{ fontWeight: 600, color: 'var(--win-text-primary)', wordBreak: 'break-all' }}>{it.name}</span>
-                <Badge tone={statusTone(it.status)}>{t(statusLabelKey(it.status) as never)}</Badge>
-                {it.changes.length > 0 && (
-                  <span style={{ color: 'var(--win-text-disabled)', fontSize: '10px' }}>
-                    {it.changes.map((c) => t(columnChangeKey(c) as never)).join(', ')}
-                  </span>
-                )}
-              </div>
-              <div style={{ ...mono, color: it.source ? 'var(--win-text-primary)' : 'var(--win-text-disabled)', wordBreak: 'break-word' }}>
-                {describe(it.source)}
-              </div>
-              <div style={{ ...mono, color: it.target ? 'var(--win-text-primary)' : 'var(--win-text-disabled)', wordBreak: 'break-word' }}>
-                {describe(it.target)}
-              </div>
-            </div>
-          ))}
+      );
+    }
+
+    const sourceDdl = generateTableDdl(selectedTableObj, 'source');
+    const targetDdl = generateTableDdl(selectedTableObj, 'target');
+
+    return (
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', flex: 1, minHeight: 0 }}>
+        {/* Source DDL Box */}
+        <div style={{ display: 'flex', flexDirection: 'column', border: '1px solid var(--win-border)', borderRadius: '6px', overflow: 'hidden', background: 'var(--win-bg-card)' }}>
+          <div style={{ padding: '6px 10px', background: 'var(--win-bg-hover)', borderBottom: '1px solid var(--win-border)', fontSize: '11px', fontWeight: 600, color: 'var(--win-accent)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <Database size={12} />
+            <span>Nguồn (A): {selectedTableObj.name}</span>
+          </div>
+          <pre style={{ flex: 1, margin: 0, padding: '10px', overflow: 'auto', ...mono, color: 'var(--win-text-primary)', lineHeight: '1.5', fontSize: '11px' }}>
+            {sourceDdl}
+          </pre>
+        </div>
+
+        {/* Target DDL Box */}
+        <div style={{ display: 'flex', flexDirection: 'column', border: '1px solid var(--win-border)', borderRadius: '6px', overflow: 'hidden', background: 'var(--win-bg-card)' }}>
+          <div style={{ padding: '6px 10px', background: 'var(--win-bg-hover)', borderBottom: '1px solid var(--win-border)', fontSize: '11px', fontWeight: 600, color: 'var(--win-accent-secondary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <Database size={12} />
+            <span>Đích (B): {selectedTableObj.name}</span>
+          </div>
+          <pre style={{ flex: 1, margin: 0, padding: '10px', overflow: 'auto', ...mono, color: 'var(--win-text-primary)', lineHeight: '1.5', fontSize: '11px' }}>
+            {targetDdl}
+          </pre>
         </div>
       </div>
     );
-  };
+  }, [selectedTableObj, t]);
 
   const sqlPane = (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, minHeight: 0 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1, minHeight: 0 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
-        <span style={label}>{t('compare.syncSqlTitle')}</span>
+        <span style={{ ...label, fontSize: '12px' }}>{t('compare.syncSqlTitle')}</span>
         <div style={{ display: 'flex', gap: '6px' }}>
-          <button className="btn btn-secondary" onClick={copySql} disabled={!sqlText} style={{ padding: '0 10px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <Copy size={11} /> {t('compare.copySql')}
+          <button className="btn btn-secondary" onClick={copySql} disabled={!sqlText} style={{ padding: '4px 10px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <Copy size={12} /> {t('compare.copySql')}
           </button>
-          <button className="btn btn-secondary" onClick={downloadSql} disabled={!sqlText} style={{ padding: '0 10px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <Download size={11} /> {t('compare.downloadSql')}
+          <button className="btn btn-secondary" onClick={downloadSql} disabled={!sqlText} style={{ padding: '4px 10px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <Download size={12} /> {t('compare.downloadSql')}
           </button>
           {onOpenInSqlEditor && (
             <button
-              className="btn btn-secondary"
+              className="btn btn-primary"
               onClick={() => {
                 onOpenInSqlEditor(sqlText);
                 onClose();
               }}
               disabled={!sqlText || !hasRunnableSql(currentSql || [])}
               title={t('compare.openInEditorTitle')}
-              style={{ padding: '0 10px', display: 'flex', alignItems: 'center', gap: '4px' }}
+              style={{ padding: '4px 12px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }}
             >
-              <FileCode size={11} /> {t('compare.openInEditor')}
+              <FileCode size={12} /> {t('compare.openInEditor')}
             </button>
           )}
         </div>
@@ -420,15 +624,16 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
         value={sqlText || t('compare.sqlEmpty')}
         style={{
           flex: 1,
-          minHeight: '120px',
+          minHeight: '140px',
           width: '100%',
-          background: 'var(--win-bg-window)',
+          background: 'var(--win-bg-card)',
           border: '1px solid var(--win-border)',
           color: 'var(--win-text-primary)',
           fontFamily: 'var(--win-font-mono)',
-          fontSize: '11px',
+          fontSize: '11.5px',
+          lineHeight: '1.5',
           padding: '10px',
-          borderRadius: '4px',
+          borderRadius: '6px',
           resize: 'none',
           outline: 'none',
         }}
@@ -436,32 +641,209 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
     </div>
   );
 
+  // ---- Navicat / dbForge Style Tree Grid Section ----
+  const renderTreeGroup = (
+    grpKey: 'different' | 'onlySource' | 'onlyTarget' | 'identical',
+    grpTitle: string,
+    grpIcon: React.ReactNode,
+    grpTables: TableDiff[],
+  ) => {
+    if (grpTables.length === 0) return null;
+    const isExpanded = expandedGroups[grpKey] ?? true;
+    const allChecked = grpTables.every((t) => checkedTables.has(t.name));
+    const someChecked = grpTables.some((t) => checkedTables.has(t.name));
+
+    return (
+      <div key={grpKey} style={{ display: 'flex', flexDirection: 'column' }}>
+        {/* Section Header Row */}
+        <div
+          onClick={() => toggleGroupExpand(grpKey)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '6px 10px',
+            background: 'var(--win-bg-card)',
+            borderBottom: '1px solid var(--win-border)',
+            cursor: 'pointer',
+            fontSize: '11.5px',
+            fontWeight: 600,
+            userSelect: 'none',
+          }}
+        >
+          {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+
+          {/* Group Checkbox */}
+          <span onClick={(e) => toggleAllCheckedInGroup(grpTables, e)} style={{ display: 'flex', alignItems: 'center', color: 'var(--win-accent)' }}>
+            {allChecked ? <CheckSquare size={14} /> : someChecked ? <MinusSquare size={14} /> : <Square size={14} style={{ color: 'var(--win-text-disabled)' }} />}
+          </span>
+
+          <span style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1 }}>
+            {grpIcon}
+            <span>{grpTitle}</span>
+            <span style={{ fontSize: '10.5px', color: 'var(--win-text-disabled)', fontWeight: 400 }}>
+              ({grpTables.filter((t) => checkedTables.has(t.name)).length} of {grpTables.length} selected)
+            </span>
+          </span>
+        </div>
+
+        {/* Group Child Table Rows */}
+        {isExpanded &&
+          grpTables.map((tb) => {
+            const isSel = selectedTable === tb.name;
+            const isTbExpanded = expandedTables[tb.name] ?? false;
+            const isChecked = checkedTables.has(tb.name);
+
+            const nonIdenticalCols = tb.columns.filter((c) => c.status !== 'identical');
+            const nonIdenticalIdxs = tb.indexes.filter((i) => i.status !== 'identical');
+            const nonIdenticalFks = tb.foreignKeys.filter((f) => f.status !== 'identical');
+            const hasChildren = nonIdenticalCols.length > 0 || nonIdenticalIdxs.length > 0 || nonIdenticalFks.length > 0;
+
+            return (
+              <React.Fragment key={tb.name}>
+                {/* Table Row */}
+                <div
+                  onClick={() => {
+                    setSelectedTable(tb.name);
+                    setShowBottomPane(true);
+                  }}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '24px 24px 28px 1fr 50px 1fr',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '5px 12px',
+                    borderBottom: '1px solid var(--win-border)',
+                    background: isSel ? 'var(--win-bg-active)' : 'transparent',
+                    cursor: 'pointer',
+                    fontSize: '11.5px',
+                    transition: 'background 0.1s ease',
+                  }}
+                >
+                  {/* Expand Chevron for child columns */}
+                  <span onClick={(e) => hasChildren && toggleTableExpand(tb.name, e)} style={{ opacity: hasChildren ? 1 : 0.2 }}>
+                    {isTbExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                  </span>
+
+                  {/* Table Checkbox */}
+                  <span onClick={(e) => toggleTableChecked(tb.name, e)} style={{ color: isChecked ? 'var(--win-accent)' : 'var(--win-text-disabled)' }}>
+                    {isChecked ? <CheckSquare size={13} /> : <Square size={13} />}
+                  </span>
+
+                  {/* Table / View Icon (Column 3 - 28px) */}
+                  <span style={{ color: tb.kind === 'view' ? '#8b5cf6' : 'var(--win-accent)', display: 'flex', alignItems: 'center' }}>
+                    {tb.kind === 'view' ? <Eye size={14} /> : <TableIcon size={14} />}
+                  </span>
+
+                  {/* Source Object Name + VIEW Badge (Column 4 - 1fr) */}
+                  <span style={{ fontWeight: 500, color: 'var(--win-text-primary)', wordBreak: 'break-all', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span>{tb.status === 'onlyTarget' ? '—' : tb.name}</span>
+                    {tb.kind === 'view' && (
+                      <span style={{ fontSize: '9px', background: 'rgba(139, 92, 246, 0.15)', color: '#8b5cf6', padding: '1px 5px', borderRadius: '3px', fontWeight: 600, border: '1px solid rgba(139, 92, 246, 0.3)', flexShrink: 0 }}>
+                        VIEW
+                      </span>
+                    )}
+                  </span>
+
+                  {/* Operation Icon (Navicat style) */}
+                  <span style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                    {tb.status === 'onlySource' && <span title="Create Table"><Plus size={14} style={{ color: '#10b981' }} /></span>}
+                    {tb.status === 'onlyTarget' && <span title="Drop Table"><X size={14} style={{ color: '#ef4444' }} /></span>}
+                    {tb.status === 'different' && <span title="Modify Table"><ArrowRight size={14} style={{ color: '#f59e0b' }} /></span>}
+                    {tb.status === 'identical' && <span style={{ color: 'var(--win-text-disabled)', fontSize: '12px' }}>=</span>}
+                  </span>
+
+                  {/* Target Object Name + VIEW Badge (Column 6 - 1fr) */}
+                  <span style={{ color: tb.status === 'onlySource' ? 'var(--win-text-disabled)' : 'var(--win-text-primary)', wordBreak: 'break-all', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span>{tb.status === 'onlySource' ? '—' : tb.name}</span>
+                    {tb.kind === 'view' && (
+                      <span style={{ fontSize: '9px', background: 'rgba(139, 92, 246, 0.15)', color: '#8b5cf6', padding: '1px 5px', borderRadius: '3px', fontWeight: 600, border: '1px solid rgba(139, 92, 246, 0.3)', flexShrink: 0 }}>
+                        VIEW
+                      </span>
+                    )}
+                  </span>
+                </div>
+
+                {/* Nested Child Columns / Indexes Rows (Navicat style) */}
+                {isTbExpanded && (
+                  <>
+                    {nonIdenticalCols.map((c) => (
+                      <div
+                        key={c.name}
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: '24px 24px 28px 1fr 50px 1fr',
+                          alignItems: 'center',
+                          gap: '6px',
+                          padding: '4px 12px 4px 44px',
+                          borderBottom: '1px solid var(--win-border)',
+                          background: 'rgba(0,0,0,0.03)',
+                          fontSize: '10.5px',
+                          color: 'var(--win-text-secondary)',
+                        }}
+                      >
+                        <span />
+                        <span style={{ color: 'var(--win-text-disabled)' }}>
+                          <Square size={12} />
+                        </span>
+                        <Columns3 size={12} style={{ color: 'var(--win-text-disabled)' }} />
+                        <span style={{ ...mono }}>{c.source ? `${c.name} (${c.source.type})` : '—'}</span>
+                        <span style={{ display: 'flex', justifyContent: 'center' }}>
+                          {c.status === 'onlySource' ? (
+                            <Plus size={12} style={{ color: '#10b981' }} />
+                          ) : c.status === 'onlyTarget' ? (
+                            <X size={12} style={{ color: '#ef4444' }} />
+                          ) : (
+                            <span style={{ color: '#f59e0b' }}>~</span>
+                          )}
+                        </span>
+                        <span style={{ ...mono }}>{c.target ? `${c.name} (${c.target.type})` : '—'}</span>
+                      </div>
+                    ))}
+
+                    {nonIdenticalIdxs.map((idx) => (
+                      <div
+                        key={idx.name}
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: '24px 24px 28px 1fr 50px 1fr',
+                          alignItems: 'center',
+                          gap: '6px',
+                          padding: '4px 12px 4px 44px',
+                          borderBottom: '1px solid var(--win-border)',
+                          background: 'rgba(0,0,0,0.03)',
+                          fontSize: '10.5px',
+                          color: 'var(--win-text-secondary)',
+                        }}
+                      >
+                        <span />
+                        <span style={{ color: 'var(--win-text-disabled)' }}>
+                          <Square size={12} />
+                        </span>
+                        <Hash size={12} style={{ color: 'var(--win-text-disabled)' }} />
+                        <span style={{ ...mono }}>{idx.source ? `${idx.name}` : '—'}</span>
+                        <span style={{ display: 'flex', justifyContent: 'center' }}>
+                          {idx.status === 'onlySource' ? <Plus size={12} style={{ color: '#10b981' }} /> : <X size={12} style={{ color: '#ef4444' }} />}
+                        </span>
+                        <span style={{ ...mono }}>{idx.target ? `${idx.name}` : '—'}</span>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </React.Fragment>
+            );
+          })}
+      </div>
+    );
+  };
+
   // ---- Tab CẤU TRÚC ----
   const structurePane = (
     <>
-      {schemaResult && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' }}>
-          <Chip tone="ok">{t('compare.summaryOnlySource', { n: schemaResult.summary.tablesOnlySource })}</Chip>
-          <Chip tone="danger">{t('compare.summaryOnlyTarget', { n: schemaResult.summary.tablesOnlyTarget })}</Chip>
-          <Chip tone="warn">{t('compare.summaryDifferent', { n: schemaResult.summary.tablesDifferent })}</Chip>
-          <Chip>{t('compare.summaryIdentical', { n: schemaResult.summary.tablesIdentical })}</Chip>
-          <Chip>
-            {t('compare.summaryColumns', {
-              a: schemaResult.summary.columnsOnlySource,
-              b: schemaResult.summary.columnsOnlyTarget,
-              c: schemaResult.summary.columnsDifferent,
-            })}
-          </Chip>
-          <Chip>{t('compare.summaryIndexes', { n: schemaResult.summary.indexDiffs })}</Chip>
-          <Chip>{t('compare.summaryForeignKeys', { n: schemaResult.summary.foreignKeyDiffs })}</Chip>
-          <span style={{ marginLeft: 'auto', ...label }}>
-            {t('compare.totalDiff', { n: totalDiffCount(schemaResult.summary) })}
-          </span>
-        </div>
-      )}
-
       {schemaResult && schemaResult.identical && (
-        <div style={{ fontSize: '12px', color: 'var(--st-ok)' }}>{t('compare.identicalSchema')}</div>
+        <div style={{ fontSize: '12px', color: 'var(--st-ok)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <CheckCircle2 size={14} /> {t('compare.identicalSchema')}
+        </div>
       )}
 
       {!schemaResult && !busy && (
@@ -471,124 +853,88 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
       )}
 
       {schemaResult && (
-        <div style={{ display: 'flex', flex: 1, gap: '10px', minHeight: 0 }}>
-          {/* Danh sách bảng */}
-          <div style={{ width: '260px', display: 'flex', flexDirection: 'column', gap: '6px', minHeight: 0 }}>
-            <div style={{ position: 'relative' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, gap: '10px', minHeight: 0 }}>
+          {/* Search & Filter Bar */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ position: 'relative', width: '260px' }}>
               <input
                 type="text"
-                style={{ ...input, paddingRight: '24px' }}
+                style={{ ...input, paddingRight: '26px' }}
                 placeholder={t('compare.searchTables')}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
-              <Search size={11} style={{ position: 'absolute', right: '7px', top: '50%', transform: 'translateY(-50%)', color: 'var(--win-text-secondary)', pointerEvents: 'none' }} />
+              <Search size={12} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', color: 'var(--win-text-secondary)', pointerEvents: 'none' }} />
             </div>
-            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', alignItems: 'center' }}>
-              {(['onlySource', 'onlyTarget', 'different', 'identical'] as DiffStatus[]).map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => toggleStatus(s)}
-                  disabled={statusCounts[s] === 0}
-                  title={statusCounts[s] === 0 ? t('compare.filterEmpty') : undefined}
-                  className={`btn ${statusFilter.has(s) ? 'btn-primary' : 'btn-secondary'}`}
-                  style={{ padding: '0 7px', height: '22px', fontSize: '10px' }}
-                >
-                  {t(statusLabelKey(s) as never)} ({statusCounts[s]})
-                </button>
-              ))}
-              {statusFilter.size > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setStatusFilter(new Set())}
-                  className="btn btn-secondary"
-                  style={{ padding: '0 7px', height: '22px', fontSize: '10px' }}
-                >
-                  {t('compare.clearFilter')}
-                </button>
-              )}
-            </div>
-            <div style={{ flex: 1, overflowY: 'auto', border: '1px solid var(--win-border)', borderRadius: '4px' }}>
-              {filtered.length === 0 && (
-                <div style={{ padding: '8px', fontSize: '11px', color: 'var(--win-text-disabled)' }}>{t('compare.noTableMatch')}</div>
-              )}
-              {filtered.map((tb: TableDiff) => (
-                <div
-                  key={tb.name}
-                  onClick={() => setSelectedTable(tb.name)}
-                  style={{
-                    padding: '5px 8px',
-                    cursor: 'pointer',
-                    borderBottom: '1px solid var(--win-border)',
-                    background: selectedTable === tb.name ? 'rgba(0,102,204,0.10)' : 'transparent',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                  }}
-                >
-                  <span style={{ fontSize: '11.5px', color: 'var(--win-text-primary)', wordBreak: 'break-all', flex: 1 }}>
-                    {tb.name}
-                    {tb.kind === 'view' && (
-                      <span style={{ color: 'var(--win-text-disabled)', fontSize: '10px' }}> · {t('compare.kindView')}</span>
-                    )}
-                  </span>
-                  <Badge tone={statusTone(tb.status)}>{tb.status === 'identical' ? '=' : tb.diffCount}</Badge>
-                </div>
-              ))}
+
+            <div style={{ display: 'flex', gap: '4px' }}>
+              <button
+                type="button"
+                onClick={() => setStatusFilter(new Set())}
+                className={`btn ${statusFilter.size === 0 ? 'btn-primary' : 'btn-secondary'}`}
+                style={{ padding: '3px 9px', fontSize: '10.5px' }}
+              >
+                Tất cả ({schemaResult.tables.length})
+              </button>
+              {(['different', 'onlySource', 'onlyTarget', 'identical'] as DiffStatus[]).map((s) => {
+                const count = schemaResult.tables.filter((t) => t.status === s).length;
+                if (count === 0 && !statusFilter.has(s)) return null;
+                return (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => toggleStatus(s)}
+                    className={`btn ${statusFilter.has(s) ? 'btn-primary' : 'btn-secondary'}`}
+                    style={{ padding: '3px 9px', fontSize: '10.5px' }}
+                  >
+                    {t(statusLabelKey(s) as never)} ({count})
+                  </button>
+                );
+              })}
             </div>
           </div>
 
-          {/* Chi tiết / SQL */}
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px', minWidth: 0, minHeight: 0 }}>
-            <div style={{ display: 'flex', gap: '6px' }}>
-              <button className={`btn ${rightTab === 'diff' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setRightTab('diff')} style={{ padding: '0 10px' }}>
-                {t('compare.tabDetail')}
+          {/* Navicat / dbForge Style Top Object Tree Grid Panel */}
+          <div style={{ flex: showBottomPane ? 1 : 2, minHeight: '220px', border: '1px solid var(--win-border)', borderRadius: '6px', overflowY: 'auto', background: 'var(--win-bg-card)', transition: 'all 0.2s ease' }}>
+            {/* Header Columns */}
+            <div style={{ display: 'grid', gridTemplateColumns: '24px 24px 28px 1fr 50px 1fr', gap: '6px', padding: '6px 12px', borderBottom: '1px solid var(--win-border)', background: 'var(--win-bg-popover)', ...label, position: 'sticky', top: 0, zIndex: 10, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
+              <span />
+              <span />
+              <span />
+              <span>Source Object (Nguồn A)</span>
+              <span style={{ textAlign: 'center' }}>Op</span>
+              <span>Target Object (Đích B)</span>
+            </div>
+
+            {renderTreeGroup('different', 'Objects to be modified', <ArrowRight size={14} style={{ color: '#f59e0b' }} />, groupedTables.different)}
+            {renderTreeGroup('onlySource', 'Objects to be created (Only in Source)', <Plus size={14} style={{ color: '#10b981' }} />, groupedTables.onlySource)}
+            {renderTreeGroup('onlyTarget', 'Objects to be deleted (Only in Target)', <X size={14} style={{ color: '#ef4444' }} />, groupedTables.onlyTarget)}
+            {renderTreeGroup('identical', 'Identical objects', <CheckCircle2 size={14} style={{ color: 'var(--win-text-disabled)' }} />, groupedTables.identical)}
+          </div>
+
+          {/* Bottom Pane: DDL Comparison / Deployment Script Tabs (Collapsible) */}
+          <div style={{ flex: showBottomPane ? 1 : '0 0 auto', display: 'flex', flexDirection: 'column', gap: '6px', minHeight: showBottomPane ? '200px' : 'auto' }}>
+            <div style={{ display: 'flex', gap: '6px', borderBottom: showBottomPane ? '1px solid var(--win-border)' : 'none', paddingBottom: showBottomPane ? '6px' : '0', alignItems: 'center' }}>
+              <button className={`btn ${bottomTab === 'ddl' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => { setBottomTab('ddl'); setShowBottomPane(true); }} style={{ padding: '3px 12px', fontSize: '11px' }}>
+                So sánh DDL (DDL Comparison)
               </button>
-              <button className={`btn ${rightTab === 'sql' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setRightTab('sql')} style={{ padding: '0 10px' }}>
-                {t('compare.tabSyncSql')}
+              <button className={`btn ${bottomTab === 'sql' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => { setBottomTab('sql'); setShowBottomPane(true); }} style={{ padding: '3px 12px', fontSize: '11px' }}>
+                Script SQL đồng bộ (Deployment Script)
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setShowBottomPane(!showBottomPane)}
+                style={{ marginLeft: 'auto', padding: '3px 10px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                title={showBottomPane ? 'Thu gọn phần chi tiết' : 'Mở rộng phần chi tiết'}
+              >
+                {showBottomPane ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
+                <span>{showBottomPane ? 'Ẩn chi tiết' : 'Hiện chi tiết DDL'}</span>
               </button>
             </div>
 
-            {rightTab === 'sql' ? (
-              sqlPane
-            ) : !selected ? (
-              <div style={{ color: 'var(--win-text-disabled)', fontSize: '12px' }}>{t('compare.pickTable')}</div>
-            ) : (
-              <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '10px', paddingRight: '4px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--win-text-primary)' }}>{selected.name}</span>
-                  <Badge tone={statusTone(selected.status)}>{t(statusLabelKey(selected.status) as never)}</Badge>
-                  {selected.changes.map((c) => (
-                    <Chip key={c}>{t(columnChangeKey(c) as never)}</Chip>
-                  ))}
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr 1fr', gap: '8px', ...label }}>
-                  <span>{t('compare.headerItem')}</span>
-                  <span>{t('compare.headerSource')}</span>
-                  <span>{t('compare.headerTarget')}</span>
-                </div>
-                {detailRows<ColumnMeta>(selected.columns, describeColumn, t('compare.sectionColumns'), <Columns3 size={12} />)}
-                {detailRows<IndexMeta>(selected.indexes, describeIndex, t('compare.sectionIndexes'), <Hash size={12} />)}
-                {detailRows<ForeignKeyMeta>(selected.foreignKeys, describeForeignKey, t('compare.sectionForeignKeys'), <GitCompare size={12} />)}
-                {selected.primaryKey.differs && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    <span style={label}>{t('compare.sectionPrimaryKey')}</span>
-                    <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr 1fr', gap: '8px', fontSize: '11px', padding: '5px 8px', border: '1px solid var(--win-border)', borderRadius: '4px' }}>
-                      <Badge tone="warn">{t('compare.statusDifferent')}</Badge>
-                      <span style={mono}>{selected.primaryKey.source?.join(', ') || '—'}</span>
-                      <span style={mono}>{selected.primaryKey.target?.join(', ') || '—'}</span>
-                    </div>
-                  </div>
-                )}
-                {selected.viewDefinitionDiffers && (
-                  <div style={{ fontSize: '11px', color: 'var(--st-warn)' }}>{t('compare.viewDefinitionDiffers')}</div>
-                )}
-                {selected.status === 'identical' && (
-                  <div style={{ fontSize: '11.5px', color: 'var(--st-ok)' }}>{t('compare.identicalTable')}</div>
-                )}
-              </div>
-            )}
+            {showBottomPane && (bottomTab === 'ddl' ? ddlPane : sqlPane)}
           </div>
         </div>
       )}
@@ -604,275 +950,325 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
         </div>
       )}
 
-      {overview && !dataTable && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, minHeight: 0 }}>
-          <div style={{ ...label, display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span>{t('compare.overviewHeader', { n: overview.tables.length })}</span>
-            <Chip tone="warn">{t('compare.overviewDiffTables', { n: overview.tablesWithDifference })}</Chip>
-          </div>
-          <div style={{ flex: 1, overflowY: 'auto', border: '1px solid var(--win-border)', borderRadius: '4px' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 110px 110px 130px 110px', gap: '8px', padding: '5px 8px', borderBottom: '1px solid var(--win-border)', position: 'sticky', top: 0, background: 'var(--win-bg-card)', ...label }}>
-              <span>{t('compare.colTable')}</span>
-              <span style={{ textAlign: 'right' }}>{t('compare.colRowsSource')}</span>
-              <span style={{ textAlign: 'right' }}>{t('compare.colRowsTarget')}</span>
-              <span>{t('compare.colStatus')}</span>
-              <span />
+      {overview && (
+        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, gap: '10px', minHeight: 0 }}>
+          {/* Search & Overview Header Bar */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ position: 'relative', width: '260px' }}>
+              <input
+                type="text"
+                style={{ ...input, paddingRight: '26px' }}
+                placeholder={t('compare.searchTables')}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+              <Search size={12} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', color: 'var(--win-text-secondary)', pointerEvents: 'none' }} />
             </div>
-            {overview.tables.map((row) => (
-              <div
-                key={row.name}
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: '1fr 110px 110px 130px 110px',
-                  gap: '8px',
-                  padding: '4px 8px',
-                  borderBottom: '1px solid var(--win-border)',
-                  alignItems: 'center',
-                  fontSize: '11.5px',
-                }}
+
+            <div style={{ marginLeft: 'auto', ...label, display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span>{t('compare.overviewHeader', { n: overview.tables.length })}</span>
+              <Badge tone="warn">{t('compare.overviewDiffTables', { n: overview.tablesWithDifference })}</Badge>
+            </div>
+          </div>
+
+          {/* Top Panel: Tree Grid of Data Overview (Identical Layout to Structure Compare) */}
+          <div style={{ flex: showBottomPane ? 1 : 2, minHeight: '200px', border: '1px solid var(--win-border)', borderRadius: '6px', overflowY: 'auto', background: 'var(--win-bg-card)', transition: 'all 0.2s ease' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '24px 24px 28px 1fr 50px 1fr 100px', gap: '6px', padding: '6px 12px', borderBottom: '1px solid var(--win-border)', background: 'var(--win-bg-popover)', ...label, position: 'sticky', top: 0, zIndex: 10, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
+              <span />
+              <span onClick={toggleAllDataTablesChecked} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+                {overview.tables.length > 0 && overview.tables.every((t) => checkedDataTables.has(t.name)) ? (
+                  <CheckSquare size={13} style={{ color: 'var(--win-accent)' }} />
+                ) : overview.tables.some((t) => checkedDataTables.has(t.name)) ? (
+                  <MinusSquare size={13} style={{ color: 'var(--win-accent)' }} />
+                ) : (
+                  <Square size={13} style={{ color: 'var(--win-text-disabled)' }} />
+                )}
+              </span>
+              <span />
+              <span>Source Table & Rows (Nguồn A)</span>
+              <span style={{ textAlign: 'center' }}>Op</span>
+              <span>Target Table & Rows (Đích B)</span>
+              <span style={{ textAlign: 'right' }}>Hành động</span>
+            </div>
+
+            {overview.tables
+              .filter((row) => !search || row.name.toLowerCase().includes(search.toLowerCase()))
+              .map((row) => {
+                const bg =
+                  row.status === 'onlySource'
+                    ? 'var(--win-status-added)'
+                    : row.status === 'onlyTarget'
+                      ? 'var(--win-status-deleted)'
+                      : row.status === 'differentCount'
+                        ? 'var(--win-status-modified)'
+                        : 'transparent';
+                const borderLeft =
+                  row.status === 'onlySource'
+                    ? '3px solid var(--win-status-added-border)'
+                    : row.status === 'onlyTarget'
+                      ? '3px solid var(--win-status-deleted-border)'
+                      : row.status === 'differentCount'
+                        ? '3px solid var(--win-status-modified-border)'
+                        : '3px solid transparent';
+
+                const isSelectedData = dataTable === row.name;
+
+                return (
+                  <div
+                    key={row.name}
+                    onClick={() => {
+                      setShowBottomPane(true);
+                      openTableData(row.name, row.primaryKey || []);
+                    }}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '24px 24px 28px 1fr 50px 1fr 100px',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '5px 12px',
+                      borderBottom: '1px solid var(--win-border)',
+                      background: isSelectedData ? 'var(--win-bg-active)' : bg,
+                      borderLeft: borderLeft,
+                      cursor: 'pointer',
+                      fontSize: '11.5px',
+                      transition: 'background 0.1s ease',
+                    }}
+                  >
+                    <span />
+                    <span onClick={(e) => toggleDataTableChecked(row.name, e)} style={{ cursor: 'pointer', color: checkedDataTables.has(row.name) ? 'var(--win-accent)' : 'var(--win-text-disabled)', display: 'flex', alignItems: 'center' }}>
+                      {checkedDataTables.has(row.name) ? <CheckSquare size={13} /> : <Square size={13} />}
+                    </span>
+                    <span style={{ color: 'var(--win-accent)', display: 'flex', alignItems: 'center' }}>
+                      <TableIcon size={14} />
+                    </span>
+
+                    {/* Source Name + Rows */}
+                    <span style={{ fontWeight: 600, color: 'var(--win-text-primary)', wordBreak: 'break-all', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span>{row.status === 'onlyTarget' ? '—' : row.name}</span>
+                      {row.sourceRows !== null && (
+                        <span style={{ ...mono, fontSize: '10.5px', color: 'var(--win-text-secondary)', fontWeight: 400 }}>
+                          ({num(row.sourceRows)} dòng)
+                        </span>
+                      )}
+                    </span>
+
+                    {/* Operation Icon */}
+                    <span style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                      {row.status === 'onlySource' && <span title="Only in Source"><Plus size={14} style={{ color: '#10b981' }} /></span>}
+                      {row.status === 'onlyTarget' && <span title="Only in Target"><X size={14} style={{ color: '#ef4444' }} /></span>}
+                      {row.status === 'differentCount' && <span title="Different Count"><ArrowRight size={14} style={{ color: '#f59e0b' }} /></span>}
+                      {row.status === 'sameCount' && <span style={{ color: 'var(--win-text-disabled)', fontSize: '12px' }}>=</span>}
+                    </span>
+
+                    {/* Target Name + Rows */}
+                    <span style={{ fontWeight: 600, color: row.status === 'onlySource' ? 'var(--win-text-disabled)' : 'var(--win-text-primary)', wordBreak: 'break-all', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span>{row.status === 'onlySource' ? '—' : row.name}</span>
+                      {row.targetRows !== null && (
+                        <span style={{ ...mono, fontSize: '10.5px', color: 'var(--win-text-secondary)', fontWeight: 400 }}>
+                          ({num(row.targetRows)} dòng)
+                        </span>
+                      )}
+                    </span>
+
+                    {/* Action Button */}
+                    <span style={{ textAlign: 'right' }}>
+                      <button
+                        className={`btn ${isSelectedData ? 'btn-primary' : 'btn-secondary'}`}
+                        style={{ padding: '2px 8px', height: '22px', fontSize: '10px' }}
+                        title={row.comparable ? undefined : t('compare.noKeyHint')}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowBottomPane(true);
+                          openTableData(row.name, row.primaryKey || []);
+                        }}
+                      >
+                        {t('compare.compareThisTable')}
+                      </button>
+                    </span>
+                  </div>
+                );
+              })}
+          </div>
+
+          {/* Bottom Panel: Detailed Data Diff / Data Sync SQL (Collapsible) */}
+          <div style={{ flex: showBottomPane ? 1 : '0 0 auto', display: 'flex', flexDirection: 'column', gap: '6px', minHeight: showBottomPane ? '200px' : 'auto' }}>
+            <div style={{ display: 'flex', gap: '6px', borderBottom: showBottomPane ? '1px solid var(--win-border)' : 'none', paddingBottom: showBottomPane ? '6px' : '0', alignItems: 'center' }}>
+              <span style={{ ...label, fontSize: '11.5px', marginRight: '6px' }}>
+                Chi tiết dữ liệu so sánh: {dataTable ? <strong style={{ color: 'var(--win-accent)' }}>{dataTable}</strong> : '(Chọn một bảng phía trên)'}
+              </span>
+              {dataResult && (
+                <div style={{ display: 'flex', gap: '4px' }}>
+                  <button className={`btn ${dataTab === 'rows' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => { setDataTab('rows'); setShowBottomPane(true); }} style={{ padding: '3px 10px', fontSize: '11px' }}>
+                    {t('compare.tabRows')}
+                  </button>
+                  <button className={`btn ${dataTab === 'sql' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => { setDataTab('sql'); setShowBottomPane(true); }} style={{ padding: '3px 10px', fontSize: '11px' }}>
+                    {t('compare.tabSyncSql')}
+                  </button>
+                </div>
+              )}
+
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setShowBottomPane(!showBottomPane)}
+                style={{ marginLeft: 'auto', padding: '3px 10px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                title={showBottomPane ? 'Thu gọn phần chi tiết' : 'Mở rộng phần chi tiết'}
               >
-                <span style={{ color: 'var(--win-text-primary)', wordBreak: 'break-all' }}>{row.name}</span>
-                <span style={{ ...mono, textAlign: 'right' }}>{num(row.sourceRows)}</span>
-                <span style={{ ...mono, textAlign: 'right' }}>{num(row.targetRows)}</span>
-                <span>
-                  <Badge tone={statusTone(row.status)}>{t(statusLabelKey(row.status) as never)}</Badge>
-                </span>
-                <span>
-                  {row.status !== 'onlySource' && row.status !== 'onlyTarget' && (
-                    <button
-                      className="btn btn-secondary"
-                      style={{ padding: '0 8px', height: '22px', fontSize: '10px' }}
-                      title={row.comparable ? undefined : t('compare.noKeyHint')}
-                      onClick={() => openTableData(row.name, row.primaryKey)}
-                    >
-                      {t('compare.compareThisTable')}
-                    </button>
-                  )}
-                </span>
+                {showBottomPane ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
+                <span>{showBottomPane ? 'Ẩn chi tiết' : 'Hiện chi tiết Dữ liệu'}</span>
+              </button>
+            </div>
+
+            {showBottomPane && !dataTable && (
+              <div style={{ padding: '24px', textAlign: 'center', color: 'var(--win-text-disabled)', fontSize: '12px' }}>
+                {t('compare.pickTable', { defaultValue: 'Bấm "So sánh" ở bất kỳ bảng nào trên danh sách để xem dữ liệu chênh lệch chi tiết' })}
               </div>
-            ))}
-            {overview.tables.some((r) => r.error) && (
-              <div style={{ padding: '6px 8px', fontSize: '11px', color: 'var(--st-warn)' }}>
-                {t('compare.overviewSomeErrors')}
+            )}
+
+            {showBottomPane && dataTable && dataResult && dataTab === 'sql' && sqlPane}
+
+            {showBottomPane && dataTable && dataResult && dataTab === 'rows' && (
+              <div style={{ flex: 1, overflow: 'auto', border: '1px solid var(--win-border)', borderRadius: '6px', background: 'var(--win-bg-card)' }}>
+                <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+                  <thead>
+                    <tr>
+                      <th style={thStyle}>{t('compare.colStatus')}</th>
+                      <th style={thStyle}>{t('compare.colKey')}</th>
+                      <th style={thStyle}>{t('compare.colSide')}</th>
+                      {dataResult.columns.map((c) => (
+                        <th key={c} style={thStyle}>
+                          {c}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dataResult.rows.map((row, ri) => {
+                      const cells = (which: 'source' | 'target') => {
+                        const data = which === 'source' ? row.source : row.target;
+                        return (
+                          <tr key={`${ri}-${which}`}>
+                            {which === 'source' && (
+                              <>
+                                <td style={tdStyle} rowSpan={row.status === 'different' ? 2 : 1}>
+                                  <Badge tone={statusTone(row.status)}>{t(statusLabelKey(row.status) as never)}</Badge>
+                                </td>
+                                <td style={{ ...tdStyle, ...mono }} rowSpan={row.status === 'different' ? 2 : 1}>
+                                  {row.key.map((k) => formatCell(k)).join(' / ')}
+                                </td>
+                              </>
+                            )}
+                            <td style={{ ...tdStyle, fontWeight: 600 }}>
+                              {which === 'source' ? t('compare.sideA') : t('compare.sideB')}
+                            </td>
+                            {dataResult.columns.map((c) => (
+                              <td
+                                key={c}
+                                style={{
+                                  ...tdStyle,
+                                  ...mono,
+                                  background: row.changedColumns.includes(c) ? 'var(--win-status-modified)' : undefined,
+                                  color: data ? 'var(--win-text-primary)' : 'var(--win-text-disabled)',
+                                }}
+                              >
+                                {data ? formatCell(data[c]) : '—'}
+                              </td>
+                            ))}
+                          </tr>
+                        );
+                      };
+                      if (row.status === 'onlySource') return cells('source');
+                      if (row.status === 'onlyTarget') return cells('target');
+                      return (
+                        <React.Fragment key={ri}>
+                          {cells('source')}
+                          {cells('target')}
+                        </React.Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             )}
           </div>
         </div>
       )}
-
-      {dataTable && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1, minHeight: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px', flexWrap: 'wrap' }}>
-            <button className="btn btn-secondary" onClick={() => { setDataTable(null); setDataResult(null); }} style={{ padding: '0 9px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <ArrowLeft size={12} /> {t('compare.backToOverview')}
-            </button>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: 1, minWidth: '180px' }}>
-              <span style={label}>{t('compare.keyColumnsLabel', { name: dataTable })}</span>
-              <input type="text" style={input} value={keyText} placeholder={t('compare.keyColumnsPlaceholder')} onChange={(e) => setKeyText(e.target.value)} />
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '130px' }}>
-              <span style={label}>{t('compare.limitLabel')}</span>
-              <input
-                type="number"
-                min={1}
-                style={input}
-                value={rowLimit}
-                onChange={(e) => setRowLimit(Math.max(1, Number(e.target.value) || 1))}
-              />
-            </div>
-            <button
-              className="btn btn-primary"
-              disabled={!!busy}
-              onClick={() => runDataCompare(dataTable, keyText.split(',').map((s) => s.trim()).filter(Boolean))}
-              style={{ padding: '0 12px', display: 'flex', alignItems: 'center', gap: '5px' }}
-            >
-              <RefreshCw size={12} className={busy ? 'loading-spinner' : undefined} /> {t('compare.runData')}
-            </button>
-          </div>
-
-          {dataResult && (
-            <>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' }}>
-                <Chip tone="ok">{t('compare.summaryRowsOnlySource', { n: dataResult.summary.onlySource })}</Chip>
-                <Chip tone="danger">{t('compare.summaryRowsOnlyTarget', { n: dataResult.summary.onlyTarget })}</Chip>
-                <Chip tone="warn">{t('compare.summaryRowsDifferent', { n: dataResult.summary.different })}</Chip>
-                <Chip>{t('compare.summaryRowsIdentical', { n: dataResult.summary.identical })}</Chip>
-                <Chip>{t('compare.summaryRowsScanned', { a: dataResult.summary.sourceRows, b: dataResult.summary.targetRows })}</Chip>
-                <span style={{ marginLeft: 'auto', display: 'flex', gap: '6px' }}>
-                  <button className={`btn ${dataTab === 'rows' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setDataTab('rows')} style={{ padding: '0 10px' }}>
-                    {t('compare.tabRows')}
-                  </button>
-                  <button className={`btn ${dataTab === 'sql' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setDataTab('sql')} style={{ padding: '0 10px' }}>
-                    {t('compare.tabSyncSql')}
-                  </button>
-                </span>
-              </div>
-
-              {dataResult.identical && <div style={{ fontSize: '12px', color: 'var(--st-ok)' }}>{t('compare.identicalData')}</div>}
-
-              {dataTab === 'sql' ? (
-                sqlPane
-              ) : (
-                <div style={{ flex: 1, overflow: 'auto', border: '1px solid var(--win-border)', borderRadius: '4px' }}>
-                  {dataResult.rowsTruncated && (
-                    <div style={{ padding: '5px 8px', fontSize: '11px', color: 'var(--st-warn)', borderBottom: '1px solid var(--win-border)' }}>
-                      {t('compare.rowsTruncated', { n: dataResult.rows.length })}
-                    </div>
-                  )}
-                  <table style={{ borderCollapse: 'collapse', width: '100%' }}>
-                    <thead>
-                      <tr>
-                        <th style={thStyle}>{t('compare.colStatus')}</th>
-                        <th style={thStyle}>{t('compare.colKey')}</th>
-                        <th style={thStyle}>{t('compare.colSide')}</th>
-                        {dataResult.columns.map((c) => (
-                          <th key={c} style={thStyle}>
-                            {c}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {dataResult.rows.map((row, ri) => {
-                        const cells = (which: 'source' | 'target') => {
-                          const data = which === 'source' ? row.source : row.target;
-                          return (
-                            <tr key={`${ri}-${which}`}>
-                              {which === 'source' && (
-                                <>
-                                  <td style={tdStyle} rowSpan={row.status === 'different' ? 2 : 1}>
-                                    <Badge tone={statusTone(row.status)}>{t(statusLabelKey(row.status) as never)}</Badge>
-                                  </td>
-                                  <td style={{ ...tdStyle, ...mono }} rowSpan={row.status === 'different' ? 2 : 1}>
-                                    {row.key.map((k) => formatCell(k)).join(' / ')}
-                                  </td>
-                                </>
-                              )}
-                              {which === 'target' && row.status !== 'different' && (
-                                <>
-                                  <td style={tdStyle}>
-                                    <Badge tone={statusTone(row.status)}>{t(statusLabelKey(row.status) as never)}</Badge>
-                                  </td>
-                                  <td style={{ ...tdStyle, ...mono }}>{row.key.map((k) => formatCell(k)).join(' / ')}</td>
-                                </>
-                              )}
-                              <td style={{ ...tdStyle, fontWeight: 600 }}>
-                                {which === 'source' ? t('compare.sideA') : t('compare.sideB')}
-                              </td>
-                              {dataResult.columns.map((c) => (
-                                <td
-                                  key={c}
-                                  style={{
-                                    ...tdStyle,
-                                    ...mono,
-                                    background: row.changedColumns.includes(c) ? 'rgba(255,159,10,0.12)' : undefined,
-                                    color: data ? 'var(--win-text-primary)' : 'var(--win-text-disabled)',
-                                  }}
-                                >
-                                  {data ? formatCell(data[c]) : '—'}
-                                </td>
-                              ))}
-                            </tr>
-                          );
-                        };
-                        if (row.status === 'onlySource') return cells('source');
-                        if (row.status === 'onlyTarget') return cells('target');
-                        return (
-                          <React.Fragment key={ri}>
-                            {cells('source')}
-                            {cells('target')}
-                          </React.Fragment>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
     </>
   );
-
-  const warnings = (mode === 'structure' ? schemaResult?.warnings : dataResult?.warnings) || [];
 
   return (
     <Modal
       title={t('compare.title')}
-      icon={<ArrowLeftRight size={14} style={{ color: 'var(--win-accent)', flexShrink: 0 }} />}
+      icon={<ArrowLeftRight size={15} style={{ color: 'var(--win-accent)', flexShrink: 0 }} />}
       onClose={onClose}
-      width="1180px"
+      width="1240px"
       maxWidth="96vw"
-      height="88vh"
+      height="90vh"
       zIndex={10000}
     >
-        <ModalBody style={{ padding: '12px 16px', gap: '10px', flex: 1 }}>
-          {/* Hai phía */}
-          <div style={{ display: 'flex', alignItems: 'stretch', gap: '8px' }}>
-            {sideCard('source')}
-            <button
-              className="btn btn-secondary"
-              title={t('compare.swapSides')}
-              onClick={swap}
-              style={{ alignSelf: 'center', width: '30px', height: '28px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-            >
-              <ArrowLeftRight size={13} />
-            </button>
-            {sideCard('target')}
-          </div>
-          <div style={{ fontSize: '11px', color: 'var(--win-text-disabled)' }}>{t('compare.directionHint')}</div>
+      <ModalBody style={{ padding: '14px 18px', gap: '12px', flex: 1 }}>
+        {/* Row 1: Selectors Nguồn (A) - Đích (B) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          {sideCard('source')}
+          <button
+            className="btn btn-secondary"
+            title={t('compare.swapSides')}
+            onClick={swap}
+            style={{ width: '32px', height: '32px', padding: 0, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
+          >
+            <ArrowLeftRight size={14} />
+          </button>
+          {sideCard('target')}
+        </div>
 
-          {/* Chế độ + hành động */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            <button className={`btn ${mode === 'structure' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setMode('structure')} style={{ padding: '0 12px' }}>
+        {/* Row 2: Control Toolbar (Mode tabs + Options + Progress Bar + Run Button) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', background: 'var(--win-bg-card)', padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--win-border)', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: '4px' }}>
+            <button className={`btn ${mode === 'structure' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setMode('structure')} style={{ padding: '4px 12px', fontSize: '11px' }}>
               {t('compare.tabStructure')}
             </button>
-            <button className={`btn ${mode === 'data' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setMode('data')} style={{ padding: '0 12px' }}>
+            <button className={`btn ${mode === 'data' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setMode('data')} style={{ padding: '4px 12px', fontSize: '11px' }}>
               {t('compare.tabData')}
-            </button>
-
-            <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11px', color: 'var(--win-text-secondary)', cursor: 'pointer' }}>
-              <input type="checkbox" checked={includeDrops} onChange={(e) => setIncludeDrops(e.target.checked)} />
-              {t('compare.includeDrops')}
-            </label>
-
-            <button
-              className="btn btn-primary"
-              disabled={!!busy || !sideReady}
-              onClick={() => (mode === 'structure' ? runSchemaCompare() : runOverview())}
-              title={sideReady ? undefined : t('compare.pickSidesFirst')}
-              style={{ marginLeft: 'auto', padding: '0 14px', display: 'flex', alignItems: 'center', gap: '6px' }}
-            >
-              {busy ? <Loader size={12} className="loading-spinner" /> : <Play size={12} />}
-              {mode === 'structure' ? t('compare.runStructure') : t('compare.runOverview')}
             </button>
           </div>
 
-          {busy && (
-            <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <Loader size={12} className="loading-spinner" />
-              {busy}
-            </div>
-          )}
-          {notice && !busy && <div style={{ fontSize: '11px', color: 'var(--st-ok)' }}>{notice}</div>}
-          {error && (
-            <div style={{ fontSize: '11px', color: 'var(--st-danger)', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '4px', padding: '6px 8px' }}>
-              {error}
-            </div>
-          )}
-          {warnings.length > 0 && (
-            <div style={{ fontSize: '11px', color: 'var(--st-warn)', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-              {warnings.map((w, i) => (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                  <AlertTriangle size={11} /> {w}
-                </div>
-              ))}
-            </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--win-text-secondary)', cursor: 'pointer', userSelect: 'none' }}>
+            <input type="checkbox" checked={includeDrops} onChange={(e) => setIncludeDrops(e.target.checked)} />
+            {t('compare.includeDrops')}
+          </label>
+
+          {/* Diff Progress Bar Summary */}
+          {mode === 'structure' && schemaResult && (
+            <DiffProgressBar summary={schemaResult.summary} />
           )}
 
-          {mode === 'structure' ? structurePane : dataPane}
-        </ModalBody>
+          <button
+            className="btn btn-primary"
+            disabled={!!busy || !sideReady}
+            onClick={() => (mode === 'structure' ? runSchemaCompare() : runOverview())}
+            title={sideReady ? undefined : t('compare.pickSidesFirst')}
+            style={{ marginLeft: 'auto', padding: '6px 16px', fontSize: '11.5px', display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600 }}
+          >
+            {busy ? <Loader size={13} className="loading-spinner" /> : <Play size={13} />}
+            {mode === 'structure' ? t('compare.runStructure') : t('compare.runOverview')}
+          </button>
+        </div>
+
+        {busy && (
+          <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)', display: 'flex', alignItems: 'center', gap: '6px', padding: '0 4px' }}>
+            <Loader size={12} className="loading-spinner" />
+            {busy}
+          </div>
+        )}
+        {notice && !busy && <div style={{ fontSize: '11px', color: 'var(--st-ok)', padding: '0 4px' }}>{notice}</div>}
+        {error && (
+          <div style={{ fontSize: '11px', color: 'var(--st-danger)', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '6px', padding: '8px 12px' }}>
+            {error}
+          </div>
+        )}
+
+        {mode === 'structure' ? structurePane : dataPane}
+      </ModalBody>
     </Modal>
   );
 };
@@ -882,18 +1278,19 @@ const thStyle: React.CSSProperties = {
   fontSize: '10.5px',
   fontWeight: 600,
   color: 'var(--win-text-secondary)',
-  padding: '4px 7px',
+  padding: '6px 10px',
   borderBottom: '1px solid var(--win-border)',
   borderRight: '1px solid var(--win-border)',
   position: 'sticky',
   top: 0,
   background: 'var(--win-bg-card)',
   whiteSpace: 'nowrap',
+  zIndex: 1,
 };
 
 const tdStyle: React.CSSProperties = {
   fontSize: '11px',
-  padding: '3px 7px',
+  padding: '4px 10px',
   borderBottom: '1px solid var(--win-border)',
   borderRight: '1px solid var(--win-border)',
   maxWidth: '240px',

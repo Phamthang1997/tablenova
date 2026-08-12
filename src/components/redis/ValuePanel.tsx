@@ -280,7 +280,15 @@ const StringValue: React.FC<StringValueProps> = ({
 
   // Raw text and hex are the two editable views; everything else is a projection that cannot
   // be written back unambiguously.
-  const editableText = !readOnly && !truncated && !isBinary && (format === 'raw' || format === 'auto');
+  //
+  // `auto` is only editable when it *landed* on raw, i.e. what is on screen is what the key holds.
+  // Sniffing igbinary/php-serialize/JSON, or decompressing, all put a projection in the box, and
+  // saving that would write the projection over the value — `isBinary` does not catch it, because
+  // a short igbinary blob can be valid UTF-8. Editing those means picking `raw` (or `hex`).
+  const autoShowsStoredBytes = decoded?.format === 'raw';
+  const editableText =
+    !readOnly && !truncated && !isBinary
+    && (format === 'raw' || (format === 'auto' && autoShowsStoredBytes));
   const editableHex = !readOnly && !truncated && format === 'hex';
 
   const saveText = async () => {

@@ -4,6 +4,8 @@ import {
   parseInsert,
   parseDumpDatabase,
   parseDumpObjects,
+  parseDumpTableNames,
+  dumpStatementObject,
   buildDropStatements,
   stripLeadingSqlComments,
   isSkippedDumpStatement,
@@ -190,5 +192,110 @@ describe('parseInsert', () => {
 
   it('trả null với câu lệnh khác', () => {
     expect(parseInsert('UPDATE t SET a = 1')).toBeNull();
+  });
+
+  // Export gộp tới 500 dòng vào một INSERT -> phần đọc tuple phải là O(n), và phải đọc đủ.
+  it('đọc đủ dòng của một INSERT gộp nhiều dòng', () => {
+    const tuples = Array.from({ length: 500 }, (_, i) => `(${i}, 'name ${i}')`).join(',\n');
+    const r = parseInsert(`INSERT INTO \`t\` (\`id\`, \`name\`) VALUES\n${tuples}`);
+    expect(r?.rows).toHaveLength(500);
+    expect(r?.rows[0]).toEqual(['0', 'name 0']);
+    expect(r?.rows[499]).toEqual(['499', 'name 499']);
+  });
+
+  it('không ăn vào phần đuôi sau danh sách tuple', () => {
+    const r = parseInsert(
+      "INSERT INTO t (a, b) VALUES (1, 'x'), (2, 'y') ON DUPLICATE KEY UPDATE b = VALUES(b)"
+    );
+    expect(r?.rows).toEqual([
+      ['1', 'x'],
+      ['2', 'y'],
+    ]);
+  });
+
+  it('ngoặc và phẩy nằm trong chuỗi không cắt sai tuple', () => {
+    const r = parseInsert("INSERT INTO t (a) VALUES ('a),(b'), ('c')");
+    expect(r?.rows).toEqual([['a),(b'], ['c']]);
+  });
+});
+
+describe('parseDumpTableNames', () => {
+  it('dò bảng từ CREATE TABLE / INSERT INTO / DROP TABLE IF EXISTS', () => {
+    const sql = [
+      'DROP TABLE IF EXISTS `actor`;',
+      'CREATE TABLE `actor` (id int);',
+      "INSERT INTO `payment` VALUES (1);",
+    ].join('\n');
+    expect(parseDumpTableNames(sql)).toEqual(['actor', 'payment']);
+  });
+
+  // Lý do hàm này tồn tại: view được ghi bằng CREATE VIEW / DROP VIEW, không phải DROP TABLE.
+  // Không dò được thì view không vào danh sách chọn và backend loại luôn lệnh của nó.
+  it('dò cả view, kể cả dạng có ALGORITHM/DEFINER/SQL SECURITY', () => {
+    const sql = [
+      'DROP VIEW IF EXISTS `actor_info`;',
+      'CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY INVOKER VIEW `actor_info` AS select 1;',
+      'CREATE VIEW `film_list` AS select * from film;',
+      'CREATE OR REPLACE VIEW "staff_list" AS select 1;',
+    ].join('\n');
+    // Chỉ tên đối tượng ĐƯỢC TẠO, không phải bảng đọc trong thân view (`from film`).
+    expect(parseDumpTableNames(sql)).toEqual(['actor_info', 'film_list', 'staff_list']);
+  });
+
+  // The routine's own name must be listed: the backend only runs statements mentioning a name
+  // from this list (`stmt_mentions_table`), so a CREATE PROCEDURE touching no selected table
+  // used to be dropped from the restore. The TEMPORARY table inside its body stays excluded —
+  // that one is not an object of the database.
+  it('lấy tên routine nhưng bỏ bảng tạm khai báo trong thân', () => {
+    const sql = [
+      'CREATE TABLE `real_table` (id int);',
+      'CREATE PROCEDURE p() BEGIN CREATE TEMPORARY TABLE tmp_x (id int); INSERT INTO tmp_x VALUES (1); END',
+    ].join('\n');
+    expect(parseDumpTableNames(sql)).toEqual(['real_table', 'p']);
+  });
+
+  it('dò trigger / procedure / function, kể cả dạng có DEFINER', () => {
+    const sql = [
+      'DROP TRIGGER IF EXISTS `ins_film`;',
+      'CREATE DEFINER=`root`@`localhost` TRIGGER `ins_film` AFTER INSERT ON `film` FOR EACH ROW BEGIN END;',
+      'CREATE DEFINER=`root`@`localhost` PROCEDURE `film_in_stock`(IN p_film_id INT) BEGIN END;',
+      'CREATE OR REPLACE FUNCTION "held_by_customer"(p_id int) RETURNS int AS $$ BEGIN RETURN 1; END $$;',
+    ].join('\n');
+    expect(parseDumpTableNames(sql)).toEqual(['ins_film', 'film_in_stock', 'held_by_customer']);
+  });
+
+  it('không lặp tên và giữ thứ tự xuất hiện', () => {
+    const sql = 'INSERT INTO b VALUES (1); INSERT INTO a VALUES (1); INSERT INTO b VALUES (2);';
+    expect(parseDumpTableNames(sql)).toEqual(['b', 'a']);
+  });
+});
+
+describe('dumpStatementObject', () => {
+  it('lấy tên của đối tượng đầu tiên trong câu lệnh', () => {
+    expect(dumpStatementObject('INSERT INTO `film` VALUES (1)')).toBe('film');
+    expect(dumpStatementObject('DROP TABLE IF EXISTS "city"')).toBe('city');
+    expect(dumpStatementObject('CREATE TABLE IF NOT EXISTS x (id int)')).toBe('x');
+  });
+
+  it('với CREATE VIEW thì lấy tên view, không phải bảng trong thân', () => {
+    expect(
+      dumpStatementObject(
+        'CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY INVOKER VIEW `actor_info` AS select * from `film`'
+      )
+    ).toBe('actor_info');
+    expect(dumpStatementObject('DROP VIEW IF EXISTS `actor_info`')).toBe('actor_info');
+  });
+
+  it('với routine/trigger thì lấy tên của chính nó', () => {
+    expect(
+      dumpStatementObject('CREATE DEFINER=`root`@`localhost` PROCEDURE `film_in_stock`(IN id INT) BEGIN SELECT 1; END')
+    ).toBe('film_in_stock');
+    expect(dumpStatementObject('CREATE TRIGGER `ins_film` AFTER INSERT ON `film` FOR EACH ROW BEGIN END')).toBe('ins_film');
+    expect(dumpStatementObject('DROP FUNCTION IF EXISTS `get_customer_balance`')).toBe('get_customer_balance');
+  });
+
+  it('câu không nhắc bảng nào thì trả null', () => {
+    expect(dumpStatementObject('SET NAMES utf8mb4')).toBeNull();
+    expect(dumpStatementObject('USE `sakila`')).toBeNull();
   });
 });

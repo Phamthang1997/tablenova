@@ -6,7 +6,9 @@ import {
   ArrowDownAZ, Box, Combine, Database, Filter, Hash, KeyRound, Layers,
   LayoutGrid, Repeat, Rows3, Search, Sigma, Table, BarChart2, Clock, FileText, X,
   TriangleAlert, CircleCheck, CircleMinus, Settings2, Braces, ZoomIn, ZoomOut, RotateCcw,
+  Download, ChevronDown,
 } from 'lucide-react';
+import { pickSaveFilePath, saveExportFileAtPath } from '../utils/fileSave';
 
 const ZOOM_MIN = 0.4;
 const ZOOM_MAX = 2.5;
@@ -60,6 +62,7 @@ const PANEL_SURFACED_FIELDS = new Set([
   'Plan Rows', 'Actual Rows', 'Actual Loops',
   'Startup Cost', 'Total Cost', 'Actual Startup Time', 'Actual Total Time',
   'rawLine', 'raw',
+  'access_type', 'used_key_parts', 'used_columns', 'data_read_per_join', 'filtered', 'cost_info',
 ]);
 
 // "a, fa ⋈ s" — which tables this join step combines. Long left sides are abbreviated so the
@@ -71,6 +74,14 @@ function joinSummary(node: ExplainNode, maxLeft = 2): string {
     ? `${join.left.slice(0, maxLeft).join(', ')}, +${join.left.length - maxLeft}`
     : join.left.join(', ');
   return join.right ? `${left} ⋈ ${join.right}` : left;
+}
+
+function getDetailField(node: ExplainNode, key: string): any {
+  if (node.details?.[key] !== undefined) return node.details[key];
+  if (node.details?.cost_info?.[key] !== undefined) return node.details.cost_info[key];
+  if (node.children?.[0]?.details?.[key] !== undefined) return node.children[0].details[key];
+  if (node.children?.[0]?.details?.cost_info?.[key] !== undefined) return node.children[0].details.cost_info[key];
+  return undefined;
 }
 
 function remainingFields(node: ExplainNode): [string, string][] {
@@ -115,6 +126,18 @@ function operatorIcon(type: string) {
   return Box;
 }
 
+function operatorIconColor(type: string): string {
+  const s = type.toLowerCase();
+  if (s === 'select' || s.includes('plan') || s.includes('execute query')) return '#2563eb';
+  if (s.includes('nested loop') || s.includes('hash join') || s.includes('merge') || s.includes('combine') || s.includes('join')) return '#0284c7';
+  if (s.includes('table scan') || s.includes('scan')) return '#ea580c';
+  if (s.includes('lookup') || s.includes('index') || s.includes('search') || s.includes('constant') || s.includes('system')) return '#10b981';
+  if (s.includes('sort') || s.includes('order') || s.includes('group') || s.includes('aggregate')) return '#8b5cf6';
+  if (s.includes('filter') || s.includes('distinct')) return '#f43f5e';
+  if (s.includes('materiali') || s.includes('stream')) return '#6366f1';
+  return '#3b82f6';
+}
+
 function percentStyle(pct: number): { color: string; background: string } {
   if (pct >= 25) return { color: '#ef4444', background: 'rgba(239, 68, 68, 0.18)' };
   if (pct >= 15) return { color: '#f59e0b', background: 'rgba(245, 158, 11, 0.18)' };
@@ -141,11 +164,279 @@ interface FlowContext {
   costLabel: string;
 }
 
+interface SvgNodeLayout {
+  node: ExplainNode;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  children: SvgNodeLayout[];
+}
+
+function calculateSvgLayout(
+  node: ExplainNode,
+  depth = 0,
+  rowCounter = { count: 0 }
+): SvgNodeLayout {
+  const nodeW = 140;
+  const nodeH = 100;
+  const rowH = 128;
+  const connW = 88;
+
+  const children = (node.children || []).map(child =>
+    calculateSvgLayout(child, depth + 1, rowCounter)
+  );
+
+  let y: number;
+  if (children.length === 0) {
+    y = rowCounter.count * rowH + (rowH - nodeH) / 2;
+    rowCounter.count++;
+  } else if (children.length === 1) {
+    y = children[0].y;
+  } else {
+    const minY = children[0].y;
+    const maxY = children[children.length - 1].y;
+    y = (minY + maxY) / 2;
+  }
+
+  const x = depth * (nodeW + connW);
+
+  return {
+    node,
+    x,
+    y,
+    width: nodeW,
+    height: nodeH,
+    children,
+  };
+}
+
+function getSvgBounds(layout: SvgNodeLayout): { maxX: number; maxY: number } {
+  let maxX = layout.x + layout.width;
+  let maxY = layout.y + layout.height;
+  for (const child of layout.children) {
+    const b = getSvgBounds(child);
+    if (b.maxX > maxX) maxX = b.maxX;
+    if (b.maxY > maxY) maxY = b.maxY;
+  }
+  return { maxX, maxY };
+}
+
+function escapeXml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function buildExplainSvgDocument(
+  rootNode: ExplainNode,
+  totalSelfCost: number,
+  locale: string
+): string {
+  const isLight = document.body.classList.contains('light-theme');
+
+  const colors = isLight
+    ? {
+        bg: '#f8fafc',
+        cardBg: '#ffffff',
+        border: '#cbd5e1',
+        textPrimary: '#0f172a',
+        textSecondary: '#475569',
+        textDisabled: '#94a3b8',
+        line: '#94a3b8',
+      }
+    : {
+        bg: '#0f172a',
+        cardBg: '#1e293b',
+        border: '#334155',
+        textPrimary: '#f8fafc',
+        textSecondary: '#94a3b8',
+        textDisabled: '#64748b',
+        line: '#475569',
+      };
+
+  const layout = calculateSvgLayout(rootNode);
+  const bounds = getSvgBounds(layout);
+
+  const padding = 32;
+  const svgWidth = bounds.maxX + padding * 2;
+  const svgHeight = bounds.maxY + padding * 2;
+
+  let elementsSvg = '';
+
+  const renderConnectors = (item: SvgNodeLayout) => {
+    if (item.children.length === 0) return;
+
+    const parentRightX = item.x + item.width + padding;
+    const parentMidY = item.y + item.height / 2 + padding;
+
+    const connW = 88;
+    const spineX = parentRightX + connW / 2;
+
+    const firstChildMidY = item.children[0].y + item.children[0].height / 2 + padding;
+    const lastChildMidY = item.children[item.children.length - 1].y + item.children[item.children.length - 1].height / 2 + padding;
+
+    elementsSvg += `<line x1="${parentRightX}" y1="${parentMidY}" x2="${spineX}" y2="${parentMidY}" stroke="${colors.line}" stroke-width="1.5"/>`;
+    elementsSvg += `<polygon points="${parentRightX},${parentMidY} ${parentRightX + 6},${parentMidY - 4} ${parentRightX + 6},${parentMidY + 4}" fill="${colors.line}"/>`;
+
+    if (item.children.length > 1) {
+      elementsSvg += `<line x1="${spineX}" y1="${firstChildMidY}" x2="${spineX}" y2="${lastChildMidY}" stroke="${colors.line}" stroke-width="1.5"/>`;
+    }
+
+    for (const child of item.children) {
+      const childLeftX = child.x + padding;
+      const childMidY = child.y + child.height / 2 + padding;
+
+      elementsSvg += `<line x1="${spineX}" y1="${childMidY}" x2="${childLeftX}" y2="${childMidY}" stroke="${colors.line}" stroke-width="1.5"/>`;
+
+      const rows = child.node.actualRows ?? child.node.rowsOut ?? child.node.rows;
+      if (rows !== undefined) {
+        const rowStr = rows.toLocaleString(locale);
+        const textX = (spineX + childLeftX) / 2;
+        elementsSvg += `<text x="${textX}" y="${childMidY - 6}" fill="${colors.textSecondary}" font-size="11" font-family="sans-serif" text-anchor="middle">${escapeXml(rowStr)}</text>`;
+      }
+
+      renderConnectors(child);
+    }
+  };
+
+  const renderNodes = (item: SvgNodeLayout) => {
+    const x = item.x + padding;
+    const y = item.y + padding;
+    const w = item.width;
+    const h = item.height;
+
+    const opColor = operatorIconColor(item.node.type);
+    const pct = totalSelfCost > 0 && item.node.selfCost !== undefined
+      ? (item.node.selfCost / totalSelfCost) * 100
+      : undefined;
+
+    elementsSvg += `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="8" fill="${colors.cardBg}" stroke="${colors.border}" stroke-width="1.5"/>`;
+
+    if (pct !== undefined && pct >= 0.005) {
+      const badgeStyle = percentStyle(pct);
+      const pctStr = `${pct.toFixed(2)}%`;
+      elementsSvg += `<rect x="${x + 8}" y="${y + 8}" width="46" height="16" rx="3" fill="${badgeStyle.background}"/>`;
+      elementsSvg += `<text x="${x + 31}" y="${y + 20}" fill="${badgeStyle.color}" font-size="10" font-weight="bold" font-family="sans-serif" text-anchor="middle">${pctStr}</text>`;
+    }
+
+    const nodeTitle = escapeXml(item.node.type);
+    elementsSvg += `<text x="${x + w / 2}" y="${y + 46}" fill="${opColor}" font-size="12" font-weight="bold" font-family="sans-serif" text-anchor="middle">${nodeTitle}</text>`;
+
+    const subText = item.node.table || joinSummary(item.node, 2);
+    if (subText) {
+      const truncatedSub = subText.length > 18 ? subText.substring(0, 16) + '...' : subText;
+      elementsSvg += `<text x="${x + w / 2}" y="${y + 66}" fill="${colors.textSecondary}" font-size="10.5" font-family="sans-serif" text-anchor="middle">${escapeXml(truncatedSub)}</text>`;
+    }
+
+    if (item.node.selfCost !== undefined && item.node.selfCost > 0) {
+      const costStr = `Cost: ${formatCost(item.node.selfCost, locale)}`;
+      elementsSvg += `<text x="${x + w / 2}" y="${y + 84}" fill="${colors.textDisabled}" font-size="9.5" font-family="sans-serif" text-anchor="middle">${escapeXml(costStr)}</text>`;
+    }
+
+    for (const child of item.children) {
+      renderNodes(child);
+    }
+  };
+
+  renderConnectors(layout);
+  renderNodes(layout);
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${svgWidth}" height="${svgHeight}" viewBox="0 0 ${svgWidth} ${svgHeight}">
+    <rect width="100%" height="100%" fill="${colors.bg}"/>
+    ${elementsSvg}
+  </svg>`;
+}
+
+async function exportDiagramImage(
+  rootNode: ExplainNode,
+  totalSelfCost: number,
+  locale: string,
+  format: 'png' | 'jpeg' | 'svg',
+  fileName = `explain_diagram_${Date.now()}`
+) {
+  const ext = format === 'jpeg' ? 'jpg' : format;
+  const filterName = format === 'png' ? 'PNG Image (*.png)' : format === 'jpeg' ? 'JPEG Image (*.jpg)' : 'SVG Image (*.svg)';
+
+  // Open native OS "Save As" file dialog so user chooses folder AND file name
+  const targetPath = await pickSaveFilePath(fileName, ext, filterName);
+  if (!targetPath) return;
+
+  const svgString = buildExplainSvgDocument(rootNode, totalSelfCost, locale);
+
+  if (format === 'svg') {
+    await saveExportFileAtPath(targetPath, svgString, 'image/svg+xml');
+    return;
+  }
+
+  const match = svgString.match(/width="(\d+)" height="(\d+)"/);
+  const width = match ? parseInt(match[1], 10) : 800;
+  const height = match ? parseInt(match[2], 10) : 600;
+
+  const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const img = new Image();
+
+  await new Promise<void>((resolve, reject) => {
+    img.onload = async () => {
+      const dpr = 2;
+      const canvas = document.createElement('canvas');
+      canvas.width = width * dpr;
+      canvas.height = height * dpr;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        URL.revokeObjectURL(url);
+        reject(new Error('Canvas context unavailable'));
+        return;
+      }
+
+      ctx.scale(dpr, dpr);
+      if (format === 'jpeg') {
+        const isLight = document.body.classList.contains('light-theme');
+        ctx.fillStyle = isLight ? '#f8fafc' : '#0f172a';
+        ctx.fillRect(0, 0, width, height);
+      }
+      ctx.drawImage(img, 0, 0, width, height);
+      URL.revokeObjectURL(url);
+
+      const mimeType = format === 'jpeg' ? 'image/jpeg' : 'image/png';
+      canvas.toBlob(async (b) => {
+        if (b) {
+          const buffer = await b.arrayBuffer();
+          const bytes = new Uint8Array(buffer);
+          await saveExportFileAtPath(targetPath, bytes, mimeType);
+        }
+        resolve();
+      }, mimeType, 0.95);
+    };
+    img.onerror = (e) => {
+      URL.revokeObjectURL(url);
+      reject(e);
+    };
+    img.src = url;
+  });
+}
+
 export const ExplainDiagramView: React.FC<ExplainDiagramViewProps> = ({ result, onRequestJsonPlan }) => {
   const { t, i18n } = useTranslation();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
+  const [showExportDropdown, setShowExportDropdown] = useState(false);
   const canvasRef = useRef<HTMLDivElement>(null);
+  const diagramTargetRef = useRef<HTMLDivElement>(null);
+
+  const handleExport = async (format: 'png' | 'jpeg' | 'svg') => {
+    setShowExportDropdown(false);
+    if (!flowRoot) return;
+    try {
+      await exportDiagramImage(flowRoot, totalSelfCost, i18n.language, format);
+    } catch (err) {
+      console.error('Failed to export diagram image:', err);
+    }
+  };
 
   // React attaches `wheel` passively, so preventDefault has to come from a native listener —
   // without it Ctrl+wheel zooms the whole app instead of the diagram.
@@ -251,46 +542,89 @@ export const ExplainDiagramView: React.FC<ExplainDiagramViewProps> = ({ result, 
           <div style={{
             display: 'flex',
             alignItems: 'center',
-            gap: '2px',
+            gap: '8px',
             marginLeft: settingsText ? 0 : 'auto',
             flexShrink: 0,
           }}>
-            <ZoomButton
-              icon={ZoomOut}
-              label={t('explain.zoomOut')}
-              disabled={zoom <= ZOOM_MIN}
-              onClick={() => setZoom(z => clampZoom(z / ZOOM_STEP))}
-            />
-            <button
-              onClick={() => setZoom(1)}
-              title={t('explain.zoomReset')}
-              aria-label={t('explain.zoomReset')}
-              style={{
-                minWidth: '44px',
-                padding: '2px 4px',
-                background: 'transparent',
-                border: 'none',
-                color: 'var(--win-text-secondary)',
-                fontSize: '11px',
-                fontWeight: 600,
-                cursor: 'pointer',
-                fontVariantNumeric: 'tabular-nums',
-              }}
-            >
-              {Math.round(zoom * 100)}%
-            </button>
-            <ZoomButton
-              icon={ZoomIn}
-              label={t('explain.zoomIn')}
-              disabled={zoom >= ZOOM_MAX}
-              onClick={() => setZoom(z => clampZoom(z * ZOOM_STEP))}
-            />
-            <ZoomButton
-              icon={RotateCcw}
-              label={t('explain.zoomReset')}
-              disabled={zoom === 1}
-              onClick={() => setZoom(1)}
-            />
+            {/* Export Dropdown */}
+            <div style={{ position: 'relative', display: 'inline-block' }}>
+              <button
+                className="btn btn-secondary"
+                onClick={() => setShowExportDropdown(!showExportDropdown)}
+                style={{ padding: '2px 8px', fontSize: '11px', height: '22px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                title={t('explain.exportDiagramTitle', 'Xuất hình ảnh sơ đồ')}
+              >
+                <Download size={12} />
+                <span>Export Image</span>
+                <ChevronDown size={10} style={{ opacity: 0.7 }} />
+              </button>
+
+              {showExportDropdown && (
+                <>
+                  <div style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={() => setShowExportDropdown(false)} />
+                  <div style={{
+                    position: 'absolute',
+                    top: 'calc(100% + 4px)',
+                    right: 0,
+                    background: 'var(--win-bg-popover, var(--win-bg-card))',
+                    border: '1px solid var(--win-border-strong, var(--win-border))',
+                    borderRadius: '6px',
+                    boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+                    zIndex: 9999,
+                    minWidth: '130px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    padding: '4px 0',
+                  }}>
+                    <button className="copy-dropdown-item" onClick={() => handleExport('png')}>Export PNG</button>
+                    <button className="copy-dropdown-item" onClick={() => handleExport('jpeg')}>Export JPG</button>
+                    <button className="copy-dropdown-item" onClick={() => handleExport('svg')}>Export SVG</button>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div style={{ width: '1px', height: '12px', background: 'var(--win-border)', margin: '0 2px' }} />
+
+            {/* Zoom Controls */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+              <ZoomButton
+                icon={ZoomOut}
+                label={t('explain.zoomOut')}
+                disabled={zoom <= ZOOM_MIN}
+                onClick={() => setZoom(z => clampZoom(z / ZOOM_STEP))}
+              />
+              <button
+                onClick={() => setZoom(1)}
+                title={t('explain.zoomReset')}
+                aria-label={t('explain.zoomReset')}
+                style={{
+                  minWidth: '44px',
+                  padding: '2px 4px',
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'var(--win-text-secondary)',
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  fontVariantNumeric: 'tabular-nums',
+                }}
+              >
+                {Math.round(zoom * 100)}%
+              </button>
+              <ZoomButton
+                icon={ZoomIn}
+                label={t('explain.zoomIn')}
+                disabled={zoom >= ZOOM_MAX}
+                onClick={() => setZoom(z => clampZoom(z * ZOOM_STEP))}
+              />
+              <ZoomButton
+                icon={RotateCcw}
+                label={t('explain.zoomReset')}
+                disabled={zoom === 1}
+                onClick={() => setZoom(1)}
+              />
+            </div>
           </div>
         </div>
 
@@ -298,7 +632,7 @@ export const ExplainDiagramView: React.FC<ExplainDiagramViewProps> = ({ result, 
             `zoom` rather than `transform: scale` because zoom is layout-aware — the scroll
             extent follows the scaled content instead of staying at the unscaled size. */}
         <div ref={canvasRef} style={{ flex: 1, overflow: 'auto', padding: '20px 16px' }}>
-          <div style={{ minWidth: 'max-content', zoom }}>
+          <div ref={diagramTargetRef} style={{ minWidth: 'max-content', zoom }}>
             <SubTree node={flowRoot} ctx={ctx} />
           </div>
         </div>
@@ -350,10 +684,50 @@ export const ExplainDiagramView: React.FC<ExplainDiagramViewProps> = ({ result, 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             <div>
               <div style={{ fontSize: '10.5px', color: 'var(--win-text-disabled)', textTransform: 'uppercase', fontWeight: 600 }}>{t('explain.nodeOperation')}</div>
-              <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--win-text-primary)', marginTop: '2px' }}>
-                {selectedNode.type}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+                {(() => {
+                  const SelIcon = operatorIcon(selectedNode.type);
+                  const selColor = operatorIconColor(selectedNode.type);
+                  return (
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      width: '26px',
+                      height: '26px',
+                      borderRadius: '6px',
+                      background: `${selColor}18`,
+                      color: selColor,
+                      flexShrink: 0
+                    }}>
+                      <SelIcon size={15} />
+                    </div>
+                  );
+                })()}
+                <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--win-text-primary)' }}>
+                  {selectedNode.type}
+                </div>
               </div>
             </div>
+
+            {getDetailField(selectedNode, 'access_type') && (
+              <div>
+                <div style={{ fontSize: '10.5px', color: 'var(--win-text-disabled)' }}>{t('explain.nodeAccessType')}</div>
+                <div style={{
+                  display: 'inline-block',
+                  padding: '2px 8px',
+                  borderRadius: '4px',
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  fontFamily: 'var(--win-font-mono)',
+                  marginTop: '3px',
+                  background: String(getDetailField(selectedNode, 'access_type')).toLowerCase() === 'all' ? 'rgba(239, 68, 68, 0.15)' : String(getDetailField(selectedNode, 'access_type')).toLowerCase().includes('ref') ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                  color: String(getDetailField(selectedNode, 'access_type')).toLowerCase() === 'all' ? '#ef4444' : String(getDetailField(selectedNode, 'access_type')).toLowerCase().includes('ref') ? '#10b981' : '#f59e0b',
+                }}>
+                  {String(getDetailField(selectedNode, 'access_type')).toUpperCase()}
+                </div>
+              </div>
+            )}
 
             {selectedNode.table && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -365,11 +739,28 @@ export const ExplainDiagramView: React.FC<ExplainDiagramViewProps> = ({ result, 
               </div>
             )}
 
+            {getDetailField(selectedNode, 'used_columns') && (Array.isArray(getDetailField(selectedNode, 'used_columns')) ? getDetailField(selectedNode, 'used_columns').length > 0 : String(getDetailField(selectedNode, 'used_columns')).length > 0) && (
+              <div>
+                <div style={{ fontSize: '10.5px', color: 'var(--win-text-disabled)' }}>{t('explain.nodeUsedColumns')}</div>
+                <div style={{
+                  fontSize: '11px',
+                  fontFamily: 'var(--win-font-mono)',
+                  color: 'var(--win-text-secondary)',
+                  marginTop: '3px',
+                  wordBreak: 'break-word',
+                  background: 'rgba(0,0,0,0.1)',
+                  padding: '4px 6px',
+                  borderRadius: '4px'
+                }}>
+                  {Array.isArray(getDetailField(selectedNode, 'used_columns')) ? getDetailField(selectedNode, 'used_columns').join(', ') : String(getDetailField(selectedNode, 'used_columns'))}
+                </div>
+              </div>
+            )}
+
             {selectedNode.joinTables && (
               <div>
                 <div style={{ fontSize: '10.5px', color: 'var(--win-text-disabled)' }}>{t('explain.nodeJoin')}</div>
                 <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--win-text-primary)', wordBreak: 'break-word' }}>
-                  {/* Full left side here, unlike the abbreviated version on the node itself. */}
                   {joinSummary(selectedNode, Infinity)}
                 </div>
               </div>
@@ -412,6 +803,15 @@ export const ExplainDiagramView: React.FC<ExplainDiagramViewProps> = ({ result, 
               </div>
             )}
 
+            {getDetailField(selectedNode, 'used_key_parts') && (Array.isArray(getDetailField(selectedNode, 'used_key_parts')) ? getDetailField(selectedNode, 'used_key_parts').length > 0 : String(getDetailField(selectedNode, 'used_key_parts')).length > 0) && (
+              <div>
+                <div style={{ fontSize: '10.5px', color: 'var(--win-text-disabled)' }}>{t('explain.nodeUsedKeyParts')}</div>
+                <div style={{ fontSize: '11.5px', fontFamily: 'var(--win-font-mono)', color: 'var(--win-text-primary)', marginTop: '2px' }}>
+                  {Array.isArray(getDetailField(selectedNode, 'used_key_parts')) ? getDetailField(selectedNode, 'used_key_parts').join(', ') : String(getDetailField(selectedNode, 'used_key_parts'))}
+                </div>
+              </div>
+            )}
+
             {selectedNode.candidateIndexes && selectedNode.candidateIndexes.length > 0 && (
               <div>
                 <div style={{ fontSize: '10.5px', color: 'var(--win-text-disabled)' }}>{t('explain.nodeCandidateIndexes')}</div>
@@ -420,6 +820,27 @@ export const ExplainDiagramView: React.FC<ExplainDiagramViewProps> = ({ result, 
                 </div>
               </div>
             )}
+
+            {getDetailField(selectedNode, 'data_read_per_join') && (
+              <div>
+                <div style={{ fontSize: '10.5px', color: 'var(--win-text-disabled)' }}>{t('explain.nodeDataReadPerJoin')}</div>
+                <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--win-text-primary)', marginTop: '2px' }}>
+                  {String(getDetailField(selectedNode, 'data_read_per_join'))}
+                </div>
+              </div>
+            )}
+
+            {(() => {
+              const filteredVal = getDetailField(selectedNode, 'filtered') ?? getDetailField(selectedNode, 'FILTERED');
+              return filteredVal !== undefined && (
+                <div>
+                  <div style={{ fontSize: '10.5px', color: 'var(--win-text-disabled)' }}>{t('explain.nodeFiltered')}</div>
+                  <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--win-text-primary)', marginTop: '2px' }}>
+                    {Number(filteredVal).toFixed(2)}%
+                  </div>
+                </div>
+              );
+            })()}
 
             {selectedNode.cost && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -696,6 +1117,7 @@ const FlagIcon: React.FC<{ flags: ExplainFlag[]; ctx: FlowContext }> = ({ flags,
 
 const NodeCell: React.FC<{ node: ExplainNode; ctx: FlowContext }> = ({ node, ctx }) => {
   const Icon = operatorIcon(node.type);
+  const iconColor = operatorIconColor(node.type);
   const selected = ctx.selectedId === node.id;
   const pct = ctx.totalSelfCost > 0 && node.selfCost !== undefined
     ? (node.selfCost / ctx.totalSelfCost) * 100
@@ -745,7 +1167,20 @@ const NodeCell: React.FC<{ node: ExplainNode; ctx: FlowContext }> = ({ node, ctx
         {flags.length > 0 && <FlagIcon flags={flags} ctx={ctx} />}
       </div>
 
-      <Icon size={26} style={{ color: selected ? 'var(--win-accent)' : 'var(--win-text-primary)', flexShrink: 0 }} />
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: '34px',
+        height: '34px',
+        borderRadius: '8px',
+        background: selected ? 'var(--win-accent)' : `${iconColor}18`,
+        color: selected ? '#ffffff' : iconColor,
+        flexShrink: 0,
+        transition: 'all 0.15s ease',
+      }}>
+        <Icon size={20} />
+      </div>
 
       <div
         style={{
