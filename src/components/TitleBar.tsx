@@ -4,7 +4,7 @@ import { Trans, useTranslation } from 'react-i18next';
 import {
   Minus, Square, X, Plus, Unplug, FileCode, HardDriveDownload, HardDriveUpload,
   PanelLeft, SunMoon, RotateCw, Info, Keyboard, Check, Database,
-  GitBranch, PanelBottom, Bot, Lock, LockOpen, ChevronUp, ChevronRight, ChevronLeft, Trash2, BarChart3, BookOpen,
+  GitBranch, PanelBottom, Bot, Lock, LockOpen, ChevronUp, ChevronRight, ChevronLeft, Trash2, BarChart3, BookOpen, Sparkles,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -45,11 +45,12 @@ interface TitleBarProps {
   onToggleTheme?: () => void;
   onShowShortcuts?: () => void;
   onShowAbout?: () => void;
+  onShowWhatsNew?: () => void;
   onToggleTerminal?: () => void;
   /** Panel AI Copilot đang mở -> tô nút bằng màu accent. */
   aiOpen?: boolean;
   onToggleAiAssistant?: () => void;
-  onDatabaseChanged?: (dbName: string) => void;
+  onDatabaseChanged?: (dbName: string, schema?: string | null) => void;
   onOpenAllDbStats?: () => void;
   onOpenDocs?: () => void;
   onOpenCompare?: () => void;
@@ -76,6 +77,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
   onToggleTheme,
   onShowShortcuts,
   onShowAbout,
+  onShowWhatsNew,
   onToggleTerminal,
   aiOpen = false,
   onToggleAiAssistant,
@@ -174,7 +176,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
     setShowDbPopover(false);
     const res = await dbHelper.switchDatabase(name);
     if (res.success) {
-      onDatabaseChanged?.(res.database || name);
+      onDatabaseChanged?.(res.database || name, res.schema);
     } else {
       alert(`Error switching database: ${res.error}`);
     }
@@ -338,6 +340,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
       items: [
         { label: t('docs.title'), Icon: BookOpen, onClick: onOpenDocs, shortcut: 'F1' },
         { label: t('titlebar.shortcuts'), Icon: Keyboard, onClick: onShowShortcuts },
+        { label: t('titlebar.whatsNew'), Icon: Sparkles, onClick: onShowWhatsNew },
         { label: t('titlebar.about'), Icon: Info, onClick: onShowAbout, separatorBefore: true },
       ],
     },

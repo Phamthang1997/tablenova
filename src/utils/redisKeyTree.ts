@@ -110,6 +110,19 @@ export function flattenTree(root: TreeNode, expanded: Set<string>): TreeRow[] {
   return rows;
 }
 
+/**
+ * The `SCAN MATCH` pattern that selects exactly the keys under a folder.
+ *
+ * The prefix is **data**, not a pattern, so its glob metacharacters have to be escaped: a folder
+ * literally named `post[1]` would otherwise produce `post[1]:*`, which Redis reads as a character
+ * class and matches `post1:…` — a delete that hits keys the user never saw while leaving the group
+ * on screen untouched. Redis's matcher (`stringmatchlen`) takes `\` as the escape, and only
+ * `\ * ? [ ]` are special.
+ */
+export function folderMatchPattern(path: string): string {
+  return `${path.replace(/[\\*?[\]]/g, (c) => `\\${c}`)}*`;
+}
+
 /** Every folder path in the tree — used by "expand all". */
 export function allFolderPaths(root: TreeNode): string[] {
   const out: string[] = [];

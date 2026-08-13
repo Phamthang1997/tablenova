@@ -73,6 +73,7 @@ const vi: typeof en = {
     reload: 'Tải lại ứng dụng',
     shortcuts: 'Phím tắt bàn phím...',
     about: 'Về TableNova...',
+    whatsNew: 'Có gì mới trong TableNova...',
     minimize: 'Thu nhỏ',
     maximize: 'Phóng to / thu về',
     closeWindow: 'Đóng',
@@ -81,6 +82,23 @@ const vi: typeof en = {
     schemaCompare: 'Di trú / so sánh cấu trúc',
     toggleTerminal: 'Ẩn/hiện terminal',
     sqlButton: 'SQL',
+  },
+
+  whatsNew: {
+    modalHeader: 'Có gì mới trong TableNova',
+    showOnStartup: 'Hiển thị khi khởi động',
+    prevSlide: 'Slide trước',
+    nextSlide: 'Slide tiếp theo',
+    slide1Title: 'Gặp gỡ "Ask AI": Trợ lý SQL thông minh',
+    slide1Desc: 'Xây dựng và tối ưu câu lệnh SQL nhanh hơn với các tác vụ AI tùy chỉnh. Tự động giải thích truy vấn phức tạp và đề xuất sửa lỗi trong vài giây.',
+    slide2Title: 'Sơ đồ Phân tích EXPLAIN Trực quan',
+    slide2Desc: 'Phân tích kế hoạch thực thi truy vấn phức tạp với sơ đồ cây trực quan, hiển thị tỉ lệ chi phí % và phát hiện điểm nghẽn hiệu năng.',
+    slide3Title: 'Trình Tạo Dữ Liệu Thử Nghiệm Thông Minh',
+    slide3Desc: 'Tạo hàng chục ngàn dòng dữ liệu giả lập chất lượng cao với các quy tắc liên kết khóa ngoại và tốc độ chèn dữ liệu cực nhanh.',
+    slide4Title: 'So Sánh & Di Trú Cấu Trúc CSDL',
+    slide4Desc: 'So sánh sự khác biệt cấu trúc CSDL giữa các môi trường Staging và Production, xem chi tiết side-by-side và xuất file SQL migration.',
+    slide5Title: 'Hỗ Trợ Đa Cơ Sở Dữ Liệu & Hiệu Năng Cao',
+    slide5Desc: 'Tích hợp native siêu tốc cho PostgreSQL, MySQL, SQLite và Redis cùng với giao diện tối/sáng hiện đại, tùy biến cao.',
   },
 
   connInfo: {
@@ -210,6 +228,8 @@ const vi: typeof en = {
     confirmDropDbTitle: 'Xóa database (Drop Database)',
     confirmDropViewTitle: 'Xóa khung nhìn (Drop View)',
     confirmDropTableTitle: 'Xóa bảng (Drop Table)',
+    confirmDropSequenceTitle: 'Xóa Sequence',
+    confirmDropSequenceMessage: 'Bạn có chắc chắn muốn xóa Sequence "{{name}}" không?',
     confirmTruncateMessage:
       'Xóa <strong>TOÀN BỘ dữ liệu</strong> trong bảng <code>{{name}}</code>? Cấu trúc bảng vẫn được giữ nguyên.',
     confirmDropDbMessage:
@@ -244,6 +264,9 @@ const vi: typeof en = {
     objDefView: 'Khung nhìn',
 
     errSwitchDb: 'Lỗi đổi database: {{message}}',
+    schema: 'Schema',
+    schemaHint: 'Schema PostgreSQL mà mọi truy vấn, xuất dữ liệu và sửa đổi sẽ dùng',
+    errSwitchSchema: 'Lỗi đổi schema: {{message}}',
     errDropCurrentDb:
       'Không thể xóa database đang kết nối. Hãy chuyển sang database khác trước.',
     errDropDb: 'Lỗi xóa database: {{message}}',
@@ -252,6 +275,7 @@ const vi: typeof en = {
     errCreateDb: 'Lỗi tạo database: {{message}}',
     promptDbName: 'Vui lòng nhập tên database.',
     createdDbSwitch: 'Đã tạo database "{{name}}". Chuyển sang dùng database này ngay?',
+    createdDbTitle: 'Đã tạo database',
     errObjectDef: 'Không lấy được định nghĩa: {{message}}',
     renameTableSuccess: 'Đổi tên bảng thành công!',
     errRenameTable: 'Lỗi đổi tên: {{message}}',
@@ -360,6 +384,8 @@ const vi: typeof en = {
     saveSuccess: 'Đã lưu cấu hình kết nối!',
     errDeleteDemo: 'Không thể xóa kết nối demo.',
     confirmDeleteProfile: 'Bạn có chắc chắn muốn xóa cấu hình kết nối này?',
+    confirmDeleteProfileTitle: 'Xóa kết nối',
+    confirmExportPlainTitle: 'Xuất mà không đặt mật khẩu tệp',
     redisTestOk: 'Kết nối Redis OK (PING thành công).',
     testOk: 'Kiểm tra kết nối thành công!',
     errConnectFailed: 'Kết nối thất bại: {{message}}',
@@ -724,6 +750,15 @@ const vi: typeof en = {
   },
 
   structure: {
+    // Drop confirmations — wording kept verbatim from the window.confirm() calls they replace.
+    confirmDropCheckTitle: 'Xóa Check constraint',
+    confirmDropCheckMessage: 'Bạn có chắc muốn xóa Check constraint "{{name}}"?',
+    confirmDropTriggerTitle: 'Xóa Trigger',
+    confirmDropTriggerMessage: 'Bạn có chắc muốn xóa Trigger "{{name}}"?',
+    confirmDropPartitionTitle: 'Xóa Partition',
+    confirmDropPartitionMessage: 'Bạn có chắc muốn xóa Partition "{{name}}"?',
+    confirmDropPartitionNote: 'Dữ liệu thuộc partition này sẽ bị xóa theo.',
+
     tableNameLabel: 'Tên bảng:',
     addColumn: 'Thêm cột',
     addIndex: 'Thêm chỉ mục',
@@ -1168,6 +1203,8 @@ const vi: typeof en = {
     queryTabLabel: 'Truy vấn {{n}}',
     confirmDiscardGridChanges:
       'Bảng hiện tại còn thay đổi CHƯA LƯU. Bỏ các thay đổi đó và tiếp tục?',
+    confirmDiscardGridTitle: 'Thay đổi chưa lưu',
+    confirmDiscardGridLabel: 'Bỏ thay đổi và tiếp tục',
 
     readOnlyOnTitle: 'Chế độ Chỉ đọc đang BẬT — nhấn để tắt',
     readOnlyOffTitle: 'Bật chế độ Chỉ đọc (chặn mọi thao tác ghi)',
@@ -1851,6 +1888,7 @@ const vi: typeof en = {
     sqlOk: '[OK] Lệnh đã thực thi.',
     errSessionClosed: 'Phiên shell đã đóng — bấm "Kết nối lại" rồi thử lại.',
 
+    enableLogTitle: 'Bật ghi log',
     enablingLog: 'Đang bật log...',
     errEnableLog: 'Bật log thất bại: {{message}}',
     errEnableLogPerm: 'kiểm tra quyền (SUPER/superuser).',
@@ -2007,6 +2045,8 @@ const vi: typeof en = {
     capReached: "Đã dừng ở {{n}} key. Thu hẹp pattern, hoặc nạp tiếp lô sau.",
     loadMore: "Nạp tiếp",
     keyCountFiltered: "{{n}} key khớp trong số đã quét",
+    ctxFolderShown: "đang hiện {{n}} key",
+    ctxDeleteGroup: "Xoá toàn bộ key thuộc prefix này…",
     bulkDeleteTitle: "Xoá key theo pattern",
     bulkDeleteDesc: "Quét keyspace và UNLINK mọi key khớp. Tổng số chỉ biết được trong lúc chạy.",
     bulkDeletePattern: "Pattern",
@@ -2274,6 +2314,9 @@ const vi: typeof en = {
     sqliteNoDropDb: 'SQLite không hỗ trợ xóa database',
     sqliteNoCreateDb: 'SQLite không hỗ trợ tạo database (mỗi tệp là một database)',
     sqliteSingleDb: 'SQLite không hỗ trợ nhiều database trên một kết nối',
+    schemaOnlyPostgres: 'Chỉ PostgreSQL mới hỗ trợ chọn schema',
+    missingSchemaName: 'Thiếu tên schema',
+    schemaNotFound: "Schema '{{a}}' không tồn tại",
     cascadeOnlyPostgres: 'CASCADE chỉ được hỗ trợ trên PostgreSQL',
     terminalClosed: 'Phiên terminal đã đóng',
     paramsSingleStatement:

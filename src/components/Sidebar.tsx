@@ -6,6 +6,7 @@ import type { TableItem, SchemaInfo, TriggerInfo, CheckConstraintInfo } from '..
 import { Search, Table, Terminal, TerminalSquare, RefreshCw, Layers, Plus, ChevronDown, ChevronRight, Braces, Cog, Info, Key, Sliders, FileCode, Trash2, CheckCircle2, Copy, AlertTriangle, History, Bookmark, Columns3, ArrowDownAZ, Link2, Zap } from 'lucide-react';
 import { CreateTableModal } from './CreateTableModal';
 import { Modal, ModalBody, ModalFooter } from './Modal';
+import { ConfirmDialog } from './ConfirmDialog';
 import { GitCompare, ArrowLeftRight, HardDriveDownload, HardDriveUpload, Wand2 } from 'lucide-react';
 import { RoutineEditorModal } from './RoutineEditorModal';
 import { ViewEditorModal } from './ViewEditorModal';
@@ -570,6 +571,10 @@ interface SidebarProps {
   onTableRenamed?: (oldName: string, newName: string) => void;
   onTableDropped?: (tableName: string) => void;
   onDatabaseChanged?: (name: string) => void;
+  /** Schema đang chọn (chỉ Postgres). Nguồn sự thật là backend — xem App.tsx. */
+  schema?: string | null;
+  /** Đổi schema xong: App cập nhật state + khoá localStorage, Sidebar tự nạp lại danh sách. */
+  onSchemaChanged?: (name: string) => void;
   onOpenQueryWithSql?: (sql: string) => void;
   onOpenRoutineTab?: (name: string, kind: 'procedure' | 'function') => void;
   onOpenViewTab?: (name: string) => void;
@@ -598,6 +603,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onTableRenamed,
   onTableDropped,
   onDatabaseChanged,
+  schema,
+  onSchemaChanged,
   onOpenQueryWithSql,
   onOpenRoutineTab,
   onOpenViewTab,
@@ -614,6 +621,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const [tables, setTables] = useState<TableItem[]>([]);
+  const [schemas, setSchemas] = useState<string[]>([]);
+  const [switchingSchema, setSwitchingSchema] = useState(false);
   const [functions, setFunctions] = useState<string[]>([]);
   const [procedures, setProcedures] = useState<string[]>([]);
   const [objDef, setObjDef] = useState<{ name: string; kind: 'view' | 'function' | 'procedure'; sql: string } | null>(null);
@@ -809,6 +818,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [newDb, setNewDb] = useState({ name: '', encoding: '', collation: '' });
   const [dbCharsets, _setDbCharsets] = useState<{ encodings: string[]; collations?: string[]; collationsByEncoding?: Record<string, string[]> }>({ encodings: [] });
   const [renameDbState, setRenameDbState] = useState<{ oldName: string; value: string } | null>(null);
+  /** Freshly created database, waiting on the "switch to it now?" answer. */
+  const [switchToNewDb, setSwitchToNewDb] = useState<string | null>(null);
 
 
   const handleRenameDatabase = async () => {
@@ -839,10 +850,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     if (res.success) {
       setShowCreateDb(false);
       setNewDb({ name: '', encoding: '', collation: '' });
-      if (confirm(t('sidebar.createdDbSwitch', { name }))) {
-        await dbHelper.switchDatabase(name);
-        onDatabaseChanged?.(name);
-      }
+      // "Created — switch to it now?" — window.confirm shows nothing in the Tauri webview,
+      // so this question used to return undefined silently and never switched database.
+      setSwitchToNewDb(name);
     } else {
       alert(t('sidebar.errCreateDb', { message: res.error }));
     }
@@ -857,6 +867,40 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setFunctions(objs.functions || []);
     setProcedures(objs.procedures || []);
     setRefreshing(false);
+  };
+
+  // Danh sách schema cho ô chọn. Rỗng với MySQL/SQLite (backend trả mảng rỗng), nên chỉ cần
+  // kiểm tra độ dài là biết có hiện ô chọn hay không.
+  //
+  // Nạp lại khi ĐỔI DATABASE: database mới có tập schema riêng, danh sách cũ là của server
+  // trước đó. Giá trị đang chọn thì lấy từ prop `schema` (nguồn là backend), không giữ ở đây —
+  // hai bản sao sẽ lệch nhau ngay lần đổi database đầu tiên.
+  useEffect(() => {
+    if (dbType !== 'postgres') {
+      setSchemas([]);
+      return;
+    }
+    let alive = true;
+    dbHelper.listSchemas().then((res) => {
+      if (alive) setSchemas(res.schemas || []);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [dbType, dbName]);
+
+  const handleSchemaChange = async (name: string) => {
+    if (!name || name === schema || switchingSchema) return;
+    setSwitchingSchema(true);
+    try {
+      // set_current_schema từ chối schema không tồn tại — báo đúng lời backend thay vì để ô chọn
+      // hiển thị một schema mà mọi truy vấn sau đó không dùng.
+      const res = await dbHelper.setSchema(name);
+      if (res.success) onSchemaChanged?.(res.schema || name);
+      else alert(t('sidebar.errSwitchSchema', { message: res.error || '' }));
+    } finally {
+      setSwitchingSchema(false);
+    }
   };
 
   const handleShowObjectDef = async (name: string, kind: 'view' | 'function' | 'procedure') => {
@@ -876,13 +920,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
+  // `schema` cũng nằm trong deps: đổi schema là đổi hẳn tập bảng, y như đổi database.
   useEffect(() => {
     fetchTables();
     // After a database switch the old selection points at names that no longer exist —
     // clear it, and drop the Shift anchor so no range is taken against the previous list.
     setSelection({ section: 'tables', names: [] });
     anchorRef.current = -1;
-  }, [dbName]);
+  }, [dbName, schema]);
 
   useEffect(() => {
     const handleGlobalRename = () => {
@@ -1279,6 +1324,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </button>
         ))}
       </div>
+
+      {/* Ô chọn schema — chỉ Postgres. MySQL coi schema là database (đã có ô chọn database ở
+          thanh tiêu đề) và SQLite thì luôn là `main`, nên `list_schemas` trả rỗng ở cả hai và
+          khối này tự biến mất mà không cần kiểm tra dbType ở đây. */}
+      {schemas.length > 0 && (
+        <div className="sidebar-schema-bar">
+          <Layers size={13} className="sidebar-schema-icon" />
+          <select
+            className="form-input sidebar-schema-select"
+            value={schema ?? ''}
+            disabled={switchingSchema}
+            title={t('sidebar.schemaHint')}
+            aria-label={t('sidebar.schema')}
+            onChange={(e) => handleSchemaChange(e.target.value)}
+          >
+            {/* Chỉ xuất hiện khi backend chưa báo được schema nào (probe lỗi) — không để ô chọn
+                hiện bừa một tên mà backend không dùng. */}
+            {!schema && <option value="">{t('sidebar.schema')}</option>}
+            {schemas.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {/* Top Search Input with Left Search Icon & Right Sliders Icon */}
       <div className="sidebar-search-container" style={{ padding: '4px 8px' }}>
@@ -2623,6 +2694,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </ModalFooter>
         </Modal>
       )}
+
+      {/* zIndex above the sidebar's own 999999 dialogs. */}
+      <ConfirmDialog
+        open={!!switchToNewDb}
+        tone="success"
+        zIndex={1000000}
+        title={t('sidebar.createdDbTitle')}
+        message={t('sidebar.createdDbSwitch', { name: switchToNewDb || '' })}
+        onConfirm={async () => {
+          const name = switchToNewDb;
+          setSwitchToNewDb(null);
+          if (!name) return;
+          await dbHelper.switchDatabase(name);
+          onDatabaseChanged?.(name);
+        }}
+        onCancel={() => setSwitchToNewDb(null)}
+      />
     </div>
   );
 };

@@ -8,7 +8,7 @@ interface DbRailProps {
   dbName: string;
   /** How many connections are open. The rail shows from 2 up — see the note below. */
   connectionCount: number;
-  onDatabaseChanged: (name: string) => void;
+  onDatabaseChanged: (name: string, schema?: string | null) => void;
 }
 
 /**
@@ -59,7 +59,7 @@ export const DbRail: React.FC<DbRailProps> = ({ dbName, connectionCount, onDatab
       // switch_database refuses while a transaction is open — report exactly what the
       // backend said (already translated at the dbHelper boundary) instead of swallowing
       // the error and leaving the rail pointing at the wrong database.
-      if (res.success) onDatabaseChanged(res.database || name);
+      if (res.success) onDatabaseChanged(res.database || name, res.schema);
       else alert(t('sidebar.errSwitchDb', { message: res.error || '' }));
     } finally {
       setSwitching(null);

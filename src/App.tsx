@@ -25,6 +25,7 @@ import { ExportDatabaseDialog } from './components/ExportDatabaseDialog';
 import type { DatabaseExportOptions } from './components/ExportDatabaseDialog';
 import { ImportDatabaseDialog } from './components/ImportDatabaseDialog';
 import { DocViewerModal } from './components/DocViewerModal';
+import { WhatsNewModal, WHATS_NEW_STORAGE_KEY, WHATS_NEW_AUTO_SHOW_KEY } from './components/WhatsNewModal';
 import { X } from 'lucide-react';
 import { getVersion } from '@tauri-apps/api/app';
 import { PostgresIcon, MySqlIcon, RedisIcon, SqliteIcon } from './components/DbIcons';
@@ -32,7 +33,7 @@ import { dbHelper } from './utils/dbHelper';
 import type { DbConnectionConfig } from './utils/dbHelper';
 import { invalidateCatalog } from './sql/catalog';
 import { splitStatements } from './sql/statements';
-import { connKey, legacyTabsStorageKey, scopeKey, tabsStorageKey } from './utils/connKey';
+import { connKey, scopeKey, tabsStorageKey, tabsStorageKeyCandidates } from './utils/connKey';
 import { updateProfileDisplay } from './utils/connectionProfiles';
 import { applyProgressStyle, getProgressStyle } from './utils/progressStyle';
 import { parseXlsx } from './utils/xlsxReader';
@@ -171,6 +172,10 @@ export const App: React.FC = () => {
   const [connection, setConnection] = useState<{
     dbName: string;
     dbType: 'sqlite' | 'postgres' | 'mysql' | 'redis';
+    // Postgres only: the schema every command reads and writes through. Comes from the backend
+    // (`current_schema()` on connect, the picker afterwards), never guessed here — it is part of
+    // the localStorage scope, so a value the backend disagrees with would key tabs wrongly.
+    schema?: string | null;
   } | null>(null);
   // Cấu hình kết nối đang dùng (gồm cả SSH) để Terminal kế thừa -> mở shell vào đúng máy chủ/VM
   const [activeConnConfig, setActiveConnConfig] = useState<DbConnectionConfig | null>(null);
@@ -185,6 +190,8 @@ export const App: React.FC = () => {
   const [readOnly, setReadOnly] = useState(() => localStorage.getItem('tf_readonly') === '1');
   // Tab bảng còn sửa đổi chưa commit (do DataGrid báo lên). Xem guardDirty bên dưới.
   const [dirtyTabId, setDirtyTabId] = useState<string | null>(null);
+  /** Action waiting for the user to agree to discard unsaved edits — see guardDirty. */
+  const [discardPrompt, setDiscardPrompt] = useState<(() => void) | null>(null);
   // Tab truy vấn đã từng được mở -> mount thường trực để giữ kết quả. Mount lười chứ không
   // mount hết `tabs`: khôi phục 10 tab từ localStorage mà dựng luôn 10 Monaco thì phí.
   const [mountedQueryTabs, setMountedQueryTabs] = useState<Set<string>>(() => new Set());
@@ -236,6 +243,12 @@ export const App: React.FC = () => {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showDocModal, setShowDocModal] = useState(false);
   const [docQuery] = useState('');
+  const [showWhatsNew, setShowWhatsNew] = useState<boolean>(() => {
+    const autoShow = localStorage.getItem(WHATS_NEW_AUTO_SHOW_KEY);
+    if (autoShow === 'false') return false;
+    const seen = localStorage.getItem(WHATS_NEW_STORAGE_KEY);
+    return !seen;
+  });
 
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -381,6 +394,9 @@ export const App: React.FC = () => {
         routines: opts.routines,
         triggers: opts.triggers,
         sqlOptions: opts.sqlOptions,
+        // Dump được đọc ra từ schema đang chọn, nên header phải nói ra schema đó — nếu không,
+        // nhập lại ở máy khác thì mọi thứ chui vào schema đầu search_path của máy đó.
+        schema: connection?.schema,
         onProgress,
       }, dbHelper);
       const ext = opts.compressGzip ? '.sql.gz' : '.sql';
@@ -568,7 +584,9 @@ export const App: React.FC = () => {
           alert(t('app.errSwitchDatabase', { name: wantDb, message: switched.error }));
           return false;
         }
-        setConnection(prev => prev ? { ...prev, dbName: switched.database || wantDb } : null);
+        setConnection(prev =>
+          prev ? { ...prev, dbName: switched.database || wantDb, schema: switched.schema ?? null } : null
+        );
         invalidateCatalog();
       }
 
@@ -709,7 +727,12 @@ export const App: React.FC = () => {
 
   React.useEffect(() => {
     if (connection) {
-      const storageKey = tabsStorageKey(activeConnConfig, connection.dbType, connection.dbName);
+      const storageKey = tabsStorageKey(
+        activeConnConfig,
+        connection.dbType,
+        connection.dbName,
+        connection.schema,
+      );
       // Không lưu tab terminal: phiên PTY không tồn tại sau khi reload
       const persistTabs = tabs.filter(t => t.type !== 'terminal');
       const persistActive = persistTabs.some(t => t.id === activeTabId) ? activeTabId : (persistTabs[0]?.id ?? null);
@@ -757,11 +780,13 @@ export const App: React.FC = () => {
     config: DbConnectionConfig | null | undefined,
     dbType: string,
     dbName: string,
+    schema?: string | null,
   ): boolean => {
-    const storageKey = tabsStorageKey(config, dbType, dbName);
-    const legacyKey = legacyTabsStorageKey(dbType, dbName);
-    const saved = localStorage.getItem(storageKey)
-      ?? (storageKey === legacyKey ? null : localStorage.getItem(legacyKey));
+    // Newest key first, then the older spellings (no schema level, then pre-connKey). Only the
+    // first is ever written back, so this migrates a workspace forward without duplicating it.
+    const saved = tabsStorageKeyCandidates(config, dbType, dbName, schema)
+      .map((key) => localStorage.getItem(key))
+      .find((v) => v != null);
     if (!saved) return false;
     try {
       const {
@@ -791,8 +816,9 @@ export const App: React.FC = () => {
     color?: string,
     config?: DbConnectionConfig,
     profile?: { id: string; name: string },
+    schema?: string | null,
   ) => {
-    setConnection({ dbName, dbType });
+    setConnection({ dbName, dbType, schema: schema ?? null });
     setActiveProfile({ id: profile?.id || '', name: profile?.name || dbName, color: color || '' });
     setActiveConnConfig(config || null);
 
@@ -800,7 +826,7 @@ export const App: React.FC = () => {
     invalidateCatalog();
 
     // Try to restore tabs from localStorage
-    if (restoreTabs(config, dbType, dbName)) return;
+    if (restoreTabs(config, dbType, dbName, schema)) return;
 
     // Open an initial SQL Query tab on connect
     const initialTabId = 'query_1';
@@ -823,8 +849,19 @@ export const App: React.FC = () => {
   // không kéo theo render nào. Chỉ có một tab *bảng* được mount tại một thời điểm
   // (xem active-panel-container bên dưới — tab truy vấn và terminal thì mount thường
   // trực) nên nhiều nhất một tab bẩn cùng lúc.
-  const guardDirty = () =>
-    !dirtyTabId || window.confirm(t('app.confirmDiscardGridChanges'));
+  // This question cannot use window.confirm: inside the Tauri webview it calls
+  // `plugin:dialog|confirm`, a command the dialog plugin does not ship, so the call throws
+  // and returns undefined — meaning every attempt to leave a half-edited tab was silently
+  // blocked. The app's dialog is asynchronous, so guardDirty takes the ACTION and runs it
+  // itself instead of returning true/false the way it used to.
+  const guardDirty = (action: () => void) => {
+    if (!dirtyTabId) {
+      action();
+      return;
+    }
+    // setState given a function reads it as an updater -> wrap it to store the function.
+    setDiscardPrompt(() => action);
+  };
 
   // Cả hai hàm dời tab đều nằm ở utils/tabGroups.ts: chúng thuần và là nơi giữ
   // bất biến "tab cùng nhóm nằm liền nhau", nên ở đó mới test được.
@@ -859,30 +896,37 @@ export const App: React.FC = () => {
     if (!group) return;
 
     const collapsing = !group.collapsed;
+    const applyCollapse = () =>
+      setTabGroups((prev) => prev.map((g) => (g.id === groupId ? { ...g, collapsed: collapsing } : g)));
+
     if (collapsing && tabs.some((tab) => tab.id === activeTabId && tab.groupId === groupId)) {
       const outside = tabs.filter((tab) => tab.groupId !== groupId);
       // Cả cửa sổ chỉ có mỗi nhóm này: thu gọn thì không còn gì để hiển thị.
       if (outside.length === 0) return;
-      if (!guardDirty()) return;
-      const at = tabs.findIndex((tab) => tab.id === activeTabId);
-      const after = tabs.slice(at + 1).find((tab) => tab.groupId !== groupId);
-      const before = [...tabs.slice(0, at)].reverse().find((tab) => tab.groupId !== groupId);
-      setActiveTabId((after ?? before ?? outside[0]).id);
+      guardDirty(() => {
+        const at = tabs.findIndex((tab) => tab.id === activeTabId);
+        const after = tabs.slice(at + 1).find((tab) => tab.groupId !== groupId);
+        const before = [...tabs.slice(0, at)].reverse().find((tab) => tab.groupId !== groupId);
+        setActiveTabId((after ?? before ?? outside[0]).id);
+        applyCollapse();
+      });
+      return;
     }
 
-    setTabGroups((prev) => prev.map((g) => (g.id === groupId ? { ...g, collapsed: collapsing } : g)));
+    applyCollapse();
   };
 
   const handleMoveTabGroup = (groupId: string, targetIndex: number) =>
     setTabs((prev) => moveGroup(prev, groupId, targetIndex));
 
   const handleCloseTabGroup = (groupId: string) => {
-    if (!guardDirty()) return;
-    const remaining = tabs.filter((tab) => tab.groupId !== groupId);
-    setTabs(remaining);
-    if (!remaining.some((tab) => tab.id === activeTabId)) {
-      setActiveTabId(remaining[remaining.length - 1]?.id ?? null);
-    }
+    guardDirty(() => {
+      const remaining = tabs.filter((tab) => tab.groupId !== groupId);
+      setTabs(remaining);
+      if (!remaining.some((tab) => tab.id === activeTabId)) {
+        setActiveTabId(remaining[remaining.length - 1]?.id ?? null);
+      }
+    });
   };
 
   // Nhóm rỗng thì bỏ đi. Chạy tập trung ở đây thay vì rải vào từng chỗ đóng tab:
@@ -897,28 +941,61 @@ export const App: React.FC = () => {
   }, [tabs]);
 
   const handleSelectTab = (id: string) => {
-    if (id !== activeTabId && !guardDirty()) return;
-    setActiveTabId(id);
+    if (id === activeTabId) return;
+    guardDirty(() => setActiveTabId(id));
   };
 
-  const handleDisconnect = async () => {
-    if (!guardDirty()) return;
-    await dbHelper.disconnect();
-    setConnection(null);
-    setActiveProfile({ id: '', name: '', color: '' });
-    setTabs([]);
-    setActiveTabId(null);
-    setQueryCount(1);
-    setShowSidebar(true);
+  const handleDisconnect = () => {
+    guardDirty(async () => {
+      await dbHelper.disconnect();
+      setConnection(null);
+      setActiveProfile({ id: '', name: '', color: '' });
+      setTabs([]);
+      setActiveTabId(null);
+      setQueryCount(1);
+      setShowSidebar(true);
+    });
+  };
+
+  // Sau khi đổi schema (chỉ Postgres): backend đã nhận schema mới rồi mới gọi vào đây.
+  //
+  // Đổi schema là đổi hẳn tập bảng, nên phải làm đúng những việc của đổi database: xoá cache
+  // catalog (completion/hover còn giữ bảng của schema cũ), bắt Sidebar/DataGrid nạp lại, và đổi
+  // khoá localStorage của tab — tab đang mở trỏ vào bảng của schema cũ.
+  const handleSchemaChanged = (newSchema: string) => {
+    const nextConn = connection ? { ...connection, schema: newSchema } : null;
+    setConnection(nextConn);
+    invalidateCatalog();
+    setDbReloadKey((k) => k + 1);
+
+    if (nextConn && restoreTabs(activeConnConfig, nextConn.dbType, nextConn.dbName, newSchema)) return;
+
+    const initialTabId = 'query_1';
+    setTabs([
+      {
+        id: initialTabId,
+        type: 'query',
+        name: 'SQL Query',
+        label: t('app.queryTabLabel', { n: 1 }),
+      },
+    ]);
+    setActiveTabId(initialTabId);
+    setQueryCount(2);
   };
 
   // Sau khi đổi database đang dùng: cập nhật tên DB, đóng các tab (thuộc DB cũ), làm mới
-  const handleDatabaseChanged = (newName: string) => {
-    const nextConn = connection ? { ...connection, dbName: newName } : null;
+  //
+  // `newSchema` đến từ phản hồi của switch_database: database mới có tập schema riêng, schema
+  // đang chọn chưa chắc tồn tại ở đó nên backend tự dò lại. Giữ giá trị cũ ở đây thì mọi truy vấn
+  // trỏ vào một schema không có thật — đúng triệu chứng "sidebar trống" mà lần này khó đoán hơn.
+  const handleDatabaseChanged = (newName: string, newSchema?: string | null) => {
+    const nextConn = connection
+      ? { ...connection, dbName: newName, schema: newSchema ?? null }
+      : null;
     setConnection(nextConn);
     setDbReloadKey((k) => k + 1);
 
-    if (nextConn && restoreTabs(activeConnConfig, nextConn.dbType, newName)) return;
+    if (nextConn && restoreTabs(activeConnConfig, nextConn.dbType, newName, nextConn.schema)) return;
 
     // Fallback
     const initialTabId = 'query_1';
@@ -941,23 +1018,27 @@ export const App: React.FC = () => {
     initialFilter?: { column: string; value: any }
   ) => {
     const tabId = `table_${tableName}`;
-    if (tabId !== activeTabId && !guardDirty()) return;
-    const exists = tabs.find((t) => t.id === tabId);
+    const open = () => {
+      const exists = tabs.find((tab) => tab.id === tabId);
 
-    if (!exists) {
-      const newTab: TabInfo = {
-        id: tabId,
-        type: 'table',
-        name: tableName,
-        label: tableName,
-        initialViewMode,
-        initialFilter,
-      } as any;
-      setTabs([...tabs, newTab]);
-    } else {
-      setTabs(tabs.map(t => t.id === tabId ? { ...t, initialViewMode, initialFilter } as any : t));
-    }
-    setActiveTabId(tabId);
+      if (!exists) {
+        const newTab: TabInfo = {
+          id: tabId,
+          type: 'table',
+          name: tableName,
+          label: tableName,
+          initialViewMode,
+          initialFilter,
+        } as any;
+        setTabs([...tabs, newTab]);
+      } else {
+        setTabs(tabs.map(tab => tab.id === tabId ? { ...tab, initialViewMode, initialFilter } as any : tab));
+      }
+      setActiveTabId(tabId);
+    };
+
+    if (tabId === activeTabId) open();
+    else guardDirty(open);
   };
 
   // Ctrl+Click / F12 trên tên bảng hoặc click FK link -> mở tab bảng kèm bộ lọc.
@@ -1007,23 +1088,27 @@ export const App: React.FC = () => {
   // Close tab
   const handleCloseTab = (id: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    // Đóng tab bảng đang sửa dở -> hỏi xác nhận
-    if (id === activeTabId && !guardDirty()) return;
-    const tabIndex = tabs.findIndex((t) => t.id === id);
-    const newTabs = tabs.filter((t) => t.id !== id);
+    const close = () => {
+      const tabIndex = tabs.findIndex((tab) => tab.id === id);
+      const newTabs = tabs.filter((tab) => tab.id !== id);
 
-    setTabs(newTabs);
+      setTabs(newTabs);
 
-    // If closing active tab, switch to another
-    if (activeTabId === id) {
-      if (newTabs.length > 0) {
-        // select next or previous tab
-        const nextActiveIndex = Math.min(tabIndex, newTabs.length - 1);
-        setActiveTabId(newTabs[nextActiveIndex].id);
-      } else {
-        setActiveTabId(null);
+      // If closing active tab, switch to another
+      if (activeTabId === id) {
+        if (newTabs.length > 0) {
+          // select next or previous tab
+          const nextActiveIndex = Math.min(tabIndex, newTabs.length - 1);
+          setActiveTabId(newTabs[nextActiveIndex].id);
+        } else {
+          setActiveTabId(null);
+        }
       }
-    }
+    };
+
+    // Đóng tab bảng đang sửa dở -> hỏi xác nhận
+    if (id === activeTabId) guardDirty(close);
+    else close();
   };
 
   const handleCloseOthers = (id: string) => {
@@ -1191,7 +1276,7 @@ export const App: React.FC = () => {
   }, [tabs, activeTabId]);
 
   // Scope của danh sách tab hiện tại, dùng làm tiền tố cho key của QueryTabPanel.
-  const tabScope = scopeKey(activeConnConfig, connection?.dbName);
+  const tabScope = scopeKey(activeConnConfig, connection?.dbName, connection?.schema);
 
   // Dựng sẵn thành biến vì thanh tiêu đề nằm ở hai vị trí khác nhau trong cây:
   // ở màn kết nối nó nằm *trong* .cm-screen để cùng chịu lớp aurora của màn đó,
@@ -1224,6 +1309,7 @@ export const App: React.FC = () => {
       onToggleTheme={toggleTheme}
       onShowShortcuts={() => setShowShortcuts(true)}
       onShowAbout={() => setShowAbout(true)}
+      onShowWhatsNew={() => setShowWhatsNew(true)}
       onToggleTerminal={() => { }}
       aiOpen={showAi}
       onToggleAiAssistant={() => setShowAi(prev => !prev)}
@@ -1299,6 +1385,8 @@ export const App: React.FC = () => {
                 onTableRenamed={handleTableRenamed}
                 onTableDropped={handleTableDropped}
                 onDatabaseChanged={handleDatabaseChanged}
+                schema={connection.schema}
+                onSchemaChanged={handleSchemaChanged}
                 onOpenQueryWithSql={openQueryTabWithSql}
                 onOpenRoutineTab={handleOpenRoutineTab}
                 onOpenViewTab={handleOpenViewTab}
@@ -1428,6 +1516,21 @@ export const App: React.FC = () => {
           </div>
         </>
       )}
+
+      {/* Leaving a half-edited table tab — the pending action lives in discardPrompt. */}
+      <ConfirmDialog
+        open={!!discardPrompt}
+        danger
+        title={t('app.confirmDiscardGridTitle')}
+        message={t('app.confirmDiscardGridChanges')}
+        confirmLabel={t('app.confirmDiscardGridLabel')}
+        onConfirm={() => {
+          const action = discardPrompt;
+          setDiscardPrompt(null);
+          action?.();
+        }}
+        onCancel={() => setDiscardPrompt(null)}
+      />
 
       {/* Popup chọn tệp: báo định dạng cho phép trước khi mở hộp thoại của hệ điều hành */}
       <ImportFilePicker
@@ -1878,6 +1981,11 @@ export const App: React.FC = () => {
         onClose={() => setShowDocModal(false)}
         initialQuery={docQuery}
         initialEngine={connection?.dbType as any}
+      />
+
+      <WhatsNewModal
+        isOpen={showWhatsNew}
+        onClose={() => setShowWhatsNew(false)}
       />
     </>
   );

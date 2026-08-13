@@ -312,7 +312,9 @@ function translateWarnings<T extends { warnings?: string[] }>(res: T): T {
 }
 
 export const dbHelper = {
-  async connect(config: DbConnectionConfig): Promise<{ success: boolean; message: string; database?: string }> {
+  async connect(
+    config: DbConnectionConfig,
+  ): Promise<{ success: boolean; message: string; database?: string; schema?: string | null }> {
     // Redis đi qua bộ command redis_* riêng (không dùng connect_db của SQL).
     if (config.type === 'redis') {
       try {
@@ -384,7 +386,14 @@ export const dbHelper = {
 
       const res: any = await invoke('connect_db', { config: mappedConfig });
       if (res.success) {
-        return { success: true, message: i18n.t('db.connected'), database: config.database || config.sqlitePath };
+        // `schema` is the schema the connection actually landed in (Postgres `current_schema()`),
+        // null on MySQL/SQLite. Callers key per-connection storage on it — see connKey.ts.
+        return {
+          success: true,
+          message: i18n.t('db.connected'),
+          database: config.database || config.sqlitePath,
+          schema: res.schema ?? null,
+        };
       }
       return { success: false, message: res.message || i18n.t('db.errConnect') };
     } catch (err: any) {
@@ -1071,10 +1080,45 @@ export const dbHelper = {
     }
   },
 
-  async switchDatabase(name: string): Promise<{ success: boolean; database?: string; error?: string }> {
+  async switchDatabase(
+    name: string,
+  ): Promise<{ success: boolean; database?: string; schema?: string | null; error?: string }> {
     try {
       const res: any = await invoke('switch_database', { name });
-      return { success: !!res.success, database: res.database, error: res.message };
+      // `schema` is re-probed by the backend: the new database has its own schemas, so the one
+      // selected on the old connection may not exist here.
+      return { success: !!res.success, database: res.database, schema: res.schema ?? null, error: res.message };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  /**
+   * Schemas of the current Postgres connection. Empty on MySQL/SQLite — which is how the caller
+   * decides whether to show a schema picker at all.
+   *
+   * `current` is what the backend will actually use; read it from here rather than from local
+   * picker state, since on a fresh connection the user has not chosen anything yet.
+   */
+  async listSchemas(): Promise<{ success: boolean; schemas: string[]; current?: string | null; error?: string }> {
+    try {
+      const res: any = await invoke('list_schemas');
+      return {
+        success: !!res.success,
+        schemas: res.schemas || [],
+        current: res.current ?? null,
+        error: res.message,
+      };
+    } catch (err: any) {
+      return { success: false, schemas: [], error: err.toString() };
+    }
+  },
+
+  /** Selects the schema every later command reads and writes through (Postgres only). */
+  async setSchema(name: string): Promise<{ success: boolean; schema?: string; error?: string }> {
+    try {
+      const res: any = await invoke('set_current_schema', { name });
+      return { success: !!res.success, schema: res.schema, error: res.message };
     } catch (err: any) {
       return { success: false, error: err.toString() };
     }

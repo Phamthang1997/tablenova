@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildDump, type DumpReader, type DumpSpec } from '../dumpBuilder';
-import { parseDumpObjects } from '../dumpPreview';
+import { parseDumpObjects, parseDumpTableNames } from '../dumpPreview';
 import { splitStatements } from '../../sql/statements';
 
 // Reader giả: đủ để dựng dump mà không cần backend. Đây chính là lý do buildDump nhận reader
@@ -106,6 +106,52 @@ describe('buildDump — header/footer cấp phiên', () => {
     const dump = await buildDump(bare('sqlite'), fakeReader());
     expect(at(dump, 'PRAGMA foreign_keys = OFF;')).toBeLessThan(at(dump, 'CREATE TABLE'));
     expect(dump.trimEnd().endsWith('PRAGMA foreign_keys = ON;')).toBe(true);
+  });
+
+  it('Postgres: schema khác public thì header tạo schema rồi đặt search_path', async () => {
+    const dump = await buildDump({ ...bare('postgres'), schema: 'sales' }, fakeReader());
+    expect(dump).toContain('CREATE SCHEMA IF NOT EXISTS "sales";');
+    expect(dump).toContain('SET search_path TO "sales";');
+    // Phải đứng trước mọi DDL, nếu không thì bảng đầu tiên đã rơi vào schema khác rồi.
+    expect(at(dump, 'SET search_path TO "sales";')).toBeLessThan(at(dump, 'CREATE TABLE'));
+    // Và CREATE SCHEMA phải trước SET, vì đặt search_path tới schema chưa có là vô nghĩa.
+    expect(at(dump, 'CREATE SCHEMA IF NOT EXISTS "sales";'))
+      .toBeLessThan(at(dump, 'SET search_path TO "sales";'));
+  });
+
+  it('Postgres: public (hoặc không truyền) không thêm dòng nào — dump giữ nguyên như cũ', async () => {
+    for (const schema of [undefined, null, 'public', '  ']) {
+      const dump = await buildDump({ ...bare('postgres'), schema }, fakeReader());
+      expect(dump).not.toContain('CREATE SCHEMA');
+      expect(dump).not.toContain('search_path');
+    }
+  });
+
+  it('MySQL/SQLite bỏ qua schema: cả hai không có khái niệm này', async () => {
+    for (const dbType of ['mysql', 'sqlite']) {
+      const dump = await buildDump({ ...bare(dbType), schema: 'sales' }, fakeReader());
+      expect(dump).not.toContain('CREATE SCHEMA');
+      expect(dump).not.toContain('search_path');
+    }
+  });
+
+  it('tên schema có dấu nháy kép vẫn ra định danh hợp lệ', async () => {
+    const dump = await buildDump({ ...bare('postgres'), schema: 'we"ird' }, fakeReader());
+    expect(dump).toContain('CREATE SCHEMA IF NOT EXISTS "we""ird";');
+    expect(dump).toContain('SET search_path TO "we""ird";');
+  });
+
+  it('hai dòng schema là câu lệnh riêng, và restore_backup luôn chạy chúng', async () => {
+    const dump = await buildDump({ ...bare('postgres'), schema: 'sales' }, fakeReader());
+    const stmts = splitStatements(dump).map((s) => s.text);
+    expect(stmts).toContain('CREATE SCHEMA IF NOT EXISTS "sales"');
+    expect(stmts).toContain('SET search_path TO "sales"');
+    // Twin của `is_session_level_stmt` (database.rs): lệnh nào mở đầu bằng SET / CREATE SCHEMA
+    // đều được cho chạy dù người dùng chỉ chọn vài bảng. Hai dòng này không nhắc tên bảng nào,
+    // nên nếu viết khác đi là chúng bị bộ lọc theo bảng loại bỏ và dump nhập vào nhầm schema.
+    for (const s of ['CREATE SCHEMA IF NOT EXISTS "sales"', 'SET search_path TO "sales"']) {
+      expect(/^(SET |CREATE SCHEMA)/.test(s.toUpperCase())).toBe(true);
+    }
   });
 
   it('header là câu lệnh hợp lệ, không lẫn vào câu lệnh đầu tiên', async () => {
@@ -343,6 +389,18 @@ describe('buildDump — đọc lại được bằng chính bộ dò của popup
     expect(objs.functions).toEqual(['get_balance']);
     expect(objs.procedures).toEqual(['film_in_stock']);
     expect(objs.triggers).toEqual(['ins_film']);
+  });
+
+  it('header schema không bị nhận nhầm thành một bảng để chọn', async () => {
+    // `parseDumpTableNames` vừa dựng danh sách cho người dùng tick, vừa là bộ lọc gửi xuống
+    // `restore_backup`. Một mục "sales" ma trong đó vừa khó hiểu, vừa làm câu lệnh của bảng
+    // thật bị bỏ khi người dùng chỉ chọn nó.
+    const dump = await buildDump(
+      { ...spec({ dbType: 'postgres', tables: ['film'], views: [], routines: [], triggers: [] }), schema: 'sales' },
+      fakeReader()
+    );
+    expect(dump).toContain('SET search_path TO "sales";');
+    expect(parseDumpTableNames(dump)).toEqual(['film']);
   });
 });
 

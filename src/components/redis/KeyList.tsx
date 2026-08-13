@@ -1,11 +1,15 @@
-import React, { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import {
   Search, RefreshCw, Plus, Trash2, Key, Clock, Database, Square,
   ChevronRight, ChevronDown, FolderTree, List as ListIcon, Timer,
 } from 'lucide-react';
 import { dbHelper, type RedisKeyItem } from '../../utils/dbHelper';
-import { buildKeyTree, flattenTree, allFolderPaths, windowSlice, type TreeRow } from '../../utils/redisKeyTree';
+import {
+  buildKeyTree, flattenTree, allFolderPaths, folderMatchPattern, windowSlice, type TreeRow,
+} from '../../utils/redisKeyTree';
+import { clampMenu, type MenuRect } from '../../utils/menuPosition';
 import { KEY_CAP, ROW_HEIGHT, SCAN_COUNT, TYPE_COLORS, ttlText } from './shared';
 
 export interface KeyListHandle {
@@ -214,6 +218,53 @@ export const KeyList = React.forwardRef<KeyListHandle, KeyListProps>(function Ke
   const expandAll = () => setExpanded(new Set(tree ? allFolderPaths(tree) : []));
   const collapseAll = () => setExpanded(new Set());
 
+  // ---- Folder context menu ----
+  // A namespace is the unit people actually think in (`post:*`, `session:*`), but until now the
+  // only way to delete one was to retype its prefix into the bulk-delete dialog by hand.
+  const [folderMenu, setFolderMenu] = useState<{
+    x: number;
+    y: number;
+    /** Prefix including the trailing delimiter, i.e. `TreeRow.path`. */
+    path: string;
+    /** Keys under it *in the tree* — see the caveat where this is rendered. */
+    count: number;
+  } | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [menuPos, setMenuPos] = useState<MenuRect | null>(null);
+
+  useLayoutEffect(() => {
+    if (!folderMenu) {
+      setMenuPos(null);
+      return;
+    }
+    const el = menuRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setMenuPos(clampMenu(folderMenu.x, folderMenu.y, r.width, r.height, window.innerWidth, window.innerHeight));
+  }, [folderMenu]);
+
+  useEffect(() => {
+    const close = () => setFolderMenu(null);
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  }, []);
+
+  // Scrolling would leave the menu pinned to a row that is no longer under it.
+  const onScrollList = (e: React.UIEvent<HTMLDivElement>) => {
+    setScrollTop((e.target as HTMLDivElement).scrollTop);
+    if (folderMenu) setFolderMenu(null);
+  };
+
+  /**
+   * Hands the group to the existing bulk-delete dialog rather than deleting on the spot: that
+   * dialog already carries the retype-to-confirm step, the live progress and the cancel button,
+   * and this action can remove far more keys than the tree is showing.
+   */
+  const deleteFolder = (path: string) => {
+    setFolderMenu(null);
+    onBulkDelete(folderMatchPattern(path), typeFilter);
+  };
+
   return (
     <div style={{ width: '340px', borderRight: '1px solid var(--win-border)', display: 'flex', flexDirection: 'column', background: 'var(--win-bg-sidebar)' }}>
       <div style={{ padding: '10px', display: 'flex', flexDirection: 'column', gap: '8px', borderBottom: '1px solid var(--win-border)' }}>
@@ -344,7 +395,7 @@ export const KeyList = React.forwardRef<KeyListHandle, KeyListProps>(function Ke
 
       <div
         ref={scrollRef}
-        onScroll={(e) => setScrollTop((e.target as HTMLDivElement).scrollTop)}
+        onScroll={onScrollList}
         style={{ flex: 1, overflowY: 'auto' }}
       >
         {rows.length === 0 && !streaming && (
@@ -357,6 +408,10 @@ export const KeyList = React.forwardRef<KeyListHandle, KeyListProps>(function Ke
             <div
               key={`f:${row.path}`}
               onClick={() => toggleFolder(row.path)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setFolderMenu({ x: e.clientX, y: e.clientY, path: row.path, count: row.count });
+              }}
               className="sidebar-item"
               style={{ display: 'flex', alignItems: 'center', gap: '4px', height: ROW_HEIGHT, padding: `0 10px 0 ${10 + row.depth * 12}px`, cursor: 'pointer', fontSize: '11px', boxSizing: 'border-box' }}
             >
@@ -400,6 +455,50 @@ export const KeyList = React.forwardRef<KeyListHandle, KeyListProps>(function Ke
           </div>
         )}
       </div>
+
+      {/* Rendered through a portal, like Modal.tsx: a `position: fixed` menu is measured against
+          the nearest ancestor with a `backdrop-filter`, and the panel sits inside the app shell
+          where several of those exist. */}
+      {folderMenu && createPortal(
+        <div
+          ref={menuRef}
+          className="ws-menu"
+          style={{
+            position: 'fixed',
+            top: menuPos ? menuPos.top : folderMenu.y,
+            left: menuPos ? menuPos.left : folderMenu.x,
+            // Hidden until measured, so the menu never visibly jumps into place.
+            visibility: menuPos ? 'visible' : 'hidden',
+            zIndex: 99999,
+            minWidth: '200px',
+          }}
+        >
+          <div style={{ padding: '6px 12px', borderBottom: '1px solid var(--win-border)', marginBottom: '4px', maxWidth: '280px' }}>
+            <div style={{ fontSize: '10px', fontWeight: 600, fontFamily: 'var(--win-font-mono)', color: 'var(--win-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {folderMenu.path}
+            </div>
+            {/* Labelled "shown" on purpose: this count comes from the tree, which the scan cap and
+                the pattern/type filter can make smaller than what the prefix matches on the server.
+                The item below therefore promises the prefix, not this number. */}
+            <div style={{ fontSize: '9px', color: 'var(--win-text-disabled)' }}>
+              {t('redis.ctxFolderShown', { n: folderMenu.count.toLocaleString() })}
+            </div>
+          </div>
+          <div
+            onClick={(e) => { e.stopPropagation(); deleteFolder(folderMenu.path); }}
+            className="sidebar-context-item"
+            title={readOnly ? t('redis.errReadOnly') : undefined}
+            style={{
+              padding: '6px 12px', fontSize: '11px', color: 'var(--st-danger)', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: '6px',
+              opacity: readOnly ? 0.5 : 1, pointerEvents: readOnly ? 'none' : 'auto',
+            }}
+          >
+            <Trash2 size={11} /> {t('redis.ctxDeleteGroup')}
+          </div>
+        </div>,
+        document.body,
+      )}
 
       {/* Chân panel giờ chỉ còn số lượng key: FLUSHDB chuyển lên cạnh bộ chọn db, còn
           Disconnect bỏ hẳn vì TitleBar đã có sẵn ở menu Connection và nút capsule. */}

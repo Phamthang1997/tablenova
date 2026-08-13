@@ -64,6 +64,8 @@ export const EXACT: Record<string, string> = {
   'SQLite không hỗ trợ xóa database': 'backend.sqliteNoDropDb',
   'SQLite không hỗ trợ tạo database (mỗi tệp là một database)': 'backend.sqliteNoCreateDb',
   'SQLite không hỗ trợ nhiều database trên một kết nối': 'backend.sqliteSingleDb',
+  'Chỉ PostgreSQL mới hỗ trợ chọn schema': 'backend.schemaOnlyPostgres',
+  'Thiếu tên schema': 'backend.missingSchemaName',
   'CASCADE chỉ được hỗ trợ trên PostgreSQL': 'backend.cascadeOnlyPostgres',
   'Phiên terminal đã đóng': 'backend.terminalClosed',
   'Tham số truy vấn chỉ hỗ trợ một câu lệnh. Vui lòng chạy từng câu lệnh riêng hoặc tắt Tham số Truy vấn.':
@@ -139,6 +141,7 @@ export const PATTERNS: { re: RegExp; key: string; nested?: boolean }[] = [
     key: 'backend.redisBlockingCmd',
   },
   { re: /^Chưa hỗ trợ phân trang cho kiểu '([^']*)'$/, key: 'backend.redisNoPagingForType' },
+  { re: /^Schema '([^']*)' không tồn tại$/, key: 'backend.schemaNotFound' },
   // `nested` — the payload is one of our own TLS messages when the dedicated connection fails
   // while building the client, so it has to go through the table instead of staying Vietnamese
   // inside a translated frame.

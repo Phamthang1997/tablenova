@@ -12,8 +12,9 @@
 // Two levels of granularity, deliberately different:
 //   connKey  -> the server (host:port, or the SQLite file). Query history uses
 //               this, so switching database with USE keeps one timeline.
-//   scopeKey -> server + database. Tabs use this, because a tab list belongs to
-//               a specific database (a table tab means nothing after USE).
+//   scopeKey -> server + database (+ Postgres schema). Tabs use this, because a
+//               tab list belongs to a specific database (a table tab means
+//               nothing after USE) and, on Postgres, to one schema of it.
 // Credentials are not part of the identity: two profiles pointing at the same
 // server with a full and a read-only account are the same server to the user.
 
@@ -52,12 +53,44 @@ export function connKey(config?: DbConnectionConfig | null): string {
  * Identity of one database on that server. `database` overrides the one in
  * `config` (the app switches database without rebuilding the config object).
  * SQLite adds nothing — one file is one database, already in `connKey`.
+ *
+ * `schema` adds a third level, and only Postgres has one: two schemas of the
+ * same database hold different tables, so a tab list (and the SQL drafted in
+ * it) belongs to one of them, not to both. It is appended only when it differs
+ * from `public`, so every key written before schemas existed keeps its exact
+ * spelling and nobody loses tabs on upgrade — see `scopeKeyCandidates`.
  */
-export function scopeKey(config?: DbConnectionConfig | null, database?: string | null): string {
+export function scopeKey(
+  config?: DbConnectionConfig | null,
+  database?: string | null,
+  schema?: string | null,
+): string {
   const base = connKey(config);
   if (!base || config?.type === 'sqlite') return base;
   const db = (database ?? config?.database ?? '').trim();
-  return db ? `${base}/${db}` : base;
+  const withDb = db ? `${base}/${db}` : base;
+  if (config?.type !== 'postgres') return withDb;
+  const sch = (schema ?? '').trim();
+  return sch && sch !== 'public' ? `${withDb}:${sch}` : withDb;
+}
+
+/**
+ * The keys to try, newest spelling first, when *reading* state back.
+ *
+ * Only the first is ever written. The rest exist because the key gained levels
+ * over time and a user upgrading mid-session would otherwise open the app to an
+ * empty workspace: `public` on Postgres is already covered by `scopeKey` itself
+ * returning the un-suffixed form, and the pre-`connKey` key is handled by
+ * `legacyTabsStorageKey` at the call site.
+ */
+export function scopeKeyCandidates(
+  config?: DbConnectionConfig | null,
+  database?: string | null,
+  schema?: string | null,
+): string[] {
+  const scoped = scopeKey(config, database, schema);
+  const unscoped = scopeKey(config, database, null);
+  return scoped === unscoped ? [scoped] : [scoped, unscoped];
 }
 
 /** Key holding the open tabs (and the SQL auto-saved inside them) for one database. */
@@ -65,9 +98,27 @@ export function tabsStorageKey(
   config: DbConnectionConfig | null | undefined,
   dbType: string,
   dbName: string,
+  schema?: string | null,
 ): string {
-  const scope = scopeKey(config, dbName);
+  const scope = scopeKey(config, dbName, schema);
   return scope ? `tn_tabs_${scope}` : legacyTabsStorageKey(dbType, dbName);
+}
+
+/**
+ * Every tab key worth reading for this connection, newest first. Written keys
+ * always come from `tabsStorageKey`; this is the read side only.
+ */
+export function tabsStorageKeyCandidates(
+  config: DbConnectionConfig | null | undefined,
+  dbType: string,
+  dbName: string,
+  schema?: string | null,
+): string[] {
+  const scoped = scopeKeyCandidates(config, dbName, schema).map((s) => `tn_tabs_${s}`);
+  const keys = scoped.length && scopeKey(config, dbName, schema) ? scoped : [];
+  keys.push(legacyTabsStorageKey(dbType, dbName));
+  // A connection with no usable config falls back to the legacy key alone.
+  return Array.from(new Set(keys));
 }
 
 /**

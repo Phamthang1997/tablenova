@@ -18,6 +18,10 @@ interface ConfirmDialogProps {
   tone?: 'danger' | 'success' | 'info';
   /** Nếu có: người dùng phải gõ đúng chuỗi này mới bấm được nút xác nhận. */
   requireText?: string;
+  /** Override the stacking order. The default sits above the 9999/10000 dialogs, but a
+   *  caller opened from a modal that raised itself higher (Sidebar, SequenceManagerModal
+   *  use 999999) must pass a bigger value or the confirmation renders behind it. */
+  zIndex?: number;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -36,6 +40,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   danger = false,
   tone,
   requireText,
+  zIndex = 10001,
   onConfirm,
   onCancel,
 }) => {
@@ -77,7 +82,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
       showClose={false}
       width="420px"
       maxWidth="92vw"
-      zIndex={10001}
+      zIndex={zIndex}
     >
       <ModalBody style={{ gap: '10px' }}>
         <div style={{ fontSize: '11px', color: 'var(--win-text-primary)', lineHeight: 1.6 }}>{message}</div>

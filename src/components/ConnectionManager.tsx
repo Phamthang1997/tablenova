@@ -124,6 +124,10 @@ interface ConnectionManagerProps {
     color?: string,
     config?: DbConnectionConfig,
     profile?: { id: string; name: string },
+    // Schema the backend actually landed in (Postgres `current_schema()`), null elsewhere.
+    // Passed on rather than re-queried: it is part of the tab storage key, so App needs it
+    // before it restores anything.
+    schema?: string | null,
   ) => void;
 }
 
@@ -567,6 +571,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
   // Profile đang mở Terminal (null = không mở). Có SSH -> SSH terminal; không -> shell cục bộ.
   const [terminalProfile, setTerminalProfile] = useState<SavedProfile | null>(null);
 
+  // Two confirmations replacing window.confirm (which shows nothing in the Tauri webview).
+  const [deleteProfileId, setDeleteProfileId] = useState<string | null>(null);
+  const [confirmPlainExport, setConfirmPlainExport] = useState(false);
+
   const openExportModal = (scope: 'all' | 'group' | 'single', groupName?: string, profile?: SavedProfile) => {
     setExportScope(scope);
     setExportGroupTarget(groupName || '');
@@ -577,7 +585,19 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     setContextMenu(null);
   };
 
-  const handlePerformExport = async () => {
+  /**
+   * `plainConfirmed` = the "passwords in the clear" warning has already been answered.
+   *
+   * The warning used to be a `window.confirm()` in the middle of this function, which shows
+   * nothing inside the Tauri webview (the dialog plugin has no `confirm` command) — the
+   * export then continued as if the user had agreed. It is now asked BEFORE any work, so
+   * cancelling also means no secret is read out of the OS keychain.
+   */
+  const handlePerformExport = async (plainConfirmed = false) => {
+    if (exportIncludePasswords && !exportFilePassword.trim() && !plainConfirmed) {
+      setConfirmPlainExport(true);
+      return;
+    }
     setExporting(true);
     try {
       let targetProfiles: SavedProfile[] = [];
@@ -604,14 +624,6 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
           return cloned;
         })
       );
-
-      if (exportIncludePasswords && !exportFilePassword.trim()) {
-        const ok = confirm(t('connection.confirmExportPlainPasswords'));
-        if (!ok) {
-          setExporting(false);
-          return;
-        }
-      }
 
       const encryptedText = await encryptConnectionExport(processedProfiles, exportFilePassword);
 
@@ -1053,10 +1065,12 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     selectProfile(newProfile);
   };
 
-  const handleDeleteProfile = async (id: string, e: React.MouseEvent) => {
+  const handleDeleteProfile = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm(t('connection.confirmDeleteProfile'))) return;
+    setDeleteProfileId(id);
+  };
 
+  const doDeleteProfile = async (id: string) => {
     const newProfiles = profiles.filter(p => p.id !== id);
     await persistProfiles(newProfiles);
     // Dọn luôn bí mật trong kho HĐH, đừng để lại mục mồ côi.
@@ -1186,6 +1200,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
           activeProfile?.color,
           config,
           activeProfile ? { id: activeProfile.id, name: activeProfile.name } : undefined,
+          res.schema,
         );
       }, 480);
     } else {
@@ -1364,6 +1379,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
             includeStructure: brIncludeStructure,
             includeContent: brIncludeContent,
           },
+          // Schema mà `connect` vừa báo là đang dùng — cùng schema mà getTables() ở trên đọc ra.
+          // Không có ô chọn schema ở màn hình này, nên đây luôn là schema đầu search_path.
+          schema: connRes.schema,
           onProgress: setBrProgress,
         }, dbHelper);
 
@@ -2979,7 +2997,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
 
             <div className="cm-modal-foot">
               <button className="cm-btn" onClick={() => setShowExportModal(false)} disabled={exporting}>{t('common.cancel')}</button>
-              <button className="cm-btn primary" onClick={handlePerformExport} disabled={exporting}>
+              {/* Wrapped in an arrow: passed directly, the MouseEvent lands in
+                  `plainConfirmed` (truthy) and the plain-password warning is skipped. */}
+              <button className="cm-btn primary" onClick={() => handlePerformExport()} disabled={exporting}>
                 {exporting ? <LoadingSpinner size={12} /> : <Download size={13} />} {t('connection.exportAction')}
               </button>
             </div>
@@ -3019,6 +3039,28 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
           </div>
         </div>
       )}
+
+      {/* Delete profile. zIndex above the export/import modals (.cm-modal sets its own). */}
+      <ConfirmDialog
+        open={!!deleteProfileId}
+        danger
+        zIndex={1000000}
+        title={t('connection.confirmDeleteProfileTitle')}
+        message={t('connection.confirmDeleteProfile')}
+        onConfirm={() => { const id = deleteProfileId; setDeleteProfileId(null); if (id) doDeleteProfile(id); }}
+        onCancel={() => setDeleteProfileId(null)}
+      />
+
+      {/* Warning about exporting passwords in the clear — asked before reading the keychain. */}
+      <ConfirmDialog
+        open={confirmPlainExport}
+        danger
+        zIndex={1000000}
+        title={t('connection.confirmExportPlainTitle')}
+        message={t('connection.confirmExportPlainPasswords')}
+        onConfirm={() => { setConfirmPlainExport(false); handlePerformExport(true); }}
+        onCancel={() => setConfirmPlainExport(false)}
+      />
     </div>
   );
 };

@@ -7,6 +7,7 @@ import { X, TerminalSquare, PictureInPicture2, PanelBottom, FileSearch, ScrollTe
 import { dbHelper } from '../utils/dbHelper';
 import type { DbConnectionConfig, SshTerminalMessage } from '../utils/dbHelper';
 import { openTerminalWindow } from '../utils/terminalWindow';
+import { ConfirmDialog } from './ConfirmDialog';
 
 interface TerminalPanelProps {
   config: DbConnectionConfig;
@@ -76,6 +77,8 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   const [banner, setBanner] = useState<{ text: string; kind: 'info' | 'ok' | 'err' } | null>(null);
   const bannerTimer = useRef<number | null>(null);
   const [setupMenu, setSetupMenu] = useState(false);
+  /** Enable-logging request waiting for confirmation — see handleEnableLog. */
+  const [enableLogPrompt, setEnableLogPrompt] = useState<{ kind: string; message: string } | null>(null);
 
   // Nguồn log: chạy lệnh tail thẳng (local), bọc qua ssh (VM), hay docker exec/logs (Docker).
   const [logSource, setLogSource] = useState<'local' | 'ssh' | 'docker'>(() => (localStorage.getItem('term_log_source') as any) || 'local');
@@ -371,9 +374,15 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     bannerTimer.current = window.setTimeout(() => setBanner(null), kind === 'err' ? 9000 : 5000);
   };
 
-  const handleEnableLog = async (kind: string, confirmMsg: string) => {
+  // Enabling logging writes to the server config, so it must still be confirmed;
+  // window.confirm shows nothing in the Tauri webview (the dialog plugin has no `confirm`
+  // command), so clicking the menu entry used to run straight through without asking.
+  const handleEnableLog = (kind: string, confirmMsg: string) => {
     setSetupMenu(false);
-    if (!window.confirm(confirmMsg)) return;
+    setEnableLogPrompt({ kind, message: confirmMsg });
+  };
+
+  const doEnableLog = async (kind: string) => {
     note(t('terminal.enablingLog'));
     const res = await dbHelper.enableLogging(config.type, kind);
     if (!res.success) {
@@ -728,6 +737,18 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
       )}
 
       <div ref={containerRef} style={{ flex: 1, padding: '6px', overflow: 'hidden' }} />
+
+      {/* Enable-logging confirmation — the question comes from the menu entry itself
+          (one wording per log kind). */}
+      {enableLogPrompt && (
+        <ConfirmDialog
+          open
+          title={t('terminal.enableLogTitle')}
+          message={enableLogPrompt.message}
+          onConfirm={() => { const kind = enableLogPrompt.kind; setEnableLogPrompt(null); doEnableLog(kind); }}
+          onCancel={() => setEnableLogPrompt(null)}
+        />
+      )}
     </div>
   );
 };

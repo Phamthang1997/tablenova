@@ -124,7 +124,7 @@ function registerSqlFormatter(dbType: string) {
     monaco.languages.registerDocumentFormattingEditProvider(lang, formatProvider)
   );
 }
-import { Play, Clipboard, Trash2, CheckCircle2, AlertTriangle, ChevronLeft, ChevronRight, Copy, AlignLeft, History, X, Bookmark, ChevronDown, MoreHorizontal, SlidersHorizontal, Star, Columns, Rows, Settings, Network, Zap, FileText, Square } from 'lucide-react';
+import { Play, Clipboard, Trash2, CheckCircle2, AlertTriangle, ChevronLeft, ChevronRight, Copy, AlignLeft, History, X, Bookmark, ChevronDown, MoreHorizontal, SlidersHorizontal, Star, Columns, Rows, Settings, Network, Zap, FileText, Square, Calendar } from 'lucide-react';
 import { getQueryParamsConfig, saveQueryParamsConfig, extractQueryParams, buildParameterizedSql, type QueryParamsConfig } from '../utils/queryParamHelper';
 import { buildExplainQuery, explainJsonLabel, parseExplainOutput, supportsJsonExplain, type ExplainResult } from '../utils/explainHelper';
 import {
@@ -329,6 +329,19 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   const inScope = (entry: HistoryEntry) => matchesScope(entry, connKey, dbName, effectiveScope);
 
   const [showSaveModal, setShowSaveModal] = useState(false);
+  /**
+   * Pending confirmation for the three history/saved-query deletions. One state instead of
+   * three flags — the dialog is the same shape, only the wording differs.
+   *
+   * `window.confirm()` is unusable here: the Tauri webview maps it to `plugin:dialog|confirm`,
+   * a command the dialog plugin does not ship, so it throws and the click does nothing.
+   */
+  const [confirmAction, setConfirmAction] = useState<
+    | { kind: 'clearHistory' }
+    | { kind: 'deleteSaved'; id: string }
+    | { kind: 'deleteHistoryItem'; id: string }
+    | null
+  >(null);
   const [newQueryName, setNewQueryName] = useState('');
 
   const [runMenuPane, setRunMenuPane] = useState<1 | 2 | null>(null);
@@ -514,15 +527,24 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     }
   };
 
-  const handleClearHistory = () => {
-    const message = effectiveScope === 'db'
-      ? t('sqlEditor.confirmClearDbHistory')
-      : effectiveScope === 'conn'
-        ? t('sqlEditor.confirmClearConnHistory')
-        : t('sqlEditor.confirmClearHistory');
-    if (confirm(message)) {
-      setHistoryList(clearHistory(effectiveScope, connKey, dbName));
+  // Same reason as the switch in clearHistoryLabel: the key must be a literal.
+  const clearHistoryMessage = (): string => {
+    switch (effectiveScope) {
+      case 'db': return t('sqlEditor.confirmClearDbHistory');
+      case 'conn': return t('sqlEditor.confirmClearConnHistory');
+      case 'all': return t('sqlEditor.confirmClearHistory');
     }
+  };
+
+  const handleClearHistory = () => setConfirmAction({ kind: 'clearHistory' });
+
+  const runConfirmAction = () => {
+    if (!confirmAction) return;
+    const action = confirmAction;
+    setConfirmAction(null);
+    if (action.kind === 'clearHistory') setHistoryList(clearHistory(effectiveScope, connKey, dbName));
+    else if (action.kind === 'deleteSaved') setSavedQueries(deleteSavedQuery(action.id));
+    else setHistoryList(deleteHistoryEntry(action.id));
   };
 
   const handleSaveQuery = () => {
@@ -553,9 +575,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
 
   const handleDeleteSaved = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (confirm(t('sqlEditor.confirmDeleteSaved'))) {
-      setSavedQueries(deleteSavedQuery(id));
-    }
+    setConfirmAction({ kind: 'deleteSaved', id });
   };
 
   const handleSelectHistoryItem = (sqlText: string) => {
@@ -1417,24 +1437,11 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
 
   const renderPaneActionBar = (paneId: 1 | 2) => {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', width: '100%', flexShrink: 0 }}>
-        <div 
-          className="sql-pane-action-bar" 
-          style={{ 
-            display: 'flex', 
-            justifyContent: 'space-between', 
-            alignItems: 'center', 
-            padding: '2px 8px', 
-            background: 'var(--win-bg-card, var(--win-bg-window))', 
-            borderTop: 'none', 
-            flexShrink: 0,
-            fontSize: '11px',
-            userSelect: 'none'
-          }}
-        >
+      <div className="sql-toolbar-wrap">
+        <div className="sql-pane-action-bar">
           {/* Khối bên trái: Icon Cấu hình Sliders (Image 2 + Image 3) & Vị trí con trỏ (line X, column Y) */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <div style={{ position: 'relative' }}>
+          <div className="sql-toolbar-left">
+            <div className="gp-popover-wrap">
               <button
                 onClick={(e) => {
                   setRunMenuPane(null);
@@ -1443,23 +1450,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                   setLimitMenuPane(null);
                   toggleDropdown('settings', paneId, e, setEditorSettingsMenuPane);
                 }}
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  boxShadow: 'none',
-                  padding: '2px 4px',
-                  fontSize: '12px',
-                  height: '24px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: 'var(--win-text-secondary)',
-                  cursor: 'pointer',
-                  borderRadius: '4px',
-                  transition: 'background 0.12s ease, color 0.12s ease'
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(0,0,0,0.06)'; e.currentTarget.style.color = 'var(--win-text-primary)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--win-text-secondary)'; }}
+                className="sql-sliders-btn"
                 title={t('sqlEditor.settingsTitle', 'Cấu hình Editor & Lưới')}
               >
                 <SlidersHorizontal size={14} />
@@ -1468,17 +1459,12 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
               {/* TablePlus Editor & Grid Settings Popover Menu (Image 3) */}
               {editorSettingsMenuPane === paneId && (
                 <>
-                  <div style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={() => setEditorSettingsMenuPane(null)} />
-                  <div style={{
+                  <div className="sql-menu-overlay" onClick={() => setEditorSettingsMenuPane(null)} />
+                  <div className="ws-menu" style={{
                     position: 'absolute',
                     top: dropdownPlacement[`settings_${paneId}`] === 'up' ? undefined : 'calc(100% + 4px)',
                     bottom: dropdownPlacement[`settings_${paneId}`] === 'up' ? 'calc(100% + 4px)' : undefined,
                     left: 0,
-                    background: 'var(--win-bg-popover, var(--win-bg-card))',
-                    border: '1px solid var(--win-border-strong, var(--win-border))',
-                    borderRadius: '6px',
-                    boxShadow: '0 10px 30px rgba(0,0,0,0.45)',
-                    zIndex: 9999,
                     minWidth: '230px',
                     display: 'flex',
                     flexDirection: 'column',
@@ -1502,27 +1488,27 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                       </select>
                     </div>
 
-                    <div style={{ borderTop: '1px solid var(--win-border)', margin: '3px 0' }} />
+                    <div className="sql-menu-divider" />
 
-                    <button className="copy-dropdown-item" onClick={() => setShowInvisibleChars(v => !v)} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}>
-                      <span style={{ width: '14px', fontWeight: 'bold', color: 'var(--win-accent)' }}>{showInvisibleChars ? '✓' : ''}</span>
+                    <button className="copy-dropdown-item" onClick={() => setShowInvisibleChars(v => !v)}>
+                      <span className="sql-item-check">{showInvisibleChars ? '✓' : ''}</span>
                       <span>{t('sqlEditor.showInvisibleChars', 'Show invisible Characters')}</span>
                     </button>
 
-                    <button className="copy-dropdown-item" onClick={() => setWordWrap(v => !v)} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}>
-                      <span style={{ width: '14px', fontWeight: 'bold', color: 'var(--win-accent)' }}>{wordWrap ? '✓' : ''}</span>
+                    <button className="copy-dropdown-item" onClick={() => setWordWrap(v => !v)}>
+                      <span className="sql-item-check">{wordWrap ? '✓' : ''}</span>
                       <span>{t('sqlEditor.wrapLines', 'Wrap lines to Editor Width')}</span>
                     </button>
 
-                    <button className="copy-dropdown-item" onClick={() => setHighlightQuery(v => !v)} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}>
-                      <span style={{ width: '14px', fontWeight: 'bold', color: 'var(--win-accent)' }}>{highlightQuery ? '✓' : ''}</span>
+                    <button className="copy-dropdown-item" onClick={() => setHighlightQuery(v => !v)}>
+                      <span className="sql-item-check">{highlightQuery ? '✓' : ''}</span>
                       <span>{t('sqlEditor.highlightQuery', 'Highlight current Query')}</span>
                     </button>
 
-                    <div style={{ borderTop: '1px solid var(--win-border)', margin: '3px 0' }} />
+                    <div className="sql-menu-divider" />
 
-                    <button className="copy-dropdown-item" onClick={() => setShowRowNumbers(v => !v)} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}>
-                      <span style={{ width: '14px', fontWeight: 'bold', color: 'var(--win-accent)' }}>{showRowNumbers ? '✓' : ''}</span>
+                    <button className="copy-dropdown-item" onClick={() => setShowRowNumbers(v => !v)}>
+                      <span className="sql-item-check">{showRowNumbers ? '✓' : ''}</span>
                       <span>{t('sqlEditor.showRowNumbers', 'Show result Row Numbers')}</span>
                     </button>
 
@@ -1530,8 +1516,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                       if (paneId === 1) setAutoFitColsPane1(v => !v);
                       else setAutoFitColsPane2(v => !v);
                       setEditorSettingsMenuPane(null);
-                    }} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}>
-                      <span style={{ width: '14px', fontWeight: 'bold', color: 'var(--win-accent)' }}>{(paneId === 1 ? autoFitColsPane1 : autoFitColsPane2) ? '✓' : ''}</span>
+                    }}>
+                      <span className="sql-item-check">{(paneId === 1 ? autoFitColsPane1 : autoFitColsPane2) ? '✓' : ''}</span>
                       <span>{t('sqlEditor.autoFitColumns', 'Auto-fit Column Widths')}</span>
                     </button>
                   </div>
@@ -1540,13 +1526,13 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
             </div>
 
             {/* Trạng thái vị trí con trỏ: line X, column Y (Image 2) */}
-            <span style={{ fontSize: '11px', color: 'var(--win-text-secondary)', fontFamily: 'var(--win-font-mono)' }}>
+            <span className="sql-status-info">
               line {(paneId === 1 ? cursorPos1 : cursorPos2).line}, column {(paneId === 1 ? cursorPos1 : cursorPos2).column}
             </span>
           </div>
 
           {/* Khối bên phải: Nút No limit + cụm nút Format, Run, [...] */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: 'auto' }}>
+          <div className="sql-toolbar-right">
             {/* Nút No limit / Giới hạn câu truy vấn */}
             <div style={{ position: 'relative' }}>
               <button
@@ -1756,7 +1742,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
               style={{ padding: '0 8px', fontSize: '11.5px', height: '26px', display: 'flex', alignItems: 'center', gap: '4px' }}
               title="Mở thư viện mẫu SQL Snippet"
             >
-              <span style={{ fontWeight: 700, fontSize: '12px', color: showSnippetPanel ? '#ffffff' : '#10b981' }}>( )</span>
+              <span style={{ fontWeight: 700, fontSize: '12px', color: showSnippetPanel ? '#ffffff' : '#10b981' }}>()</span>
               <span>Snippets</span>
             </button>
 
@@ -2155,7 +2141,10 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   };
 
   /** `original` is the value straight off the row, i.e. before any buffered edit. */
-  const saveCellEdit = (original: any) => {
+  const saveCellEdit = (original: any, e?: React.FocusEvent) => {
+    if (e?.relatedTarget && (e.relatedTarget as HTMLElement).closest('.grid-edit-wrapper')) {
+      return;
+    }
     if (!editingCell) return;
     const { pane, rowKey, col } = editingCell;
     setCellEdits(prev => {
@@ -2518,7 +2507,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                             return (
                               <td
                                 key={ci}
-                                className={isDirty ? 'grid-cell-dirty' : ''}
+                                className={`${isDirty ? 'grid-cell-dirty' : ''} ${isEditing ? 'is-editing' : ''}`.trim()}
                                 style={{ textAlign: isNum ? 'right' : 'left', whiteSpace: isAutoFit ? 'nowrap' : undefined }}
                                 title={
                                   pTarget && !canEdit
@@ -2528,18 +2517,72 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                                 onDoubleClick={canEdit ? () => startCellEdit(paneId, rowKey, col, cellVal) : undefined}
                               >
                                 {isEditing ? (
-                                  <input
-                                    type="text"
-                                    className="grid-input-edit"
-                                    value={editValue}
-                                    onChange={(e) => setEditValue(e.target.value)}
-                                    onBlur={() => saveCellEdit(row[col])}
-                                    onKeyDown={(e) => {
-                                      if (e.key === 'Enter') saveCellEdit(row[col]);
-                                      if (e.key === 'Escape') setEditingCell(null);
-                                    }}
-                                    autoFocus
-                                  />
+                                  <>
+                                    <span className="grid-cell-ghost">{cellVal === null ? 'NULL' : String(cellVal)}</span>
+                                    <div className="grid-edit-wrapper">
+                                    <input
+                                      type="text"
+                                      className="grid-input-edit"
+                                      value={editValue}
+                                      onChange={(e) => setEditValue(e.target.value)}
+                                      onBlur={(e) => saveCellEdit(row[col], e)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') saveCellEdit(row[col]);
+                                        if (e.key === 'Escape') setEditingCell(null);
+                                      }}
+                                      autoFocus
+                                    />
+                                    {(col.toLowerCase().includes('date') || col.toLowerCase().includes('time') || col.toLowerCase().endsWith('_at') || /^\d{4}-\d{2}-\d{2}/.test(String(cellVal || ''))) && (
+                                      <div
+                                        className="grid-date-picker-btn"
+                                        title={t('common.selectDate', 'Select Date & Time')}
+                                        onMouseDown={(e) => {
+                                          e.preventDefault();
+                                          e.stopPropagation();
+                                          const pickerEl = e.currentTarget.querySelector('input[type="datetime-local"]') as HTMLInputElement;
+                                          if (pickerEl && typeof pickerEl.showPicker === 'function') {
+                                            try { pickerEl.showPicker(); } catch {}
+                                          }
+                                        }}
+                                      >
+                                        <Calendar size={13} style={{ pointerEvents: 'none' }} />
+                                        <input
+                                          type="datetime-local"
+                                          step="1"
+                                          className="grid-date-picker-input"
+                                          value={(() => {
+                                            if (!editValue) return new Date().toISOString().slice(0, 19);
+                                            const str = String(editValue).trim().replace(' ', 'T');
+                                            const match = str.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?)/);
+                                            return match ? match[1] : '';
+                                          })()}
+                                          onMouseDown={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            if (typeof e.currentTarget.showPicker === 'function') {
+                                              try { e.currentTarget.showPicker(); } catch {}
+                                            }
+                                          }}
+                                          onChange={(e) => {
+                                            if (e.target.value) {
+                                              const orig = String(cellVal || editValue || '');
+                                              if (orig.includes('+')) {
+                                                const tz = orig.slice(orig.indexOf('+'));
+                                                setEditValue(e.target.value + tz);
+                                              } else if (orig.includes('Z')) {
+                                                setEditValue(e.target.value + 'Z');
+                                              } else if (orig.includes(' ') && !orig.includes('T')) {
+                                                setEditValue(e.target.value.replace('T', ' '));
+                                              } else {
+                                                setEditValue(e.target.value);
+                                              }
+                                            }
+                                          }}
+                                        />
+                                      </div>
+                                    )}
+                                  </div>
+                                  </>
                                 ) : cellVal === null ? (
                                   <span style={{ color: 'var(--win-accent, #3b82f6)', opacity: 0.8, fontStyle: 'italic' }}>{'NULL'}</span>
                                 ) : isFkCol ? (
@@ -3026,9 +3069,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                                   style={{ cursor: 'pointer', color: 'var(--st-danger)', display: 'flex', alignItems: 'center', gap: '2px' }}
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    if (confirm(t('sqlEditor.confirmDeleteHistoryItem'))) {
-                                      setHistoryList(deleteHistoryEntry(item.id));
-                                    }
+                                    setConfirmAction({ kind: 'deleteHistoryItem', id: item.id });
                                   }}
                                   title={t('sqlEditor.deleteHistoryItemTitle')}
                                 >
@@ -3238,6 +3279,26 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
             else executeSql(p.sql, p.pane, true);
           }}
           onCancel={() => setUnsafePrompt(null)}
+        />
+      )}
+
+      {/* Clearing history / deleting a saved statement — replaces window.confirm, see confirmAction. */}
+      {confirmAction && (
+        <ConfirmDialog
+          open
+          danger
+          title={
+            confirmAction.kind === 'clearHistory' ? clearHistoryLabel()
+              : confirmAction.kind === 'deleteSaved' ? t('sqlEditor.deleteSavedTitle')
+                : t('sqlEditor.deleteHistoryItemTitle')
+          }
+          message={
+            confirmAction.kind === 'clearHistory' ? clearHistoryMessage()
+              : confirmAction.kind === 'deleteSaved' ? t('sqlEditor.confirmDeleteSaved')
+                : t('sqlEditor.confirmDeleteHistoryItem')
+          }
+          onConfirm={runConfirmAction}
+          onCancel={() => setConfirmAction(null)}
         />
       )}
 

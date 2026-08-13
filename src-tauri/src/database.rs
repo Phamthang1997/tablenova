@@ -191,6 +191,44 @@ pub struct DatabaseManager {
     pub db_type: String,
     pub ssh_tunnel: Option<SshTunnel>,
     pub last_config: Option<Value>,
+    /// Postgres only: the schema every introspection query filters on and every generated
+    /// statement qualifies with. `None` on MySQL/SQLite (schema == database / always `main`)
+    /// and while disconnected. Lives here rather than in each command's arguments for the same
+    /// reason the open database does: there is one connection, so there is one current schema.
+    /// See `docs/postgres-schema-support-plan.md` §5.0.
+    pub current_schema: Option<String>,
+}
+
+/// The schema to use for Postgres, defaulting to `public` so a connection that never reported
+/// one behaves exactly as it did before this existed.
+pub(crate) fn pg_schema(manager: &DatabaseManager) -> String {
+    manager.current_schema.clone().unwrap_or_else(|| "public".to_string())
+}
+
+/// Same, for a schema already cloned out of the manager.
+pub(crate) fn pg_schema_of(opt: &Option<String>) -> String {
+    opt.clone().unwrap_or_else(|| "public".to_string())
+}
+
+/// Escape a schema/identifier for use inside a single-quoted SQL literal (`nspname = '...'`).
+pub(crate) fn sql_str(s: &str) -> String {
+    s.replace('\'', "''")
+}
+
+/// The schema a fresh Postgres connection lands in — i.e. the first existing entry of its
+/// `search_path`. This is what the plan's §4.1 calls the default for the Sidebar picker, and it
+/// costs no extra UI. Returns `None` for MySQL/SQLite, and on any failure: a probe that cannot
+/// run must not stop the connection from opening, it just leaves the `public` default in place.
+async fn probe_pg_schema(conn: &DbConnection) -> Option<String> {
+    if !matches!(conn, DbConnection::Postgres(_)) {
+        return None;
+    }
+    let res = execute_raw_sql_generic(conn, "SELECT current_schema() AS s".to_string()).await.ok()?;
+    let rows = rows_of(&res);
+    // `cell` yields "" for a NULL, which is what current_schema() returns when no entry of
+    // search_path exists — same handling either way.
+    let name = cell(rows.first()?, "s").trim().to_string();
+    if name.is_empty() { None } else { Some(name) }
 }
 
 // Mã hóa thành phần user/password để tránh vỡ URL khi có ký tự đặc biệt (@, :, /, ...)
@@ -420,12 +458,16 @@ pub async fn connect_db(app: tauri::AppHandle, state: tauri::State<'_, crate::Ap
         _ => return Err("Hệ quản trị CSDL không được hỗ trợ".to_string()),
     };
 
+    // Probed before the manager is locked: this awaits, and the guard must not be held across it.
+    let schema = probe_pg_schema(&conn).await;
+
     {
         let mut manager = state.db_manager.lock().map_err(|e| e.to_string())?;
         manager.connection = Some(conn);
         manager.db_type = db_type.clone();
         manager.ssh_tunnel = ssh_tunnel; // thay tunnel cũ (drop tunnel cũ nếu có)
         manager.last_config = Some(config.clone());
+        manager.current_schema = schema.clone();
     }
 
     // Kết nối IAM: chạy task làm mới token định kỳ (token chỉ sống 15 phút)
@@ -433,7 +475,10 @@ pub async fn connect_db(app: tauri::AppHandle, state: tauri::State<'_, crate::Ap
         spawn_iam_refresh(app, db_type, config, generation);
     }
 
-    Ok(json!({ "success": true }))
+    // The frontend keys its per-connection localStorage on the effective schema, so it has to
+    // learn it from here rather than from its own picker state — on the first connect the user
+    // has not touched the picker yet. See the plan §5.0.
+    Ok(json!({ "success": true, "schema": schema }))
 }
 
 #[tauri::command]
@@ -451,6 +496,7 @@ pub async fn disconnect_db(state: tauri::State<'_, crate::AppState>) -> Result<V
     manager.db_type = String::new();
     manager.ssh_tunnel = None;
     manager.last_config = None;
+    manager.current_schema = None;
     Ok(json!({ "success": true }))
 }
 
@@ -507,7 +553,7 @@ fn uniquify_columns(columns: &mut [String]) {
 
 #[tauri::command]
 pub async fn get_full_catalog(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
-    let (conn_type, db_type) = {
+    let (conn_type, db_type, schema) = {
         let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
         let ct = match manager.connection.as_ref() {
             Some(DbConnection::Sqlite(c)) => DbConnection::Sqlite(c.clone()),
@@ -515,8 +561,9 @@ pub async fn get_full_catalog(state: tauri::State<'_, crate::AppState>) -> Resul
             Some(DbConnection::Mysql(p)) => DbConnection::Mysql(p.clone()),
             None => return Err("Chưa kết nối CSDL".to_string()),
         };
-        (ct, manager.db_type.clone())
+        (ct, manager.db_type.clone(), pg_schema(&manager))
     };
+    let sch = sql_str(&schema);
 
     let mut columns_map = serde_json::Map::new(); // table -> [{name,type,isPrimaryKey}]
     let mut fk_map = serde_json::Map::new();      // table -> [{column,refTable,refColumn}]
@@ -541,13 +588,14 @@ pub async fn get_full_catalog(state: tauri::State<'_, crate::AppState>) -> Resul
     } else if db_type == "postgres" {
         // format_type() so hover/completion shows `varchar(45)` like the MySQL branch
         // above (COLUMN_TYPE) instead of information_schema's bare `character varying`.
-        let col_sql = "SELECT cl.relname::text AS t, a.attname::text AS c, format_type(a.atttypid, a.atttypmod) AS ty \
-                       FROM pg_attribute a \
-                       JOIN pg_class cl ON cl.oid = a.attrelid \
-                       JOIN pg_namespace n ON n.oid = cl.relnamespace \
-                       WHERE n.nspname = 'public' AND cl.relkind IN ('r','v','m','p','f') \
-                         AND a.attnum > 0 AND NOT a.attisdropped \
-                       ORDER BY cl.relname, a.attnum".to_string();
+        let col_sql = format!(
+            "SELECT cl.relname::text AS t, a.attname::text AS c, format_type(a.atttypid, a.atttypmod) AS ty \
+             FROM pg_attribute a \
+             JOIN pg_class cl ON cl.oid = a.attrelid \
+             JOIN pg_namespace n ON n.oid = cl.relnamespace \
+             WHERE n.nspname = '{sch}' AND cl.relkind IN ('r','v','m','p','f') \
+               AND a.attnum > 0 AND NOT a.attisdropped \
+             ORDER BY cl.relname, a.attnum");
         for row in rows_of(&execute_raw_sql_generic(&conn_type, col_sql).await?) {
             let t = cell(&row, "t").to_string();
             let entry = columns_map.entry(t).or_insert_with(|| Value::Array(vec![]));
@@ -556,7 +604,7 @@ pub async fn get_full_catalog(state: tauri::State<'_, crate::AppState>) -> Resul
             }
         }
         // PK: đánh dấu isPrimaryKey
-        let pk_sql = "SELECT tc.table_name AS t, kcu.column_name AS c FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema WHERE tc.constraint_type = 'PRIMARY KEY' AND tc.table_schema = 'public'".to_string();
+        let pk_sql = format!("SELECT tc.table_name AS t, kcu.column_name AS c FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema WHERE tc.constraint_type = 'PRIMARY KEY' AND tc.table_schema = '{sch}'");
         for row in rows_of(&execute_raw_sql_generic(&conn_type, pk_sql).await?) {
             let t = cell(&row, "t");
             let c = cell(&row, "c");
@@ -568,7 +616,7 @@ pub async fn get_full_catalog(state: tauri::State<'_, crate::AppState>) -> Resul
                 }
             }
         }
-        let fk_sql = "SELECT tc.table_name AS t, kcu.column_name AS c, ccu.table_name AS rt, ccu.column_name AS rc FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema JOIN information_schema.constraint_column_usage ccu ON ccu.constraint_name = tc.constraint_name WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = 'public'".to_string();
+        let fk_sql = format!("SELECT tc.table_name AS t, kcu.column_name AS c, ccu.table_name AS rt, ccu.column_name AS rc FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema JOIN information_schema.constraint_column_usage ccu ON ccu.constraint_name = tc.constraint_name WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = '{sch}'");
         for row in rows_of(&execute_raw_sql_generic(&conn_type, fk_sql).await?) {
             let t = cell(&row, "t").to_string();
             let entry = fk_map.entry(t).or_insert_with(|| Value::Array(vec![]));
@@ -584,18 +632,20 @@ pub async fn get_full_catalog(state: tauri::State<'_, crate::AppState>) -> Resul
 
 #[tauri::command]
 pub async fn get_tables(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
-    let conn_type = {
+    let (conn_type, schema) = {
         let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
+        let ct = match manager.connection.as_ref() {
             Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
             Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
             Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
             None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        };
+        (ct, pg_schema(&manager))
     };
-    
+    let sch = sql_str(&schema);
+
     let mut tables = Vec::new();
-    
+
     match conn_type {
         DbConnection::Sqlite(conn_arc) => {
             let conn = conn_arc.lock().map_err(|e| e.to_string())?;
@@ -618,11 +668,11 @@ pub async fn get_tables(state: tauri::State<'_, crate::AppState>) -> Result<Valu
             // information_schema.tables has no materialized view in it (it is not in the SQL
             // standard), so a matview used to be invisible everywhere in the app — sidebar,
             // export, compare. pg_class.relkind = 'm' is the only place it shows up.
-            let rows = sqlx::query(
-                "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = 'public' \
+            let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+                "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = '{sch}' \
                  UNION ALL \
                  SELECT c.relname, 'VIEW' FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
-                 WHERE n.nspname = 'public' AND c.relkind = 'm'")
+                 WHERE n.nspname = '{sch}' AND c.relkind = 'm'")))
                 .fetch_all(&pool).await.map_err(|e| e.to_string())?;
             for r in rows {
                 let name: String = r.get(0);
@@ -660,19 +710,23 @@ pub async fn get_table_data(
     sort_dir: Option<String>,
     filter: Option<String>,
 ) -> Result<Value, String> {
-    let conn_type = {
+    let (conn_type, schema) = {
         let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
+        let ct = match manager.connection.as_ref() {
             Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
             Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
             Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
             None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        };
+        (ct, manager.current_schema.clone())
     };
 
     let is_mysql = matches!(&conn_type, DbConnection::Mysql(_));
     // Ký tự trích dẫn định danh theo dialect: MySQL dùng backtick, còn lại dùng dấu nháy kép
     let q = if is_mysql { '`' } else { '"' };
+    // The grid reads through this command, so it has to name the same schema the sidebar listed
+    // from — otherwise a table outside `public` lists fine and then fails to open.
+    let table_ref = qualified(&conn_type, &schema, &name);
 
     // WHERE: frontend đã dựng mệnh đề lọc đúng dialect, chỉ ghép thô vào sau WHERE
     let where_clause = match filter.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
@@ -696,12 +750,12 @@ pub async fn get_table_data(
 
     let offset = (page.saturating_sub(1)) * limit;
     let sql = format!(
-        "SELECT * FROM {q}{name}{q}{where_clause}{order_clause} LIMIT {limit} OFFSET {offset}",
-        q = q, name = name, where_clause = where_clause, order_clause = order_clause, limit = limit, offset = offset
+        "SELECT * FROM {table_ref}{where_clause}{order_clause} LIMIT {limit} OFFSET {offset}",
+        table_ref = table_ref, where_clause = where_clause, order_clause = order_clause, limit = limit, offset = offset
     );
     let count_sql = format!(
-        "SELECT COUNT(*) FROM {q}{name}{q}{where_clause}",
-        q = q, name = name, where_clause = where_clause
+        "SELECT COUNT(*) FROM {table_ref}{where_clause}",
+        table_ref = table_ref, where_clause = where_clause
     );
     
     let mut rows_json = Vec::new();
@@ -784,22 +838,24 @@ pub async fn get_table_data(
 
 #[tauri::command]
 pub async fn get_table_schema(state: tauri::State<'_, crate::AppState>, name: String) -> Result<Value, String> {
-    let conn_type = {
+    let (conn_type, schema) = {
         let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
+        let ct = match manager.connection.as_ref() {
             Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
             Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
             Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
             None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        };
+        (ct, manager.current_schema.clone())
     };
-    
+    let sch = sql_str(&pg_schema_of(&schema));
+
     let mut indexes = Vec::new();
     let mut foreign_keys = Vec::new();
     let mut columns = Vec::new();
 
     // Danh sách cột khóa chính thật sự (dùng cho Postgres/MySQL; SQLite lấy trực tiếp từ PRAGMA)
-    let pk_cols = get_primary_key_columns(&conn_type, &name).await;
+    let pk_cols = get_primary_key_columns(&conn_type, &schema, &name).await;
 
     match &conn_type {
         DbConnection::Sqlite(conn_arc) => {
@@ -890,9 +946,9 @@ pub async fn get_table_schema(state: tauri::State<'_, crate::AppState>, name: St
                  JOIN pg_class c ON c.oid = a.attrelid
                  JOIN pg_namespace n ON n.oid = c.relnamespace
                  LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
-                 WHERE n.nspname = 'public' AND c.relname = '{}'
+                 WHERE n.nspname = '{}' AND c.relname = '{}'
                    AND a.attnum > 0 AND NOT a.attisdropped
-                 ORDER BY a.attnum", name.replace('\'', "''")
+                 ORDER BY a.attnum", sch, name.replace('\'', "''")
             );
             let rows = sqlx::query(sqlx::AssertSqlSafe(sql.clone())).fetch_all(pool).await.map_err(|e| e.to_string())?;
             for r in rows {
@@ -924,7 +980,9 @@ pub async fn get_table_schema(state: tauri::State<'_, crate::AppState>, name: St
                  JOIN pg_index ix ON t.oid = ix.indrelid
                  JOIN pg_class i ON i.oid = ix.indexrelid
                  JOIN pg_am am ON i.relam = am.oid
-                 WHERE t.relkind = 'r' AND t.relname = '{}'", name
+                 JOIN pg_namespace n ON n.oid = t.relnamespace
+                 WHERE t.relkind = 'r' AND n.nspname = '{}' AND t.relname = '{}'",
+                sch, name.replace('\'', "''")
             );
             if let Ok(idx_rows) = sqlx::query(sqlx::AssertSqlSafe(idx_sql)).fetch_all(pool).await {
                 for r in idx_rows {
@@ -960,7 +1018,8 @@ pub async fn get_table_schema(state: tauri::State<'_, crate::AppState>, name: St
                  FROM information_schema.table_constraints AS tc
                  JOIN information_schema.key_column_usage AS kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
                  JOIN information_schema.constraint_column_usage AS ccu ON ccu.constraint_name = tc.constraint_name
-                 WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_name = '{}'", name
+                 WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = '{}' AND tc.table_name = '{}'",
+                sch, name.replace('\'', "''")
             );
             if let Ok(fk_rows) = sqlx::query(sqlx::AssertSqlSafe(fk_sql)).fetch_all(pool).await {
                 for r in fk_rows {
@@ -1077,8 +1136,28 @@ pub async fn get_table_schema(state: tauri::State<'_, crate::AppState>, name: St
 }
 
 // Sinh câu lệnh SQL thay đổi cấu trúc bảng dựa trên payload DDL nhận từ frontend
-fn generate_alter_sqls(table_name: &str, payload: &Value, db_type: &str) -> Vec<String> {
+fn generate_alter_sqls(table_name: &str, payload: &Value, db_type: &str, schema: &Option<String>) -> Vec<String> {
     let mut sqls = Vec::new();
+
+    // Identifier quoting per dialect. Several statements below are shared by all three dialects
+    // and used to hardcode backticks, which Postgres rejects outright — qualifying with a
+    // backticked schema would have kept that broken, so they take this token instead.
+    let quote = |ident: &str| -> String {
+        if db_type == "postgres" {
+            format!("\"{}\"", ident.replace('"', "\"\""))
+        } else {
+            format!("`{}`", ident.replace('`', "``"))
+        }
+    };
+    // Postgres resolves an unqualified name through search_path, which need not contain the
+    // schema the user picked, so every table reference here carries it.
+    let qual = |ident: &str| -> String {
+        match (db_type, schema.as_deref()) {
+            ("postgres", Some(s)) if !s.is_empty() => format!("{}.{}", quote(s), quote(ident)),
+            _ => quote(ident),
+        }
+    };
+    let tbl = qual(table_name);
     
     let added = payload.get("added").and_then(|v| v.as_array());
     let dropped = payload.get("dropped").and_then(|v| v.as_array());
@@ -1114,7 +1193,7 @@ fn generate_alter_sqls(table_name: &str, payload: &Value, db_type: &str) -> Vec<
                     "".to_string()
                 };
 
-                let sql = format!("ALTER TABLE `{}` ADD COLUMN `{}` {}{} {}", table_name, col_name, col_type, default_str, null_str);
+                let sql = format!("ALTER TABLE {} ADD COLUMN {} {}{} {}", tbl, quote(col_name), col_type, default_str, null_str);
                 sqls.push(sql);
             }
         }
@@ -1124,12 +1203,8 @@ fn generate_alter_sqls(table_name: &str, payload: &Value, db_type: &str) -> Vec<
     if let Some(arr) = dropped {
         for col_name in arr {
             if let Some(name) = col_name.as_str() {
-                if db_type == "sqlite" {
-                    // SQLite không hỗ trợ DROP COLUMN trực tiếp ở một số bản cũ, tuy nhiên sqlite3 hiện tại đã hỗ trợ ALTER TABLE DROP COLUMN
-                    sqls.push(format!("ALTER TABLE `{}` DROP COLUMN `{}`", table_name, name));
-                } else {
-                    sqls.push(format!("ALTER TABLE `{}` DROP COLUMN `{}`", table_name, name));
-                }
+                // SQLite không hỗ trợ DROP COLUMN trực tiếp ở một số bản cũ, tuy nhiên sqlite3 hiện tại đã hỗ trợ ALTER TABLE DROP COLUMN
+                sqls.push(format!("ALTER TABLE {} DROP COLUMN {}", tbl, quote(name)));
             }
         }
     }
@@ -1140,7 +1215,7 @@ fn generate_alter_sqls(table_name: &str, payload: &Value, db_type: &str) -> Vec<
             let old_name = item.get("oldName").and_then(|v| v.as_str()).unwrap_or("");
             let new_name = item.get("newName").and_then(|v| v.as_str()).unwrap_or("");
             if !old_name.is_empty() && !new_name.is_empty() {
-                sqls.push(format!("ALTER TABLE `{}` RENAME COLUMN `{}` TO `{}`", table_name, old_name, new_name));
+                sqls.push(format!("ALTER TABLE {} RENAME COLUMN {} TO {}", tbl, quote(old_name), quote(new_name)));
             }
         }
     }
@@ -1154,11 +1229,11 @@ fn generate_alter_sqls(table_name: &str, payload: &Value, db_type: &str) -> Vec<
                 let null_str = if is_nullable { "NULL" } else { "NOT NULL" };
                 
                 if db_type == "mysql" {
-                    sqls.push(format!("ALTER TABLE `{}` MODIFY COLUMN `{}` {} {}", table_name, col_name, col_type, null_str));
+                    sqls.push(format!("ALTER TABLE {} MODIFY COLUMN {} {} {}", tbl, quote(col_name), col_type, null_str));
                 } else if db_type == "postgres" {
-                    sqls.push(format!("ALTER TABLE \"{}\" ALTER COLUMN \"{}\" TYPE {}", table_name, col_name, col_type));
+                    sqls.push(format!("ALTER TABLE {} ALTER COLUMN {} TYPE {}", tbl, quote(col_name), col_type));
                     let null_action = if is_nullable { "DROP NOT NULL" } else { "SET NOT NULL" };
-                    sqls.push(format!("ALTER TABLE \"{}\" ALTER COLUMN \"{}\" {}", table_name, col_name, null_action));
+                    sqls.push(format!("ALTER TABLE {} ALTER COLUMN {} {}", tbl, quote(col_name), null_action));
                 } else {
                     // SQLite không hỗ trợ thay đổi trực tiếp thuộc tính cột, cảnh báo cho người dùng
                 }
@@ -1171,9 +1246,10 @@ fn generate_alter_sqls(table_name: &str, payload: &Value, db_type: &str) -> Vec<
         for idx in arr {
             if let Some(idx_name) = idx.as_str() {
                 if db_type == "mysql" {
-                    sqls.push(format!("ALTER TABLE `{}` DROP INDEX `{}`", table_name, idx_name));
+                    sqls.push(format!("ALTER TABLE {} DROP INDEX {}", tbl, quote(idx_name)));
                 } else {
-                    sqls.push(format!("DROP INDEX `{}`", idx_name));
+                    // Postgres: an index lives in its table's schema, so the DROP must name it.
+                    sqls.push(format!("DROP INDEX {}", qual(idx_name)));
                 }
             }
         }
@@ -1190,31 +1266,33 @@ fn generate_alter_sqls(table_name: &str, payload: &Value, db_type: &str) -> Vec<
                 
                 let unique_str = if is_unique || idx_type == "UNIQUE" { "UNIQUE" } else { "" };
                 
+                // The new index name is never schema-qualified — Postgres puts it in its table's
+                // schema and rejects a qualified name here — but the table it is ON must be.
                 if db_type == "mysql" {
                     let sql = match idx_type {
                         "FULLTEXT" => format!(
-                            "CREATE FULLTEXT INDEX `{}` ON `{}` ({})",
-                            idx_name, table_name, cols
+                            "CREATE FULLTEXT INDEX {} ON {} ({})",
+                            quote(idx_name), tbl, cols
                         ),
                         "SPATIAL" => format!(
-                            "CREATE SPATIAL INDEX `{}` ON `{}` ({})",
-                            idx_name, table_name, cols
+                            "CREATE SPATIAL INDEX {} ON {} ({})",
+                            quote(idx_name), tbl, cols
                         ),
                         _ => format!(
-                            "CREATE {} INDEX `{}` ON `{}` ({}) USING {}",
-                            unique_str, idx_name, table_name, cols, method
+                            "CREATE {} INDEX {} ON {} ({}) USING {}",
+                            unique_str, quote(idx_name), tbl, cols, method
                         ),
                     };
                     sqls.push(sql);
                 } else if db_type == "postgres" {
                     sqls.push(format!(
-                        "CREATE {} INDEX \"{}\" ON \"{}\" USING {} ({})",
-                        unique_str, idx_name, table_name, method.to_lowercase(), cols
+                        "CREATE {} INDEX {} ON {} USING {} ({})",
+                        unique_str, quote(idx_name), tbl, method.to_lowercase(), cols
                     ));
                 } else {
                     sqls.push(format!(
-                        "CREATE {} INDEX `{}` ON `{}` ({})",
-                        unique_str, idx_name, table_name, cols
+                        "CREATE {} INDEX {} ON {} ({})",
+                        unique_str, quote(idx_name), tbl, cols
                     ));
                 }
             }
@@ -1226,9 +1304,9 @@ fn generate_alter_sqls(table_name: &str, payload: &Value, db_type: &str) -> Vec<
         for fk in arr {
             if let Some(fk_name) = fk.get("name").and_then(|v| v.as_str()) {
                 if db_type == "mysql" {
-                    sqls.push(format!("ALTER TABLE `{}` DROP FOREIGN KEY `{}`", table_name, fk_name));
+                    sqls.push(format!("ALTER TABLE {} DROP FOREIGN KEY {}", tbl, quote(fk_name)));
                 } else if db_type == "postgres" {
-                    sqls.push(format!("ALTER TABLE \"{}\" DROP CONSTRAINT \"{}\"", table_name, fk_name));
+                    sqls.push(format!("ALTER TABLE {} DROP CONSTRAINT {}", tbl, quote(fk_name)));
                 }
             }
         }
@@ -1245,14 +1323,16 @@ fn generate_alter_sqls(table_name: &str, payload: &Value, db_type: &str) -> Vec<
 
             if !col.is_empty() && !ref_table.is_empty() && !ref_col.is_empty() {
                 let fk_name = format!("fk_{}_{}_{}", table_name, col, ref_table);
+                // The referenced table is qualified too: it is in the schema the user is working
+                // in, which search_path need not cover.
                 match db_type {
                     "mysql" => sqls.push(format!(
-                        "ALTER TABLE `{}` ADD CONSTRAINT `{}` FOREIGN KEY (`{}`) REFERENCES `{}` (`{}`) ON UPDATE {} ON DELETE {}",
-                        table_name, fk_name, col, ref_table, ref_col, on_update, on_delete
+                        "ALTER TABLE {} ADD CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {} ({}) ON UPDATE {} ON DELETE {}",
+                        tbl, quote(&fk_name), quote(col), qual(ref_table), quote(ref_col), on_update, on_delete
                     )),
                     "postgres" => sqls.push(format!(
-                        "ALTER TABLE \"{}\" ADD CONSTRAINT \"{}\" FOREIGN KEY (\"{}\") REFERENCES \"{}\" (\"{}\") ON UPDATE {} ON DELETE {}",
-                        table_name, fk_name, col, ref_table, ref_col, on_update, on_delete
+                        "ALTER TABLE {} ADD CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {} ({}) ON UPDATE {} ON DELETE {}",
+                        tbl, quote(&fk_name), quote(col), qual(ref_table), quote(ref_col), on_update, on_delete
                     )),
                     // SQLite không hỗ trợ thêm khóa ngoại qua ALTER TABLE — bỏ qua (cần tạo lại bảng)
                     _ => {}
@@ -1266,14 +1346,15 @@ fn generate_alter_sqls(table_name: &str, payload: &Value, db_type: &str) -> Vec<
 
 #[tauri::command]
 pub async fn alter_table_schema(state: tauri::State<'_, crate::AppState>, name: String, payload: Value) -> Result<Value, String> {
-    let conn_type = {
+    let (conn_type, schema) = {
         let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
+        let ct = match manager.connection.as_ref() {
             Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
             Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
             Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
             None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        };
+        (ct, manager.current_schema.clone())
     };
 
     let db_type = match &conn_type {
@@ -1282,7 +1363,7 @@ pub async fn alter_table_schema(state: tauri::State<'_, crate::AppState>, name: 
         DbConnection::Mysql(_) => "mysql",
     };
 
-    let sqls = generate_alter_sqls(&name, &payload, db_type);
+    let sqls = generate_alter_sqls(&name, &payload, db_type, &schema);
     for sql in sqls {
         execute_raw_sql_generic(&conn_type, sql).await?;
     }
@@ -1292,14 +1373,15 @@ pub async fn alter_table_schema(state: tauri::State<'_, crate::AppState>, name: 
 
 #[tauri::command]
 pub async fn preview_alter_schema(state: tauri::State<'_, crate::AppState>, name: String, payload: Value) -> Result<Value, String> {
-    let conn_type = {
+    let (conn_type, schema) = {
         let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
+        let ct = match manager.connection.as_ref() {
             Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
             Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
             Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
             None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        };
+        (ct, manager.current_schema.clone())
     };
 
     let db_type = match &conn_type {
@@ -1308,7 +1390,8 @@ pub async fn preview_alter_schema(state: tauri::State<'_, crate::AppState>, name
         DbConnection::Mysql(_) => "mysql",
     };
 
-    let sqls = generate_alter_sqls(&name, &payload, db_type);
+    // Cùng SQL với alter_table_schema — người dùng xem trước đúng câu sẽ chạy.
+    let sqls = generate_alter_sqls(&name, &payload, db_type, &schema);
     Ok(json!({ "success": true, "sql": sqls.join(";\n") }))
 }
 
@@ -2159,7 +2242,11 @@ pub(crate) async fn mysql_stream(
 }
 
 // Lấy danh sách cột khóa chính của một bảng theo từng dialect (hỗ trợ cả khóa chính tổ hợp).
-async fn get_primary_key_columns(conn: &DbConnection, table: &str) -> Vec<String> {
+//
+// `schema` must be the same one the caller writes through. This feeds `commit_changes`, whose
+// UPDATE/DELETE build their WHERE from the result: reading the PK of `public.film` while writing
+// to `sales.film` produces no error at all, just a wrong WHERE — i.e. the wrong rows changed.
+async fn get_primary_key_columns(conn: &DbConnection, schema: &Option<String>, table: &str) -> Vec<String> {
     match conn {
         DbConnection::Sqlite(conn_arc) => {
             let mut cols: Vec<(i32, String)> = Vec::new();
@@ -2185,9 +2272,10 @@ async fn get_primary_key_columns(conn: &DbConnection, table: &str) -> Vec<String
             let sql = format!(
                 "SELECT kcu.column_name FROM information_schema.table_constraints tc \
                  JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema \
-                 WHERE tc.constraint_type = 'PRIMARY KEY' AND tc.table_name = '{}' AND tc.table_schema = 'public' \
+                 WHERE tc.constraint_type = 'PRIMARY KEY' AND tc.table_name = '{}' AND tc.table_schema = '{}' \
                  ORDER BY kcu.ordinal_position",
-                table.replace('\'', "''")
+                table.replace('\'', "''"),
+                sql_str(&pg_schema_of(schema))
             );
             match execute_raw_sql_generic(conn, sql).await {
                 Ok(results) => all_string_values(&results),
@@ -2210,8 +2298,8 @@ async fn get_primary_key_columns(conn: &DbConnection, table: &str) -> Vec<String
 }
 
 // Tự dò tên cột khóa chính (lấy cột đầu tiên). Trả về None nếu không xác định được.
-async fn detect_primary_key(conn: &DbConnection, table: &str) -> Option<String> {
-    get_primary_key_columns(conn, table).await.into_iter().next()
+async fn detect_primary_key(conn: &DbConnection, schema: &Option<String>, table: &str) -> Option<String> {
+    get_primary_key_columns(conn, schema, table).await.into_iter().next()
 }
 
 // Lấy giá trị chuỗi ở ô đầu tiên của mỗi hàng trong kết quả execute_raw_sql_generic
@@ -2231,14 +2319,15 @@ fn all_string_values(results: &[Value]) -> Vec<String> {
 
 #[tauri::command]
 pub async fn commit_changes(state: tauri::State<'_, crate::AppState>, payload: Value) -> Result<Value, String> {
-    let conn_type = {
+    let (conn_type, schema) = {
         let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
+        let ct = match manager.connection.as_ref() {
             Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
             Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
             Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
             None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        };
+        (ct, manager.current_schema.clone())
     };
 
     let table_name = payload.get("tableName").and_then(|v| v.as_str()).ok_or("Thiếu tên bảng")?;
@@ -2247,12 +2336,19 @@ pub async fn commit_changes(state: tauri::State<'_, crate::AppState>, payload: V
     let preview = payload.get("preview").and_then(|v| v.as_bool()).unwrap_or(false);
 
     // Xác định cột khóa chính: ưu tiên giá trị frontend gửi lên, nếu không có thì tự dò từ schema, cuối cùng mới fallback "id"
+    // Cùng schema với các câu ghi bên dưới — xem chú thích ở get_primary_key_columns.
     let pk_col = match payload.get("primaryKey").and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()) {
         Some(pk) => pk.to_string(),
-        None => detect_primary_key(&conn_type, table_name).await.unwrap_or_else(|| "id".to_string()),
+        None => detect_primary_key(&conn_type, &schema, table_name).await.unwrap_or_else(|| "id".to_string()),
     };
 
     let is_pg = matches!(&conn_type, DbConnection::Postgres(_));
+    // Written with backticks like every other identifier below, because the Postgres branch turns
+    // the whole statement's backticks into double quotes at the end.
+    let table_ref = match (is_pg, schema.as_deref()) {
+        (true, Some(s)) if !s.is_empty() => format!("`{}`.`{}`", s, table_name),
+        _ => format!("`{}`", table_name),
+    };
     let mut sqls: Vec<String> = Vec::new();
 
     for change in changes {
@@ -2267,7 +2363,7 @@ pub async fn commit_changes(state: tauri::State<'_, crate::AppState>, payload: V
 
         match change_type {
             "delete" => {
-                let sql = format!("DELETE FROM `{}` WHERE `{}` = '{}'", table_name, pk_col, row_id.replace("'", "''"));
+                let sql = format!("DELETE FROM {} WHERE `{}` = '{}'", table_ref, pk_col, row_id.replace("'", "''"));
                 sqls.push(if is_pg { sql.replace("`", "\"") } else { sql });
             }
             "insert" => {
@@ -2285,8 +2381,8 @@ pub async fn commit_changes(state: tauri::State<'_, crate::AppState>, payload: V
                         }
                     }
                     let sql = format!(
-                        "INSERT INTO `{}` ({}) VALUES ({})",
-                        table_name,
+                        "INSERT INTO {} ({}) VALUES ({})",
+                        table_ref,
                         cols.join(", "),
                         vals.join(", ")
                     );
@@ -2308,8 +2404,8 @@ pub async fn commit_changes(state: tauri::State<'_, crate::AppState>, payload: V
                     }
                     if !sets.is_empty() {
                         let sql = format!(
-                            "UPDATE `{}` SET {} WHERE `{}` = '{}'",
-                            table_name,
+                            "UPDATE {} SET {} WHERE `{}` = '{}'",
+                            table_ref,
                             sets.join(", "),
                             pk_col,
                             row_id.replace("'", "''")
@@ -2702,14 +2798,15 @@ pub async fn restore_backup_old(_state: tauri::State<'_, crate::AppState>, _file
 
 #[tauri::command]
 pub async fn import_new_table(state: tauri::State<'_, crate::AppState>, table_name: String, rows: Vec<Value>) -> Result<Value, String> {
-    let conn_type = {
+    let (conn_type, schema) = {
         let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
+        let ct = match manager.connection.as_ref() {
             Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
             Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
             Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
             None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        };
+        (ct, manager.current_schema.clone())
     };
     if rows.is_empty() {
         return Err("Không có dữ liệu để tạo bảng".to_string());
@@ -2762,25 +2859,26 @@ pub async fn import_new_table(state: tauri::State<'_, crate::AppState>, table_na
         defs.push(format!("{q}{}{q} {}", c, ty));
     }
 
-    let create_sql = format!("CREATE TABLE {q}{}{q} ({})", table_name, defs.join(", "));
+    let create_sql = format!("CREATE TABLE {} ({})", qualified(&conn_type, &schema, &table_name), defs.join(", "));
     execute_raw_sql_generic(&conn_type, create_sql).await?;
 
-    let inserted = bulk_insert(&conn_type, &table_name, &rows).await?;
+    let inserted = bulk_insert(&conn_type, &schema, &table_name, &rows).await?;
     Ok(json!({ "success": true, "inserted": inserted }))
 }
 
 #[tauri::command]
 pub async fn create_table(state: tauri::State<'_, crate::AppState>, payload: Value) -> Result<Value, String> {
-    let conn_type = {
+    let (conn_type, schema) = {
         let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
+        let ct = match manager.connection.as_ref() {
             Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
             Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
             Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
             None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        };
+        (ct, manager.current_schema.clone())
     };
-    
+
     let table_name = payload.get("tableName").and_then(|v| v.as_str()).ok_or("Thiếu tên bảng")?;
 
     let db_type = match &conn_type {
@@ -2789,6 +2887,8 @@ pub async fn create_table(state: tauri::State<'_, crate::AppState>, payload: Val
         DbConnection::Mysql(_) => "mysql",
     };
     let q = if db_type == "mysql" { '`' } else { '"' };
+    // Không qualify thì bảng mới rơi vào schema đầu search_path, không phải schema đang chọn.
+    let table_ref = qualified(&conn_type, &schema, table_name);
 
     let columns = payload.get("columns").and_then(|v| v.as_array());
 
@@ -2849,11 +2949,11 @@ pub async fn create_table(state: tauri::State<'_, crate::AppState>, payload: Val
                 defs.push(format!("PRIMARY KEY ({})", pk_list));
             }
 
-            format!("CREATE TABLE {q}{name}{q} ({defs})", q = q, name = table_name, defs = defs.join(", "))
+            format!("CREATE TABLE {name} ({defs})", name = table_ref, defs = defs.join(", "))
         }
         _ => match &conn_type {
-            DbConnection::Mysql(_) => format!("CREATE TABLE `{}` (id INT AUTO_INCREMENT PRIMARY KEY)", table_name),
-            _ => format!("CREATE TABLE \"{}\" (id INTEGER PRIMARY KEY)", table_name),
+            DbConnection::Mysql(_) => format!("CREATE TABLE {} (id INT AUTO_INCREMENT PRIMARY KEY)", table_ref),
+            _ => format!("CREATE TABLE {} (id INTEGER PRIMARY KEY)", table_ref),
         },
     };
 
@@ -2864,7 +2964,7 @@ pub async fn create_table(state: tauri::State<'_, crate::AppState>, payload: Val
         "addedIndexes": payload.get("indexes").cloned().unwrap_or(json!([])),
         "addedFKs": payload.get("foreignKeys").cloned().unwrap_or(json!([])),
     });
-    let extra_sqls = generate_alter_sqls(table_name, &extra_payload, db_type);
+    let extra_sqls = generate_alter_sqls(table_name, &extra_payload, db_type, &schema);
     for sql in extra_sqls {
         execute_raw_sql_generic(&conn_type, sql).await?;
     }
@@ -2877,6 +2977,22 @@ fn quote_ident(conn: &DbConnection, name: &str) -> String {
     match conn {
         DbConnection::Mysql(_) => format!("`{}`", name.replace('`', "``")),
         _ => format!("\"{}\"", name.replace('"', "\"\"")),
+    }
+}
+
+/// A table name as it must appear in generated SQL: `"sales"."film"` on Postgres.
+///
+/// Only Postgres qualifies — MySQL's schema *is* the open database (the connection already
+/// points at it) and SQLite has none. Passing `None`/empty leaves the bare quoted name, so
+/// every call site keeps its old output until a schema is actually selected. This is the twin
+/// of `db_compare.rs`'s `qualified()`; see `docs/postgres-schema-support-plan.md` §4.2 for the
+/// list of sites that must use it.
+fn qualified(conn: &DbConnection, schema: &Option<String>, table: &str) -> String {
+    match (conn, schema) {
+        (DbConnection::Postgres(_), Some(s)) if !s.is_empty() => {
+            format!("{}.{}", quote_ident(conn, s), quote_ident(conn, table))
+        }
+        _ => quote_ident(conn, table),
     }
 }
 
@@ -2961,14 +3077,15 @@ pub async fn drop_table(
     cascade: Option<bool>,
     ignore_fk: Option<bool>,
 ) -> Result<Value, String> {
-    let conn_type = {
+    let (conn_type, schema) = {
         let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
+        let ct = match manager.connection.as_ref() {
             Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
             Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
             Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
             None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        };
+        (ct, manager.current_schema.clone())
     };
     let is_view = is_view.unwrap_or(false);
     let cascade = cascade.unwrap_or(false);
@@ -2985,7 +3102,7 @@ pub async fn drop_table(
     let sql = format!(
         "{} {}{}",
         keyword,
-        quote_ident(&conn_type, &name),
+        qualified(&conn_type, &schema, &name),
         if cascade { " CASCADE" } else { "" }
     );
 
@@ -3018,19 +3135,20 @@ pub async fn truncate_table(
     disable_fk: Option<bool>,
     cascade: Option<bool>,
 ) -> Result<Value, String> {
-    let conn_type = {
+    let (conn_type, schema) = {
         let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
+        let ct = match manager.connection.as_ref() {
             Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
             Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
             Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
             None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        };
+        (ct, manager.current_schema.clone())
     };
     let restart_identity = restart_identity.unwrap_or(false);
     let disable_fk = disable_fk.unwrap_or(false);
     let cascade = cascade.unwrap_or(false);
-    let quoted = quote_ident(&conn_type, &name);
+    let quoted = qualified(&conn_type, &schema, &name);
 
     // Như DROP: chỉ Postgres có TRUNCATE ... CASCADE.
     if cascade && !matches!(conn_type, DbConnection::Postgres(_)) {
@@ -3087,15 +3205,17 @@ pub async fn truncate_table(
 // Trả về câu lệnh CREATE TABLE (định nghĩa) của bảng theo từng dialect
 #[tauri::command]
 pub async fn get_table_definition(state: tauri::State<'_, crate::AppState>, name: String) -> Result<Value, String> {
-    let conn_type = {
+    let (conn_type, schema) = {
         let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
+        let ct = match manager.connection.as_ref() {
             Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
             Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
             Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
             None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        };
+        (ct, manager.current_schema.clone())
     };
+    let sch = sql_str(&pg_schema_of(&schema));
 
     let ddl: String = match &conn_type {
         DbConnection::Sqlite(conn_arc) => {
@@ -3127,8 +3247,8 @@ pub async fn get_table_definition(state: tauri::State<'_, crate::AppState>, name
             let relkind = {
                 let sql = format!(
                     "SELECT c.relkind::text AS kind FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
-                     WHERE n.nspname = 'public' AND c.relname = '{}' LIMIT 1",
-                    name.replace('\'', "''")
+                     WHERE n.nspname = '{}' AND c.relname = '{}' LIMIT 1",
+                    sch, name.replace('\'', "''")
                 );
                 execute_raw_sql_generic(&conn_type, sql)
                     .await
@@ -3137,8 +3257,13 @@ pub async fn get_table_definition(state: tauri::State<'_, crate::AppState>, name
                     .unwrap_or_default()
             };
             if relkind == "v" || relkind == "m" {
+                // regclass resolves through search_path unless the name is qualified, which would
+                // read a same-named view from another schema. The emitted DDL below stays
+                // unqualified on purpose: the dump header sets search_path, so the file can be
+                // restored into a differently-named schema.
                 let sql = format!(
-                    "SELECT pg_get_viewdef('\"{}\"'::regclass, true) AS def",
+                    "SELECT pg_get_viewdef('\"{}\".\"{}\"'::regclass, true) AS def",
+                    sch.replace('"', "\"\""),
                     name.replace('"', "\"\"")
                 );
                 let results = execute_raw_sql_generic(&conn_type, sql).await?;
@@ -3155,7 +3280,7 @@ pub async fn get_table_definition(state: tauri::State<'_, crate::AppState>, name
             }
 
             // Postgres không có SHOW CREATE TABLE -> dựng lại từ metadata (cột + NOT NULL + DEFAULT + PRIMARY KEY)
-            let pk_cols = get_primary_key_columns(&conn_type, &name).await;
+            let pk_cols = get_primary_key_columns(&conn_type, &schema, &name).await;
             // format_type() keeps length/precision — see get_table_schema for why.
             let sql = format!(
                 "SELECT a.attname::text AS column_name, \
@@ -3166,10 +3291,10 @@ pub async fn get_table_definition(state: tauri::State<'_, crate::AppState>, name
                  JOIN pg_class c ON c.oid = a.attrelid \
                  JOIN pg_namespace n ON n.oid = c.relnamespace \
                  LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum \
-                 WHERE n.nspname = 'public' AND c.relname = '{}' \
+                 WHERE n.nspname = '{}' AND c.relname = '{}' \
                    AND a.attnum > 0 AND NOT a.attisdropped \
                  ORDER BY a.attnum",
-                name.replace('\'', "''")
+                sch, name.replace('\'', "''")
             );
             let results = execute_raw_sql_generic(&conn_type, sql).await?;
             let mut defs: Vec<String> = Vec::new();
@@ -3199,19 +3324,26 @@ pub async fn get_table_definition(state: tauri::State<'_, crate::AppState>, name
 
 #[tauri::command]
 pub async fn rename_table(state: tauri::State<'_, crate::AppState>, old_name: String, new_name: String) -> Result<Value, String> {
-    let conn_type = {
+    let (conn_type, schema) = {
         let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
+        let ct = match manager.connection.as_ref() {
             Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
             Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
             Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
             None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        };
+        (ct, manager.current_schema.clone())
     };
-    
+
+    // Chỉ vế nguồn mang schema: RENAME TO nhận tên mới KHÔNG qualify (Postgres báo lỗi cú pháp
+    // nếu qualify), bảng đổi tên vẫn ở nguyên schema cũ.
     let sql = match &conn_type {
         DbConnection::Mysql(_) => format!("RENAME TABLE `{}` TO `{}`", old_name, new_name),
-        _ => format!("ALTER TABLE \"{}\" RENAME TO \"{}\"", old_name, new_name),
+        _ => format!(
+            "ALTER TABLE {} RENAME TO {}",
+            qualified(&conn_type, &schema, &old_name),
+            quote_ident(&conn_type, &new_name)
+        ),
     };
     execute_raw_sql_generic(&conn_type, sql.clone()).await?;
     
@@ -3230,7 +3362,7 @@ fn sql_literal(v: Option<&Value>) -> String {
 
 // Chèn hàng loạt dòng vào một bảng đã tồn tại. Gộp mỗi BATCH dòng vào một câu INSERT nhiều VALUES.
 // Cột lấy từ hợp (union) các key của các dòng, giữ thứ tự xuất hiện lần đầu.
-async fn bulk_insert(conn: &DbConnection, table: &str, rows: &[Value]) -> Result<usize, String> {
+async fn bulk_insert(conn: &DbConnection, schema: &Option<String>, table: &str, rows: &[Value]) -> Result<usize, String> {
     if rows.is_empty() {
         return Ok(0);
     }
@@ -3252,7 +3384,7 @@ async fn bulk_insert(conn: &DbConnection, table: &str, rows: &[Value]) -> Result
         return Err("Dữ liệu import không có cột nào".to_string());
     }
 
-    let quoted_table = format!("{q}{}{q}", table);
+    let quoted_table = qualified(conn, schema, table);
     let cols_sql = col_order.iter().map(|c| format!("{q}{}{q}", c)).collect::<Vec<_>>().join(", ");
 
     const BATCH: usize = 500;
@@ -3277,16 +3409,17 @@ async fn bulk_insert(conn: &DbConnection, table: &str, rows: &[Value]) -> Result
 
 #[tauri::command]
 pub async fn import_table_data(state: tauri::State<'_, crate::AppState>, name: String, rows: Vec<Value>) -> Result<Value, String> {
-    let conn_type = {
+    let (conn_type, schema) = {
         let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
+        let ct = match manager.connection.as_ref() {
             Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
             Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
             Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
             None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        };
+        (ct, manager.current_schema.clone())
     };
-    let inserted = bulk_insert(&conn_type, &name, &rows).await?;
+    let inserted = bulk_insert(&conn_type, &schema, &name, &rows).await?;
     Ok(json!({ "success": true, "inserted": inserted }))
 }
 
@@ -3769,10 +3902,86 @@ pub async fn switch_database(state: tauri::State<'_, crate::AppState>, name: Str
         _ => return Err("Hệ quản trị CSDL không được hỗ trợ".to_string()),
     };
 
+    // The new database has its own schemas: the one selected on the old pool may not exist here,
+    // and keeping it would point every query at a schema that is not there — the same empty
+    // sidebar this whole feature exists to fix, only harder to explain. Re-probe instead.
+    let schema = probe_pg_schema(&new_conn).await;
+
     let mut manager = state.db_manager.lock().map_err(|e| e.to_string())?;
     manager.connection = Some(new_conn);
     manager.last_config = Some(stored_conf);
-    Ok(json!({ "success": true, "database": name }))
+    manager.current_schema = schema.clone();
+    Ok(json!({ "success": true, "database": name, "schema": schema }))
+}
+
+/// Schemas available on the current Postgres connection, for the Sidebar picker.
+///
+/// Empty on MySQL (its schema *is* the database — `list_databases` already covers that) and on
+/// SQLite, which is how the frontend decides whether to show the picker at all.
+#[tauri::command]
+pub async fn list_schemas(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
+    let (conn_type, current) = {
+        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
+        let ct = match manager.connection.as_ref() {
+            Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
+            Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
+            Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
+            None => return Err("Chưa kết nối CSDL".to_string()),
+        };
+        (ct, manager.current_schema.clone())
+    };
+
+    if !matches!(conn_type, DbConnection::Postgres(_)) {
+        return Ok(json!({ "success": true, "schemas": [], "current": Value::Null }));
+    }
+
+    let results = execute_raw_sql_generic(
+        &conn_type,
+        "SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg_%' \
+         AND nspname <> 'information_schema' ORDER BY nspname".to_string(),
+    ).await?;
+    let schemas = all_string_values(&results);
+    Ok(json!({ "success": true, "schemas": schemas, "current": current }))
+}
+
+/// Selects the schema every later command works in. The Sidebar picker's backing command.
+///
+/// The name is verified against `pg_namespace` first: accepting one that does not exist would
+/// leave every query filtering on a schema that is not there, i.e. the same empty sidebar this
+/// feature exists to fix, with nothing on screen to explain it.
+#[tauri::command]
+pub async fn set_current_schema(state: tauri::State<'_, crate::AppState>, name: String) -> Result<Value, String> {
+    let conn_type = {
+        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
+        match manager.connection.as_ref() {
+            Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
+            Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
+            Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
+            None => return Err("Chưa kết nối CSDL".to_string()),
+        }
+    };
+    if !matches!(conn_type, DbConnection::Postgres(_)) {
+        return Err("Chỉ PostgreSQL mới hỗ trợ chọn schema".to_string());
+    }
+
+    let schema = name.trim().to_string();
+    if schema.is_empty() {
+        return Err("Thiếu tên schema".to_string());
+    }
+
+    let found = execute_raw_sql_generic(
+        &conn_type,
+        format!("SELECT nspname FROM pg_namespace WHERE nspname = '{}' LIMIT 1", sql_str(&schema)),
+    ).await?;
+    if rows_of(&found).is_empty() {
+        return Err(format!("Schema '{}' không tồn tại", schema));
+    }
+
+    {
+        let mut manager = state.db_manager.lock().map_err(|e| e.to_string())?;
+        manager.current_schema = Some(schema.clone());
+    }
+    Ok(json!({ "success": true, "schema": schema }))
 }
 
 // Tạo database mới (dùng kết nối hiện tại). encoding/collation là tùy chọn.
@@ -3865,15 +4074,17 @@ pub async fn rename_database(state: tauri::State<'_, crate::AppState>, old_name:
 // Liệt kê các đối tượng CSDL của kết nối hiện tại: bảng, khung nhìn, hàm, thủ tục
 #[tauri::command]
 pub async fn get_database_objects(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
-    let conn_type = {
+    let (conn_type, schema) = {
         let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
+        let ct = match manager.connection.as_ref() {
             Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
             Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
             Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
             None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        };
+        (ct, pg_schema(&manager))
     };
+    let sch = sql_str(&schema);
 
     let mut tables: Vec<String> = Vec::new();
     let mut views: Vec<String> = Vec::new();
@@ -3910,15 +4121,15 @@ pub async fn get_database_objects(state: tauri::State<'_, crate::AppState>) -> R
         DbConnection::Postgres(_) => {
             // Materialized views: see the note in get_tables — information_schema has none.
             let tv = execute_raw_sql_generic(&conn_type,
-                "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = 'public' \
+                format!("SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = '{sch}' \
                  UNION ALL \
                  SELECT c.relname, 'VIEW' FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
-                 WHERE n.nspname = 'public' AND c.relkind = 'm' \
-                 ORDER BY 1".to_string()).await?;
+                 WHERE n.nspname = '{sch}' AND c.relkind = 'm' \
+                 ORDER BY 1")).await?;
             split_tables_views(&tv, "table_name", "table_type", "VIEW", &mut tables, &mut views);
 
             let rt = execute_raw_sql_generic(&conn_type,
-                "SELECT p.proname AS name, p.prokind::text AS kind FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.prokind IN ('f','p') ORDER BY p.proname".to_string())
+                format!("SELECT p.proname AS name, p.prokind::text AS kind FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = '{sch}' AND p.prokind IN ('f','p') ORDER BY p.proname"))
                 .await.unwrap_or_default();
             if let Some(data) = rt.get(0).and_then(|r| r.get("data")).and_then(|v| v.as_array()) {
                 for row in data {
@@ -3983,15 +4194,17 @@ pub async fn get_database_objects(state: tauri::State<'_, crate::AppState>) -> R
 // Lấy định nghĩa (mã nguồn) của view / function / procedure
 #[tauri::command]
 pub async fn get_object_definition(state: tauri::State<'_, crate::AppState>, name: String, kind: String) -> Result<Value, String> {
-    let conn_type = {
+    let (conn_type, schema) = {
         let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
+        let ct = match manager.connection.as_ref() {
             Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
             Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
             Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
             None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        };
+        (ct, pg_schema(&manager))
     };
+    let sch = sql_str(&schema);
 
     let ddl: String = match &conn_type {
         DbConnection::Mysql(pool) => {
@@ -4014,10 +4227,14 @@ pub async fn get_object_definition(state: tauri::State<'_, crate::AppState>, nam
         DbConnection::Postgres(_) => {
             let sql = match kind.as_str() {
                 "function" | "procedure" => format!(
-                    "SELECT pg_get_functiondef(p.oid) AS def FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname = '{}' LIMIT 1",
-                    name.replace('\'', "''")
+                    "SELECT pg_get_functiondef(p.oid) AS def FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = '{}' AND p.proname = '{}' LIMIT 1",
+                    sch, name.replace('\'', "''")
                 ),
-                "view" => format!("SELECT pg_get_viewdef('\"{}\"'::regclass, true) AS def", name.replace('"', "\"\"")),
+                "view" => format!(
+                    "SELECT pg_get_viewdef('\"{}\".\"{}\"'::regclass, true) AS def",
+                    sch.replace('"', "\"\""),
+                    name.replace('"', "\"\"")
+                ),
                 _ => return Err("Loại đối tượng không được hỗ trợ".to_string()),
             };
             let results = execute_raw_sql_generic(&conn_type, sql).await?;
@@ -4413,13 +4630,15 @@ fn row_i64(row: &Value, col: &str) -> i64 {
 
 #[tauri::command]
 pub async fn get_table_triggers(state: tauri::State<'_, crate::AppState>, table_name: String) -> Result<Value, String> {
-    let conn_type = {
+    let (conn_type, schema) = {
         let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
+        let ct = match manager.connection.as_ref() {
             Some(c) => c.clone(),
             None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        };
+        (ct, pg_schema(&manager))
     };
+    let sch = sql_str(&schema);
 
     let sql = match &conn_type {
         DbConnection::Mysql(_) => format!(
@@ -4427,8 +4646,8 @@ pub async fn get_table_triggers(state: tauri::State<'_, crate::AppState>, table_
             table_name.replace('\'', "''")
         ),
         DbConnection::Postgres(_) => format!(
-            "SELECT tr.tgname AS name, CASE WHEN tr.tgtype & 2 = 2 THEN 'BEFORE' WHEN tr.tgtype & 64 = 64 THEN 'INSTEAD OF' ELSE 'AFTER' END AS timing, CASE WHEN tr.tgtype & 4 = 4 THEN 'INSERT' WHEN tr.tgtype & 8 = 8 THEN 'DELETE' WHEN tr.tgtype & 16 = 16 THEN 'UPDATE' ELSE 'MANIPULATION' END AS event, pg_get_triggerdef(tr.oid) AS statement FROM pg_trigger tr JOIN pg_class c ON c.oid = tr.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relname = '{}' AND n.nspname = 'public' AND NOT tr.tgisinternal",
-            table_name.replace('\'', "''")
+            "SELECT tr.tgname AS name, CASE WHEN tr.tgtype & 2 = 2 THEN 'BEFORE' WHEN tr.tgtype & 64 = 64 THEN 'INSTEAD OF' ELSE 'AFTER' END AS timing, CASE WHEN tr.tgtype & 4 = 4 THEN 'INSERT' WHEN tr.tgtype & 8 = 8 THEN 'DELETE' WHEN tr.tgtype & 16 = 16 THEN 'UPDATE' ELSE 'MANIPULATION' END AS event, pg_get_triggerdef(tr.oid) AS statement FROM pg_trigger tr JOIN pg_class c ON c.oid = tr.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relname = '{}' AND n.nspname = '{}' AND NOT tr.tgisinternal",
+            table_name.replace('\'', "''"), sch
         ),
         DbConnection::Sqlite(_) => format!(
             "SELECT name, 'BEFORE' as timing, 'MANIPULATION' as event, sql as statement FROM sqlite_master WHERE type = 'trigger' AND tbl_name = '{}'",
@@ -4487,14 +4706,18 @@ pub async fn get_table_ddl_extras(
     state: tauri::State<'_, crate::AppState>,
     table_name: String,
 ) -> Result<Value, String> {
-    let conn_type = {
+    let (conn_type, schema) = {
         let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
+        let ct = match manager.connection.as_ref() {
             Some(c) => c.clone(),
             None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        };
+        (ct, pg_schema(&manager))
     };
     let esc = table_name.replace('\'', "''");
+    // Only the catalog lookups take the schema. The statements these build stay unqualified so a
+    // dump can be restored into a differently-named schema — the header's SET search_path decides.
+    let sch = sql_str(&schema);
 
     // Runs a query whose single column is a ready-to-run statement; a dialect that does not
     // support one of these (older server, missing catalog) yields an empty list instead of
@@ -4531,7 +4754,7 @@ pub async fn get_table_ddl_extras(
                 "SELECT 'CREATE SEQUENCE IF NOT EXISTS ' || quote_ident(s.relname) || ';' \
                  FROM pg_class s JOIN pg_depend d ON d.objid = s.oid AND d.deptype = 'a' \
                  JOIN pg_class t ON t.oid = d.refobjid JOIN pg_namespace n ON n.oid = t.relnamespace \
-                 WHERE s.relkind = 'S' AND n.nspname = 'public' AND t.relname = '{}'", esc)).await;
+                 WHERE s.relkind = 'S' AND n.nspname = '{sch}' AND t.relname = '{esc}'")).await;
 
             // Skip every index that merely backs a constraint — PRIMARY KEY is already inside
             // CREATE TABLE and UNIQUE comes back below as ALTER TABLE ADD CONSTRAINT.
@@ -4539,8 +4762,8 @@ pub async fn get_table_ddl_extras(
                 "SELECT pg_get_indexdef(i.indexrelid) || ';' \
                  FROM pg_index i JOIN pg_class c ON c.oid = i.indrelid \
                  JOIN pg_namespace n ON n.oid = c.relnamespace \
-                 WHERE n.nspname = 'public' AND c.relname = '{}' \
-                   AND NOT EXISTS (SELECT 1 FROM pg_constraint con WHERE con.conindid = i.indexrelid)", esc)).await;
+                 WHERE n.nspname = '{sch}' AND c.relname = '{esc}' \
+                   AND NOT EXISTS (SELECT 1 FROM pg_constraint con WHERE con.conindid = i.indexrelid)")).await;
 
             // contype: f = foreign key, u = unique, c = check. 'p' (primary key) is skipped.
             constraints = ddl_list(&conn_type, format!(
@@ -4548,21 +4771,21 @@ pub async fn get_table_ddl_extras(
                      || quote_ident(con.conname) || ' ' || pg_get_constraintdef(con.oid) || ';' \
                  FROM pg_constraint con JOIN pg_class c ON c.oid = con.conrelid \
                  JOIN pg_namespace n ON n.oid = c.relnamespace \
-                 WHERE n.nspname = 'public' AND c.relname = '{}' AND con.contype IN ('f','u','c') \
-                 ORDER BY con.contype DESC, con.conname", esc)).await;
+                 WHERE n.nspname = '{sch}' AND c.relname = '{esc}' AND con.contype IN ('f','u','c') \
+                 ORDER BY con.contype DESC, con.conname")).await;
 
             comments = ddl_list(&conn_type, format!(
                 "SELECT 'COMMENT ON TABLE ' || quote_ident(c.relname) || ' IS ' \
                      || quote_literal(obj_description(c.oid)) || ';' \
                  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
-                 WHERE n.nspname = 'public' AND c.relname = '{}' AND obj_description(c.oid) IS NOT NULL \
+                 WHERE n.nspname = '{sch}' AND c.relname = '{esc}' AND obj_description(c.oid) IS NOT NULL \
                  UNION ALL \
                  SELECT 'COMMENT ON COLUMN ' || quote_ident(c.relname) || '.' || quote_ident(a.attname) \
                      || ' IS ' || quote_literal(col_description(c.oid, a.attnum)) || ';' \
                  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
                  JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped \
-                 WHERE n.nspname = 'public' AND c.relname = '{}' \
-                   AND col_description(c.oid, a.attnum) IS NOT NULL", esc, esc)).await;
+                 WHERE n.nspname = '{sch}' AND c.relname = '{esc}' \
+                   AND col_description(c.oid, a.attnum) IS NOT NULL")).await;
 
             // setval computed from the restored rows instead of the value read at export time:
             // the dump stays correct no matter how long it sits on disk before being replayed.
@@ -4573,7 +4796,7 @@ pub async fn get_table_ddl_extras(
                  JOIN pg_class t ON t.oid = d.refobjid \
                  JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = d.refobjsubid \
                  JOIN pg_namespace n ON n.oid = t.relnamespace \
-                 WHERE s.relkind = 'S' AND n.nspname = 'public' AND t.relname = '{}'", esc)).await;
+                 WHERE s.relkind = 'S' AND n.nspname = '{sch}' AND t.relname = '{esc}'")).await;
         }
     }
 
@@ -4594,17 +4817,19 @@ pub async fn get_table_ddl_extras(
 /// trigger without `ON <table>`).
 #[tauri::command]
 pub async fn get_all_triggers(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
-    let conn_type = {
+    let (conn_type, schema) = {
         let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
+        let ct = match manager.connection.as_ref() {
             Some(c) => c.clone(),
             None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        };
+        (ct, pg_schema(&manager))
     };
+    let sch = sql_str(&schema);
 
     let sql = match &conn_type {
         DbConnection::Mysql(_) => "SELECT TRIGGER_NAME AS name, EVENT_OBJECT_TABLE AS tbl, ACTION_TIMING AS timing, EVENT_MANIPULATION AS event, ACTION_STATEMENT AS statement FROM INFORMATION_SCHEMA.TRIGGERS WHERE TRIGGER_SCHEMA = DATABASE() ORDER BY EVENT_OBJECT_TABLE, ACTION_ORDER, TRIGGER_NAME".to_string(),
-        DbConnection::Postgres(_) => "SELECT tr.tgname AS name, c.relname AS tbl, '' AS timing, '' AS event, pg_get_triggerdef(tr.oid) AS statement FROM pg_trigger tr JOIN pg_class c ON c.oid = tr.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND NOT tr.tgisinternal ORDER BY c.relname, tr.tgname".to_string(),
+        DbConnection::Postgres(_) => format!("SELECT tr.tgname AS name, c.relname AS tbl, '' AS timing, '' AS event, pg_get_triggerdef(tr.oid) AS statement FROM pg_trigger tr JOIN pg_class c ON c.oid = tr.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = '{sch}' AND NOT tr.tgisinternal ORDER BY c.relname, tr.tgname"),
         // sql IS NULL for objects SQLite creates itself; those cannot be replayed anyway.
         DbConnection::Sqlite(_) => "SELECT name, tbl_name AS tbl, '' AS timing, '' AS event, sql AS statement FROM sqlite_master WHERE type = 'trigger' AND sql IS NOT NULL ORDER BY tbl_name, name".to_string(),
     };
@@ -4685,16 +4910,18 @@ pub async fn save_routine_definition(state: tauri::State<'_, crate::AppState>, r
 
 #[tauri::command]
 pub async fn get_sequences(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
-    let conn_type = {
+    let (conn_type, schema) = {
         let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
+        let ct = match manager.connection.as_ref() {
             Some(c) => c.clone(),
             None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        };
+        (ct, pg_schema(&manager))
     };
+    let sch = sql_str(&schema);
 
     let sql = match &conn_type {
-        DbConnection::Postgres(_) => "SELECT sequence_name as name, data_type, start_value, minimum_value as min_val, maximum_value as max_val, increment, cycle_option as cycle FROM information_schema.sequences WHERE sequence_schema = 'public'".to_string(),
+        DbConnection::Postgres(_) => format!("SELECT sequence_name as name, data_type, start_value, minimum_value as min_val, maximum_value as max_val, increment, cycle_option as cycle FROM information_schema.sequences WHERE sequence_schema = '{sch}'"),
         DbConnection::Mysql(_) => "SELECT table_name as name, 'bigint' as data_type, '1' as start_value, '1' as min_val, '9223372036854775807' as max_val, '1' as increment, 'NO' as cycle FROM information_schema.tables WHERE table_type = 'SEQUENCE' AND table_schema = DATABASE()".to_string(),
         _ => return Ok(json!({ "success": true, "sequences": [] })),
     };
@@ -4789,13 +5016,15 @@ pub async fn get_table_partitions(state: tauri::State<'_, crate::AppState>, tabl
 
 #[tauri::command]
 pub async fn get_check_constraints(state: tauri::State<'_, crate::AppState>, table_name: String) -> Result<Value, String> {
-    let conn_type = {
+    let (conn_type, schema) = {
         let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
+        let ct = match manager.connection.as_ref() {
             Some(c) => c.clone(),
             None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        };
+        (ct, pg_schema(&manager))
     };
+    let sch = sql_str(&schema);
 
     let sql = match &conn_type {
         DbConnection::Mysql(_) => format!(
@@ -4803,8 +5032,8 @@ pub async fn get_check_constraints(state: tauri::State<'_, crate::AppState>, tab
             table_name.replace('\'', "''")
         ),
         DbConnection::Postgres(_) => format!(
-            "SELECT conname AS name, pg_get_constraintdef(c.oid) AS expression, 'YES' AS enforced FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace WHERE t.relname = '{}' AND n.nspname = 'public' AND c.contype = 'c'",
-            table_name.replace('\'', "''")
+            "SELECT conname AS name, pg_get_constraintdef(c.oid) AS expression, 'YES' AS enforced FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace WHERE t.relname = '{}' AND n.nspname = '{}' AND c.contype = 'c'",
+            table_name.replace('\'', "''"), sch
         ),
         _ => return Ok(json!({ "success": true, "constraints": [] })),
     };

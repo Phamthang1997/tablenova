@@ -5,6 +5,7 @@ import type { SchemaInfo, ColumnInfo, TriggerInfo, PartitionInfo, CheckConstrain
 import { dbHelper } from '../utils/dbHelper';
 import { Save, Plus, Trash2, RotateCcw, AlertTriangle, CheckCircle2, Key, Search, X, Table2, ArrowRight, Copy } from 'lucide-react';
 import { Modal, ModalBody, ModalFooter } from './Modal';
+import { ConfirmDialog } from './ConfirmDialog';
 import { splitType, joinType, typeBase } from '../utils/columnType';
 
 type StructureSection = 'columns' | 'indexes' | 'fks' | 'check_constraints' | 'triggers' | 'partitions' | 'ddl';
@@ -22,6 +23,79 @@ interface StructureViewerProps {
   activeSection?: StructureSection;
   onSectionChange?: (sec: StructureSection) => void;
 }
+
+const HighlightSqlView: React.FC<{ sql: string; loading?: boolean; emptyText?: string }> = ({ sql, loading, emptyText }) => {
+  if (loading) {
+    return <div className="st-ddl-codeblock" style={{ padding: '16px', color: 'var(--win-text-disabled)' }}>Loading DDL...</div>;
+  }
+  if (!sql) {
+    return <div className="st-ddl-codeblock" style={{ padding: '16px', color: 'var(--win-text-disabled)' }}>{emptyText || 'Empty SQL'}</div>;
+  }
+
+  let raw = sql.trim();
+  if (!raw.includes('\n')) {
+    raw = raw
+      .replace(/\s*\(\s*/g, ' (\n  ')
+      .replace(/,\s*(?=(?:[^']*'[^']*')*[^']*$)/g, ',\n  ')
+      .replace(/\s*\)\s*/g, '\n)\n');
+  }
+
+  const lines = raw.split('\n');
+
+  const processLineTokens = (line: string) => {
+    const regex = /(`[^`]+`)|('[^']*')|(\b(?:CREATE TABLE|PRIMARY KEY|FOREIGN KEY|KEY|CONSTRAINT|REFERENCES|ON DELETE|ON UPDATE|CASCADE|RESTRICT|SET NULL|SET DEFAULT|NOT NULL|AUTO_INCREMENT|DEFAULT|ENGINE|CHARSET|COLLATE|UNSIGNED|NULL|DROP TABLE|TRUNCATE|ALTER TABLE|ADD COLUMN|DROP COLUMN|MODIFY COLUMN|INDEX|UNIQUE|FULLTEXT|SPATIAL)\b)|(\b(?:smallint|varchar|text|year|tinyint|decimal|enum|set|timestamp|datetime|date|time|int|bigint|mediumint|char|blob|longtext|mediumtext|tinytext|json|boolean|bit|float|double)\b)|(\b\d+\b)/gi;
+
+    const elements: React.ReactNode[] = [];
+    let lastIdx = 0;
+    let match: RegExpExecArray | null;
+
+    while ((match = regex.exec(line)) !== null) {
+      const idx = match.index;
+      if (idx > lastIdx) {
+        elements.push(line.slice(lastIdx, idx));
+      }
+
+      const [full, identifier, strVal, keyword, dataType, numberVal] = match;
+
+      if (identifier) {
+        elements.push(<span key={idx} style={{ color: 'var(--win-accent, #60a5fa)', fontWeight: 600 }}>{identifier}</span>);
+      } else if (strVal) {
+        elements.push(<span key={idx} style={{ color: '#f59e0b' }}>{strVal}</span>);
+      } else if (keyword) {
+        elements.push(<span key={idx} style={{ color: '#c084fc', fontWeight: 700 }}>{keyword.toUpperCase()}</span>);
+      } else if (dataType) {
+        elements.push(<span key={idx} style={{ color: '#2dd4bf', fontWeight: 600 }}>{dataType.toLowerCase()}</span>);
+      } else if (numberVal) {
+        elements.push(<span key={idx} style={{ color: '#fb923c' }}>{numberVal}</span>);
+      } else {
+        elements.push(full);
+      }
+
+      lastIdx = regex.lastIndex;
+    }
+
+    if (lastIdx < line.length) {
+      elements.push(line.slice(lastIdx));
+    }
+
+    return elements;
+  };
+
+  return (
+    <div className="st-ddl-codeblock">
+      <table className="st-ddl-table">
+        <tbody>
+          {lines.map((line, idx) => (
+            <tr key={idx}>
+              <td className="st-ddl-linenum">{idx + 1}</td>
+              <td className="st-ddl-linecontent">{processLineTokens(line)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+};
 
 export const StructureViewer: React.FC<StructureViewerProps> = ({
   tableName,
@@ -64,6 +138,16 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
   const [constraints, setConstraints] = useState<CheckConstraintInfo[]>([]);
   const [showAddCheckModal, setShowAddCheckModal] = useState<boolean>(false);
   const [newCheck, setNewCheck] = useState<{ name: string; expression: string }>({ name: '', expression: '' });
+
+  /**
+   * Object waiting for a drop confirmation — one state for all three kinds, since the
+   * dialog has the same shape and only the wording differs.
+   *
+   * `window.confirm()` cannot be used: inside the Tauri webview it is replaced by a call to
+   * `plugin:dialog|confirm`, which the dialog plugin does not ship (only `message`/`open`/
+   * `save`), so the call throws "Command not found" and the user sees nothing at all.
+   */
+  const [dropTarget, setDropTarget] = useState<{ kind: 'check' | 'trigger' | 'partition'; name: string } | null>(null);
 
   // Active pane + controlled sync
   const [internalSection, setInternalSection] = useState<StructureSection>('columns');
@@ -866,8 +950,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
     }
   };
 
-  const handleDropCheckConstraint = async (name: string) => {
-    if (!window.confirm(`Bạn có chắc muốn xóa Check constraint "${name}"?`)) return;
+  const doDropCheckConstraint = async (name: string) => {
     const sql = dbType === 'mysql'
       ? `ALTER TABLE ${tableName} DROP CHECK \`${name}\`;`
       : `ALTER TABLE ${tableName} DROP CONSTRAINT "${name}";`;
@@ -903,8 +986,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
     }
   };
 
-  const handleDropTrigger = async (triggerName: string) => {
-    if (!window.confirm(`Bạn có chắc muốn xóa Trigger "${triggerName}"?`)) return;
+  const doDropTrigger = async (triggerName: string) => {
     const res = await dbHelper.dropTrigger(triggerName);
     if (res.success) {
       setSuccessMsg(`Đã xóa Trigger ${triggerName}`);
@@ -934,8 +1016,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
     }
   };
 
-  const handleDropPartition = async (partitionName: string) => {
-    if (!window.confirm(`Bạn có chắc muốn xóa Partition "${partitionName}"? (Dữ liệu thuộc partition này sẽ bị xóa)`)) return;
+  const doDropPartition = async (partitionName: string) => {
     const sql = `ALTER TABLE ${tableName} DROP PARTITION ${partitionName};`;
     const res = await dbHelper.executeQuery(sql);
     if (res.success) {
@@ -945,6 +1026,20 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
     } else {
       setErrorMsg(res.error || 'Lỗi khi xóa Partition');
     }
+  };
+
+  // The three menu entries only open the dialog; the doDrop* above run on confirm.
+  const handleDropCheckConstraint = (name: string) => setDropTarget({ kind: 'check', name });
+  const handleDropTrigger = (name: string) => setDropTarget({ kind: 'trigger', name });
+  const handleDropPartition = (name: string) => setDropTarget({ kind: 'partition', name });
+
+  const confirmDrop = () => {
+    if (!dropTarget) return;
+    const { kind, name } = dropTarget;
+    setDropTarget(null);
+    if (kind === 'check') doDropCheckConstraint(name);
+    else if (kind === 'trigger') doDropTrigger(name);
+    else doDropPartition(name);
   };
 
   const sections: { id: StructureSection; label: string; count?: number }[] = [
@@ -1170,28 +1265,32 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
 
                       {/* Column Name */}
                       <td
-                        className="st-edit"
+                        className={`st-edit ${isEditing && editingColCell?.field === 'name' ? 'is-editing' : ''}`}
                         onClick={() => startEditCol(index, 'name', col.name)}
                         title={t('structure.editHint')}
-                        style={{ fontWeight: 600, color: 'var(--win-text-primary)', whiteSpace: 'nowrap' }}
+                        style={{ fontWeight: 600, color: 'var(--win-text-primary)', whiteSpace: 'nowrap', position: 'relative' }}
                       >
                         {isEditing && editingColCell?.field === 'name' ? (
-                          <input
-                            type="text"
-                            className="form-input st-cell-input"
-                            value={editColValue}
-                            onChange={e => setEditColValue(e.target.value)}
-                            onBlur={() => saveEditCol(index, 'name')}
-                            onKeyDown={e => e.key === 'Enter' && saveEditCol(index, 'name')}
-                            ref={el => { if (el) { el.focus(); el.select(); } }}
-                          />
+                          <>
+                            <span className="st-cell-ghost">{col.name}</span>
+                            <input
+                              type="text"
+                              className="form-input st-cell-input st-cell-input-overlay"
+                              value={editColValue}
+                              onChange={e => setEditColValue(e.target.value)}
+                              onBlur={() => saveEditCol(index, 'name')}
+                              onKeyDown={e => e.key === 'Enter' && saveEditCol(index, 'name')}
+                              onClick={e => e.stopPropagation()}
+                              ref={el => { if (el) { el.focus(); el.select(); } }}
+                            />
+                          </>
                         ) : (
                           <span>{col.name}</span>
                         )}
                       </td>
 
                       {/* Data Type — Direct select showing full data_type */}
-                      <td style={{ padding: '2px 4px', verticalAlign: 'middle', whiteSpace: 'nowrap' }}>
+                      <td>
                         <select
                           className="st-select st-select-type"
                           value={col.type}
@@ -1248,7 +1347,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                       </td>
 
                       {/* Default Value — Direct 1-click select */}
-                      <td style={{ padding: '2px 4px', verticalAlign: 'middle' }}>
+                      <td>
                         <select
                           className={`st-select st-select-default ${col.defaultValue === null ? 'is-null' : ''}`}
                           value={col.defaultValue === null ? 'NULL' : String(col.defaultValue)}
@@ -1319,22 +1418,26 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
 
                       {/* Comment */}
                       <td
-                        className="st-edit"
+                        className={`st-edit ${isEditing && editingColCell?.field === 'comment' ? 'is-editing' : ''}`}
                         onClick={() => startEditCol(index, 'comment', col.comment)}
-                        style={{ color: 'var(--win-text-secondary)' }}
+                        style={{ color: 'var(--win-text-secondary)', position: 'relative' }}
                         title={t('structure.commentHint')}
                       >
                         {isEditing && editingColCell?.field === 'comment' ? (
-                          <input
-                            type="text"
-                            className="form-input st-cell-input"
-                            value={editColValue}
-                            onChange={e => setEditColValue(e.target.value)}
-                            onBlur={() => saveEditCol(index, 'comment')}
-                            onKeyDown={e => e.key === 'Enter' && saveEditCol(index, 'comment')}
-                            autoFocus
-                            placeholder={t('structure.commentPlaceholder')}
-                          />
+                          <>
+                            <span className="st-cell-ghost">{col.comment || '-'}</span>
+                            <input
+                              type="text"
+                              className="form-input st-cell-input st-cell-input-overlay"
+                              value={editColValue}
+                              onChange={e => setEditColValue(e.target.value)}
+                              onBlur={() => saveEditCol(index, 'comment')}
+                              onKeyDown={e => e.key === 'Enter' && saveEditCol(index, 'comment')}
+                              onClick={e => e.stopPropagation()}
+                              autoFocus
+                              placeholder={t('structure.commentPlaceholder')}
+                            />
+                          </>
                         ) : (
                           col.comment ? (
                             <span>{col.comment}</span>
@@ -1373,9 +1476,9 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
           <table className="structure-table">
             <thead>
               <tr>
-                <th>{t('structure.idxName')}</th>
-                <th>{t('structure.idxColumns')}</th>
-                <th>{t('structure.idxType')}</th>
+                <th style={{ minWidth: '180px', whiteSpace: 'nowrap' }}>{t('structure.idxName')}</th>
+                <th style={{ minWidth: '200px', whiteSpace: 'nowrap' }}>{t('structure.idxColumns')}</th>
+                <th style={{ minWidth: '140px', whiteSpace: 'nowrap' }}>{t('structure.idxType')}</th>
                 <th style={{ width: '36px' }} aria-label={t('structure.colActions')} />
               </tr>
             </thead>
@@ -1394,22 +1497,25 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                   >
                     {/* Index Name */}
                     <td
-                      className="st-edit"
+                      className={`st-edit ${isEditing && editingIdxCell?.field === 'name' ? 'is-editing' : ''}`}
                       onClick={() => startEditIdx(index, 'name', idx.name)}
                       title={t('structure.editHint')}
-                      style={{ fontWeight: 600, color: idxType === 'PRIMARY' ? '#f59e0b' : 'var(--st-warn)' }}
+                      style={{ fontWeight: 600, color: idxType === 'PRIMARY' ? '#f59e0b' : 'var(--st-warn)', position: 'relative' }}
                     >
                       {isEditing && editingIdxCell?.field === 'name' ? (
-                        <input
-                          type="text"
-                          className="form-input"
-                          value={editIdxValue}
-                          onChange={e => setEditIdxValue(e.target.value)}
-                          onBlur={() => saveEditIdx(index, 'name')}
-                          onKeyDown={e => e.key === 'Enter' && saveEditIdx(index, 'name')}
-                          autoFocus
-                          style={{ width: '100%', padding: '2px 6px', fontSize: '12px' }}
-                        />
+                        <>
+                          <span className="st-cell-ghost">{idx.name}</span>
+                          <input
+                            type="text"
+                            className="form-input st-cell-input st-cell-input-overlay"
+                            value={editIdxValue}
+                            onChange={e => setEditIdxValue(e.target.value)}
+                            onBlur={() => saveEditIdx(index, 'name')}
+                            onKeyDown={e => e.key === 'Enter' && saveEditIdx(index, 'name')}
+                            onClick={e => e.stopPropagation()}
+                            autoFocus
+                          />
+                        </>
                       ) : (
                         <span>{idx.name}</span>
                       )}
@@ -1417,24 +1523,32 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
 
                     {/* Target Columns */}
                     <td
-                      className="st-edit st-edit-select"
+                      className={`st-edit st-edit-select ${isEditing && editingIdxCell?.field === 'columns' ? 'is-editing' : ''}`}
                       onClick={() => startEditIdx(index, 'columns', idx.columns)}
                       title={t('structure.editHint')}
-                      style={{ fontFamily: 'var(--win-font-mono)' }}
+                      style={{ fontFamily: 'var(--win-font-mono)', position: 'relative' }}
                     >
                       {isEditing && editingIdxCell?.field === 'columns' ? (
-                        <select
-                          className="form-input"
-                          value={editIdxValue}
-                          onChange={e => setEditIdxValue(e.target.value)}
-                          onBlur={() => saveEditIdx(index, 'columns')}
-                          autoFocus
-                          style={{ width: '100%', padding: '2px', fontSize: '12px', height: '24px' }}
-                        >
-                          {cols.map(c => (
-                            <option key={c.name} value={c.name}>{c.name}</option>
-                          ))}
-                        </select>
+                        <>
+                          <span className="st-cell-ghost">{idx.columns}</span>
+                          <select
+                            className="st-select st-select-type st-select-overlay"
+                            value={editIdxValue}
+                            onChange={e => {
+                              const val = e.target.value;
+                              setEditIdxValue(val);
+                              setIdxs(prev => prev.map((item, i) => i === index ? { ...item, columns: val } : item));
+                              setEditingIdxCell(null);
+                            }}
+                            onBlur={() => saveEditIdx(index, 'columns')}
+                            onClick={e => e.stopPropagation()}
+                            autoFocus
+                          >
+                            {cols.map(c => (
+                              <option key={c.name} value={c.name}>{c.name}</option>
+                            ))}
+                          </select>
+                        </>
                       ) : (
                         <span>{idx.columns}</span>
                       )}
@@ -1442,40 +1556,33 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
 
                     {/* Index Type */}
                     <td
-                      className="st-edit st-edit-select"
+                      className={`st-edit st-edit-select ${isEditing && editingIdxCell?.field === 'unique' ? 'is-editing' : ''}`}
                       onClick={() => idxType !== 'PRIMARY' && startEditIdx(index, 'unique', idxType)}
                       title={t('structure.editHint')}
+                      style={{ position: 'relative' }}
                     >
                       {isEditing && editingIdxCell?.field === 'unique' ? (
-                        <select
-                          className="form-input"
-                          value={editIdxValue}
-                          onChange={e => {
-                            setEditIdxValue(e.target.value);
-                          }}
-                          onBlur={() => {
-                            // Update unique boolean state based on selection
-                            const val = editIdxValue;
-                            setIdxs(prev => prev.map((item, i) => {
-                              if (i === index) {
-                                return {
-                                  ...item,
-                                  unique: val === 'UNIQUE',
-                                  type: val
-                                } as any;
-                              }
-                              return item;
-                            }));
-                            setEditingIdxCell(null);
-                          }}
-                          autoFocus
-                          style={{ width: '100%', padding: '2px', fontSize: '12px', height: '24px' }}
-                        >
-                          <option value="INDEX">{t('structure.optIndexPlain')}</option>
-                          <option value="UNIQUE">{t('structure.optIndexUnique')}</option>
-                          {dbType === 'mysql' && <option value="FULLTEXT">FULLTEXT</option>}
-                          {dbType === 'mysql' && <option value="SPATIAL">SPATIAL</option>}
-                        </select>
+                        <>
+                          <span className="st-cell-ghost">{idxType}</span>
+                          <select
+                            className="st-select st-select-type st-select-overlay"
+                            value={editIdxValue}
+                            onChange={e => {
+                              const val = e.target.value;
+                              setEditIdxValue(val);
+                              setIdxs(prev => prev.map((item, i) => i === index ? { ...item, unique: val === 'UNIQUE', type: val } as any : item));
+                              setEditingIdxCell(null);
+                            }}
+                            onBlur={() => setEditingIdxCell(null)}
+                            onClick={e => e.stopPropagation()}
+                            autoFocus
+                          >
+                            <option value="INDEX">{t('structure.optIndexPlain')}</option>
+                            <option value="UNIQUE">{t('structure.optIndexUnique')}</option>
+                            {dbType === 'mysql' && <option value="FULLTEXT">FULLTEXT</option>}
+                            {dbType === 'mysql' && <option value="SPATIAL">SPATIAL</option>}
+                          </select>
+                        </>
                       ) : (
                         <span
                           className="badge-pk"
@@ -1518,12 +1625,12 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
           <table className="structure-table">
             <thead>
               <tr>
-                <th>{t('structure.fkName')}</th>
-                <th>{t('structure.fkColumn')}</th>
-                <th>{t('structure.fkRefTable')}</th>
-                <th>{t('structure.fkRefColumn')}</th>
-                <th>On Update</th>
-                <th>On Delete</th>
+                <th style={{ minWidth: '160px', whiteSpace: 'nowrap' }}>{t('structure.fkName')}</th>
+                <th style={{ minWidth: '150px', whiteSpace: 'nowrap' }}>{t('structure.fkColumn')}</th>
+                <th style={{ minWidth: '160px', whiteSpace: 'nowrap' }}>{t('structure.fkRefTable')}</th>
+                <th style={{ minWidth: '150px', whiteSpace: 'nowrap' }}>{t('structure.fkRefColumn')}</th>
+                <th style={{ minWidth: '120px', whiteSpace: 'nowrap' }}>On Update</th>
+                <th style={{ minWidth: '120px', whiteSpace: 'nowrap' }}>On Delete</th>
                 <th style={{ width: '36px' }} aria-label={t('structure.colActions')} />
               </tr>
             </thead>
@@ -1546,24 +1653,31 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
 
                     {/* Local Source Column */}
                     <td
-                      className="st-edit st-edit-select"
+                      className={`st-edit st-edit-select ${isEditing && editingFkCell?.field === 'column' ? 'is-editing' : ''}`}
                       onClick={() => startEditFk(index, 'column', fk.column)}
                       title={t('structure.editHint')}
-                      style={{ fontWeight: 600 }}
+                      style={{ fontWeight: 600, position: 'relative' }}
                     >
                       {isEditing && editingFkCell?.field === 'column' ? (
-                        <select
-                          className="form-input"
-                          value={editFkValue}
-                          onChange={e => setEditFkValue(e.target.value)}
-                          onBlur={() => saveEditFk(index, 'column')}
-                          autoFocus
-                          style={{ width: '100%', padding: '2px', fontSize: '12px', height: '24px' }}
-                        >
-                          {cols.map(c => (
-                            <option key={c.name} value={c.name}>{c.name}</option>
-                          ))}
-                        </select>
+                        <>
+                          <span className="st-cell-ghost">{fk.column}</span>
+                          <select
+                            className="st-select st-select-type st-select-overlay"
+                            value={editFkValue}
+                            onChange={e => {
+                              const val = e.target.value;
+                              setEditFkValue(val);
+                              saveEditFk(index, 'column', val);
+                            }}
+                            onBlur={() => saveEditFk(index, 'column')}
+                            onClick={e => e.stopPropagation()}
+                            autoFocus
+                          >
+                            {cols.map(c => (
+                              <option key={c.name} value={c.name}>{c.name}</option>
+                            ))}
+                          </select>
+                        </>
                       ) : (
                         <span>{fk.column}</span>
                       )}
@@ -1571,27 +1685,31 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
 
                     {/* Referenced Table */}
                     <td
-                      className="st-edit st-edit-select"
+                      className={`st-edit st-edit-select ${isEditing && editingFkCell?.field === 'refTable' ? 'is-editing' : ''}`}
                       onClick={() => startEditFk(index, 'refTable', fk.refTable)}
                       title={t('structure.editHint')}
-                      style={{ color: 'var(--win-accent)', fontWeight: 600 }}
+                      style={{ color: 'var(--win-accent)', fontWeight: 600, position: 'relative' }}
                     >
                       {isEditing && editingFkCell?.field === 'refTable' ? (
-                        <select
-                          className="form-input"
-                          value={editFkValue}
-                          onChange={e => {
-                            setEditFkValue(e.target.value);
-                            saveEditFk(index, 'refTable', e.target.value);
-                          }}
-                          autoFocus
-                          style={{ width: '100%', padding: '2px', fontSize: '12px', height: '24px' }}
-                        >
-                          <option value="">{t('structure.selectTable')}</option>
-                          {allTables.map(tblName => (
-                            <option key={tblName} value={tblName}>{tblName}</option>
-                          ))}
-                        </select>
+                        <>
+                          <span className="st-cell-ghost">{fk.refTable || t('structure.fkNotSet')}</span>
+                          <select
+                            className="st-select st-select-type st-select-overlay"
+                            value={editFkValue}
+                            onChange={e => {
+                              const val = e.target.value;
+                              setEditFkValue(val);
+                              saveEditFk(index, 'refTable', val);
+                            }}
+                            onClick={e => e.stopPropagation()}
+                            autoFocus
+                          >
+                            <option value="">{t('structure.selectTable')}</option>
+                            {allTables.map(tblName => (
+                              <option key={tblName} value={tblName}>{tblName}</option>
+                            ))}
+                          </select>
+                        </>
                       ) : (
                         <span>{fk.refTable || <span style={{ color: 'var(--win-text-disabled)', fontStyle: 'italic' }}>{t('structure.fkNotSet')}</span>}</span>
                       )}
@@ -1599,29 +1717,31 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
 
                     {/* Referenced Column */}
                     <td
-                      className="st-edit st-edit-select"
+                      className={`st-edit st-edit-select ${isEditing && editingFkCell?.field === 'refColumn' ? 'is-editing' : ''}`}
                       onClick={() => startEditFk(index, 'refColumn', fk.refColumn)}
                       title={t('structure.editHint')}
-                      style={{ fontFamily: 'var(--win-font-mono)' }}
+                      style={{ fontFamily: 'var(--win-font-mono)', position: 'relative' }}
                     >
                       {isEditing && editingFkCell?.field === 'refColumn' ? (
-                        <select
-                          className="form-input"
-                          value={editFkValue}
-                          onChange={e => {
-                            setEditFkValue(e.target.value);
-                            saveEditFk(index, 'refColumn', e.target.value);
-                          }}
-                          autoFocus
-                          style={{ width: '100%', padding: '2px', fontSize: '12px', height: '24px' }}
-                        >
-                          {/* Cho biết đang nạp, thay vì dropdown trống trơn khiến
-                              người dùng tưởng bảng không có cột nào. */}
-                          <option value="">{loadingRefCols ? t('structure.loadingColumns') : t('structure.selectColumn')}</option>
-                          {refColumns.map(colName => (
-                            <option key={colName} value={colName}>{colName}</option>
-                          ))}
-                        </select>
+                        <>
+                          <span className="st-cell-ghost">{fk.refColumn || t('structure.fkNotSet')}</span>
+                          <select
+                            className="st-select st-select-type st-select-overlay"
+                            value={editFkValue}
+                            onChange={e => {
+                              const val = e.target.value;
+                              setEditFkValue(val);
+                              saveEditFk(index, 'refColumn', val);
+                            }}
+                            onClick={e => e.stopPropagation()}
+                            autoFocus
+                          >
+                            <option value="">{loadingRefCols ? t('structure.loadingColumns') : t('structure.selectColumn')}</option>
+                            {refColumns.map(colName => (
+                              <option key={colName} value={colName}>{colName}</option>
+                            ))}
+                          </select>
+                        </>
                       ) : (
                         <span>{fk.refColumn || <span style={{ color: 'var(--win-text-disabled)', fontStyle: 'italic' }}>{t('structure.fkNotSet')}</span>}</span>
                       )}
@@ -1629,35 +1749,34 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
 
                     {/* On Update Action */}
                     <td
-                      className="st-edit st-edit-select"
+                      className={`st-edit st-edit-select ${isEditing && editingFkCell?.field === ('onUpdate' as any) ? 'is-editing' : ''}`}
                       onClick={() => startEditFk(index, 'onUpdate' as any, onUpdateAct)}
                       title={t('structure.editHint')}
-                      style={{ fontSize: '11px' }}
+                      style={{ fontSize: '11px', position: 'relative' }}
                     >
                       {isEditing && editingFkCell?.field === ('onUpdate' as any) ? (
-                        <select
-                          className="form-input"
-                          value={editFkValue}
-                          onChange={e => setEditFkValue(e.target.value)}
-                          onBlur={() => {
-                            const val = editFkValue;
-                            setFks(prev => prev.map((item, i) => {
-                              if (i === index) {
-                                return { ...item, onUpdate: val } as any;
-                              }
-                              return item;
-                            }));
-                            setEditingFkCell(null);
-                          }}
-                          autoFocus
-                          style={{ width: '100%', padding: '2px', fontSize: '12px', height: '24px' }}
-                        >
-                          <option value="NO ACTION">NO ACTION</option>
-                          <option value="RESTRICT">RESTRICT</option>
-                          <option value="CASCADE">CASCADE</option>
-                          <option value="SET NULL">SET NULL</option>
-                          <option value="SET DEFAULT">SET DEFAULT</option>
-                        </select>
+                        <>
+                          <span className="st-cell-ghost">{onUpdateAct}</span>
+                          <select
+                            className="st-select st-select-type st-select-overlay"
+                            value={editFkValue}
+                            onChange={e => {
+                              const val = e.target.value;
+                              setEditFkValue(val);
+                              setFks(prev => prev.map((item, i) => i === index ? { ...item, onUpdate: val } as any : item));
+                              setEditingFkCell(null);
+                            }}
+                            onBlur={() => setEditingFkCell(null)}
+                            onClick={e => e.stopPropagation()}
+                            autoFocus
+                          >
+                            <option value="NO ACTION">NO ACTION</option>
+                            <option value="RESTRICT">RESTRICT</option>
+                            <option value="CASCADE">CASCADE</option>
+                            <option value="SET NULL">SET NULL</option>
+                            <option value="SET DEFAULT">SET DEFAULT</option>
+                          </select>
+                        </>
                       ) : (
                         <span style={{ color: onUpdateAct === 'CASCADE' ? '#10b981' : 'var(--win-text-secondary)' }}>{onUpdateAct}</span>
                       )}
@@ -1665,35 +1784,34 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
 
                     {/* On Delete Action */}
                     <td
-                      className="st-edit st-edit-select"
+                      className={`st-edit st-edit-select ${isEditing && editingFkCell?.field === ('onDelete' as any) ? 'is-editing' : ''}`}
                       onClick={() => startEditFk(index, 'onDelete' as any, onDeleteAct)}
                       title={t('structure.editHint')}
-                      style={{ fontSize: '11px' }}
+                      style={{ fontSize: '11px', position: 'relative' }}
                     >
                       {isEditing && editingFkCell?.field === ('onDelete' as any) ? (
-                        <select
-                          className="form-input"
-                          value={editFkValue}
-                          onChange={e => setEditFkValue(e.target.value)}
-                          onBlur={() => {
-                            const val = editFkValue;
-                            setFks(prev => prev.map((item, i) => {
-                              if (i === index) {
-                                return { ...item, onDelete: val } as any;
-                              }
-                              return item;
-                            }));
-                            setEditingFkCell(null);
-                          }}
-                          autoFocus
-                          style={{ width: '100%', padding: '2px', fontSize: '12px', height: '24px' }}
-                        >
-                          <option value="NO ACTION">NO ACTION</option>
-                          <option value="RESTRICT">RESTRICT</option>
-                          <option value="CASCADE">CASCADE</option>
-                          <option value="SET NULL">SET NULL</option>
-                          <option value="SET DEFAULT">SET DEFAULT</option>
-                        </select>
+                        <>
+                          <span className="st-cell-ghost">{onDeleteAct}</span>
+                          <select
+                            className="st-select st-select-type st-select-overlay"
+                            value={editFkValue}
+                            onChange={e => {
+                              const val = e.target.value;
+                              setEditFkValue(val);
+                              setFks(prev => prev.map((item, i) => i === index ? { ...item, onDelete: val } as any : item));
+                              setEditingFkCell(null);
+                            }}
+                            onBlur={() => setEditingFkCell(null)}
+                            onClick={e => e.stopPropagation()}
+                            autoFocus
+                          >
+                            <option value="NO ACTION">NO ACTION</option>
+                            <option value="RESTRICT">RESTRICT</option>
+                            <option value="CASCADE">CASCADE</option>
+                            <option value="SET NULL">SET NULL</option>
+                            <option value="SET DEFAULT">SET DEFAULT</option>
+                          </select>
+                        </>
                       ) : (
                         <span style={{ color: onDeleteAct === 'CASCADE' ? '#ef4444' : 'var(--win-text-secondary)' }}>{onDeleteAct}</span>
                       )}
@@ -1841,28 +1959,24 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
               <div style={{ display: 'flex', gap: '6px' }}>
                 {changed ? (
                   <button className="btn btn-secondary" onClick={() => copyText(ddlText, 'ALTER TABLE')} disabled={!ddlText}>
-                    {t('common.copy')}
+                    <Copy size={13} /> {t('common.copy')}
                   </button>
                 ) : (
                   <>
                     <button className="btn btn-secondary" onClick={() => copyText(ddlText, 'CREATE TABLE')} disabled={!ddlText}>
-                      {t('structure.copyCreate')}
+                      <Copy size={13} /> {t('structure.copyCreate')}
                     </button>
                     <button className="btn btn-secondary" onClick={() => copyText(dropScript, 'DROP TABLE')}>
-                      {t('structure.copyDrop')}
+                      <Copy size={13} /> {t('structure.copyDrop')}
                     </button>
                     <button className="btn btn-secondary" onClick={() => copyText(truncateScript, 'TRUNCATE')}>
-                      {t('structure.copyTruncate')}
+                      <Trash2 size={13} /> {t('structure.copyTruncate')}
                     </button>
                   </>
                 )}
               </div>
             </div>
-            <pre className="st-ddl">
-              {ddlLoading
-                ? t('structure.ddlLoading')
-                : (ddlText || t('structure.previewEmpty'))}
-            </pre>
+            <HighlightSqlView sql={ddlText} loading={ddlLoading} emptyText={t('structure.previewEmpty')} />
           </div>
         )}
 
@@ -2304,6 +2418,27 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
           )}
         </div>,
         document.body
+      )}
+
+      {/* Drop confirmation for check constraints / triggers / partitions. */}
+      {dropTarget && (
+        <ConfirmDialog
+          open
+          danger
+          title={
+            dropTarget.kind === 'check' ? t('structure.confirmDropCheckTitle')
+              : dropTarget.kind === 'trigger' ? t('structure.confirmDropTriggerTitle')
+                : t('structure.confirmDropPartitionTitle')
+          }
+          message={
+            dropTarget.kind === 'check' ? t('structure.confirmDropCheckMessage', { name: dropTarget.name })
+              : dropTarget.kind === 'trigger' ? t('structure.confirmDropTriggerMessage', { name: dropTarget.name })
+                : t('structure.confirmDropPartitionMessage', { name: dropTarget.name })
+          }
+          note={dropTarget.kind === 'partition' ? t('structure.confirmDropPartitionNote') : undefined}
+          onConfirm={confirmDrop}
+          onCancel={() => setDropTarget(null)}
+        />
       )}
     </div>
   );

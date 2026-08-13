@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Modal, ModalBody, ModalFooter } from './Modal';
+import { ConfirmDialog } from './ConfirmDialog';
 import { dbHelper } from '../utils/dbHelper';
 import type { SequenceInfo } from '../utils/dbHelper';
 import { RefreshCw, Trash2, Edit3, AlertTriangle, CheckCircle } from 'lucide-react';
@@ -9,11 +11,14 @@ interface SequenceManagerModalProps {
 }
 
 export const SequenceManagerModal: React.FC<SequenceManagerModalProps> = ({ onClose }) => {
+  const { t } = useTranslation();
   const [sequences, setSequences] = useState<SequenceInfo[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [restartTarget, setRestartTarget] = useState<{ name: string; val: string } | null>(null);
+  /** Sequence awaiting drop confirmation — see handleDrop. */
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
 
   const fetchSequences = async () => {
     setLoading(true);
@@ -41,8 +46,11 @@ export const SequenceManagerModal: React.FC<SequenceManagerModalProps> = ({ onCl
     }
   };
 
-  const handleDrop = async (name: string) => {
-    if (!window.confirm(`Bạn có chắc chắn muốn xóa Sequence "${name}" không?`)) return;
+  // window.confirm() shows nothing inside the Tauri webview (the dialog plugin ships no
+  // `confirm` command), so the trash button only arms the dialog below.
+  const handleDrop = (name: string) => setDropTarget(name);
+
+  const doDrop = async (name: string) => {
     const res = await dbHelper.dropSequence(name);
     if (res.success) {
       setSuccessMsg(`Đã xóa Sequence ${name}`);
@@ -54,6 +62,7 @@ export const SequenceManagerModal: React.FC<SequenceManagerModalProps> = ({ onCl
   };
 
   return (
+    <>
     <Modal
       title="Quản lý Chuỗi Tự tăng (Sequences)"
       onClose={onClose}
@@ -159,5 +168,19 @@ export const SequenceManagerModal: React.FC<SequenceManagerModalProps> = ({ onCl
         <button className="btn btn-secondary" onClick={onClose}>Đóng</button>
       </ModalFooter>
     </Modal>
+
+    {/* zIndex above this modal's own 999999, otherwise the confirmation renders behind it. */}
+    {dropTarget && (
+      <ConfirmDialog
+        open
+        danger
+        zIndex={1000000}
+        title={t('sidebar.confirmDropSequenceTitle')}
+        message={t('sidebar.confirmDropSequenceMessage', { name: dropTarget })}
+        onConfirm={() => { const name = dropTarget; setDropTarget(null); doDrop(name); }}
+        onCancel={() => setDropTarget(null)}
+      />
+    )}
+    </>
   );
 };

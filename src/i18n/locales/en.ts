@@ -80,6 +80,7 @@ const en = {
     reload: 'Reload application',
     shortcuts: 'Keyboard shortcuts...',
     about: 'About TableNova...',
+    whatsNew: "What's New in TableNova...",
     minimize: 'Minimize',
     maximize: 'Maximize / restore',
     closeWindow: 'Close',
@@ -88,6 +89,23 @@ const en = {
     schemaCompare: 'Schema migration / compare',
     toggleTerminal: 'Toggle terminal',
     sqlButton: 'SQL',
+  },
+
+  whatsNew: {
+    modalHeader: "What's New in TableNova",
+    showOnStartup: 'Show on startup',
+    prevSlide: 'Previous slide',
+    nextSlide: 'Next slide',
+    slide1Title: 'Meet "Ask AI": Your new SQL assistant',
+    slide1Desc: 'Build and adjust queries faster with customizable AI actions. Analyze errors, explain complex queries, and suggest performance fixes in seconds.',
+    slide2Title: 'Visual EXPLAIN Plan Diagram',
+    slide2Desc: 'Analyze complex query execution plans with graphic tree nodes, cost distribution percentages, and bottleneck highlighting.',
+    slide3Title: 'Smart Test Data Generator',
+    slide3Desc: 'Generate realistic dummy data in seconds with customizable generation rules, foreign key mapping, and high-performance batch insertion.',
+    slide4Title: 'Schema Comparison & Migration',
+    slide4Desc: 'Compare schemas between environments, review structural differences side by side, and export clean DDL migration scripts.',
+    slide5Title: 'Multi-Database & High Efficiency',
+    slide5Desc: 'Native high-speed support for PostgreSQL, MySQL, SQLite, and Redis with customizable sleek dark & light UI themes.',
   },
 
   connInfo: {
@@ -218,6 +236,8 @@ const en = {
     confirmDropDbTitle: 'Drop database',
     confirmDropViewTitle: 'Drop view',
     confirmDropTableTitle: 'Drop table',
+    confirmDropSequenceTitle: 'Drop sequence',
+    confirmDropSequenceMessage: 'Are you sure you want to drop sequence "{{name}}"?',
     confirmTruncateMessage:
       'Delete <strong>ALL DATA</strong> in table <code>{{name}}</code>? The table structure is kept.',
     confirmDropDbMessage:
@@ -252,6 +272,9 @@ const en = {
     objDefView: 'View',
 
     errSwitchDb: 'Failed to switch database: {{message}}',
+    schema: 'Schema',
+    schemaHint: 'PostgreSQL schema every query, export and edit works in',
+    errSwitchSchema: 'Failed to switch schema: {{message}}',
     errDropCurrentDb:
       'Cannot drop the database you are connected to. Switch to another database first.',
     errDropDb: 'Failed to drop database: {{message}}',
@@ -260,6 +283,7 @@ const en = {
     errCreateDb: 'Failed to create database: {{message}}',
     promptDbName: 'Please enter a database name.',
     createdDbSwitch: 'Database "{{name}}" created. Switch to it now?',
+    createdDbTitle: 'Database created',
     errObjectDef: 'Could not load the definition: {{message}}',
     renameTableSuccess: 'Table renamed successfully!',
     errRenameTable: 'Failed to rename: {{message}}',
@@ -368,6 +392,8 @@ const en = {
     saveSuccess: 'Connection settings saved.',
     errDeleteDemo: 'The demo connection cannot be deleted.',
     confirmDeleteProfile: 'Delete this saved connection?',
+    confirmDeleteProfileTitle: 'Delete connection',
+    confirmExportPlainTitle: 'Export without a file password',
     redisTestOk: 'Redis connection OK (PING succeeded).',
     testOk: 'Connection test succeeded.',
     errConnectFailed: 'Connection failed: {{message}}',
@@ -732,6 +758,16 @@ const en = {
   },
 
   structure: {
+    // Drop confirmations. window.confirm() shows nothing inside the Tauri webview
+    // (the dialog plugin has no `confirm` command), so these go through ConfirmDialog.
+    confirmDropCheckTitle: 'Drop check constraint',
+    confirmDropCheckMessage: 'Are you sure you want to drop check constraint "{{name}}"?',
+    confirmDropTriggerTitle: 'Drop trigger',
+    confirmDropTriggerMessage: 'Are you sure you want to drop trigger "{{name}}"?',
+    confirmDropPartitionTitle: 'Drop partition',
+    confirmDropPartitionMessage: 'Are you sure you want to drop partition "{{name}}"?',
+    confirmDropPartitionNote: 'Every row stored in this partition is deleted with it.',
+
     tableNameLabel: 'Table name:',
     addColumn: 'Add column',
     addIndex: 'Add index',
@@ -1176,6 +1212,8 @@ const en = {
     queryTabLabel: 'Query {{n}}',
     confirmDiscardGridChanges:
       'The current table still has UNSAVED changes. Discard them and continue?',
+    confirmDiscardGridTitle: 'Unsaved changes',
+    confirmDiscardGridLabel: 'Discard and continue',
 
     readOnlyOnTitle: 'Read-only mode is ON — click to turn it off',
     readOnlyOffTitle: 'Turn on read-only mode (blocks every write)',
@@ -1859,6 +1897,7 @@ const en = {
     sqlOk: '[OK] Statement executed.',
     errSessionClosed: 'The shell session is closed — press "Reconnect" and try again.',
 
+    enableLogTitle: 'Enable logging',
     enablingLog: 'Enabling logging...',
     errEnableLog: 'Could not enable logging: {{message}}',
     errEnableLogPerm: 'check your privileges (SUPER/superuser).',
@@ -2015,6 +2054,8 @@ const en = {
     capReached: "Stopped at {{n}} keys. Narrow the pattern, or load the next batch.",
     loadMore: "Load more",
     keyCountFiltered: "{{n}} keys matched in what was scanned",
+    ctxFolderShown: "{{n}} keys shown",
+    ctxDeleteGroup: "Delete every key under this prefix…",
     bulkDeleteTitle: "Delete keys by pattern",
     bulkDeleteDesc: "Scans the keyspace and unlinks every matching key. The total is only known as it goes.",
     bulkDeletePattern: "Pattern",
@@ -2291,6 +2332,9 @@ const en = {
     sqliteNoDropDb: 'SQLite cannot drop a database.',
     sqliteNoCreateDb: 'SQLite cannot create a database (each file is one database).',
     sqliteSingleDb: 'SQLite does not support several databases on one connection.',
+    schemaOnlyPostgres: 'Only PostgreSQL supports selecting a schema.',
+    missingSchemaName: 'Missing schema name.',
+    schemaNotFound: 'Schema "{{a}}" does not exist.',
     cascadeOnlyPostgres: 'CASCADE is only supported on PostgreSQL.',
     terminalClosed: 'The terminal session is closed.',
     paramsSingleStatement:

@@ -72,6 +72,7 @@ const ja: typeof en = {
     reload: 'アプリを再読み込み',
     shortcuts: 'キーボードショートカット...',
     about: 'TableNova について...',
+    whatsNew: 'TableNova の新機能...',
     minimize: '最小化',
     maximize: '最大化 / 元に戻す',
     closeWindow: '閉じる',
@@ -80,6 +81,23 @@ const ja: typeof en = {
     schemaCompare: 'スキーマ移行 / 比較',
     toggleTerminal: 'ターミナルの表示切替',
     sqlButton: 'SQL',
+  },
+
+  whatsNew: {
+    modalHeader: 'TableNova の新機能',
+    showOnStartup: '起動時に表示する',
+    prevSlide: '前のスライド',
+    nextSlide: '次のスライド',
+    slide1Title: '「Ask AI」機能の紹介: SQLアシスタント',
+    slide1Desc: 'カスタマイズ可能なAIアクションでクエリをより高速に作成および調整します。エラーを分析し、複雑なクエリを数秒で最適化します。',
+    slide2Title: 'ビジュアル EXPLAIN 実行計画ダイアグラム',
+    slide2Desc: 'ツリーノードグラフィック、コスト分散割合、パフォーマンスのボトルネック表示により、複雑なクエリ実行計画を直感的に分析します。',
+    slide3Title: 'スマートテストデータ生成機能',
+    slide3Desc: '外部キーマッピングルールと高速バッチ挿入により、数秒で現実的なテスト用ダミーデータを生成します。',
+    slide4Title: 'スキーマ比較およびマイグレーション',
+    slide4Desc: '環境間のスキーマ差異をサイドバイサイドで比較確認し、クリーンなDDLマイグレーションスクリプトをエクスポートします。',
+    slide5Title: 'マルチデータベースとネイティブ高性能',
+    slide5Desc: 'PostgreSQL、MySQL、SQLite、Redis の高速ネイティブサポートとカスタマイズ可能なモダンUIテーマを提供します。',
   },
 
   connInfo: {
@@ -209,6 +227,8 @@ const ja: typeof en = {
     confirmDropDbTitle: 'データベースを削除 (Drop Database)',
     confirmDropViewTitle: 'ビューを削除 (Drop View)',
     confirmDropTableTitle: 'テーブルを削除 (Drop Table)',
+    confirmDropSequenceTitle: 'シーケンスを削除',
+    confirmDropSequenceMessage: 'シーケンス "{{name}}" を削除してもよろしいですか?',
     confirmTruncateMessage:
       'テーブル <code>{{name}}</code> の<strong>すべてのデータ</strong>を削除しますか？テーブル構造は保持されます。',
     confirmDropDbMessage:
@@ -243,6 +263,9 @@ const ja: typeof en = {
     objDefView: 'ビュー',
 
     errSwitchDb: 'データベースの切り替えに失敗しました: {{message}}',
+    schema: 'スキーマ',
+    schemaHint: 'クエリ・エクスポート・編集のすべてが対象とする PostgreSQL スキーマ',
+    errSwitchSchema: 'スキーマの切り替えに失敗しました: {{message}}',
     errDropCurrentDb:
       '接続中のデータベースは削除できません。先に別のデータベースへ切り替えてください。',
     errDropDb: 'データベースの削除に失敗しました: {{message}}',
@@ -251,6 +274,7 @@ const ja: typeof en = {
     errCreateDb: 'データベースの作成に失敗しました: {{message}}',
     promptDbName: 'データベース名を入力してください。',
     createdDbSwitch: 'データベース "{{name}}" を作成しました。今すぐ切り替えますか？',
+    createdDbTitle: 'データベースを作成しました',
     errObjectDef: '定義を取得できませんでした: {{message}}',
     renameTableSuccess: 'テーブル名を変更しました。',
     errRenameTable: '名前の変更に失敗しました: {{message}}',
@@ -359,6 +383,8 @@ const ja: typeof en = {
     saveSuccess: '接続設定を保存しました。',
     errDeleteDemo: 'デモ接続は削除できません。',
     confirmDeleteProfile: 'この保存済み接続を削除しますか？',
+    confirmDeleteProfileTitle: '接続を削除',
+    confirmExportPlainTitle: 'ファイルパスワードなしでエクスポート',
     redisTestOk: 'Redis 接続 OK (PING 成功)。',
     testOk: '接続テストに成功しました。',
     errConnectFailed: '接続に失敗しました: {{message}}',
@@ -721,6 +747,15 @@ const ja: typeof en = {
   },
 
   structure: {
+    // Drop confirmations replacing window.confirm().
+    confirmDropCheckTitle: 'CHECK 制約を削除',
+    confirmDropCheckMessage: 'CHECK 制約 "{{name}}" を削除してもよろしいですか?',
+    confirmDropTriggerTitle: 'トリガーを削除',
+    confirmDropTriggerMessage: 'トリガー "{{name}}" を削除してもよろしいですか?',
+    confirmDropPartitionTitle: 'パーティションを削除',
+    confirmDropPartitionMessage: 'パーティション "{{name}}" を削除してもよろしいですか?',
+    confirmDropPartitionNote: 'このパーティションに入っている行もすべて削除されます。',
+
     tableNameLabel: 'テーブル名:',
     addColumn: 'カラムを追加',
     addIndex: 'インデックスを追加',
@@ -1165,6 +1200,8 @@ const ja: typeof en = {
     queryTabLabel: 'クエリ {{n}}',
     confirmDiscardGridChanges:
       '現在のテーブルに未保存の変更があります。破棄して続行しますか？',
+    confirmDiscardGridTitle: '未保存の変更',
+    confirmDiscardGridLabel: '破棄して続行',
 
     readOnlyOnTitle: '読み取り専用モードが有効です — クリックで解除',
     readOnlyOffTitle: '読み取り専用モードを有効にする (すべての書き込みを禁止)',
@@ -1846,6 +1883,7 @@ const ja: typeof en = {
     sqlOk: '[OK] 実行しました。',
     errSessionClosed: 'シェルセッションは閉じています — 「再接続」を押してからもう一度試してください。',
 
+    enableLogTitle: 'ログを有効化',
     enablingLog: 'ログを有効化中...',
     errEnableLog: 'ログの有効化に失敗しました: {{message}}',
     errEnableLogPerm: '権限 (SUPER/superuser) を確認してください。',
@@ -2002,6 +2040,8 @@ const ja: typeof en = {
     capReached: "{{n}} 件で停止しました。パターンを絞るか、続きを読み込んでください。",
     loadMore: "続きを読み込む",
     keyCountFiltered: "スキャンした範囲で {{n}} 件一致",
+    ctxFolderShown: "{{n}} 件のキーを表示中",
+    ctxDeleteGroup: "このプレフィックス配下のキーをすべて削除…",
     bulkDeleteTitle: "パターンでキーを削除",
     bulkDeleteDesc: "キー空間をスキャンし、一致するキーを UNLINK します。総数は実行中にしか分かりません。",
     bulkDeletePattern: "パターン",
@@ -2269,6 +2309,9 @@ const ja: typeof en = {
     sqliteNoDropDb: 'SQLite はデータベースを削除できません。',
     sqliteNoCreateDb: 'SQLite はデータベースを作成できません (1 ファイル = 1 データベース)。',
     sqliteSingleDb: 'SQLite は 1 接続で複数データベースを扱えません。',
+    schemaOnlyPostgres: 'スキーマの選択は PostgreSQL のみ対応です。',
+    missingSchemaName: 'スキーマ名がありません。',
+    schemaNotFound: 'スキーマ「{{a}}」は存在しません。',
     cascadeOnlyPostgres: 'CASCADE は PostgreSQL でのみサポートされています。',
     terminalClosed: 'ターミナルセッションは閉じています。',
     paramsSingleStatement:

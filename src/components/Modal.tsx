@@ -150,17 +150,21 @@ export const Modal: React.FC<ModalProps> = ({
 /** Scrollable content area of a dialog. */
 export const ModalBody: React.FC<{
   style?: React.CSSProperties;
+  className?: string;
   children?: React.ReactNode;
-}> = ({ style, children }) => (
-  <div style={{
-    padding: '16px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '14px',
-    overflowY: 'auto',
-    minHeight: 0,
-    ...style,
-  }}>
+}> = ({ style, className, children }) => (
+  <div
+    className={className}
+    style={{
+      padding: '16px',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '14px',
+      overflowY: 'auto',
+      minHeight: 0,
+      ...style,
+    }}
+  >
     {children}
   </div>
 );
@@ -168,19 +172,23 @@ export const ModalBody: React.FC<{
 /** Action bar at the bottom of a dialog. */
 export const ModalFooter: React.FC<{
   style?: React.CSSProperties;
+  className?: string;
   children?: React.ReactNode;
-}> = ({ style, children }) => (
-  <div style={{
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    gap: '8px',
-    padding: '12px 16px',
-    borderTop: '1px solid var(--win-border)',
-    background: HEADER_BG,
-    flexShrink: 0,
-    ...style,
-  }}>
+}> = ({ style, className, children }) => (
+  <div
+    className={className}
+    style={{
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+      gap: '8px',
+      padding: '12px 16px',
+      borderTop: '1px solid var(--win-border)',
+      background: HEADER_BG,
+      flexShrink: 0,
+      ...style,
+    }}
+  >
     {children}
   </div>
 );

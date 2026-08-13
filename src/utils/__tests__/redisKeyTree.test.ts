@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { buildKeyTree, flattenTree, allFolderPaths, windowSlice } from '../redisKeyTree';
+import {
+  buildKeyTree, flattenTree, allFolderPaths, folderMatchPattern, windowSlice,
+} from '../redisKeyTree';
 import type { RedisKeyItem } from '../dbHelper';
 
 const k = (key: string, type = 'string', ttl = -1): RedisKeyItem => ({ key, type, ttl });
@@ -100,6 +102,30 @@ describe('allFolderPaths', () => {
   it('returns every nested folder path', () => {
     const tree = buildKeyTree([k('a:b:c'), k('a:d'), k('e:f')], ':');
     expect(allFolderPaths(tree).sort()).toEqual(['a:', 'a:b:', 'e:']);
+  });
+});
+
+describe('folderMatchPattern', () => {
+  it('appends the wildcard to a plain prefix', () => {
+    expect(folderMatchPattern('post:')).toBe('post:*');
+    expect(folderMatchPattern('user:data:')).toBe('user:data:*');
+  });
+
+  it('escapes glob metacharacters in the prefix, which is data and not a pattern', () => {
+    // Unescaped, `post[1]:*` is a character class and would delete `post1:…` instead.
+    expect(folderMatchPattern('post[1]:')).toBe('post\\[1\\]:*');
+    expect(folderMatchPattern('a*b:')).toBe('a\\*b:*');
+    expect(folderMatchPattern('a?b:')).toBe('a\\?b:*');
+    expect(folderMatchPattern('a\\b:')).toBe('a\\\\b:*');
+  });
+
+  it('keeps two folders that differ only by metacharacters apart', () => {
+    // These are two separate groups in the tree, so they must not share one delete pattern.
+    const tree = buildKeyTree([k('post[1]:a'), k('post1:b')], ':');
+    expect([...tree.folders.keys()].sort()).toEqual(['post1', 'post[1]']);
+    const patterns = [...tree.folders.values()].map((f) => folderMatchPattern(f.path));
+    expect(new Set(patterns).size).toBe(2);
+    expect(patterns).toContain('post\\[1\\]:*');
   });
 });
 
