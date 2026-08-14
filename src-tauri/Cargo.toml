@@ -32,7 +32,9 @@ sqlx-mysql = { version = "0.9.0", default-features = false, features = [
     "json",
 ] }
 bigdecimal = "0.4"
-uuid = "1"
+# `v4` cho `Uuid::new_v4()`: conn_id do backend sinh (multi-connection-plan §4.3 — opaque, không
+# dẫn xuất từ config vì config mang secret). sqlx chỉ cần uuid để decode nên không bật feature này.
+uuid = { version = "1", features = ["v4"] }
 russh = "0.62.5"
 portable-pty = "0.9"
 flate2 = "1.1.9"

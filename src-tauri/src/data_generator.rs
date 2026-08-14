@@ -1917,32 +1917,28 @@ pub fn suggest_generator(col: &ColMeta, fk: Option<&FkMeta>) -> (String, Value) 
 /// The schema rides along here rather than being a parameter of every command because the five
 /// functions that need it (`collect_meta`, `fetch_fk_pool`, `estimate_fk_pool`, `insert_sql`,
 /// `run_generation`) are internal, not commands — see the plan §5.0.
-fn active_conn(state: &State<'_, AppState>) -> Result<(DbConnection, String, Option<String>), String> {
-    let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-    let conn = match manager.connection.as_ref() {
-        Some(DbConnection::Sqlite(c)) => DbConnection::Sqlite(c.clone()),
-        Some(DbConnection::Postgres(p)) => DbConnection::Postgres(p.clone()),
-        Some(DbConnection::Mysql(p)) => DbConnection::Mysql(p.clone()),
-        None => return Err("Chưa kết nối CSDL".to_string()),
-    };
-    let dialect = if manager.db_type.is_empty() {
-        match &conn {
-            DbConnection::Sqlite(_) => "sqlite".to_string(),
-            DbConnection::Postgres(_) => "postgres".to_string(),
-            DbConnection::Mysql(_) => "mysql".to_string(),
-        }
-    } else {
-        manager.db_type.clone()
-    };
-    let schema = manager.current_schema.clone();
-    Ok((conn, dialect, schema))
+fn active_conn(
+    state: &State<'_, AppState>,
+    conn_id: &str,
+) -> Result<(DbConnection, String, Option<String>), String> {
+    // Same tuple as before so none of the five internal callers changes.
+    //
+    // The dialect always comes from the live connection. That deleted the old
+    // `if db_type.is_empty()` fallback rather than porting it: `ConnCtx::dialect()` derives it, so
+    // there is no second spelling of the dialect that could disagree with the connection.
+    let ctx = state.connections.acquire(conn_id)?;
+    Ok((
+        ctx.conn().clone(),
+        ctx.dialect().to_string(),
+        ctx.raw_schema().map(str::to_string),
+    ))
 }
 
 /// Tables/columns available for generation, with a suggested generator per column and the
 /// FK-safe insertion order.
 #[tauri::command]
-pub async fn get_generation_targets(state: State<'_, AppState>) -> Result<Value, String> {
-    let (conn, dialect, schema) = active_conn(&state)?;
+pub async fn get_generation_targets(state: State<'_, AppState>, conn_id: String) -> Result<Value, String> {
+    let (conn, dialect, schema) = active_conn(&state, &conn_id)?;
     let metas = collect_meta(&conn, &dialect, &schema, None).await?;
 
     let names: Vec<String> = metas.iter().map(|m| m.name.clone()).collect();
@@ -2198,12 +2194,12 @@ fn pick_batch_size(requested: usize, column_count: usize) -> usize {
 /// Preview rows for ONE table — same code path as the real run, no writes.
 #[tauri::command]
 pub async fn preview_generated_data(
-    state: State<'_, AppState>,
+    state: State<'_, AppState>, conn_id: String,
     spec: GenSpec,
     table: String,
     limit: Option<usize>,
 ) -> Result<Value, String> {
-    let (conn, dialect, schema) = active_conn(&state)?;
+    let (conn, dialect, schema) = active_conn(&state, &conn_id)?;
     let tspec = spec
         .tables
         .iter()
@@ -2249,16 +2245,16 @@ pub async fn cancel_data_generation(state: State<'_, AppState>) -> Result<Value,
 /// `{type:'start'|'table'|'progress'|'done'|'error', ...}`.
 #[tauri::command]
 pub async fn generate_data(
-    state: State<'_, AppState>,
+    state: State<'_, AppState>, conn_id: String,
     spec: GenSpec,
     // Bắt buộc (không dùng Option): Channel không impl Deserialize nên `Option<Channel<_>>`
     // không thoả CommandArg — frontend luôn tạo kênh.
     on_progress: Channel<Value>,
 ) -> Result<Value, String> {
     // Same reason as restore_backup: this runs on its own connection and would block on the locks
-    // an open manual transaction holds. See tx_session::reject_if_open.
+    // an open manual transaction holds. See tx_session::reject_if_manual_or_open.
     crate::tx_session::reject_if_manual_or_open("sinh dữ liệu")?;
-    let (conn, dialect, schema) = active_conn(&state)?;
+    let (conn, dialect, schema) = active_conn(&state, &conn_id)?;
     if spec.tables.is_empty() {
         return Err("Chưa chọn bảng nào để sinh dữ liệu".to_string());
     }

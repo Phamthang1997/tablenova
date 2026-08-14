@@ -64,8 +64,8 @@ export const TitleBar: React.FC<TitleBarProps> = ({
   activeProfileName = '',
   activeProfileColor = '',
   onProfileChange,
-  theme = 'dark',
-  onThemeChange,
+  theme: _theme = 'dark',
+  onThemeChange: _onThemeChange,
   onReconnect,
   activeTableName,
   onNewConnection,
@@ -676,8 +676,6 @@ export const TitleBar: React.FC<TitleBarProps> = ({
           profileName={activeProfileName}
           profileColor={activeProfileColor}
           onProfileChange={(patch) => onProfileChange?.(patch)}
-          theme={theme}
-          onThemeChange={(next) => onThemeChange?.(next)}
           onDisconnect={() => {
             setShowConnPopover(false);
             onDisconnect?.();

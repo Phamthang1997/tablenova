@@ -433,6 +433,7 @@ const vi: typeof en = {
     sqlitePathLabel: 'Đường dẫn tệp (.db, .sqlite)',
     sqlitePathPlaceholder: 'my_database.db',
     sqliteHint: 'Nếu tệp chưa tồn tại, TableNova sẽ tự tạo tệp mới khi kết nối.',
+    pickSqliteTitle: 'Chọn tệp cơ sở dữ liệu SQLite',
 
     redisSection: 'Máy chủ Redis',
     redisDesc: 'Thông tin đăng nhập được lưu cục bộ trên thiết bị của bạn.',
@@ -880,12 +881,24 @@ const vi: typeof en = {
   ai: {
     title: 'Trợ lý AI',
     you: 'Bạn',
+    justNow: 'Vừa xong',
+    insert: 'Chèn',
+    run: 'Chạy',
+    runQuery: 'Chạy truy vấn này',
+    compareTitle: 'Bạn có thể so sánh câu trả lời này với...',
+    chatHistory: 'Lịch sử đoạn chat',
+    newChat: 'Đoạn chat mới',
+    attachTable: 'Gắn bảng',
+    attachTableHint: 'Đính kèm bảng vào ngữ cảnh prompt',
+    searchTables: 'Tìm kiếm bảng...',
+    noTablesFound: 'Không tìm thấy bảng nào',
+    settingsTitle: 'Cấu hình Trợ lý AI & API',
     greeting:
       'Xin chào! Tôi là Trợ lý AI hỗ trợ SQL của TableNova. Tôi có thể dịch câu hỏi tiếng Việt của bạn thành truy vấn SQL tương ứng.\n\nHãy thử hỏi tôi: *"lấy danh sách admin hoạt động trong bảng users"* hoặc *"tổng doanh thu của tất cả đơn hàng"*!',
-    schemaCurrentTable: 'Bảng hiện tại: {{table}}. Bảng khác: users, products, orders',
+    schemaCurrentTable: 'Bảng hiện tại: {{table}}',
     insertIntoEditor: 'Nạp vào editor',
-    thinking: 'Đang nghĩ...',
-    inputPlaceholder: 'Hỏi AI viết SQL (nhấn Enter)...',
+    thinking: 'Đang phân tích schema & viết SQL...',
+    inputPlaceholder: 'Hỏi Trợ lý AI viết SQL...',
   },
 
   explain: {

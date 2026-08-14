@@ -441,6 +441,7 @@ const en = {
     sqlitePathLabel: 'File path (.db, .sqlite)',
     sqlitePathPlaceholder: 'my_database.db',
     sqliteHint: 'If the file does not exist yet, TableNova creates it on connect.',
+    pickSqliteTitle: 'Choose SQLite database file',
 
     redisSection: 'Redis server',
     redisDesc: 'Credentials are stored locally on your device.',
@@ -889,12 +890,24 @@ const en = {
   ai: {
     title: 'AI Assistant',
     you: 'You',
+    justNow: 'Just Now',
+    insert: 'Insert',
+    run: 'Run',
+    runQuery: 'Run Query',
+    compareTitle: 'You can compare this answer with...',
+    chatHistory: 'Chat History',
+    newChat: 'New Chat',
+    attachTable: 'Attach Table',
+    attachTableHint: 'Attach table schema to prompt context',
+    searchTables: 'Search tables...',
+    noTablesFound: 'No tables found',
+    settingsTitle: 'AI Assistant & API Settings',
     greeting:
       'Hi! I am TableNova\'s SQL assistant. I can turn a plain-language question into the matching SQL query.\n\nTry asking: *"list the active admins in the users table"* or *"total revenue across all orders"*.',
-    schemaCurrentTable: 'Current table: {{table}}. Other tables: users, products, orders',
+    schemaCurrentTable: 'Current table: {{table}}',
     insertIntoEditor: 'Insert into the editor',
-    thinking: 'Thinking...',
-    inputPlaceholder: 'Ask the AI for SQL (press Enter)...',
+    thinking: 'Analyzing schema & generating SQL...',
+    inputPlaceholder: 'Ask AI Assistant for SQL...',
   },
 
   explain: {

@@ -1,13 +1,16 @@
 // So sánh CẤU TRÚC và DỮ LIỆU giữa HAI database.
 //
-// `DatabaseManager` chỉ giữ MỘT kết nối, nên mỗi "phía" (source/target) được giải quyết
+// Phase 1 của đa kết nối vẫn chỉ mở MỘT kết nối, nên mỗi "phía" (source/target) được giải quyết
 // riêng trong `resolve_side()`: dùng lại kết nối đang mở nếu phía đó trỏ đúng database
 // hiện tại, còn không thì mở kết nối TẠM từ `last_config` với database/tệp thay thế —
 // cùng cách `get_all_databases_stats` làm khi "quét sâu". Kết nối tạm được đóng ngay
 // khi lệnh kết thúc (`Resolved::close`).
 //
 // Toàn bộ metadata đọc qua `execute_raw_sql_generic` (đã trả về JSON `{columns, data}`)
-// nên module này không lặp lại phần giải mã ô dữ liệu của từng driver.
+// nên module này không lặp lại phần giải mã ô dữ liệu của từng driver. Việc pool tạm của
+// module không bao giờ bị pin làm phiên transaction của người dùng giờ do CHÍNH KIỂU bảo đảm:
+// mỗi pool tạm mang `ConnId::Adhoc` và `should_route` từ chối nó — không còn phụ thuộc vào
+// việc nhớ gọi đúng một funnel riêng.
 //
 // SQL sinh ra (`syncSql`) luôn theo hướng source -> target và theo dialect của TARGET.
 // Mọi câu lệnh phá dữ liệu (DROP ...) chỉ được sinh ở dạng thực thi khi
@@ -24,7 +27,7 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use tauri::State;
 
-use crate::database::{build_mysql_url, build_pg_url, execute_raw_sql_generic, DbConnection};
+use crate::database::{build_mysql_url, build_pg_url, execute_raw_sql_generic, DbConnection, DbKind};
 use crate::ssh_tunnel::SshTunnel;
 use crate::AppState;
 
@@ -73,11 +76,11 @@ impl Resolved {
         if !self.owned {
             return;
         }
-        match self.conn {
-            DbConnection::Postgres(pool) => pool.close().await,
-            DbConnection::Mysql(pool) => pool.close().await,
+        match self.conn.kind {
+            DbKind::Postgres(pool) => pool.close().await,
+            DbKind::Mysql(pool) => pool.close().await,
             // rusqlite tự đóng khi Arc cuối cùng bị drop.
-            DbConnection::Sqlite(_) => {}
+            DbKind::Sqlite(_) => {}
         }
     }
 }
@@ -113,15 +116,23 @@ async fn current_db_name(conn: &DbConnection, dialect: &str) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-async fn resolve_side(state: &State<'_, AppState>, side: &CompareSide) -> Result<Resolved, String> {
+async fn resolve_side(
+    state: &State<'_, AppState>,
+    side: &CompareSide,
+    conn_id: &str,
+) -> Result<Resolved, String> {
     let (active, active_type, last_config, tunnel_port) = {
-        let mgr = state.db_manager.lock().map_err(|e| e.to_string())?;
-        (
-            mgr.connection.clone(),
-            mgr.db_type.clone(),
-            mgr.last_config.clone(),
-            mgr.ssh_tunnel.as_ref().map(|t| t.local_port),
-        )
+        // `.ok()`, không phải `?`: mỗi phía có thể tự mang config riêng, nên "chưa kết nối" không
+        // phải lỗi ở đây — `base` phía dưới mới quyết định (`side.config.or(last_config)`).
+        match state.connections.acquire(&conn_id).ok() {
+            Some(ctx) => (
+                Some(ctx.conn().clone()),
+                ctx.server().db_type.clone(),
+                Some(ctx.server().config()),
+                ctx.server().ssh_tunnel.as_ref().map(|t| t.local_port),
+            ),
+            None => (None, String::new(), None, None),
+        }
     };
 
     let own_config = side.config.is_some();
@@ -173,7 +184,9 @@ async fn resolve_side(state: &State<'_, AppState>, side: &CompareSide) -> Result
         .map_err(|e| format!("Không mở được tệp SQLite '{}': {}", path, e))?;
 
         return Ok(Resolved {
-            conn: DbConnection::Sqlite(std::sync::Arc::new(std::sync::Mutex::new(conn))),
+            // `adhoc`: pool này do module tự mở nên không bao giờ được trở thành phiên transaction
+            // của người dùng — xem `ConnId::Adhoc` và §0 của kế hoạch.
+            conn: DbConnection::adhoc(DbKind::Sqlite(std::sync::Arc::new(std::sync::Mutex::new(conn)))),
             dialect,
             schema: "main".to_string(),
             label: path.clone(),
@@ -239,9 +252,10 @@ async fn resolve_side(state: &State<'_, AppState>, side: &CompareSide) -> Result
     crate::database::apply_iam_password(&base, &mut conn_config, default_port)?;
 
     let db_override = wanted_db.as_deref();
-    let conn = if dialect == "postgres" {
+    // `adhoc` — xem ghi chú ở nhánh SQLite phía trên.
+    let conn = DbConnection::adhoc(if dialect == "postgres" {
         let url = build_pg_url(&conn_config, db_override);
-        DbConnection::Postgres(
+        DbKind::Postgres(
             sqlx::pool::PoolOptions::<sqlx::Postgres>::new()
                 .max_connections(2)
                 .connect(&url)
@@ -250,14 +264,14 @@ async fn resolve_side(state: &State<'_, AppState>, side: &CompareSide) -> Result
         )
     } else {
         let url = build_mysql_url(&conn_config, db_override);
-        DbConnection::Mysql(
+        DbKind::Mysql(
             sqlx::pool::PoolOptions::<sqlx::MySql>::new()
                 .max_connections(2)
                 .connect(&url)
                 .await
                 .map_err(|e| e.to_string())?,
         )
-    };
+    });
 
     let label = wanted_db
         .clone()
@@ -291,6 +305,11 @@ fn side_json(r: &Resolved, tables: usize) -> Value {
 
 // ===================== Đọc kết quả JSON =====================
 
+/// The single funnel for every statement this module runs — all 18 call sites go through here.
+///
+/// A side resolved to an ad-hoc pool must never become the user's pinned transaction session. That
+/// no longer depends on calling a particular executor: the pool carries `ConnId::Adhoc` and
+/// `should_route` refuses it.
 async fn query_rows(conn: &DbConnection, sql: String) -> Result<Vec<Value>, String> {
     let res = execute_raw_sql_generic(conn, sql).await?;
     Ok(res
@@ -1356,13 +1375,13 @@ fn alter_column_stmts(
 
 #[tauri::command]
 pub async fn compare_schemas(
-    state: State<'_, AppState>,
+    state: State<'_, AppState>, conn_id: String,
     source: CompareSide,
     target: CompareSide,
     include_drops: Option<bool>,
 ) -> Result<Value, String> {
-    let src = resolve_side(&state, &source).await?;
-    let tgt = match resolve_side(&state, &target).await {
+    let src = resolve_side(&state, &source, &conn_id).await?;
+    let tgt = match resolve_side(&state, &target, &conn_id).await {
         Ok(t) => t,
         Err(e) => {
             src.close().await;
@@ -1836,13 +1855,13 @@ async fn compare_schemas_inner(
 
 #[tauri::command]
 pub async fn compare_data_overview(
-    state: State<'_, AppState>,
+    state: State<'_, AppState>, conn_id: String,
     source: CompareSide,
     target: CompareSide,
     tables: Option<Vec<String>>,
 ) -> Result<Value, String> {
-    let src = resolve_side(&state, &source).await?;
-    let tgt = match resolve_side(&state, &target).await {
+    let src = resolve_side(&state, &source, &conn_id).await?;
+    let tgt = match resolve_side(&state, &target, &conn_id).await {
         Ok(t) => t,
         Err(e) => {
             src.close().await;
@@ -2022,7 +2041,7 @@ fn values_equal(a: &Value, b: &Value) -> bool {
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn compare_table_data(
-    state: State<'_, AppState>,
+    state: State<'_, AppState>, conn_id: String,
     source: CompareSide,
     target: CompareSide,
     table: String,
@@ -2034,8 +2053,8 @@ pub async fn compare_table_data(
     if table.trim().is_empty() {
         return Err("Thiếu tên bảng".to_string());
     }
-    let src = resolve_side(&state, &source).await?;
-    let tgt = match resolve_side(&state, &target).await {
+    let src = resolve_side(&state, &source, &conn_id).await?;
+    let tgt = match resolve_side(&state, &target, &conn_id).await {
         Ok(t) => t,
         Err(e) => {
             src.close().await;

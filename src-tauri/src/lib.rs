@@ -11,14 +11,19 @@ pub mod local_terminal;
 pub mod aws_iam;
 pub mod export;
 pub mod secret_store;
+pub mod state;
 pub mod tx_session;
+pub mod oauth;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU64};
 
 pub struct AppState {
-    pub db_manager: Mutex<database::DatabaseManager>,
+    // Mọi kết nối SQL đang mở, khoá theo `conn_id` (docs/multi-connection-plan.md §4.3). Đây là
+    // nguồn sự thật DUY NHẤT — `DatabaseManager` (một `Option<DbConnection>` cho cả app) đã bị xoá.
+    // Phase 1 vẫn giữ tối đa một entry: `connect_db` xoá cái trước khi thêm cái mới.
+    pub connections: state::ConnRegistry,
     // Cờ hủy cho các truy vấn đang stream (query_id -> cờ). execute_query_stream đăng ký,
     // cancel_query bật cờ để dừng vòng lặp đẩy dữ liệu.
     pub cancel_flags: Mutex<HashMap<String, Arc<AtomicBool>>>,
@@ -89,13 +94,7 @@ pub fn run() {
             Ok(())
         })
         .manage(AppState {
-            db_manager: Mutex::new(database::DatabaseManager {
-                connection: None,
-                db_type: String::new(),
-                ssh_tunnel: None,
-                last_config: None,
-                current_schema: None,
-            }),
+            connections: state::ConnRegistry::new(),
             cancel_flags: Mutex::new(HashMap::new()),
             ssh_terminals: Mutex::new(HashMap::new()),
             local_terminals: Mutex::new(HashMap::new()),
@@ -167,6 +166,7 @@ pub fn run() {
             database::get_check_constraints,
             database::save_view_definition,
             database::open_url,
+            oauth::start_google_oauth_flow,
             database::set_app_window_size,
             secret_store::secret_set,
             secret_store::secret_get,

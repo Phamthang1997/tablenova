@@ -180,32 +180,42 @@ fn bind_mysql_params<'q>(
 }
 
 #[derive(Clone)]
-pub enum DbConnection {
+pub enum DbKind {
     Sqlite(Arc<Mutex<SqliteConnection>>),
     Postgres(PgPool),
     Mysql(MySqlPool),
 }
 
-pub struct DatabaseManager {
-    pub connection: Option<DbConnection>,
-    pub db_type: String,
-    pub ssh_tunnel: Option<SshTunnel>,
-    pub last_config: Option<Value>,
-    /// Postgres only: the schema every introspection query filters on and every generated
-    /// statement qualifies with. `None` on MySQL/SQLite (schema == database / always `main`)
-    /// and while disconnected. Lives here rather than in each command's arguments for the same
-    /// reason the open database does: there is one connection, so there is one current schema.
-    /// See `docs/postgres-schema-support-plan.md` §5.0.
-    pub current_schema: Option<String>,
+/// A live connection handle plus **which connection it is**.
+///
+/// The id rides inside the handle so the ~35 helper signatures that take `&DbConnection` and the 66
+/// `execute_raw_sql_generic` call sites stay byte-identical, while `tx_session` finally has a key to
+/// look a session up by (§4.4a of `docs/multi-connection-plan.md`).
+#[derive(Clone)]
+pub struct DbConnection {
+    pub id: crate::state::ConnId,
+    pub kind: DbKind,
 }
 
-/// The schema to use for Postgres, defaulting to `public` so a connection that never reported
-/// one behaves exactly as it did before this existed.
-pub(crate) fn pg_schema(manager: &DatabaseManager) -> String {
-    manager.current_schema.clone().unwrap_or_else(|| "public".to_string())
+impl DbConnection {
+    /// A handle on a registry entry — the only kind a transaction session may pin.
+    pub fn session(id: crate::state::SessionId, kind: DbKind) -> Self {
+        DbConnection { id: crate::state::ConnId::Session(id), kind }
+    }
+
+    /// A handle on a pool this process opened for itself. See `ConnId::Adhoc`.
+    pub fn adhoc(kind: DbKind) -> Self {
+        DbConnection { id: crate::state::ConnId::Adhoc, kind }
+    }
 }
 
-/// Same, for a schema already cloned out of the manager.
+/// Defaults a Postgres schema to `public`, so a connection that never reported one behaves exactly
+/// as it did before schema support existed.
+///
+/// This used to have a twin, `pg_schema(&DatabaseManager)`, called at 9 sites. Those sites now read
+/// `ConnCtx::schema()`, which is defaulted on the way out — a call site can no longer forget to
+/// default and silently query `public` (§4.4d of docs/multi-connection-plan.md). `ConnCtx` builds
+/// its value with this function, so `public` is still spelled in exactly one place.
 pub(crate) fn pg_schema_of(opt: &Option<String>) -> String {
     opt.clone().unwrap_or_else(|| "public".to_string())
 }
@@ -220,7 +230,7 @@ pub(crate) fn sql_str(s: &str) -> String {
 /// costs no extra UI. Returns `None` for MySQL/SQLite, and on any failure: a probe that cannot
 /// run must not stop the connection from opening, it just leaves the `public` default in place.
 async fn probe_pg_schema(conn: &DbConnection) -> Option<String> {
-    if !matches!(conn, DbConnection::Postgres(_)) {
+    if !matches!(conn.kind, DbKind::Postgres(_)) {
         return None;
     }
     let res = execute_raw_sql_generic(conn, "SELECT current_schema() AS s".to_string()).await.ok()?;
@@ -372,15 +382,18 @@ pub(crate) fn apply_iam_password(orig_config: &Value, conn_config: &mut Value, d
 }
 
 // Dựng lại pool IAM với token mới (không qua SSH tunnel — IAM refresh giả định kết nối trực tiếp RDS).
-async fn build_iam_conn(db_type: &str, orig_config: &Value) -> Result<DbConnection, String> {
+//
+// Trả `DbKind`, không phải `DbConnection`: pool mới thay chỗ của một kết nối ĐANG có, nên id phải là
+// id của kết nối đó. Caller (task refresh) là nơi biết id, và bọc ở đó.
+async fn build_iam_conn(db_type: &str, orig_config: &Value) -> Result<DbKind, String> {
     let default_port = if db_type == "postgres" { 5432 } else { 3306 };
     let mut conn_config = orig_config.clone();
     apply_iam_password(orig_config, &mut conn_config, default_port)?;
     match db_type {
-        "postgres" => Ok(DbConnection::Postgres(
+        "postgres" => Ok(DbKind::Postgres(
             PgPool::connect(&build_pg_url(&conn_config, None)).await.map_err(|e| e.to_string())?,
         )),
-        "mysql" => Ok(DbConnection::Mysql(
+        "mysql" => Ok(DbKind::Mysql(
             MySqlPool::connect(&build_mysql_url(&conn_config, None)).await.map_err(|e| e.to_string())?,
         )),
         _ => Err("IAM chỉ hỗ trợ postgres/mysql".to_string()),
@@ -388,7 +401,13 @@ async fn build_iam_conn(db_type: &str, orig_config: &Value) -> Result<DbConnecti
 }
 
 // Task nền: cứ ~13 phút sinh token mới và thay pool, chừng nào kết nối vẫn còn "đời" (generation) này.
-fn spawn_iam_refresh(app: tauri::AppHandle, db_type: String, config: Value, generation: u64) {
+fn spawn_iam_refresh(
+    app: tauri::AppHandle,
+    db_type: String,
+    config: Value,
+    generation: u64,
+    conn_id: crate::state::SessionId,
+) {
     tauri::async_runtime::spawn(async move {
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(IAM_REFRESH_SECS)).await;
@@ -403,12 +422,20 @@ fn spawn_iam_refresh(app: tauri::AppHandle, db_type: String, config: Value, gene
                 continue;
             }
             match build_iam_conn(&db_type, &config).await {
-                Ok(new_conn) => {
-                    if let Ok(mut m) = state.db_manager.lock() {
-                        if state.conn_generation.load(Ordering::SeqCst) != generation {
-                            break;
-                        }
-                        m.connection = Some(new_conn);
+                Ok(kind) => {
+                    if state.conn_generation.load(Ordering::SeqCst) != generation {
+                        break;
+                    }
+                    let new_conn = DbConnection::session(conn_id.clone(), kind);
+                    // The old code did this check and the swap inside ONE `db_manager` lock, because
+                    // it swapped a single global slot and a connect landing in between would have
+                    // been overwritten. That is no longer possible: the swap names `conn_id`, and a
+                    // disconnect removes that entry while a reconnect mints a *different* id — so a
+                    // stale task can only ever write to an entry that is already gone, and
+                    // `replace_conn` no-ops. The generation check above is now only what stops the
+                    // task from looping forever, not what protects the swap.
+                    if state.connections.replace_conn(&conn_id, new_conn).is_err() {
+                        break; // registry poisoned -> nothing left to refresh
                     }
                 }
                 Err(_) => { /* lỗi tạm thời -> thử lại chu kỳ sau */ }
@@ -423,21 +450,20 @@ pub async fn connect_db(app: tauri::AppHandle, state: tauri::State<'_, crate::Ap
 
     // The old connection is about to be replaced: roll back and clear any manual transaction on it
     // first. Isolation levels are dialect-specific, so the whole transaction preference resets.
-    {
-        let prev = state.db_manager.lock().ok().and_then(|m| m.connection.clone());
-        crate::tx_session::reset(prev.as_ref()).await;
-    }
-
     // Mỗi lần connect tăng generation -> vô hiệu task refresh IAM của kết nối trước đó
     let generation = state.conn_generation.fetch_add(1, Ordering::SeqCst) + 1;
 
     let mut ssh_tunnel: Option<SshTunnel> = None;
 
-    let conn = match db_type.as_str() {
+    // Minted before the pool is built so the handle can carry its own id from the moment it exists —
+    // there is never a window where a `DbConnection` is alive without knowing which connection it is.
+    let conn_id = crate::state::mint_id();
+
+    let kind = match db_type.as_str() {
         "sqlite" => {
             let path = config.get("filePath").and_then(|v| v.as_str()).ok_or("Thiếu đường dẫn tệp SQLite")?;
             let conn = SqliteConnection::open(path).map_err(|e| e.to_string())?;
-            DbConnection::Sqlite(Arc::new(Mutex::new(conn)))
+            DbKind::Sqlite(Arc::new(Mutex::new(conn)))
         }
         "postgres" => {
             let (mut conn_config, tunnel) = apply_ssh_tunnel(&config, 5432).await?;
@@ -445,7 +471,7 @@ pub async fn connect_db(app: tauri::AppHandle, state: tauri::State<'_, crate::Ap
             apply_iam_password(&config, &mut conn_config, 5432)?;
             let url = build_pg_url(&conn_config, None);
             let pool = PgPool::connect(&url).await.map_err(|e| e.to_string())?;
-            DbConnection::Postgres(pool)
+            DbKind::Postgres(pool)
         }
         "mysql" => {
             let (mut conn_config, tunnel) = apply_ssh_tunnel(&config, 3306).await?;
@@ -453,50 +479,95 @@ pub async fn connect_db(app: tauri::AppHandle, state: tauri::State<'_, crate::Ap
             apply_iam_password(&config, &mut conn_config, 3306)?;
             let url = build_mysql_url(&conn_config, None);
             let pool = MySqlPool::connect(&url).await.map_err(|e| e.to_string())?;
-            DbConnection::Mysql(pool)
+            DbKind::Mysql(pool)
         }
         _ => return Err("Hệ quản trị CSDL không được hỗ trợ".to_string()),
     };
+    let conn = DbConnection::session(conn_id.clone(), kind);
 
-    // Probed before the manager is locked: this awaits, and the guard must not be held across it.
+    // Probed before the registry is locked: this awaits, and no guard may be held across it.
     let schema = probe_pg_schema(&conn).await;
 
+    // `connect_db` là "phiên server mới": mint cả server id lẫn conn_id, và thay trọn registry vì
+    // Phase 1 giữ tối đa một kết nối. Việc dùng LẠI một `Arc<ServerHandle>` đã có là của
+    // `open_database` ở Phase 3, không phải của lệnh này.
     {
-        let mut manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        manager.connection = Some(conn);
-        manager.db_type = db_type.clone();
-        manager.ssh_tunnel = ssh_tunnel; // thay tunnel cũ (drop tunnel cũ nếu có)
-        manager.last_config = Some(config.clone());
-        manager.current_schema = schema.clone();
+        // Tên database của kết nối; SQLite thì là đường dẫn tệp.
+        let db_name = if db_type == "sqlite" {
+            config.get("filePath").and_then(|v| v.as_str()).unwrap_or("").to_string()
+        } else {
+            config.get("database").and_then(|v| v.as_str()).unwrap_or("").to_string()
+        };
+        let server = std::sync::Arc::new(crate::state::ServerHandle::new(
+            crate::state::mint_id(),
+            db_type.clone(),
+            config.clone(),
+            // `ServerHandle` SỞ HỮU tunnel. `SshTunnel` không `Clone` và `Drop` của nó đóng port,
+            // nên đúng một bên được giữ — và đây là bên đúng: `ConnEntry` cuối cùng của server bị
+            // drop thì `Arc` cuối cùng đi theo và port tự đóng, không cần refcount tay.
+            ssh_tunnel.take(),
+            // Vẫn theo bộ đếm global ở bước này để không đổi hành vi; §4.6 chuyển hẳn vào đây ở
+            // Phase 2, vì một bộ đếm chung làm kết nối thứ nhất mất task refresh IAM của nó.
+            generation,
+        ));
+        // The connection being replaced still has to roll back and clear its manual transaction, and
+        // that must happen while its pool is alive: dropping a pool with a transaction open leaves
+        // the server holding its locks until it notices the socket died. Isolation levels are
+        // dialect-specific, so the whole transaction preference resets.
+        //
+        // Taking the outgoing entry from `clear()` rather than looking it up at the top of the
+        // command also fixes a detail: a connect that FAILS while building the new pool no longer
+        // rolls back the transaction of the connection it never replaced. `.first()` keeps
+        // `reset(None)` on a first connect, which is what resets the state machine itself.
+        let dropped = state.connections.clear()?;
+        crate::tx_session::reset(dropped.first().map(|e| &e.conn)).await;
+        drop(dropped);
+
+        state.connections.insert(
+            conn_id.clone(),
+            crate::state::ConnEntry {
+                server,
+                db: db_name,
+                conn,
+                current_schema: schema.clone(),
+            },
+        )?;
     }
 
     // Kết nối IAM: chạy task làm mới token định kỳ (token chỉ sống 15 phút)
     if is_iam(&config) && (db_type == "postgres" || db_type == "mysql") {
-        spawn_iam_refresh(app, db_type, config, generation);
+        spawn_iam_refresh(app, db_type, config, generation, conn_id.clone());
     }
 
     // The frontend keys its per-connection localStorage on the effective schema, so it has to
     // learn it from here rather than from its own picker state — on the first connect the user
     // has not touched the picker yet. See the plan §5.0.
-    Ok(json!({ "success": true, "schema": schema }))
+    //
+    // `connId` is additive and unused by the frontend for now: ids are minted here and handed out,
+    // never derived from the config (multi-connection-plan §4.3). Phase 1d is what starts sending it
+    // back down as a command argument.
+    Ok(json!({ "success": true, "schema": schema, "connId": &*conn_id }))
 }
 
 #[tauri::command]
-pub async fn disconnect_db(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
-    // Roll back an open manual transaction while the connection still exists. Dropping the pool
-    // with a transaction open leaves the server holding its locks until it notices the socket died.
-    {
-        let prev = state.db_manager.lock().ok().and_then(|m| m.connection.clone());
-        crate::tx_session::reset(prev.as_ref()).await;
-    }
+pub async fn disconnect_db(
+    state: tauri::State<'_, crate::AppState>,
+    conn_id: String,
+) -> Result<Value, String> {
     // Vô hiệu task refresh IAM (nếu có)
     state.conn_generation.fetch_add(1, Ordering::SeqCst);
-    let mut manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-    manager.connection = None;
-    manager.db_type = String::new();
-    manager.ssh_tunnel = None;
-    manager.last_config = None;
-    manager.current_schema = None;
+
+    // Take the entry out first, then roll back its manual transaction while its pool is still alive:
+    // dropping a pool with a transaction open leaves the server holding its locks until it notices
+    // the socket died. Dropping `entry` afterwards releases the last `Arc<ServerHandle>` of that
+    // server, and because `ServerHandle` owns the `SshTunnel`, its `Drop` closes the forwarded port —
+    // no manual tunnel teardown.
+    //
+    // An unknown id is not an error: disconnecting something already gone is the state the caller
+    // wanted. `reset(None)` still runs so the state machine itself is cleared.
+    let entry = state.connections.remove(&conn_id)?;
+    crate::tx_session::reset(entry.as_ref().map(|e| &e.conn)).await;
+    drop(entry);
     Ok(json!({ "success": true }))
 }
 
@@ -552,16 +623,11 @@ fn uniquify_columns(columns: &mut [String]) {
 }
 
 #[tauri::command]
-pub async fn get_full_catalog(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
+pub async fn get_full_catalog(state: tauri::State<'_, crate::AppState>, conn_id: String) -> Result<Value, String> {
     let (conn_type, db_type, schema) = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        let ct = match manager.connection.as_ref() {
-            Some(DbConnection::Sqlite(c)) => DbConnection::Sqlite(c.clone()),
-            Some(DbConnection::Postgres(p)) => DbConnection::Postgres(p.clone()),
-            Some(DbConnection::Mysql(p)) => DbConnection::Mysql(p.clone()),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        };
-        (ct, manager.db_type.clone(), pg_schema(&manager))
+        let ctx = state.connections.acquire(&conn_id)?;
+        let ct = ctx.conn().clone();
+        (ct, ctx.dialect().to_string(), ctx.schema().to_string())
     };
     let sch = sql_str(&schema);
 
@@ -631,23 +697,18 @@ pub async fn get_full_catalog(state: tauri::State<'_, crate::AppState>) -> Resul
 }
 
 #[tauri::command]
-pub async fn get_tables(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
+pub async fn get_tables(state: tauri::State<'_, crate::AppState>, conn_id: String) -> Result<Value, String> {
     let (conn_type, schema) = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        let ct = match manager.connection.as_ref() {
-            Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
-            Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
-            Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        };
-        (ct, pg_schema(&manager))
+        let ctx = state.connections.acquire(&conn_id)?;
+        let ct = ctx.conn().clone();
+        (ct, ctx.schema().to_string())
     };
     let sch = sql_str(&schema);
 
     let mut tables = Vec::new();
 
-    match conn_type {
-        DbConnection::Sqlite(conn_arc) => {
+    match conn_type.kind {
+        DbKind::Sqlite(conn_arc) => {
             let conn = conn_arc.lock().map_err(|e| e.to_string())?;
             let mut stmt = conn.prepare("SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%'").map_err(|e| e.to_string())?;
             let rows = stmt.query_map([], |row| {
@@ -664,7 +725,7 @@ pub async fn get_tables(state: tauri::State<'_, crate::AppState>) -> Result<Valu
                 }
             }
         }
-        DbConnection::Postgres(pool) => {
+        DbKind::Postgres(pool) => {
             // information_schema.tables has no materialized view in it (it is not in the SQL
             // standard), so a matview used to be invisible everywhere in the app — sidebar,
             // export, compare. pg_class.relkind = 'm' is the only place it shows up.
@@ -683,7 +744,7 @@ pub async fn get_tables(state: tauri::State<'_, crate::AppState>) -> Result<Valu
                 }));
             }
         }
-        DbConnection::Mysql(pool) => {
+        DbKind::Mysql(pool) => {
             let rows = sqlx::query("SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = DATABASE()")
                 .fetch_all(&pool).await.map_err(|e| e.to_string())?;
             for r in rows {
@@ -702,7 +763,7 @@ pub async fn get_tables(state: tauri::State<'_, crate::AppState>) -> Result<Valu
 
 #[tauri::command]
 pub async fn get_table_data(
-    state: tauri::State<'_, crate::AppState>,
+    state: tauri::State<'_, crate::AppState>, conn_id: String,
     name: String,
     page: u32,
     limit: u32,
@@ -711,17 +772,12 @@ pub async fn get_table_data(
     filter: Option<String>,
 ) -> Result<Value, String> {
     let (conn_type, schema) = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        let ct = match manager.connection.as_ref() {
-            Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
-            Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
-            Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        };
-        (ct, manager.current_schema.clone())
+        let ctx = state.connections.acquire(&conn_id)?;
+        let ct = ctx.conn().clone();
+        (ct, ctx.raw_schema().map(str::to_string))
     };
 
-    let is_mysql = matches!(&conn_type, DbConnection::Mysql(_));
+    let is_mysql = matches!(&conn_type.kind, DbKind::Mysql(_));
     // Ký tự trích dẫn định danh theo dialect: MySQL dùng backtick, còn lại dùng dấu nháy kép
     let q = if is_mysql { '`' } else { '"' };
     // The grid reads through this command, so it has to name the same schema the sidebar listed
@@ -762,8 +818,8 @@ pub async fn get_table_data(
     let mut columns = Vec::new();
     let mut total_count: i64 = 0;
     
-    match &conn_type {
-        DbConnection::Sqlite(conn_arc) => {
+    match &conn_type.kind {
+        DbKind::Sqlite(conn_arc) => {
             let conn = conn_arc.lock().map_err(|e| e.to_string())?;
             
             // Lấy total count
@@ -837,16 +893,11 @@ pub async fn get_table_data(
 }
 
 #[tauri::command]
-pub async fn get_table_schema(state: tauri::State<'_, crate::AppState>, name: String) -> Result<Value, String> {
+pub async fn get_table_schema(state: tauri::State<'_, crate::AppState>, conn_id: String, name: String) -> Result<Value, String> {
     let (conn_type, schema) = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        let ct = match manager.connection.as_ref() {
-            Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
-            Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
-            Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        };
-        (ct, manager.current_schema.clone())
+        let ctx = state.connections.acquire(&conn_id)?;
+        let ct = ctx.conn().clone();
+        (ct, ctx.raw_schema().map(str::to_string))
     };
     let sch = sql_str(&pg_schema_of(&schema));
 
@@ -857,8 +908,8 @@ pub async fn get_table_schema(state: tauri::State<'_, crate::AppState>, name: St
     // Danh sách cột khóa chính thật sự (dùng cho Postgres/MySQL; SQLite lấy trực tiếp từ PRAGMA)
     let pk_cols = get_primary_key_columns(&conn_type, &schema, &name).await;
 
-    match &conn_type {
-        DbConnection::Sqlite(conn_arc) => {
+    match &conn_type.kind {
+        DbKind::Sqlite(conn_arc) => {
             let conn = conn_arc.lock().map_err(|e| e.to_string())?;
             let sql = format!("PRAGMA table_info(\"{}\")", name);
             let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
@@ -924,7 +975,7 @@ pub async fn get_table_schema(state: tauri::State<'_, crate::AppState>, name: St
                 }));
             }
         }
-        DbConnection::Postgres(pool) => {
+        DbKind::Postgres(pool) => {
             // format_type() instead of information_schema.data_type: the latter drops
             // length/precision (`character varying`, `numeric`) so the structure editor
             // could neither show `varchar(45)` nor round-trip it into ALTER TABLE.
@@ -1036,7 +1087,7 @@ pub async fn get_table_schema(state: tauri::State<'_, crate::AppState>, name: St
                 }
             }
         }
-        DbConnection::Mysql(pool) => {
+        DbKind::Mysql(pool) => {
             // COLUMN_TYPE, not DATA_TYPE: the former carries length/precision and the
             // unsigned/zerofill flags (`varchar(45)`, `int(10) unsigned`, `enum('a','b')`),
             // which the structure editor both displays and feeds back into MODIFY COLUMN.
@@ -1345,22 +1396,17 @@ fn generate_alter_sqls(table_name: &str, payload: &Value, db_type: &str, schema:
 }
 
 #[tauri::command]
-pub async fn alter_table_schema(state: tauri::State<'_, crate::AppState>, name: String, payload: Value) -> Result<Value, String> {
+pub async fn alter_table_schema(state: tauri::State<'_, crate::AppState>, conn_id: String, name: String, payload: Value) -> Result<Value, String> {
     let (conn_type, schema) = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        let ct = match manager.connection.as_ref() {
-            Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
-            Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
-            Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        };
-        (ct, manager.current_schema.clone())
+        let ctx = state.connections.acquire(&conn_id)?;
+        let ct = ctx.conn().clone();
+        (ct, ctx.raw_schema().map(str::to_string))
     };
 
-    let db_type = match &conn_type {
-        DbConnection::Sqlite(_) => "sqlite",
-        DbConnection::Postgres(_) => "postgres",
-        DbConnection::Mysql(_) => "mysql",
+    let db_type = match &conn_type.kind {
+        DbKind::Sqlite(_) => "sqlite",
+        DbKind::Postgres(_) => "postgres",
+        DbKind::Mysql(_) => "mysql",
     };
 
     let sqls = generate_alter_sqls(&name, &payload, db_type, &schema);
@@ -1372,22 +1418,17 @@ pub async fn alter_table_schema(state: tauri::State<'_, crate::AppState>, name: 
 }
 
 #[tauri::command]
-pub async fn preview_alter_schema(state: tauri::State<'_, crate::AppState>, name: String, payload: Value) -> Result<Value, String> {
+pub async fn preview_alter_schema(state: tauri::State<'_, crate::AppState>, conn_id: String, name: String, payload: Value) -> Result<Value, String> {
     let (conn_type, schema) = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        let ct = match manager.connection.as_ref() {
-            Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
-            Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
-            Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        };
-        (ct, manager.current_schema.clone())
+        let ctx = state.connections.acquire(&conn_id)?;
+        let ct = ctx.conn().clone();
+        (ct, ctx.raw_schema().map(str::to_string))
     };
 
-    let db_type = match &conn_type {
-        DbConnection::Sqlite(_) => "sqlite",
-        DbConnection::Postgres(_) => "postgres",
-        DbConnection::Mysql(_) => "mysql",
+    let db_type = match &conn_type.kind {
+        DbKind::Sqlite(_) => "sqlite",
+        DbKind::Postgres(_) => "postgres",
+        DbKind::Mysql(_) => "mysql",
     };
 
     // Cùng SQL với alter_table_schema — người dùng xem trước đúng câu sẽ chạy.
@@ -1396,15 +1437,10 @@ pub async fn preview_alter_schema(state: tauri::State<'_, crate::AppState>, name
 }
 
 #[tauri::command]
-pub async fn execute_query(state: tauri::State<'_, crate::AppState>, sql: String, params: Option<Vec<Value>>) -> Result<Value, String> {
+pub async fn execute_query(state: tauri::State<'_, crate::AppState>, conn_id: String, sql: String, params: Option<Vec<Value>>) -> Result<Value, String> {
     let conn_type = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
-            Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
-            Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
-            Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        let ctx = state.connections.acquire(&conn_id)?;
+        ctx.conn().clone()
     };
 
     // Có tham số -> bind ở tầng driver (parameterized, một câu lệnh). Không có -> giữ nguyên hành vi cũ.
@@ -1858,15 +1894,10 @@ fn split_sql_statements(sql: &str) -> Vec<String> {
 
 // Chạy nhiều câu lệnh SQL, mỗi câu trả về một bộ kết quả riêng (phục vụ nhiều result tab ở SqlEditor)
 #[tauri::command]
-pub async fn execute_multi_query(state: tauri::State<'_, crate::AppState>, sql: String) -> Result<Value, String> {
+pub async fn execute_multi_query(state: tauri::State<'_, crate::AppState>, conn_id: String, sql: String) -> Result<Value, String> {
     let conn_type = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
-            Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
-            Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
-            Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        let ctx = state.connections.acquire(&conn_id)?;
+        ctx.conn().clone()
     };
 
     let statements = split_sql_statements(&sql);
@@ -1905,20 +1936,15 @@ pub async fn execute_multi_query(state: tauri::State<'_, crate::AppState>, sql: 
 //   { type:"error",   stmtIndex, message }                  -> lỗi, dừng stream
 #[tauri::command]
 pub async fn execute_query_stream(
-    state: tauri::State<'_, crate::AppState>,
+    state: tauri::State<'_, crate::AppState>, conn_id: String,
     sql: String,
     query_id: String,
     channel: Channel<Value>,
     params: Option<Vec<Value>>,
 ) -> Result<Value, String> {
     let conn_type = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
-            Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
-            Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
-            Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        let ctx = state.connections.acquire(&conn_id)?;
+        ctx.conn().clone()
     };
 
     // Đăng ký cờ hủy để cancel_query có thể dừng vòng lặp stream đang chạy
@@ -2001,13 +2027,13 @@ async fn stream_one_statement(
     if crate::tx_session::should_route(conn, sql) {
         return crate::tx_session::run_stream(conn, sql, params, stmt_index, channel, cancel).await;
     }
-    match conn {
-        DbConnection::Sqlite(conn_arc) => sqlite_stream(conn_arc, sql, params, stmt_index, channel, cancel).await,
-        DbConnection::Postgres(pool) => {
+    match &conn.kind {
+        DbKind::Sqlite(conn_arc) => sqlite_stream(conn_arc, sql, params, stmt_index, channel, cancel).await,
+        DbKind::Postgres(pool) => {
             let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
             pg_stream(&mut conn, sql, params, stmt_index, channel, cancel).await
         }
-        DbConnection::Mysql(pool) => {
+        DbKind::Mysql(pool) => {
             let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
             mysql_stream(&mut conn, sql, params, stmt_index, channel, cancel).await
         }
@@ -2015,7 +2041,7 @@ async fn stream_one_statement(
 }
 
 // Split out of `stream_one_statement` so the pinned transaction session runs the same body.
-// SQLite needs no pinning — `DbConnection::Sqlite` is one shared handle already.
+// SQLite needs no pinning — `DbKind::Sqlite` is one shared handle already.
 
 pub(crate) async fn sqlite_stream(
     conn_arc: &Arc<Mutex<SqliteConnection>>,
@@ -2247,8 +2273,8 @@ pub(crate) async fn mysql_stream(
 // UPDATE/DELETE build their WHERE from the result: reading the PK of `public.film` while writing
 // to `sales.film` produces no error at all, just a wrong WHERE — i.e. the wrong rows changed.
 async fn get_primary_key_columns(conn: &DbConnection, schema: &Option<String>, table: &str) -> Vec<String> {
-    match conn {
-        DbConnection::Sqlite(conn_arc) => {
+    match &conn.kind {
+        DbKind::Sqlite(conn_arc) => {
             let mut cols: Vec<(i32, String)> = Vec::new();
             if let Ok(c) = conn_arc.lock() {
                 let sql = format!("PRAGMA table_info(\"{}\")", table);
@@ -2268,7 +2294,7 @@ async fn get_primary_key_columns(conn: &DbConnection, schema: &Option<String>, t
             cols.sort_by_key(|(order, _)| *order);
             cols.into_iter().map(|(_, name)| name).collect()
         }
-        DbConnection::Postgres(_) => {
+        DbKind::Postgres(_) => {
             let sql = format!(
                 "SELECT kcu.column_name FROM information_schema.table_constraints tc \
                  JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema \
@@ -2282,7 +2308,7 @@ async fn get_primary_key_columns(conn: &DbConnection, schema: &Option<String>, t
                 Err(_) => Vec::new(),
             }
         }
-        DbConnection::Mysql(_) => {
+        DbKind::Mysql(_) => {
             let sql = format!(
                 "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE \
                  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{}' AND CONSTRAINT_NAME = 'PRIMARY' \
@@ -2318,16 +2344,11 @@ fn all_string_values(results: &[Value]) -> Vec<String> {
 }
 
 #[tauri::command]
-pub async fn commit_changes(state: tauri::State<'_, crate::AppState>, payload: Value) -> Result<Value, String> {
+pub async fn commit_changes(state: tauri::State<'_, crate::AppState>, conn_id: String, payload: Value) -> Result<Value, String> {
     let (conn_type, schema) = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        let ct = match manager.connection.as_ref() {
-            Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
-            Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
-            Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        };
-        (ct, manager.current_schema.clone())
+        let ctx = state.connections.acquire(&conn_id)?;
+        let ct = ctx.conn().clone();
+        (ct, ctx.raw_schema().map(str::to_string))
     };
 
     let table_name = payload.get("tableName").and_then(|v| v.as_str()).ok_or("Thiếu tên bảng")?;
@@ -2342,7 +2363,7 @@ pub async fn commit_changes(state: tauri::State<'_, crate::AppState>, payload: V
         None => detect_primary_key(&conn_type, &schema, table_name).await.unwrap_or_else(|| "id".to_string()),
     };
 
-    let is_pg = matches!(&conn_type, DbConnection::Postgres(_));
+    let is_pg = matches!(&conn_type.kind, DbKind::Postgres(_));
     // Written with backticks like every other identifier below, because the Postgres branch turns
     // the whole statement's backticks into double quotes at the end.
     let table_ref = match (is_pg, schema.as_deref()) {
@@ -2447,7 +2468,7 @@ pub async fn commit_changes(state: tauri::State<'_, crate::AppState>, payload: V
     // Only DML gets built above. Do not add DDL to this batch: MySQL commits implicitly on DDL, so
     // the rollback would no longer undo everything.
     let mut exec = Exec::acquire(&conn_type).await?;
-    let begin = if matches!(&conn_type, DbConnection::Mysql(_)) { "START TRANSACTION;" } else { "BEGIN;" };
+    let begin = if matches!(&conn_type.kind, DbKind::Mysql(_)) { "START TRANSACTION;" } else { "BEGIN;" };
     exec.run(begin.to_string()).await?;
     for sql in sqls {
         if let Err(e) = exec.run(sql.clone()).await {
@@ -2475,7 +2496,7 @@ pub async fn export_table(_state: tauri::State<'_, crate::AppState>, _name: Stri
 
 #[tauri::command]
 pub async fn restore_backup(
-    state: tauri::State<'_, crate::AppState>,
+    state: tauri::State<'_, crate::AppState>, conn_id: String,
     sql_content: String,
     tables: Vec<String>,
     // Kênh báo tiến độ về UI: {type:'start'|'progress'|'done', done, total}. Restore là một
@@ -2502,13 +2523,8 @@ pub async fn restore_backup(
     // transaction holds, and a frozen progress bar is a worse answer than a clear refusal.
     crate::tx_session::reject_if_manual_or_open("phục hồi dữ liệu")?;
     let conn_type = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
-            Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
-            Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
-            Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        let ctx = state.connections.acquire(&conn_id)?;
+        ctx.conn().clone()
     };
 
     let mut statements_count = 0;
@@ -2584,8 +2600,8 @@ pub async fn restore_backup(
     };
 
 
-    match &conn_type {
-        DbConnection::Mysql(pool) => {
+    match &conn_type.kind {
+        DbKind::Mysql(pool) => {
             let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
 
             // 0. Dọn khoá còn treo trên connection này. LOCK TABLES là theo SESSION và pool thì
@@ -2641,12 +2657,12 @@ pub async fn restore_backup(
         }
         _ => {
             // Tắt kiểm tra khóa ngoại và bắt đầu Transaction
-            match &conn_type {
-                DbConnection::Postgres(_) => {
+            match &conn_type.kind {
+                DbKind::Postgres(_) => {
                     let _ = execute_raw_sql_generic(&conn_type, "SET CONSTRAINTS ALL DEFERRED;".to_string()).await;
                     let _ = execute_raw_sql_generic(&conn_type, "BEGIN;".to_string()).await;
                 }
-                DbConnection::Sqlite(conn_arc) => {
+                DbKind::Sqlite(conn_arc) => {
                     if let Ok(conn) = conn_arc.lock() {
                         let _ = conn.execute("PRAGMA foreign_keys = OFF;", []);
                         let _ = conn.execute("BEGIN TRANSACTION;", []);
@@ -2658,15 +2674,15 @@ pub async fn restore_backup(
             for (idx, (q, session_level)) in to_run.iter().enumerate() {
                 let session_level = *session_level;
 
-                let exec_sql = match &conn_type {
-                    DbConnection::Postgres(_) => q.replace("`", "\""),
+                let exec_sql = match &conn_type.kind {
+                    DbKind::Postgres(_) => q.replace("`", "\""),
                     _ => q.clone(),
                 };
                 // Postgres: một lỗi làm cả transaction chuyển sang trạng thái aborted (25P02),
                 // mọi câu sau đó đều lỗi "current transaction is aborted". Muốn chạy tiếp thì
                 // phải có điểm lùi cho từng câu. Chỉ trả giá 2 round trip khi người dùng bật
                 // chế độ này; MySQL và SQLite không cần vì lỗi một câu không huỷ transaction.
-                let pg_savepoint = continue_on_error && matches!(&conn_type, DbConnection::Postgres(_));
+                let pg_savepoint = continue_on_error && matches!(&conn_type.kind, DbKind::Postgres(_));
                 if pg_savepoint {
                     let _ = execute_raw_sql_generic(&conn_type, "SAVEPOINT tn_restore_sp;".to_string()).await;
                 }
@@ -2683,11 +2699,11 @@ pub async fn restore_backup(
                     }
                     if !session_level {
                         // Rollback nếu có lỗi
-                        match &conn_type {
-                            DbConnection::Postgres(_) => {
+                        match &conn_type.kind {
+                            DbKind::Postgres(_) => {
                                 let _ = execute_raw_sql_generic(&conn_type, "ROLLBACK;".to_string()).await;
                             }
-                            DbConnection::Sqlite(conn_arc) => {
+                            DbKind::Sqlite(conn_arc) => {
                                 if let Ok(conn) = conn_arc.lock() {
                                     let _ = conn.execute("ROLLBACK;", []);
                                     let _ = conn.execute("PRAGMA foreign_keys = ON;", []);
@@ -2711,11 +2727,11 @@ pub async fn restore_backup(
             }
 
             // Commit transaction
-            match &conn_type {
-                DbConnection::Postgres(_) => {
+            match &conn_type.kind {
+                DbKind::Postgres(_) => {
                     let _ = execute_raw_sql_generic(&conn_type, "COMMIT;".to_string()).await;
                 }
-                DbConnection::Sqlite(conn_arc) => {
+                DbKind::Sqlite(conn_arc) => {
                     if let Ok(conn) = conn_arc.lock() {
                         let _ = conn.execute("COMMIT;", []);
                     }
@@ -2724,8 +2740,8 @@ pub async fn restore_backup(
             }
 
             // Bật lại khóa ngoại
-            match &conn_type {
-                DbConnection::Sqlite(conn_arc) => {
+            match &conn_type.kind {
+                DbKind::Sqlite(conn_arc) => {
                     if let Ok(conn) = conn_arc.lock() {
                         let _ = conn.execute("PRAGMA foreign_keys = ON;", []);
                     }
@@ -2737,9 +2753,12 @@ pub async fn restore_backup(
 
     if let Some(ref db_name) = last_use_db {
         let (last_conf_opt, db_type, tunnel_port) = {
-            let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-            (manager.last_config.clone(), manager.db_type.clone(),
-             manager.ssh_tunnel.as_ref().map(|t| t.local_port))
+            // Server-level, không phải connection-level: `last_config` + cổng tunnel thuộc
+            // `ServerHandle`. `last_config` ở đó là `Value` (một server thì luôn có config) nên bọc
+            // `Some` để phần dưới không phải đổi.
+            let ctx = state.connections.acquire(&conn_id)?;
+            (Some(ctx.server().config()), ctx.server().db_type.clone(),
+             ctx.server().ssh_tunnel.as_ref().map(|t| t.local_port))
         };
 
         if let Some(mut last_conf) = last_conf_opt {
@@ -2756,19 +2775,24 @@ pub async fn restore_backup(
                 "postgres" => {
                     let url = build_pg_url(&last_conf, Some(db_name.as_str()));
                     let pool = PgPool::connect(&url).await.map_err(|e| e.to_string())?;
-                    Some(DbConnection::Postgres(pool))
+                    Some(DbKind::Postgres(pool))
                 }
                 "mysql" => {
                     let url = build_mysql_url(&last_conf, Some(db_name.as_str()));
                     let pool = MySqlPool::connect(&url).await.map_err(|e| e.to_string())?;
-                    Some(DbConnection::Mysql(pool))
+                    Some(DbKind::Mysql(pool))
                 }
                 _ => None
             };
-            if let Some(c) = new_conn {
-                let mut manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-                manager.connection = Some(c);
-                manager.last_config = Some(last_conf);
+            if let Some(kind) = new_conn {
+                // `USE <db>` đổi database ngay dưới chân tab đang restore. Phase 3 sẽ mint một
+                // `conn_id` mới cho database mới (§4.3); ở đây vẫn chuyển entry hiện tại như trước —
+                // nên pool mới mang ĐÚNG id của entry đó, không phải một id mới.
+                let ctx = state.connections.acquire(&conn_id)?;
+                let id = ctx.id().clone();
+                ctx.server().set_config(last_conf);
+                state.connections.replace_conn(&id, DbConnection::session(id.clone(), kind))?;
+                state.connections.set_db(&id, db_name.clone())?;
             }
         }
     }
@@ -2797,22 +2821,17 @@ pub async fn restore_backup_old(_state: tauri::State<'_, crate::AppState>, _file
 }
 
 #[tauri::command]
-pub async fn import_new_table(state: tauri::State<'_, crate::AppState>, table_name: String, rows: Vec<Value>) -> Result<Value, String> {
+pub async fn import_new_table(state: tauri::State<'_, crate::AppState>, conn_id: String, table_name: String, rows: Vec<Value>) -> Result<Value, String> {
     let (conn_type, schema) = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        let ct = match manager.connection.as_ref() {
-            Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
-            Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
-            Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        };
-        (ct, manager.current_schema.clone())
+        let ctx = state.connections.acquire(&conn_id)?;
+        let ct = ctx.conn().clone();
+        (ct, ctx.raw_schema().map(str::to_string))
     };
     if rows.is_empty() {
         return Err("Không có dữ liệu để tạo bảng".to_string());
     }
-    let is_mysql = matches!(&conn_type, DbConnection::Mysql(_));
-    let is_pg = matches!(&conn_type, DbConnection::Postgres(_));
+    let is_mysql = matches!(&conn_type.kind, DbKind::Mysql(_));
+    let is_pg = matches!(&conn_type.kind, DbKind::Postgres(_));
     let q = if is_mysql { '`' } else { '"' };
 
     // Cột = hợp các key (giữ thứ tự xuất hiện lần đầu).
@@ -2867,24 +2886,19 @@ pub async fn import_new_table(state: tauri::State<'_, crate::AppState>, table_na
 }
 
 #[tauri::command]
-pub async fn create_table(state: tauri::State<'_, crate::AppState>, payload: Value) -> Result<Value, String> {
+pub async fn create_table(state: tauri::State<'_, crate::AppState>, conn_id: String, payload: Value) -> Result<Value, String> {
     let (conn_type, schema) = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        let ct = match manager.connection.as_ref() {
-            Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
-            Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
-            Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        };
-        (ct, manager.current_schema.clone())
+        let ctx = state.connections.acquire(&conn_id)?;
+        let ct = ctx.conn().clone();
+        (ct, ctx.raw_schema().map(str::to_string))
     };
 
     let table_name = payload.get("tableName").and_then(|v| v.as_str()).ok_or("Thiếu tên bảng")?;
 
-    let db_type = match &conn_type {
-        DbConnection::Sqlite(_) => "sqlite",
-        DbConnection::Postgres(_) => "postgres",
-        DbConnection::Mysql(_) => "mysql",
+    let db_type = match &conn_type.kind {
+        DbKind::Sqlite(_) => "sqlite",
+        DbKind::Postgres(_) => "postgres",
+        DbKind::Mysql(_) => "mysql",
     };
     let q = if db_type == "mysql" { '`' } else { '"' };
     // Không qualify thì bảng mới rơi vào schema đầu search_path, không phải schema đang chọn.
@@ -2951,8 +2965,8 @@ pub async fn create_table(state: tauri::State<'_, crate::AppState>, payload: Val
 
             format!("CREATE TABLE {name} ({defs})", name = table_ref, defs = defs.join(", "))
         }
-        _ => match &conn_type {
-            DbConnection::Mysql(_) => format!("CREATE TABLE {} (id INT AUTO_INCREMENT PRIMARY KEY)", table_ref),
+        _ => match &conn_type.kind {
+            DbKind::Mysql(_) => format!("CREATE TABLE {} (id INT AUTO_INCREMENT PRIMARY KEY)", table_ref),
             _ => format!("CREATE TABLE {} (id INTEGER PRIMARY KEY)", table_ref),
         },
     };
@@ -2974,8 +2988,8 @@ pub async fn create_table(state: tauri::State<'_, crate::AppState>, payload: Val
 
 // Bọc định danh theo dialect (MySQL backtick, còn lại double quote), nhân đôi ký tự đóng.
 fn quote_ident(conn: &DbConnection, name: &str) -> String {
-    match conn {
-        DbConnection::Mysql(_) => format!("`{}`", name.replace('`', "``")),
+    match &conn.kind {
+        DbKind::Mysql(_) => format!("`{}`", name.replace('`', "``")),
         _ => format!("\"{}\"", name.replace('"', "\"\"")),
     }
 }
@@ -2988,8 +3002,8 @@ fn quote_ident(conn: &DbConnection, name: &str) -> String {
 /// of `db_compare.rs`'s `qualified()`; see `docs/postgres-schema-support-plan.md` §4.2 for the
 /// list of sites that must use it.
 fn qualified(conn: &DbConnection, schema: &Option<String>, table: &str) -> String {
-    match (conn, schema) {
-        (DbConnection::Postgres(_), Some(s)) if !s.is_empty() => {
+    match (&conn.kind, schema) {
+        (DbKind::Postgres(_), Some(s)) if !s.is_empty() => {
             format!("{}.{}", quote_ident(conn, s), quote_ident(conn, table))
         }
         _ => quote_ident(conn, table),
@@ -3000,14 +3014,14 @@ fn qualified(conn: &DbConnection, schema: &Option<String>, table: &str) -> Strin
 // Dùng try_run: server từ chối (Postgres `session_replication_role` cần superuser) thì lệnh
 // chính vẫn phải chạy, và lệnh khôi phục vẫn phải thử dù lệnh chính đã lỗi.
 fn fk_checks_sql(conn: &DbConnection, on: bool) -> &'static str {
-    match conn {
-        DbConnection::Mysql(_) => {
+    match &conn.kind {
+        DbKind::Mysql(_) => {
             if on { "SET FOREIGN_KEY_CHECKS = 1" } else { "SET FOREIGN_KEY_CHECKS = 0" }
         }
-        DbConnection::Postgres(_) => {
+        DbKind::Postgres(_) => {
             if on { "SET session_replication_role = 'origin'" } else { "SET session_replication_role = 'replica'" }
         }
-        DbConnection::Sqlite(_) => {
+        DbKind::Sqlite(_) => {
             if on { "PRAGMA foreign_keys = ON" } else { "PRAGMA foreign_keys = OFF" }
         }
     }
@@ -3071,21 +3085,16 @@ async fn run_fk_wrapped(
 // Xóa bảng/view. `cascade` và `ignore_fk` là 2 tuỳ chọn của dialog Delete ở sidebar.
 #[tauri::command]
 pub async fn drop_table(
-    state: tauri::State<'_, crate::AppState>,
+    state: tauri::State<'_, crate::AppState>, conn_id: String,
     name: String,
     is_view: Option<bool>,
     cascade: Option<bool>,
     ignore_fk: Option<bool>,
 ) -> Result<Value, String> {
     let (conn_type, schema) = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        let ct = match manager.connection.as_ref() {
-            Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
-            Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
-            Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        };
-        (ct, manager.current_schema.clone())
+        let ctx = state.connections.acquire(&conn_id)?;
+        let ct = ctx.conn().clone();
+        (ct, ctx.raw_schema().map(str::to_string))
     };
     let is_view = is_view.unwrap_or(false);
     let cascade = cascade.unwrap_or(false);
@@ -3094,7 +3103,7 @@ pub async fn drop_table(
 
     // CASCADE chỉ Postgres mới thực thi thật: SQLite báo lỗi cú pháp, MySQL chấp nhận từ khóa
     // rồi bỏ qua -> người dùng tưởng đã xóa lan mà thực tế không. Từ chối còn hơn im lặng.
-    if cascade && !matches!(conn_type, DbConnection::Postgres(_)) {
+    if cascade && !matches!(conn_type.kind, DbKind::Postgres(_)) {
         return Err("CASCADE chỉ được hỗ trợ trên PostgreSQL".to_string());
     }
 
@@ -3129,21 +3138,16 @@ async fn mysql_next_auto_increment(conn: &DbConnection, name: &str) -> Option<u6
 // `restart_identity` / `disable_fk` / `cascade` là 3 tuỳ chọn của dialog Truncate ở sidebar.
 #[tauri::command]
 pub async fn truncate_table(
-    state: tauri::State<'_, crate::AppState>,
+    state: tauri::State<'_, crate::AppState>, conn_id: String,
     name: String,
     restart_identity: Option<bool>,
     disable_fk: Option<bool>,
     cascade: Option<bool>,
 ) -> Result<Value, String> {
     let (conn_type, schema) = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        let ct = match manager.connection.as_ref() {
-            Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
-            Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
-            Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        };
-        (ct, manager.current_schema.clone())
+        let ctx = state.connections.acquire(&conn_id)?;
+        let ct = ctx.conn().clone();
+        (ct, ctx.raw_schema().map(str::to_string))
     };
     let restart_identity = restart_identity.unwrap_or(false);
     let disable_fk = disable_fk.unwrap_or(false);
@@ -3151,20 +3155,20 @@ pub async fn truncate_table(
     let quoted = qualified(&conn_type, &schema, &name);
 
     // Như DROP: chỉ Postgres có TRUNCATE ... CASCADE.
-    if cascade && !matches!(conn_type, DbConnection::Postgres(_)) {
+    if cascade && !matches!(conn_type.kind, DbKind::Postgres(_)) {
         return Err("CASCADE chỉ được hỗ trợ trên PostgreSQL".to_string());
     }
 
     // MySQL luôn reset bộ đếm tự tăng bên trong TRUNCATE và không có cách tắt, nên "giữ nguyên
     // bộ đếm" phải làm thủ công: đọc giá trị trước, đặt lại sau. Đọc TRƯỚC khi truncate.
-    let keep_auto_inc = match (&conn_type, restart_identity) {
-        (DbConnection::Mysql(_), false) => mysql_next_auto_increment(&conn_type, &name).await,
+    let keep_auto_inc = match (&conn_type.kind, restart_identity) {
+        (DbKind::Mysql(_), false) => mysql_next_auto_increment(&conn_type, &name).await,
         _ => None,
     };
 
     // Câu lệnh bắt buộc + câu lệnh "cố gắng" chạy sau (lỗi không tính là thất bại).
-    let (sql, optional): (String, Option<String>) = match &conn_type {
-        DbConnection::Mysql(_) => (
+    let (sql, optional): (String, Option<String>) = match &conn_type.kind {
+        DbKind::Mysql(_) => (
             format!("TRUNCATE TABLE {}", quoted),
             match (restart_identity, keep_auto_inc) {
                 // InnoDB đã reset sẵn; vẫn phát lệnh để ý định rõ ràng và các engine khác hành xử
@@ -3177,7 +3181,7 @@ pub async fn truncate_table(
                 _ => None,
             },
         ),
-        DbConnection::Postgres(_) => (
+        DbKind::Postgres(_) => (
             format!(
                 "TRUNCATE TABLE {}{}{}",
                 quoted,
@@ -3189,7 +3193,7 @@ pub async fn truncate_table(
         // SQLite không có TRUNCATE -> DELETE FROM, và bộ đếm tự tăng nằm ở bảng phụ
         // sqlite_sequence mà DELETE không đụng tới. Bảng này chỉ tồn tại khi CSDL có
         // ít nhất một cột AUTOINCREMENT -> bỏ qua lỗi "no such table".
-        DbConnection::Sqlite(_) => (
+        DbKind::Sqlite(_) => (
             format!("DELETE FROM {}", quoted),
             restart_identity.then(|| {
                 format!("DELETE FROM sqlite_sequence WHERE name = '{}'", name.replace('\'', "''"))
@@ -3204,21 +3208,16 @@ pub async fn truncate_table(
 
 // Trả về câu lệnh CREATE TABLE (định nghĩa) của bảng theo từng dialect
 #[tauri::command]
-pub async fn get_table_definition(state: tauri::State<'_, crate::AppState>, name: String) -> Result<Value, String> {
+pub async fn get_table_definition(state: tauri::State<'_, crate::AppState>, conn_id: String, name: String) -> Result<Value, String> {
     let (conn_type, schema) = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        let ct = match manager.connection.as_ref() {
-            Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
-            Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
-            Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        };
-        (ct, manager.current_schema.clone())
+        let ctx = state.connections.acquire(&conn_id)?;
+        let ct = ctx.conn().clone();
+        (ct, ctx.raw_schema().map(str::to_string))
     };
     let sch = sql_str(&pg_schema_of(&schema));
 
-    let ddl: String = match &conn_type {
-        DbConnection::Sqlite(conn_arc) => {
+    let ddl: String = match &conn_type.kind {
+        DbKind::Sqlite(conn_arc) => {
             let conn = conn_arc.lock().map_err(|e| e.to_string())?;
             let mut stmt = conn.prepare("SELECT sql FROM sqlite_master WHERE type IN ('table','view') AND name = ?")
                 .map_err(|e| e.to_string())?;
@@ -3230,14 +3229,14 @@ pub async fn get_table_definition(state: tauri::State<'_, crate::AppState>, name
                 return Err("Không tìm thấy định nghĩa bảng".to_string());
             }
         }
-        DbConnection::Mysql(pool) => {
+        DbKind::Mysql(pool) => {
             let show_sql = format!("SHOW CREATE TABLE `{}`", name);
             let row = sqlx::query(sqlx::AssertSqlSafe(show_sql)).fetch_one(pool).await.map_err(|e| e.to_string())?;
             // Cột thứ 2 là "Create Table" (bảng) hoặc "Create View" (view)
             let s: String = row.try_get("Create Table").or_else(|_| row.try_get("Create View")).map_err(|e| e.to_string())?;
             format!("{};", s)
         }
-        DbConnection::Postgres(_) => {
+        DbKind::Postgres(_) => {
             // A view is NOT a table here. This branch used to hand-build `CREATE TABLE` for
             // every name it was given, so exporting a Postgres database emitted a CREATE TABLE
             // for each of its views — the re-import then had a real table shadowing the view
@@ -3323,22 +3322,17 @@ pub async fn get_table_definition(state: tauri::State<'_, crate::AppState>, name
 }
 
 #[tauri::command]
-pub async fn rename_table(state: tauri::State<'_, crate::AppState>, old_name: String, new_name: String) -> Result<Value, String> {
+pub async fn rename_table(state: tauri::State<'_, crate::AppState>, conn_id: String, old_name: String, new_name: String) -> Result<Value, String> {
     let (conn_type, schema) = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        let ct = match manager.connection.as_ref() {
-            Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
-            Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
-            Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        };
-        (ct, manager.current_schema.clone())
+        let ctx = state.connections.acquire(&conn_id)?;
+        let ct = ctx.conn().clone();
+        (ct, ctx.raw_schema().map(str::to_string))
     };
 
     // Chỉ vế nguồn mang schema: RENAME TO nhận tên mới KHÔNG qualify (Postgres báo lỗi cú pháp
     // nếu qualify), bảng đổi tên vẫn ở nguyên schema cũ.
-    let sql = match &conn_type {
-        DbConnection::Mysql(_) => format!("RENAME TABLE `{}` TO `{}`", old_name, new_name),
+    let sql = match &conn_type.kind {
+        DbKind::Mysql(_) => format!("RENAME TABLE `{}` TO `{}`", old_name, new_name),
         _ => format!(
             "ALTER TABLE {} RENAME TO {}",
             qualified(&conn_type, &schema, &old_name),
@@ -3366,7 +3360,7 @@ async fn bulk_insert(conn: &DbConnection, schema: &Option<String>, table: &str, 
     if rows.is_empty() {
         return Ok(0);
     }
-    let is_mysql = matches!(conn, DbConnection::Mysql(_));
+    let is_mysql = matches!(conn.kind, DbKind::Mysql(_));
     let q = if is_mysql { '`' } else { '"' };
 
     let mut col_order: Vec<String> = Vec::new();
@@ -3408,16 +3402,11 @@ async fn bulk_insert(conn: &DbConnection, schema: &Option<String>, table: &str, 
 }
 
 #[tauri::command]
-pub async fn import_table_data(state: tauri::State<'_, crate::AppState>, name: String, rows: Vec<Value>) -> Result<Value, String> {
+pub async fn import_table_data(state: tauri::State<'_, crate::AppState>, conn_id: String, name: String, rows: Vec<Value>) -> Result<Value, String> {
     let (conn_type, schema) = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        let ct = match manager.connection.as_ref() {
-            Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
-            Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
-            Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        };
-        (ct, manager.current_schema.clone())
+        let ctx = state.connections.acquire(&conn_id)?;
+        let ct = ctx.conn().clone();
+        (ct, ctx.raw_schema().map(str::to_string))
     };
     let inserted = bulk_insert(&conn_type, &schema, &name, &rows).await?;
     Ok(json!({ "success": true, "inserted": inserted }))
@@ -3437,13 +3426,13 @@ pub(crate) async fn execute_raw_sql_generic(conn: &DbConnection, sql: String) ->
     if crate::tx_session::should_route(conn, &sql) {
         return crate::tx_session::run_raw(conn, sql).await;
     }
-    match conn {
-        DbConnection::Sqlite(conn_arc) => sqlite_raw(conn_arc, &sql),
-        DbConnection::Postgres(pool) => {
+    match &conn.kind {
+        DbKind::Sqlite(conn_arc) => sqlite_raw(conn_arc, &sql),
+        DbKind::Postgres(pool) => {
             let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
             pg_raw(&mut conn, &sql).await
         }
-        DbConnection::Mysql(pool) => {
+        DbKind::Mysql(pool) => {
             // Lấy 1 connection duy nhất từ pool để chạy câu lệnh, đảm bảo SET FOREIGN_KEY_CHECKS hoạt động xuyên suốt phiên
             let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
             mysql_raw(&mut conn, &sql).await
@@ -3597,12 +3586,12 @@ pub(crate) enum Exec {
 impl Exec {
     /// Takes one connection out of the pool and holds it for the caller's whole sequence.
     pub(crate) async fn acquire(conn: &DbConnection) -> Result<Exec, String> {
-        Ok(match conn {
-            DbConnection::Sqlite(arc) => Exec::Sqlite(arc.clone()),
-            DbConnection::Postgres(pool) => {
+        Ok(match &conn.kind {
+            DbKind::Sqlite(arc) => Exec::Sqlite(arc.clone()),
+            DbKind::Postgres(pool) => {
                 Exec::Postgres(pool.acquire().await.map_err(|e| e.to_string())?)
             }
-            DbConnection::Mysql(pool) => {
+            DbKind::Mysql(pool) => {
                 Exec::Mysql(pool.acquire().await.map_err(|e| e.to_string())?)
             }
         })
@@ -3644,13 +3633,13 @@ async fn run_bound_query(conn: &DbConnection, sql: String, params: &[Value]) -> 
     if crate::tx_session::should_route(conn, &sql) {
         return crate::tx_session::run_bound(conn, sql, params).await;
     }
-    match conn {
-        DbConnection::Sqlite(conn_arc) => sqlite_bound(conn_arc, &sql, params),
-        DbConnection::Postgres(pool) => {
+    match &conn.kind {
+        DbKind::Sqlite(conn_arc) => sqlite_bound(conn_arc, &sql, params),
+        DbKind::Postgres(pool) => {
             let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
             pg_bound(&mut conn, &sql, params).await
         }
-        DbConnection::Mysql(pool) => {
+        DbKind::Mysql(pool) => {
             let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
             mysql_bound(&mut conn, &sql, params).await
         }
@@ -3837,21 +3826,16 @@ pub async fn get_databases_list(config: Value) -> Result<Value, String> {
 
 // Liệt kê database bằng KẾT NỐI HIỆN TẠI (phục vụ switcher trong workspace)
 #[tauri::command]
-pub async fn list_databases(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
+pub async fn list_databases(state: tauri::State<'_, crate::AppState>, conn_id: String) -> Result<Value, String> {
     let conn_type = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
-            Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
-            Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
-            Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        let ctx = state.connections.acquire(&conn_id)?;
+        ctx.conn().clone()
     };
 
-    let sql = match &conn_type {
-        DbConnection::Postgres(_) => "SELECT datname FROM pg_database WHERE datistemplate = false AND datallowconn = true ORDER BY datname".to_string(),
-        DbConnection::Mysql(_) => "SHOW DATABASES".to_string(),
-        DbConnection::Sqlite(_) => return Ok(json!({ "success": true, "databases": [] })), // SQLite: 1 file = 1 DB
+    let sql = match &conn_type.kind {
+        DbKind::Postgres(_) => "SELECT datname FROM pg_database WHERE datistemplate = false AND datallowconn = true ORDER BY datname".to_string(),
+        DbKind::Mysql(_) => "SHOW DATABASES".to_string(),
+        DbKind::Sqlite(_) => return Ok(json!({ "success": true, "databases": [] })), // SQLite: 1 file = 1 DB
     };
     let results = execute_raw_sql_generic(&conn_type, sql).await?;
     let mut databases = all_string_values(&results);
@@ -3861,14 +3845,16 @@ pub async fn list_databases(state: tauri::State<'_, crate::AppState>) -> Result<
 
 // Đổi database đang dùng: kết nối lại bằng last_config với database mới (đi qua SSH tunnel nếu đang bật)
 #[tauri::command]
-pub async fn switch_database(state: tauri::State<'_, crate::AppState>, name: String) -> Result<Value, String> {
-    // Switching database replaces the pool, so an open transaction would die without a word.
-    // Refuse instead of choosing commit-or-rollback on the user's behalf.
-    crate::tx_session::reject_if_open("đổi database")?;
+pub async fn switch_database(state: tauri::State<'_, crate::AppState>, conn_id: String, name: String) -> Result<Value, String> {
+    // Switching database replaces the pool, so uncommitted work would die without a word. Refuse
+    // only when there IS uncommitted work — see `reject_if_pending`. An open-but-read-only session
+    // is rolled back below instead of being turned into a refusal the user cannot clear.
+    crate::tx_session::reject_if_pending("đổi database")?;
     let (last_conf_opt, db_type, tunnel_port) = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        (manager.last_config.clone(), manager.db_type.clone(),
-         manager.ssh_tunnel.as_ref().map(|t| t.local_port))
+        // Server-level, xem ghi chú cùng loại ở `restore_backup`.
+        let ctx = state.connections.acquire(&conn_id)?;
+        (Some(ctx.server().config()), ctx.server().db_type.clone(),
+         ctx.server().ssh_tunnel.as_ref().map(|t| t.local_port))
     };
 
     if db_type == "sqlite" {
@@ -3888,29 +3874,42 @@ pub async fn switch_database(state: tauri::State<'_, crate::AppState>, name: Str
         }
     }
 
-    let new_conn = match db_type.as_str() {
+    let kind = match db_type.as_str() {
         "postgres" => {
             let url = build_pg_url(&url_conf, Some(name.as_str()));
             let pool = PgPool::connect(&url).await.map_err(|e| e.to_string())?;
-            DbConnection::Postgres(pool)
+            DbKind::Postgres(pool)
         }
         "mysql" => {
             let url = build_mysql_url(&url_conf, Some(name.as_str()));
             let pool = MySqlPool::connect(&url).await.map_err(|e| e.to_string())?;
-            DbConnection::Mysql(pool)
+            DbKind::Mysql(pool)
         }
         _ => return Err("Hệ quản trị CSDL không được hỗ trợ".to_string()),
     };
+
+    // Cùng dạng với `USE` ở `restore_backup`: Phase 3 thay bằng `open_database` mint conn_id mới, còn
+    // ở đây pool mới nhận đúng id của entry đang có.
+    let ctx = state.connections.acquire(&conn_id)?;
+    let id = ctx.id().clone();
+
+    // The session may be open with nothing pending (a read in manual mode opens one — see
+    // `reject_if_pending`). Roll it back and drop the pinned connection while the OLD pool is still
+    // alive: after the swap that connection belongs to a pool nobody holds, and the server would keep
+    // its locks until the socket died. Done after the new pool built successfully, so a failed switch
+    // leaves the session untouched.
+    crate::tx_session::reset(Some(ctx.conn())).await;
+
+    let new_conn = DbConnection::session(id.clone(), kind);
 
     // The new database has its own schemas: the one selected on the old pool may not exist here,
     // and keeping it would point every query at a schema that is not there — the same empty
     // sidebar this whole feature exists to fix, only harder to explain. Re-probe instead.
     let schema = probe_pg_schema(&new_conn).await;
-
-    let mut manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-    manager.connection = Some(new_conn);
-    manager.last_config = Some(stored_conf);
-    manager.current_schema = schema.clone();
+    ctx.server().set_config(stored_conf);
+    state.connections.replace_conn(&id, new_conn)?;
+    state.connections.set_db(&id, name.clone())?;
+    state.connections.set_schema(&id, schema.clone())?;
     Ok(json!({ "success": true, "database": name, "schema": schema }))
 }
 
@@ -3919,19 +3918,14 @@ pub async fn switch_database(state: tauri::State<'_, crate::AppState>, name: Str
 /// Empty on MySQL (its schema *is* the database — `list_databases` already covers that) and on
 /// SQLite, which is how the frontend decides whether to show the picker at all.
 #[tauri::command]
-pub async fn list_schemas(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
+pub async fn list_schemas(state: tauri::State<'_, crate::AppState>, conn_id: String) -> Result<Value, String> {
     let (conn_type, current) = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        let ct = match manager.connection.as_ref() {
-            Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
-            Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
-            Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        };
-        (ct, manager.current_schema.clone())
+        let ctx = state.connections.acquire(&conn_id)?;
+        let ct = ctx.conn().clone();
+        (ct, ctx.raw_schema().map(str::to_string))
     };
 
-    if !matches!(conn_type, DbConnection::Postgres(_)) {
+    if !matches!(conn_type.kind, DbKind::Postgres(_)) {
         return Ok(json!({ "success": true, "schemas": [], "current": Value::Null }));
     }
 
@@ -3950,17 +3944,12 @@ pub async fn list_schemas(state: tauri::State<'_, crate::AppState>) -> Result<Va
 /// leave every query filtering on a schema that is not there, i.e. the same empty sidebar this
 /// feature exists to fix, with nothing on screen to explain it.
 #[tauri::command]
-pub async fn set_current_schema(state: tauri::State<'_, crate::AppState>, name: String) -> Result<Value, String> {
+pub async fn set_current_schema(state: tauri::State<'_, crate::AppState>, conn_id: String, name: String) -> Result<Value, String> {
     let conn_type = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
-            Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
-            Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
-            Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        let ctx = state.connections.acquire(&conn_id)?;
+        ctx.conn().clone()
     };
-    if !matches!(conn_type, DbConnection::Postgres(_)) {
+    if !matches!(conn_type.kind, DbKind::Postgres(_)) {
         return Err("Chỉ PostgreSQL mới hỗ trợ chọn schema".to_string());
     }
 
@@ -3978,37 +3967,32 @@ pub async fn set_current_schema(state: tauri::State<'_, crate::AppState>, name: 
     }
 
     {
-        let mut manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        manager.current_schema = Some(schema.clone());
+        let id = state.connections.acquire(&conn_id)?.id().clone();
+        state.connections.set_schema(&id, Some(schema.clone()))?;
     }
     Ok(json!({ "success": true, "schema": schema }))
 }
 
 // Tạo database mới (dùng kết nối hiện tại). encoding/collation là tùy chọn.
 #[tauri::command]
-pub async fn create_database(state: tauri::State<'_, crate::AppState>, payload: Value) -> Result<Value, String> {
+pub async fn create_database(state: tauri::State<'_, crate::AppState>, conn_id: String, payload: Value) -> Result<Value, String> {
     let conn_type = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
-            Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
-            Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
-            Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        let ctx = state.connections.acquire(&conn_id)?;
+        ctx.conn().clone()
     };
 
     let name = payload.get("name").and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()).ok_or("Thiếu tên database")?;
     let encoding = payload.get("encoding").and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty());
     let collation = payload.get("collation").and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty());
 
-    let sql = match &conn_type {
-        DbConnection::Mysql(_) => {
+    let sql = match &conn_type.kind {
+        DbKind::Mysql(_) => {
             let mut s = format!("CREATE DATABASE `{}`", name);
             if let Some(e) = encoding { s.push_str(&format!(" CHARACTER SET {}", e)); }
             if let Some(c) = collation { s.push_str(&format!(" COLLATE {}", c)); }
             s
         }
-        DbConnection::Postgres(_) => {
+        DbKind::Postgres(_) => {
             let mut s = format!("CREATE DATABASE \"{}\"", name);
             let mut opts: Vec<String> = Vec::new();
             if let Some(e) = encoding { opts.push(format!("ENCODING '{}'", e.replace('\'', "''"))); }
@@ -4019,7 +4003,7 @@ pub async fn create_database(state: tauri::State<'_, crate::AppState>, payload: 
             }
             s
         }
-        DbConnection::Sqlite(_) => return Err("SQLite không hỗ trợ tạo database (mỗi tệp là một database)".to_string()),
+        DbKind::Sqlite(_) => return Err("SQLite không hỗ trợ tạo database (mỗi tệp là một database)".to_string()),
     };
 
     execute_raw_sql_generic(&conn_type, sql).await?;
@@ -4028,21 +4012,16 @@ pub async fn create_database(state: tauri::State<'_, crate::AppState>, payload: 
 
 // Xóa database (dùng kết nối hiện tại). Không thể xóa database đang kết nối.
 #[tauri::command]
-pub async fn drop_database(state: tauri::State<'_, crate::AppState>, name: String) -> Result<Value, String> {
+pub async fn drop_database(state: tauri::State<'_, crate::AppState>, conn_id: String, name: String) -> Result<Value, String> {
     let conn_type = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
-            Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
-            Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
-            Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        let ctx = state.connections.acquire(&conn_id)?;
+        ctx.conn().clone()
     };
 
-    let sql = match &conn_type {
-        DbConnection::Mysql(_) => format!("DROP DATABASE `{}`", name),
-        DbConnection::Postgres(_) => format!("DROP DATABASE \"{}\"", name),
-        DbConnection::Sqlite(_) => return Err("SQLite không hỗ trợ xóa database".to_string()),
+    let sql = match &conn_type.kind {
+        DbKind::Mysql(_) => format!("DROP DATABASE `{}`", name),
+        DbKind::Postgres(_) => format!("DROP DATABASE \"{}\"", name),
+        DbKind::Sqlite(_) => return Err("SQLite không hỗ trợ xóa database".to_string()),
     };
     execute_raw_sql_generic(&conn_type, sql).await?;
     Ok(json!({ "success": true }))
@@ -4050,22 +4029,17 @@ pub async fn drop_database(state: tauri::State<'_, crate::AppState>, name: Strin
 
 // Đổi tên database. Chỉ PostgreSQL hỗ trợ (và không được đổi tên DB đang kết nối tới).
 #[tauri::command]
-pub async fn rename_database(state: tauri::State<'_, crate::AppState>, old_name: String, new_name: String) -> Result<Value, String> {
+pub async fn rename_database(state: tauri::State<'_, crate::AppState>, conn_id: String, old_name: String, new_name: String) -> Result<Value, String> {
     let conn_type = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
-            Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
-            Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
-            Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        let ctx = state.connections.acquire(&conn_id)?;
+        ctx.conn().clone()
     };
 
-    let sql = match &conn_type {
+    let sql = match &conn_type.kind {
         // PG có lệnh đổi tên trực tiếp (không được đổi tên DB đang kết nối tới)
-        DbConnection::Postgres(_) => format!("ALTER DATABASE \"{}\" RENAME TO \"{}\"", old_name, new_name),
-        DbConnection::Mysql(_) => return Err("MySQL không hỗ trợ đổi tên database.".to_string()),
-        DbConnection::Sqlite(_) => return Err("SQLite không hỗ trợ đổi tên database.".to_string()),
+        DbKind::Postgres(_) => format!("ALTER DATABASE \"{}\" RENAME TO \"{}\"", old_name, new_name),
+        DbKind::Mysql(_) => return Err("MySQL không hỗ trợ đổi tên database.".to_string()),
+        DbKind::Sqlite(_) => return Err("SQLite không hỗ trợ đổi tên database.".to_string()),
     };
     execute_raw_sql_generic(&conn_type, sql).await?;
     Ok(json!({ "success": true }))
@@ -4073,16 +4047,11 @@ pub async fn rename_database(state: tauri::State<'_, crate::AppState>, old_name:
 
 // Liệt kê các đối tượng CSDL của kết nối hiện tại: bảng, khung nhìn, hàm, thủ tục
 #[tauri::command]
-pub async fn get_database_objects(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
+pub async fn get_database_objects(state: tauri::State<'_, crate::AppState>, conn_id: String) -> Result<Value, String> {
     let (conn_type, schema) = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        let ct = match manager.connection.as_ref() {
-            Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
-            Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
-            Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        };
-        (ct, pg_schema(&manager))
+        let ctx = state.connections.acquire(&conn_id)?;
+        let ct = ctx.conn().clone();
+        (ct, ctx.schema().to_string())
     };
     let sch = sql_str(&schema);
 
@@ -4106,8 +4075,8 @@ pub async fn get_database_objects(state: tauri::State<'_, crate::AppState>) -> R
         }
     }
 
-    match &conn_type {
-        DbConnection::Sqlite(conn_arc) => {
+    match &conn_type.kind {
+        DbKind::Sqlite(conn_arc) => {
             let conn = conn_arc.lock().map_err(|e| e.to_string())?;
             let mut stmt = conn.prepare("SELECT name, type FROM sqlite_master WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%' ORDER BY name").map_err(|e| e.to_string())?;
             let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
@@ -4118,7 +4087,7 @@ pub async fn get_database_objects(state: tauri::State<'_, crate::AppState>) -> R
             }
             // SQLite không có hàm/thủ tục do người dùng định nghĩa
         }
-        DbConnection::Postgres(_) => {
+        DbKind::Postgres(_) => {
             // Materialized views: see the note in get_tables — information_schema has none.
             let tv = execute_raw_sql_generic(&conn_type,
                 format!("SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = '{sch}' \
@@ -4142,7 +4111,7 @@ pub async fn get_database_objects(state: tauri::State<'_, crate::AppState>) -> R
                 }
             }
         }
-        DbConnection::Mysql(_) => {
+        DbKind::Mysql(_) => {
             let tv = execute_raw_sql_generic(&conn_type, "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = DATABASE() ORDER BY table_name".to_string()).await?;
             split_tables_views(&tv, "table_name", "table_type", "VIEW", &mut tables, &mut views);
 
@@ -4165,7 +4134,7 @@ pub async fn get_database_objects(state: tauri::State<'_, crate::AppState>) -> R
     // MySQL scheduled EVENTs. Only MySQL has them, and they are dumped like a routine (their
     // body carries its own `;`, so the export wraps them in a DELIMITER block).
     let mut events: Vec<String> = Vec::new();
-    if matches!(conn_type, DbConnection::Mysql(_)) {
+    if matches!(conn_type.kind, DbKind::Mysql(_)) {
         let ev = execute_raw_sql_generic(
             &conn_type,
             "SELECT EVENT_NAME AS name FROM information_schema.EVENTS WHERE EVENT_SCHEMA = DATABASE() ORDER BY EVENT_NAME".to_string(),
@@ -4193,21 +4162,16 @@ pub async fn get_database_objects(state: tauri::State<'_, crate::AppState>) -> R
 
 // Lấy định nghĩa (mã nguồn) của view / function / procedure
 #[tauri::command]
-pub async fn get_object_definition(state: tauri::State<'_, crate::AppState>, name: String, kind: String) -> Result<Value, String> {
+pub async fn get_object_definition(state: tauri::State<'_, crate::AppState>, conn_id: String, name: String, kind: String) -> Result<Value, String> {
     let (conn_type, schema) = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        let ct = match manager.connection.as_ref() {
-            Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
-            Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
-            Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        };
-        (ct, pg_schema(&manager))
+        let ctx = state.connections.acquire(&conn_id)?;
+        let ct = ctx.conn().clone();
+        (ct, ctx.schema().to_string())
     };
     let sch = sql_str(&schema);
 
-    let ddl: String = match &conn_type {
-        DbConnection::Mysql(pool) => {
+    let ddl: String = match &conn_type.kind {
+        DbKind::Mysql(pool) => {
             let stmt = match kind.as_str() {
                 "function" => format!("SHOW CREATE FUNCTION `{}`", name),
                 "procedure" => format!("SHOW CREATE PROCEDURE `{}`", name),
@@ -4224,7 +4188,7 @@ pub async fn get_object_definition(state: tauri::State<'_, crate::AppState>, nam
                 .map_err(|e| e.to_string())?;
             format!("{};", s)
         }
-        DbConnection::Postgres(_) => {
+        DbKind::Postgres(_) => {
             let sql = match kind.as_str() {
                 "function" | "procedure" => format!(
                     "SELECT pg_get_functiondef(p.oid) AS def FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = '{}' AND p.proname = '{}' LIMIT 1",
@@ -4240,7 +4204,7 @@ pub async fn get_object_definition(state: tauri::State<'_, crate::AppState>, nam
             let results = execute_raw_sql_generic(&conn_type, sql).await?;
             all_string_values(&results).into_iter().next().ok_or("Không lấy được định nghĩa đối tượng")?
         }
-        DbConnection::Sqlite(conn_arc) => {
+        DbKind::Sqlite(conn_arc) => {
             let conn = conn_arc.lock().map_err(|e| e.to_string())?;
             let mut stmt = conn.prepare("SELECT sql FROM sqlite_master WHERE name = ? LIMIT 1").map_err(|e| e.to_string())?;
             let mut rows = stmt.query([name.as_str()]).map_err(|e| e.to_string())?;
@@ -4258,15 +4222,10 @@ pub async fn get_object_definition(state: tauri::State<'_, crate::AppState>, nam
 
 // Lấy danh sách encoding/collation được hỗ trợ theo hệ CSDL (dùng cho hộp thoại tạo database)
 #[tauri::command]
-pub async fn get_db_charsets(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
+pub async fn get_db_charsets(state: tauri::State<'_, crate::AppState>, conn_id: String) -> Result<Value, String> {
     let conn_type = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
-            Some(DbConnection::Sqlite(conn_arc)) => DbConnection::Sqlite(conn_arc.clone()),
-            Some(DbConnection::Postgres(pool)) => DbConnection::Postgres(pool.clone()),
-            Some(DbConnection::Mysql(pool)) => DbConnection::Mysql(pool.clone()),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        let ctx = state.connections.acquire(&conn_id)?;
+        ctx.conn().clone()
     };
 
     // Trích các giá trị của một cột từ kết quả execute_raw_sql_generic
@@ -4282,8 +4241,8 @@ pub async fn get_db_charsets(state: tauri::State<'_, crate::AppState>) -> Result
         out
     }
 
-    match &conn_type {
-        DbConnection::Mysql(_) => {
+    match &conn_type.kind {
+        DbKind::Mysql(_) => {
             let cs_res = execute_raw_sql_generic(&conn_type, "SHOW CHARACTER SET".to_string()).await?;
             let mut encodings = col_values(&cs_res, "Charset");
             encodings.sort();
@@ -4305,7 +4264,7 @@ pub async fn get_db_charsets(state: tauri::State<'_, crate::AppState>) -> Result
             }
             Ok(json!({ "success": true, "encodings": encodings, "collationsByEncoding": by_enc }))
         }
-        DbConnection::Postgres(_) => {
+        DbKind::Postgres(_) => {
             let enc_res = execute_raw_sql_generic(&conn_type,
                 "SELECT DISTINCT pg_encoding_to_char(encoding) AS enc FROM pg_database WHERE encoding >= 0 ORDER BY 1".to_string()).await?;
             let mut encodings = col_values(&enc_res, "enc");
@@ -4316,7 +4275,7 @@ pub async fn get_db_charsets(state: tauri::State<'_, crate::AppState>) -> Result
             let collations = col_values(&coll_res, "c");
             Ok(json!({ "success": true, "encodings": encodings, "collations": collations }))
         }
-        DbConnection::Sqlite(_) => {
+        DbKind::Sqlite(_) => {
             Ok(json!({ "success": true, "encodings": [], "collations": [] }))
         }
     }
@@ -4424,33 +4383,120 @@ async fn mysql_status_var(pool: &sqlx::MySqlPool, sql: &'static str) -> String {
 pub async fn get_connection_status(
     // `State`/`AppState` không được import ở đầu file — mọi command khác trong file đều viết
     // đường dẫn đầy đủ, giữ nguyên quy ước đó.
-    state: tauri::State<'_, crate::AppState>,
+    state: tauri::State<'_, crate::AppState>, conn_id: String,
 ) -> Result<ConnectionStatusInfo, String> {
     let start = std::time::Instant::now();
     let (conn, db_type, config, has_ssh) = {
-        let mgr = state.db_manager.lock().map_err(|e| e.to_string())?;
-        let conn = match &mgr.connection {
-            Some(c) => c.clone(),
-            None => return Ok(ConnectionStatusInfo::disconnected()),
-        };
-        (
-            conn,
-            mgr.db_type.clone(),
-            mgr.last_config.clone(),
-            mgr.ssh_tunnel.is_some(),
-        )
+        // `.ok()`, không phải `?`: không có kết nối SQL là trạng thái được DUNG THỨ ở đây — nhánh
+        // Redis phía dưới mới là câu trả lời khi đó. Dùng `?` sẽ biến "chưa kết nối SQL" thành lỗi
+        // và chặn luôn đường Redis.
+        match state.connections.acquire(&conn_id).ok() {
+            Some(ctx) => (
+                Some(ctx.conn().clone()),
+                ctx.server().db_type.clone(),
+                Some(ctx.server().config()),
+                ctx.server().ssh_tunnel.is_some(),
+            ),
+            None => (None, String::new(), None, false),
+        }
     };
 
-    match &conn {
-        DbConnection::Sqlite(arc) => {
+    let conn = match conn {
+        Some(c) => c,
+        None => {
+            // Check Redis connection
+            let (redis_conn, redis_config, redis_db_index, has_redis_ssh, caps) = {
+                let conn = state.redis.conn.lock().ok().and_then(|g| g.clone());
+                let cfg = state.redis.config.lock().ok().and_then(|g| g.clone());
+                let db_idx = state.redis.db_index.lock().ok().map(|g| *g).unwrap_or(0);
+                let has_ssh = state.redis.ssh_tunnel.lock().ok().map(|g| g.is_some()).unwrap_or(false);
+                let caps = state.redis.caps.lock().ok().map(|g| g.clone()).unwrap_or_default();
+                (conn, cfg, db_idx, has_ssh, caps)
+            };
+
+            if let Some(mut r_conn) = redis_conn {
+                let start = std::time::Instant::now();
+                let _ = redis::cmd("PING").query_async::<String>(&mut r_conn).await;
+                let latency_ms = start.elapsed().as_millis() as u64;
+
+                let host = redis_config
+                    .as_ref()
+                    .and_then(|c| c.get("host"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("localhost")
+                    .to_string();
+
+                let port = redis_config
+                    .as_ref()
+                    .and_then(|c| c.get("port"))
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(6379) as u16;
+
+                let user = redis_config
+                    .as_ref()
+                    .and_then(|c| c.get("username").or_else(|| c.get("user")))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("default")
+                    .to_string();
+
+                let ssl_mode = redis_config
+                    .as_ref()
+                    .and_then(|c| c.get("sslMode"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("DISABLED");
+
+                let conn_type = if has_redis_ssh
+                    || redis_config
+                        .as_ref()
+                        .and_then(|c| c.get("useSshTunnel"))
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                {
+                    "ssh".to_string()
+                } else if ssl_mode != "DISABLED" {
+                    "ssl".to_string()
+                } else if host == "localhost"
+                    || host == "127.0.0.1"
+                    || host == "::1"
+                    || host.starts_with("127.")
+                {
+                    "loc".to_string()
+                } else {
+                    "rem".to_string()
+                };
+
+                let database = format!("db{}", redis_db_index);
+                let server_version = caps.version;
+
+                return Ok(ConnectionStatusInfo {
+                    is_connected: true,
+                    db_type: "redis".to_string(),
+                    conn_type,
+                    host,
+                    latency_ms,
+                    server_version,
+                    user,
+                    database,
+                    port,
+                    cipher: if ssl_mode != "DISABLED" { "TLS".to_string() } else { String::new() },
+                    tls_version: if ssl_mode != "DISABLED" { ssl_mode.to_string() } else { String::new() },
+                });
+            }
+
+            return Ok(ConnectionStatusInfo::disconnected());
+        }
+    };
+
+    match &conn.kind {
+        DbKind::Sqlite(arc) => {
             if let Ok(conn) = arc.lock() {
                 let _ = conn.execute_batch("SELECT 1;");
             }
         }
-        DbConnection::Postgres(pool) => {
+        DbKind::Postgres(pool) => {
             let _ = sqlx::query("SELECT 1;").execute(pool).await;
         }
-        DbConnection::Mysql(pool) => {
+        DbKind::Mysql(pool) => {
             let _ = sqlx::query("SELECT 1;").execute(pool).await;
         }
     }
@@ -4460,8 +4506,8 @@ pub async fn get_connection_status(
     // "best effort": lỗi thì để trống chứ không làm hỏng cả status pill.
     // Phần TLS tách khỏi phần version/user vì `pg_stat_ssl` không tồn tại trên
     // Postgres cũ — gộp chung thì một server cũ mất luôn cả version lẫn user.
-    let (server_version, session_user, session_db, cipher, tls_version) = match &conn {
-        DbConnection::Sqlite(arc) => {
+    let (server_version, session_user, session_db, cipher, tls_version) = match &conn.kind {
+        DbKind::Sqlite(arc) => {
             let version = arc
                 .lock()
                 .ok()
@@ -4472,7 +4518,7 @@ pub async fn get_connection_status(
                 .unwrap_or_default();
             (version, String::new(), String::new(), String::new(), String::new())
         }
-        DbConnection::Postgres(pool) => {
+        DbKind::Postgres(pool) => {
             // `current_user`/`current_database()` có kiểu `name`, sqlx không giải mã
             // thẳng sang String được nên phải ép ::text.
             let (version, user, db) = match sqlx::query(
@@ -4503,7 +4549,7 @@ pub async fn get_connection_status(
             };
             (version, user, db, cipher, tls)
         }
-        DbConnection::Mysql(pool) => {
+        DbKind::Mysql(pool) => {
             let (version, user, db) = match sqlx::query(
                 "SELECT VERSION(), CURRENT_USER(), COALESCE(DATABASE(), '')",
             )
@@ -4629,27 +4675,24 @@ fn row_i64(row: &Value, col: &str) -> i64 {
 }
 
 #[tauri::command]
-pub async fn get_table_triggers(state: tauri::State<'_, crate::AppState>, table_name: String) -> Result<Value, String> {
+pub async fn get_table_triggers(state: tauri::State<'_, crate::AppState>, conn_id: String, table_name: String) -> Result<Value, String> {
     let (conn_type, schema) = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        let ct = match manager.connection.as_ref() {
-            Some(c) => c.clone(),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        };
-        (ct, pg_schema(&manager))
+        let ctx = state.connections.acquire(&conn_id)?;
+        let ct = ctx.conn().clone();
+        (ct, ctx.schema().to_string())
     };
     let sch = sql_str(&schema);
 
-    let sql = match &conn_type {
-        DbConnection::Mysql(_) => format!(
+    let sql = match &conn_type.kind {
+        DbKind::Mysql(_) => format!(
             "SELECT TRIGGER_NAME as name, ACTION_TIMING as timing, EVENT_MANIPULATION as event, ACTION_STATEMENT as statement FROM INFORMATION_SCHEMA.TRIGGERS WHERE EVENT_OBJECT_TABLE = '{}' AND TRIGGER_SCHEMA = DATABASE()",
             table_name.replace('\'', "''")
         ),
-        DbConnection::Postgres(_) => format!(
+        DbKind::Postgres(_) => format!(
             "SELECT tr.tgname AS name, CASE WHEN tr.tgtype & 2 = 2 THEN 'BEFORE' WHEN tr.tgtype & 64 = 64 THEN 'INSTEAD OF' ELSE 'AFTER' END AS timing, CASE WHEN tr.tgtype & 4 = 4 THEN 'INSERT' WHEN tr.tgtype & 8 = 8 THEN 'DELETE' WHEN tr.tgtype & 16 = 16 THEN 'UPDATE' ELSE 'MANIPULATION' END AS event, pg_get_triggerdef(tr.oid) AS statement FROM pg_trigger tr JOIN pg_class c ON c.oid = tr.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relname = '{}' AND n.nspname = '{}' AND NOT tr.tgisinternal",
             table_name.replace('\'', "''"), sch
         ),
-        DbConnection::Sqlite(_) => format!(
+        DbKind::Sqlite(_) => format!(
             "SELECT name, 'BEFORE' as timing, 'MANIPULATION' as event, sql as statement FROM sqlite_master WHERE type = 'trigger' AND tbl_name = '{}'",
             table_name.replace('\'', "''")
         ),
@@ -4703,16 +4746,13 @@ fn mysql_trigger_ddl(name: &str, table: &str, timing: &str, event: &str, body: &
 ///   - `sequence_values`  after the data (setval reads MAX() of the rows just inserted).
 #[tauri::command]
 pub async fn get_table_ddl_extras(
-    state: tauri::State<'_, crate::AppState>,
+    state: tauri::State<'_, crate::AppState>, conn_id: String,
     table_name: String,
 ) -> Result<Value, String> {
     let (conn_type, schema) = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        let ct = match manager.connection.as_ref() {
-            Some(c) => c.clone(),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        };
-        (ct, pg_schema(&manager))
+        let ctx = state.connections.acquire(&conn_id)?;
+        let ct = ctx.conn().clone();
+        (ct, ctx.schema().to_string())
     };
     let esc = table_name.replace('\'', "''");
     // Only the catalog lookups take the schema. The statements these build stay unqualified so a
@@ -4735,9 +4775,9 @@ pub async fn get_table_ddl_extras(
     let mut comments: Vec<String> = Vec::new();
     let mut sequence_values: Vec<String> = Vec::new();
 
-    match &conn_type {
-        DbConnection::Mysql(_) => {}
-        DbConnection::Sqlite(_) => {
+    match &conn_type.kind {
+        DbKind::Mysql(_) => {}
+        DbKind::Sqlite(_) => {
             // sql IS NULL for the indexes SQLite creates itself (UNIQUE / AUTOINCREMENT):
             // they come back with the table and must not be replayed.
             indexes = ddl_list(
@@ -4749,7 +4789,7 @@ pub async fn get_table_ddl_extras(
             )
             .await;
         }
-        DbConnection::Postgres(_) => {
+        DbKind::Postgres(_) => {
             sequences = ddl_list(&conn_type, format!(
                 "SELECT 'CREATE SEQUENCE IF NOT EXISTS ' || quote_ident(s.relname) || ';' \
                  FROM pg_class s JOIN pg_depend d ON d.objid = s.oid AND d.deptype = 'a' \
@@ -4816,26 +4856,23 @@ pub async fn get_table_ddl_extras(
 /// needs the whole database in one call, plus the owning table name (Postgres cannot drop a
 /// trigger without `ON <table>`).
 #[tauri::command]
-pub async fn get_all_triggers(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
+pub async fn get_all_triggers(state: tauri::State<'_, crate::AppState>, conn_id: String) -> Result<Value, String> {
     let (conn_type, schema) = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        let ct = match manager.connection.as_ref() {
-            Some(c) => c.clone(),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        };
-        (ct, pg_schema(&manager))
+        let ctx = state.connections.acquire(&conn_id)?;
+        let ct = ctx.conn().clone();
+        (ct, ctx.schema().to_string())
     };
     let sch = sql_str(&schema);
 
-    let sql = match &conn_type {
-        DbConnection::Mysql(_) => "SELECT TRIGGER_NAME AS name, EVENT_OBJECT_TABLE AS tbl, ACTION_TIMING AS timing, EVENT_MANIPULATION AS event, ACTION_STATEMENT AS statement FROM INFORMATION_SCHEMA.TRIGGERS WHERE TRIGGER_SCHEMA = DATABASE() ORDER BY EVENT_OBJECT_TABLE, ACTION_ORDER, TRIGGER_NAME".to_string(),
-        DbConnection::Postgres(_) => format!("SELECT tr.tgname AS name, c.relname AS tbl, '' AS timing, '' AS event, pg_get_triggerdef(tr.oid) AS statement FROM pg_trigger tr JOIN pg_class c ON c.oid = tr.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = '{sch}' AND NOT tr.tgisinternal ORDER BY c.relname, tr.tgname"),
+    let sql = match &conn_type.kind {
+        DbKind::Mysql(_) => "SELECT TRIGGER_NAME AS name, EVENT_OBJECT_TABLE AS tbl, ACTION_TIMING AS timing, EVENT_MANIPULATION AS event, ACTION_STATEMENT AS statement FROM INFORMATION_SCHEMA.TRIGGERS WHERE TRIGGER_SCHEMA = DATABASE() ORDER BY EVENT_OBJECT_TABLE, ACTION_ORDER, TRIGGER_NAME".to_string(),
+        DbKind::Postgres(_) => format!("SELECT tr.tgname AS name, c.relname AS tbl, '' AS timing, '' AS event, pg_get_triggerdef(tr.oid) AS statement FROM pg_trigger tr JOIN pg_class c ON c.oid = tr.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = '{sch}' AND NOT tr.tgisinternal ORDER BY c.relname, tr.tgname"),
         // sql IS NULL for objects SQLite creates itself; those cannot be replayed anyway.
-        DbConnection::Sqlite(_) => "SELECT name, tbl_name AS tbl, '' AS timing, '' AS event, sql AS statement FROM sqlite_master WHERE type = 'trigger' AND sql IS NOT NULL ORDER BY tbl_name, name".to_string(),
+        DbKind::Sqlite(_) => "SELECT name, tbl_name AS tbl, '' AS timing, '' AS event, sql AS statement FROM sqlite_master WHERE type = 'trigger' AND sql IS NOT NULL ORDER BY tbl_name, name".to_string(),
     };
 
     let results = execute_raw_sql_generic(&conn_type, sql).await?;
-    let is_mysql = matches!(conn_type, DbConnection::Mysql(_));
+    let is_mysql = matches!(conn_type.kind, DbKind::Mysql(_));
     let mut triggers: Vec<Value> = Vec::new();
     for row in result_rows(&results) {
         let name = row_str(row, "name").unwrap_or("");
@@ -4862,13 +4899,10 @@ pub async fn get_all_triggers(state: tauri::State<'_, crate::AppState>) -> Resul
 }
 
 #[tauri::command]
-pub async fn save_trigger(state: tauri::State<'_, crate::AppState>, statement_sql: String) -> Result<Value, String> {
+pub async fn save_trigger(state: tauri::State<'_, crate::AppState>, conn_id: String, statement_sql: String) -> Result<Value, String> {
     let conn_type = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
-            Some(c) => c.clone(),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        let ctx = state.connections.acquire(&conn_id)?;
+        ctx.conn().clone()
     };
 
     execute_raw_sql_generic(&conn_type, statement_sql).await?;
@@ -4876,17 +4910,14 @@ pub async fn save_trigger(state: tauri::State<'_, crate::AppState>, statement_sq
 }
 
 #[tauri::command]
-pub async fn drop_trigger(state: tauri::State<'_, crate::AppState>, trigger_name: String) -> Result<Value, String> {
+pub async fn drop_trigger(state: tauri::State<'_, crate::AppState>, conn_id: String, trigger_name: String) -> Result<Value, String> {
     let conn_type = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
-            Some(c) => c.clone(),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        let ctx = state.connections.acquire(&conn_id)?;
+        ctx.conn().clone()
     };
 
-    let sql = match &conn_type {
-        DbConnection::Mysql(_) => format!("DROP TRIGGER `{}`", trigger_name),
+    let sql = match &conn_type.kind {
+        DbKind::Mysql(_) => format!("DROP TRIGGER `{}`", trigger_name),
         _ => format!("DROP TRIGGER IF EXISTS \"{}\"", trigger_name),
     };
 
@@ -4895,13 +4926,10 @@ pub async fn drop_trigger(state: tauri::State<'_, crate::AppState>, trigger_name
 }
 
 #[tauri::command]
-pub async fn save_routine_definition(state: tauri::State<'_, crate::AppState>, routine_sql: String) -> Result<Value, String> {
+pub async fn save_routine_definition(state: tauri::State<'_, crate::AppState>, conn_id: String, routine_sql: String) -> Result<Value, String> {
     let conn_type = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
-            Some(c) => c.clone(),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        let ctx = state.connections.acquire(&conn_id)?;
+        ctx.conn().clone()
     };
 
     execute_raw_sql_generic(&conn_type, routine_sql).await?;
@@ -4909,20 +4937,17 @@ pub async fn save_routine_definition(state: tauri::State<'_, crate::AppState>, r
 }
 
 #[tauri::command]
-pub async fn get_sequences(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
+pub async fn get_sequences(state: tauri::State<'_, crate::AppState>, conn_id: String) -> Result<Value, String> {
     let (conn_type, schema) = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        let ct = match manager.connection.as_ref() {
-            Some(c) => c.clone(),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        };
-        (ct, pg_schema(&manager))
+        let ctx = state.connections.acquire(&conn_id)?;
+        let ct = ctx.conn().clone();
+        (ct, ctx.schema().to_string())
     };
     let sch = sql_str(&schema);
 
-    let sql = match &conn_type {
-        DbConnection::Postgres(_) => format!("SELECT sequence_name as name, data_type, start_value, minimum_value as min_val, maximum_value as max_val, increment, cycle_option as cycle FROM information_schema.sequences WHERE sequence_schema = '{sch}'"),
-        DbConnection::Mysql(_) => "SELECT table_name as name, 'bigint' as data_type, '1' as start_value, '1' as min_val, '9223372036854775807' as max_val, '1' as increment, 'NO' as cycle FROM information_schema.tables WHERE table_type = 'SEQUENCE' AND table_schema = DATABASE()".to_string(),
+    let sql = match &conn_type.kind {
+        DbKind::Postgres(_) => format!("SELECT sequence_name as name, data_type, start_value, minimum_value as min_val, maximum_value as max_val, increment, cycle_option as cycle FROM information_schema.sequences WHERE sequence_schema = '{sch}'"),
+        DbKind::Mysql(_) => "SELECT table_name as name, 'bigint' as data_type, '1' as start_value, '1' as min_val, '9223372036854775807' as max_val, '1' as increment, 'NO' as cycle FROM information_schema.tables WHERE table_type = 'SEQUENCE' AND table_schema = DATABASE()".to_string(),
         _ => return Ok(json!({ "success": true, "sequences": [] })),
     };
 
@@ -4944,13 +4969,10 @@ pub async fn get_sequences(state: tauri::State<'_, crate::AppState>) -> Result<V
 }
 
 #[tauri::command]
-pub async fn alter_sequence(state: tauri::State<'_, crate::AppState>, sequence_sql: String) -> Result<Value, String> {
+pub async fn alter_sequence(state: tauri::State<'_, crate::AppState>, conn_id: String, sequence_sql: String) -> Result<Value, String> {
     let conn_type = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
-            Some(c) => c.clone(),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        let ctx = state.connections.acquire(&conn_id)?;
+        ctx.conn().clone()
     };
 
     execute_raw_sql_generic(&conn_type, sequence_sql).await?;
@@ -4958,17 +4980,14 @@ pub async fn alter_sequence(state: tauri::State<'_, crate::AppState>, sequence_s
 }
 
 #[tauri::command]
-pub async fn drop_sequence(state: tauri::State<'_, crate::AppState>, sequence_name: String) -> Result<Value, String> {
+pub async fn drop_sequence(state: tauri::State<'_, crate::AppState>, conn_id: String, sequence_name: String) -> Result<Value, String> {
     let conn_type = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
-            Some(c) => c.clone(),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        let ctx = state.connections.acquire(&conn_id)?;
+        ctx.conn().clone()
     };
 
-    let sql = match &conn_type {
-        DbConnection::Mysql(_) => format!("DROP SEQUENCE IF EXISTS `{}`", sequence_name),
+    let sql = match &conn_type.kind {
+        DbKind::Mysql(_) => format!("DROP SEQUENCE IF EXISTS `{}`", sequence_name),
         _ => format!("DROP SEQUENCE IF EXISTS \"{}\"", sequence_name),
     };
 
@@ -4977,21 +4996,18 @@ pub async fn drop_sequence(state: tauri::State<'_, crate::AppState>, sequence_na
 }
 
 #[tauri::command]
-pub async fn get_table_partitions(state: tauri::State<'_, crate::AppState>, table_name: String) -> Result<Value, String> {
+pub async fn get_table_partitions(state: tauri::State<'_, crate::AppState>, conn_id: String, table_name: String) -> Result<Value, String> {
     let conn_type = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
-            Some(c) => c.clone(),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        let ctx = state.connections.acquire(&conn_id)?;
+        ctx.conn().clone()
     };
 
-    let sql = match &conn_type {
-        DbConnection::Mysql(_) => format!(
+    let sql = match &conn_type.kind {
+        DbKind::Mysql(_) => format!(
             "SELECT PARTITION_NAME as name, PARTITION_METHOD as method, PARTITION_EXPRESSION as expression, PARTITION_DESCRIPTION as description, TABLE_ROWS as table_rows, DATA_LENGTH as data_length FROM INFORMATION_SCHEMA.PARTITIONS WHERE TABLE_NAME = '{}' AND TABLE_SCHEMA = DATABASE() AND PARTITION_NAME IS NOT NULL",
             table_name.replace('\'', "''")
         ),
-        DbConnection::Postgres(_) => format!(
+        DbKind::Postgres(_) => format!(
             "SELECT c.relname AS name, 'PARTITION' AS method, pg_get_expr(c.relpartbound, c.oid) AS expression, '' AS description, c.reltuples::bigint AS table_rows, 0 AS data_length FROM pg_class c JOIN pg_inherits i ON i.inhrelid = c.oid JOIN pg_class parent ON parent.oid = i.inhparent WHERE parent.relname = '{}'",
             table_name.replace('\'', "''")
         ),
@@ -5015,23 +5031,20 @@ pub async fn get_table_partitions(state: tauri::State<'_, crate::AppState>, tabl
 }
 
 #[tauri::command]
-pub async fn get_check_constraints(state: tauri::State<'_, crate::AppState>, table_name: String) -> Result<Value, String> {
+pub async fn get_check_constraints(state: tauri::State<'_, crate::AppState>, conn_id: String, table_name: String) -> Result<Value, String> {
     let (conn_type, schema) = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        let ct = match manager.connection.as_ref() {
-            Some(c) => c.clone(),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        };
-        (ct, pg_schema(&manager))
+        let ctx = state.connections.acquire(&conn_id)?;
+        let ct = ctx.conn().clone();
+        (ct, ctx.schema().to_string())
     };
     let sch = sql_str(&schema);
 
-    let sql = match &conn_type {
-        DbConnection::Mysql(_) => format!(
+    let sql = match &conn_type.kind {
+        DbKind::Mysql(_) => format!(
             "SELECT tc.CONSTRAINT_NAME as name, cc.CHECK_CLAUSE as expression, 'YES' as enforced FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc JOIN INFORMATION_SCHEMA.CHECK_CONSTRAINTS cc ON tc.CONSTRAINT_NAME = cc.CONSTRAINT_NAME AND tc.CONSTRAINT_SCHEMA = cc.CONSTRAINT_SCHEMA WHERE tc.TABLE_NAME = '{}' AND tc.TABLE_SCHEMA = DATABASE() AND tc.CONSTRAINT_TYPE = 'CHECK'",
             table_name.replace('\'', "''")
         ),
-        DbConnection::Postgres(_) => format!(
+        DbKind::Postgres(_) => format!(
             "SELECT conname AS name, pg_get_constraintdef(c.oid) AS expression, 'YES' AS enforced FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace WHERE t.relname = '{}' AND n.nspname = '{}' AND c.contype = 'c'",
             table_name.replace('\'', "''"), sch
         ),
@@ -5052,13 +5065,10 @@ pub async fn get_check_constraints(state: tauri::State<'_, crate::AppState>, tab
 }
 
 #[tauri::command]
-pub async fn save_view_definition(state: tauri::State<'_, crate::AppState>, view_sql: String) -> Result<Value, String> {
+pub async fn save_view_definition(state: tauri::State<'_, crate::AppState>, conn_id: String, view_sql: String) -> Result<Value, String> {
     let conn_type = {
-        let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-        match manager.connection.as_ref() {
-            Some(c) => c.clone(),
-            None => return Err("Chưa kết nối CSDL".to_string()),
-        }
+        let ctx = state.connections.acquire(&conn_id)?;
+        ctx.conn().clone()
     };
 
     execute_raw_sql_generic(&conn_type, view_sql).await?;

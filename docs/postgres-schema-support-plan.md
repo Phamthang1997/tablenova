@@ -198,6 +198,14 @@ Hình dạng cụ thể:
   **từ phản hồi của backend**, không phải từ state của ô chọn — nếu không, lần kết nối đầu (khi
   người dùng chưa chạm vào ô chọn) sẽ ghi khoá theo một giá trị mà backend chưa chắc đồng ý.
 
+> **Cập nhật: quyết định này bị đảo cho `conn_id`.** `docs/multi-connection-plan.md` §4.1 chốt rằng
+> **kết nối** đi xuống backend bằng **tham số tường minh của từng lệnh**, đúng cái đường bị loại ở
+> trên. Không phải vì lý lẽ ở đây sai, mà vì **tiền đề của nó bị bỏ**: lý do số 1 ở trên là *"có một
+> kết nối nên có một schema"*, còn kế hoạch đa kết nối chính là kế hoạch xoá cái "một kết nối" đó.
+> Ranh giới sau khi đảo: `conn_id` là **tham số**, còn `current_schema` vẫn là **trạng thái** — nó chỉ
+> chuyển từ `DatabaseManager` vào từng entry của registry, vì mỗi `(server, database)` có đúng một
+> schema đang chọn (`multi-connection-plan.md` §4.3). Ba lý do ở trên vẫn nguyên giá trị cho schema.
+
 ### 5.1. Các bước
 
 1. **Backend**: `pg_schema()` helper (mặc định `public`, giữ nguyên hành vi cũ khi chưa đặt) +

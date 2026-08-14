@@ -16,14 +16,35 @@ import type {
 } from './dataGenHelper';
 
 /**
+ * Which backend connection commands act on. Set from `connect()`'s response, cleared by
+ * `disconnect()`.
+ *
+ * **A migration shim, not the design.** `docs/multi-connection-plan.md` §4.1 rules out an ambient
+ * "active connection" precisely because a module-level value read here is the race it describes:
+ * with two tabs on two connections, whichever one wrote last decides where the other one's query
+ * goes. It is safe only while Phase 1 keeps the backend at exactly one connection, and Phase 2's
+ * exit condition is that nothing reads it — each tab passes the `connId` it owns instead.
+ */
+let currentConnId = '';
+
+/** Returns the minted id so `App.tsx` can hand it to the tab that owns the connection (Phase 2). */
+export function activeConnId(): string {
+  return currentConnId;
+}
+
+/**
  * Every backend call goes through here so the Vietnamese error text the Rust side
  * returns is mapped to the active UI language in ONE place — see `backendErrors.ts`.
  * Shadowing the imported name keeps all existing `await invoke(...)` call sites
  * unchanged; a message with no mapping is passed through untouched.
+ *
+ * The same trick now also supplies `connId` to every connection-bound command, so adding that
+ * argument on the Rust side cost zero of the 210 `dbHelper.*` call sites. A command that does not
+ * declare it simply ignores the extra field — Tauri deserializes by name.
  */
 async function invoke<T = any>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   try {
-    return translateResultErrors(await rawInvoke<T>(cmd, args));
+    return translateResultErrors(await rawInvoke<T>(cmd, { connId: currentConnId, ...args }));
   } catch (err) {
     // A command that returns Err(String) surfaces here as a thrown *string*, and the
     // catch blocks below interpolate it directly (`${err}`). Rethrow a string, not an
@@ -386,6 +407,9 @@ export const dbHelper = {
 
       const res: any = await invoke('connect_db', { config: mappedConfig });
       if (res.success) {
+        // The backend mints the id and hands it back; it is never derived from `config`, which
+        // carries credentials (multi-connection-plan §4.3). Every later command carries it.
+        currentConnId = res.connId ?? '';
         // `schema` is the schema the connection actually landed in (Postgres `current_schema()`),
         // null on MySQL/SQLite. Callers key per-connection storage on it — see connKey.ts.
         return {
@@ -404,8 +428,13 @@ export const dbHelper = {
   async disconnect(): Promise<{ success: boolean }> {
     try {
       const res: any = await invoke('disconnect_db');
+      // Cleared after the call, not before: the command needs the id to know which entry to drop.
+      // An empty id then makes every later command fail with the standard "not connected" error,
+      // because `ConnRegistry::acquire` cannot resolve it — which is exactly the right answer.
+      currentConnId = '';
       return { success: !!res.success };
     } catch {
+      currentConnId = '';
       return { success: false };
     }
   },

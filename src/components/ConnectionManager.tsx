@@ -18,7 +18,7 @@ import {
 } from '../utils/dumpPreview';
 import { splitStatements } from '../sql/statements';
 import { buildDump } from '../utils/dumpBuilder';
-import { gzipText, getLastExportDir, saveExportFile } from '../utils/fileSave';
+import { gzipText, getLastExportDir, saveExportFile, pickOpenFile, pickSqliteDatabaseFile } from '../utils/fileSave';
 import { ProgressBar, type ProgressState } from './ProgressBar';
 import { ConfirmDialog } from './ConfirmDialog';
 
@@ -87,23 +87,37 @@ const EyeBtn: React.FC<{ on: boolean; onClick: () => void }> = ({ on, onClick })
 };
 
 // Nút chọn tệp (chứng chỉ SSL, private key...) — chỉ hiện tên tệp cho gọn.
-const FilePick: React.FC<{ id: string; value: string; label: string; onPick: (path: string) => void }> = ({ id, value, label, onPick }) => (
-  <>
-    <input
-      type="file"
-      id={id}
-      style={{ display: 'none' }}
-      onChange={(e) => {
-        const file = e.target.files?.[0];
-        if (file) onPick((file as any).path || file.name);
-      }}
-    />
-    <button type="button" className={`cm-file-btn ${value ? 'has-file' : ''}`} onClick={() => document.getElementById(id)?.click()} title={value || label}>
-      <FolderOpen size={12} />
-      <span>{value ? value.split(/[\\/]/).pop() : label}</span>
-    </button>
-  </>
-);
+const FilePick: React.FC<{ id: string; value: string; label: string; onPick: (path: string) => void }> = ({ id, value, label, onPick }) => {
+  const handleClick = async () => {
+    const file = await pickOpenFile({ title: label });
+    if (file) {
+      onPick(file);
+      return;
+    }
+    if (file === null) {
+      // Fallback for non-Tauri / web mode
+      document.getElementById(id)?.click();
+    }
+  };
+
+  return (
+    <>
+      <input
+        type="file"
+        id={id}
+        className="cm-hidden-file"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) onPick((file as any).path || file.name);
+        }}
+      />
+      <button type="button" className={`cm-file-btn ${value ? 'has-file' : ''}`} onClick={handleClick} title={value || label}>
+        <FolderOpen size={12} />
+        <span>{value ? value.split(/[\\/]/).pop() : label}</span>
+      </button>
+    </>
+  );
+};
 
 export interface SavedProfile {
   id: string;
@@ -1706,6 +1720,17 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     );
   };
 
+  const handlePickSqlitePath = async () => {
+    const file = await pickSqliteDatabaseFile(sqlitePath);
+    if (file) {
+      setSqlitePath(file);
+      const filename = file.split(/[\\/]/).pop();
+      if (filename && (!profileNameInput || profileNameInput.toLowerCase().includes('sqlite') || profileNameInput.trim() === '')) {
+        setProfileNameInput(filename.replace(/\.[^/.]+$/, ''));
+      }
+    }
+  };
+
   // ——— Tab "Chung" cho từng loại DB ———
   const renderGeneralTab = () => (
     <>
@@ -1718,15 +1743,26 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
           <div className="cm-fields">
             <div className="form-group">
               <label>{t('connection.sqlitePathLabel')}</label>
-              <div className="input-icon-wrapper">
-                <input
-                  type="text"
-                  className="form-input"
-                  value={sqlitePath}
-                  onChange={(e) => setSqlitePath(e.target.value)}
-                  placeholder={t('connection.sqlitePathPlaceholder')}
-                />
-                <FolderOpen size={14} className="input-icon" />
+              <div className="cm-file-row">
+                <div className="input-icon-wrapper">
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={sqlitePath}
+                    onChange={(e) => setSqlitePath(e.target.value)}
+                    placeholder={t('connection.sqlitePathPlaceholder')}
+                  />
+                  <FolderOpen size={14} className="input-icon" />
+                </div>
+                <button
+                  type="button"
+                  className="cm-file-btn"
+                  onClick={handlePickSqlitePath}
+                  title={t('connection.pickFile')}
+                >
+                  <FolderOpen size={12} />
+                  <span>{t('connection.pickFile')}</span>
+                </button>
               </div>
               <span className="cm-hint">{t('connection.sqliteHint')}</span>
             </div>
@@ -2346,9 +2382,29 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
           {brType === 'sqlite' ? (
             <div className="form-group">
               <label>{t('connection.brSqlitePath')}</label>
-              <div className="input-icon-wrapper">
-                <input type="text" className="form-input" value={brSqlitePath} onChange={(e) => setBrSqlitePath(e.target.value)} />
-                <FolderOpen size={14} className="input-icon" />
+              <div className="cm-file-row">
+                <div className="input-icon-wrapper">
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={brSqlitePath}
+                    onChange={(e) => setBrSqlitePath(e.target.value)}
+                    placeholder={t('connection.sqlitePathPlaceholder')}
+                  />
+                  <FolderOpen size={14} className="input-icon" />
+                </div>
+                <button
+                  type="button"
+                  className="cm-file-btn"
+                  onClick={async () => {
+                    const picked = await pickSqliteDatabaseFile(brSqlitePath);
+                    if (picked) setBrSqlitePath(picked);
+                  }}
+                  title={t('connection.pickFile')}
+                >
+                  <FolderOpen size={12} />
+                  <span>{t('connection.pickFile')}</span>
+                </button>
               </div>
             </div>
           ) : (
@@ -2568,7 +2624,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
               <button className="cm-icon-btn" title={t('connection.importFromFile')} onClick={() => document.getElementById('cm-import-file')?.click()}>
                 <Upload size={13} />
               </button>
-              <input id="cm-import-file" type="file" accept=".tableplusconnection,.tableforgeconnection,.json" onChange={handleFileImportSelect} style={{ display: 'none' }} />
+              <input id="cm-import-file" type="file" accept=".tableplusconnection,.tableforgeconnection,.json" onChange={handleFileImportSelect} className="cm-hidden-file" />
               <button className="cm-icon-btn" title={t('connection.exportAll')} onClick={() => openExportModal('all')}>
                 <Download size={13} />
               </button>

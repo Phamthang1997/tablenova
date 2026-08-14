@@ -1,6 +1,6 @@
 use tauri::State;
 use serde_json::{json, Value};
-use crate::database::DbConnection;
+use crate::database::DbKind;
 use crate::AppState;
 
 fn get_pg_i64_cell(row: &sqlx::postgres::PgRow, col: &str) -> i64 {
@@ -34,15 +34,16 @@ fn get_mysql_i64_cell(row: &sqlx::mysql::MySqlRow, col: &str) -> i64 {
 }
 
 #[tauri::command]
-pub async fn get_database_stats(state: State<'_, AppState>) -> Result<Value, String> {
+pub async fn get_database_stats(state: State<'_, AppState>, conn_id: String) -> Result<Value, String> {
     let (conn_clone, _db_type) = {
-        let mgr = state.db_manager.lock().map_err(|e| e.to_string())?;
-        let conn = mgr.connection.clone().ok_or_else(|| "Chưa kết nối database".to_string())?;
-        (conn, mgr.db_type.clone())
+        // `acquire` trả `"Chưa kết nối CSDL"` thay cho `"Chưa kết nối database"` trước đây; cả hai
+        // literal đã cùng trỏ về `backend.notConnected` trong `backendErrors.ts` nên UI không đổi.
+        let ctx = state.connections.acquire(&conn_id)?;
+        (ctx.conn().clone(), ctx.server().db_type.clone())
     };
 
-    match &conn_clone {
-        DbConnection::Sqlite(sqlite_conn) => {
+    match &conn_clone.kind {
+        DbKind::Sqlite(sqlite_conn) => {
             let conn = sqlite_conn.lock().map_err(|e| e.to_string())?;
 
             let page_size: i64 = conn.query_row("PRAGMA page_size;", [], |r| r.get(0)).unwrap_or(4096);
@@ -86,7 +87,7 @@ pub async fn get_database_stats(state: State<'_, AppState>) -> Result<Value, Str
                 "tables": tables
             }))
         }
-        DbConnection::Postgres(pool) => {
+        DbKind::Postgres(pool) => {
             let db_name: String = sqlx::query_scalar("SELECT current_database()")
                 .fetch_one(pool)
                 .await
@@ -149,7 +150,7 @@ pub async fn get_database_stats(state: State<'_, AppState>) -> Result<Value, Str
                 "tables": tables
             }))
         }
-        DbConnection::Mysql(pool) => {
+        DbKind::Mysql(pool) => {
             let db_name: String = sqlx::query_scalar("SELECT DATABASE()")
                 .fetch_one(pool)
                 .await
@@ -265,21 +266,22 @@ async fn pg_count_tables_rows_remote(url: &str) -> Result<(i64, i64), String> {
 }
 
 #[tauri::command]
-pub async fn get_all_databases_stats(state: State<'_, AppState>, deep: Option<bool>) -> Result<Value, String> {
+pub async fn get_all_databases_stats(state: State<'_, AppState>, conn_id: String, deep: Option<bool>) -> Result<Value, String> {
     let deep = deep.unwrap_or(false);
 
     let (conn_clone, last_config, tunnel_port) = {
-        let mgr = state.db_manager.lock().map_err(|e| e.to_string())?;
-        let conn = mgr.connection.clone().ok_or_else(|| "Chưa kết nối database".to_string())?;
+        let ctx = state.connections.acquire(&conn_id)?;
         (
-            conn,
-            mgr.last_config.clone(),
-            mgr.ssh_tunnel.as_ref().map(|t| t.local_port),
+            ctx.conn().clone(),
+            // `ServerHandle.last_config` là `Value` (một server thì luôn có config), bọc `Some` để
+            // phần quét sâu phía dưới không phải đổi.
+            Some(ctx.server().config()),
+            ctx.server().ssh_tunnel.as_ref().map(|t| t.local_port),
         )
     };
 
-    match &conn_clone {
-        DbConnection::Sqlite(sqlite_conn) => {
+    match &conn_clone.kind {
+        DbKind::Sqlite(sqlite_conn) => {
             // SQLite: "tất cả database" = database chính + các database đã ATTACH.
             let conn = sqlite_conn.lock().map_err(|e| e.to_string())?;
 
@@ -357,7 +359,7 @@ pub async fn get_all_databases_stats(state: State<'_, AppState>, deep: Option<bo
                 "databases": databases
             }))
         }
-        DbConnection::Postgres(pool) => {
+        DbKind::Postgres(pool) => {
             let current_db: String = sqlx::query_scalar("SELECT current_database()")
                 .fetch_one(pool)
                 .await
@@ -443,7 +445,7 @@ pub async fn get_all_databases_stats(state: State<'_, AppState>, deep: Option<bo
                 "databases": databases
             }))
         }
-        DbConnection::Mysql(pool) => {
+        DbKind::Mysql(pool) => {
             let current_db: String = sqlx::query_scalar("SELECT COALESCE(DATABASE(), '')")
                 .fetch_one(pool)
                 .await
@@ -510,27 +512,28 @@ pub async fn get_all_databases_stats(state: State<'_, AppState>, deep: Option<bo
 }
 
 #[tauri::command]
-pub async fn get_exact_table_row_count(state: State<'_, AppState>, table_name: String) -> Result<Value, String> {
+pub async fn get_exact_table_row_count(state: State<'_, AppState>, conn_id: String, table_name: String) -> Result<Value, String> {
     let (conn_clone, _db_type) = {
-        let mgr = state.db_manager.lock().map_err(|e| e.to_string())?;
-        let conn = mgr.connection.clone().ok_or_else(|| "Chưa kết nối database".to_string())?;
-        (conn, mgr.db_type.clone())
+        // `acquire` trả `"Chưa kết nối CSDL"` thay cho `"Chưa kết nối database"` trước đây; cả hai
+        // literal đã cùng trỏ về `backend.notConnected` trong `backendErrors.ts` nên UI không đổi.
+        let ctx = state.connections.acquire(&conn_id)?;
+        (ctx.conn().clone(), ctx.server().db_type.clone())
     };
 
-    match &conn_clone {
-        DbConnection::Sqlite(sqlite_conn) => {
+    match &conn_clone.kind {
+        DbKind::Sqlite(sqlite_conn) => {
             let conn = sqlite_conn.lock().map_err(|e| e.to_string())?;
             let sql = format!("SELECT COUNT(*) FROM \"{}\"", table_name.replace('"', "\"\""));
             let count: i64 = conn.query_row(&sql, [], |r| r.get(0)).map_err(|e| e.to_string())?;
             Ok(json!({ "table_name": table_name, "exact_rows": count.max(0) }))
         }
-        DbConnection::Postgres(pool) => {
+        DbKind::Postgres(pool) => {
             let sql = format!("SELECT COUNT(*) FROM \"{}\"", table_name.replace('"', "\"\""));
             let row = sqlx::query(sqlx::AssertSqlSafe(sql)).fetch_one(pool).await.map_err(|e| e.to_string())?;
             let count = get_pg_i64_cell(&row, "count").max(0);
             Ok(json!({ "table_name": table_name, "exact_rows": count }))
         }
-        DbConnection::Mysql(pool) => {
+        DbKind::Mysql(pool) => {
             let sql = format!("SELECT COUNT(*) FROM `{}`", table_name.replace('`', "``"));
             let row = sqlx::query(sqlx::AssertSqlSafe(sql)).fetch_one(pool).await.map_err(|e| e.to_string())?;
             let count = get_mysql_i64_cell(&row, "COUNT(*)").max(0);

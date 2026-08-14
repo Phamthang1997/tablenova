@@ -121,11 +121,25 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected }) => {
     void run(() => dbHelper.txSetAutocommit(!status.autocommit));
   };
 
-  const run = async (fn: () => Promise<TxStatus>, closeAfter = false) => {
+  /**
+   * `refetch` is for the operations that change the rows the user is looking at — Commit, Discard,
+   * `ROLLBACK TO`. Without it the grid keeps showing the value that was just rolled back, which
+   * reads as "Discard did not roll anything back" even though the backend did. `database-restored`
+   * is the event `DataGrid` and `Sidebar` already listen to, so this needs no new channel.
+   *
+   * Mode / isolation / savepoint do NOT refetch: they change no row, and reloading the grid there
+   * would be a round trip for nothing.
+   */
+  const run = async (
+    fn: () => Promise<TxStatus>,
+    closeAfter = false,
+    refetch = false,
+  ) => {
     setBusy(true);
     setError(null);
     try {
       setStatus(await fn());
+      if (refetch) window.dispatchEvent(new CustomEvent('database-restored'));
       if (closeAfter) setOpen(false);
     } catch (err) {
       // Message đã được dịch ở biên dbHelper (backendErrors.ts).
@@ -416,7 +430,7 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected }) => {
                     className="btn btn-secondary"
                     disabled={busy}
                     title={t('tx.savepointRollback')}
-                    onClick={() => void run(() => dbHelper.txRollbackTo(sp))}
+                    onClick={() => void run(() => dbHelper.txRollbackTo(sp), false, true)}
                   >
                     <Undo2 size={12} />
                     <span>{sp}</span>
@@ -445,7 +459,7 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected }) => {
               type="button"
               className="btn btn-secondary"
               disabled={busy || !status.open}
-              onClick={() => void run(() => dbHelper.txRollback(), true)}
+              onClick={() => void run(() => dbHelper.txRollback(), true, true)}
             >
               {t('tx.discard')}
             </button>
@@ -453,7 +467,7 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected }) => {
               type="button"
               className="btn btn-primary"
               disabled={busy || !status.open || status.aborted}
-              onClick={() => void run(() => dbHelper.txCommit(), true)}
+              onClick={() => void run(() => dbHelper.txCommit(), true, true)}
             >
               {t('tx.commit')}
             </button>

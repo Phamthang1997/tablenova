@@ -18,22 +18,38 @@ Phạm vi đã chốt:
 
 ---
 
-## 0. Một lỗi đang tồn tại, sửa được ngay và độc lập
+## 0. Một lỗi đang tồn tại — ✅ ĐÃ SỬA
 
-Tìm ra khi soát cho kế hoạch này. Không liên quan đa kết nối, **nên sửa trước**.
+Tìm ra khi soát cho kế hoạch này. Không liên quan đa kết nối, nên đã sửa trước và độc lập.
 
 `should_route()` (`tx_session.rs:476`) trả `true` khi `!m.autocommit || m.open` — **trước khi** xét
-connection nào. Nhưng `db_compare.rs` đọc metadata qua `execute_raw_sql_generic`
-(`db_compare.rs:295`), và connection nó truyền có thể là **pool ad-hoc** do `resolve_side()` mở cho
-phía không phải database hiện tại.
+connection nào. Nhưng `db_compare.rs` đọc metadata qua `execute_raw_sql_generic`, và connection nó
+truyền có thể là **pool ad-hoc** do `resolve_side()` mở cho phía không phải database hiện tại.
 
 Hệ quả: bật commit thủ công → mở "So sánh 2 database" trỏ một database khác → `lock_pinned`
 (`tx_session.rs:493`) pin **pool tạm của compare** làm phiên và `ensure_begin` chạy `BEGIN` trên đó.
 Từ đó **mọi câu lệnh của người dùng chạy vào database compare**, rồi `Resolved::close()` đóng pool
-trong khi phiên vẫn trỏ vào nó. Deep scan của `db_stats` cùng phơi nhiễm nếu sau này nó bọc pool.
+trong khi phiên vẫn trỏ vào nó.
 
-Cách sửa trùng đúng bước đầu của refactor này (§4.4a): pool ad-hoc mang `ConnId::Adhoc` và
-`should_route` trả `false` cho nó. Vì vậy nó nằm ở Phase 1a và ship được ngay.
+**Đã sửa** bằng cách tách `execute_raw_sql_generic` thành hai: phần kiểm tra route giữ nguyên tên, và
+`execute_raw_sql_unrouted` là phần thân. `db_compare::query_rows` — **funnel duy nhất** của cả module,
+cả 18 call site đi qua nó — gọi bản unrouted. Không nhân bản code, một chỗ sửa.
+
+Hai điều đã kiểm khi sửa:
+
+- **`db_stats` không dính.** Deep scan của nó (`pg_count_tables_rows_remote`, `db_stats.rs:256`) dùng
+  sqlx trực tiếp chứ không qua funnel, nên pool ad-hoc của nó chưa bao giờ route được. Vẫn là chỗ
+  phơi nhiễm nếu sau này ai bọc nó lại qua funnel.
+- **`data_generator` không dính.** Nó dùng kết nối *active*, không phải ad-hoc, và đã có
+  `reject_if_manual_or_open` chặn từ đầu (`data_generator.rs:2260`).
+
+Đánh đổi, ghi lại để khỏi tìm lại: Postgres/MySQL giờ đọc trạng thái **đã commit** qua một pooled
+connection riêng. Đó là ngữ nghĩa đúng cho việc so sánh hai database, và MVCC snapshot read không bị
+chặn bởi row lock của transaction đang mở. SQLite không đổi gì: `DbConnection::Sqlite` là một handle
+dùng chung nên vẫn thấy transaction, route hay không.
+
+Khi làm Phase 1a, `ConnId::Adhoc` (§4.4a) sẽ thay bản sửa này bằng cấu trúc — lúc đó `should_route`
+tự trả `false` cho pool ad-hoc và không cần một funnel riêng nữa.
 
 ---
 
@@ -228,8 +244,84 @@ global cấp module.
 **Và `TxControl` không còn đúng chỗ.** Comment của nó nói thẳng: *"transaction thuộc về kết nối, không
 thuộc về tab — `DatabaseManager` giữ đúng một connection cho cả app, nên nói rằng hai tab có hai
 transaction là nói dối. Vì vậy nút nằm ở thanh tiêu đề chứ không ở toolbar từng tab."* Tiền đề đó mất
-thì phải chốt một trong hai: nút theo kết nối đang chọn ở UI, hay chuyển vào toolbar từng tab. **Chưa
-chốt** — xem §8.
+thì phải chốt lại chỗ đặt.
+
+#### 4.2a Guard phải khoá theo "có gì để mất", không theo "có transaction mở"
+
+Phát hiện khi thử tay Phase 1, và Phase 2 phải giữ đúng tính chất này khi `tx_session` thành per-connection.
+
+Trong manual mode, `should_route` gửi **mọi** câu lệnh qua phiên, và `run_raw` gọi `ensure_begin` cho
+câu đầu tiên **bất kể câu gì** — nên một `SELECT` của lần refresh lưới cũng mở transaction. Hệ quả:
+`is_open()` gần như luôn true khi manual mode bật, và `switch_database` (chỗ duy nhất gọi
+`reject_if_open`) trở thành **không bao giờ chạy được**: ngay sau Discard, lần đọc kế tiếp mở lại
+transaction với 0 câu chờ và lời từ chối quay lại — một lời từ chối người dùng không có cách nào xoá.
+
+Chốt: guard khoá theo `has_pending()` (`open && statements > 0`, mà `statements` chỉ đếm câu **ghi**).
+Transaction mở mà không có gì chờ nghĩa là nó chỉ đọc, nên caller **tự rollback** rồi đi tiếp thay vì
+hỏi người dùng — và phải rollback **trong lúc pool cũ còn sống**, vì sau khi swap thì connection đã pin
+thuộc một pool không ai giữ và server ôm khoá tới khi socket chết. Giữ nguyên văn message cũ nên
+`backendErrors.ts` không đổi.
+
+Cùng gốc, một lỗi UI: sau Discard, không ai bảo lưới nạp lại nên màn hình vẫn hiện giá trị vừa bị
+rollback — người dùng đọc ra thành "Discard không rollback" dù backend đã rollback xong. `TxControl`
+dispatch `database-restored` sau Commit / Discard / `ROLLBACK TO`; **không** dispatch khi đổi mode /
+isolation / savepoint vì chúng không đổi dòng nào.
+
+#### 4.2b Chỗ đặt `TxControl` — ✅ ĐÃ CHỐT: chia ba tầng
+
+**Loại hẳn "toolbar từng tab".** Nó khẳng định một quyền sở hữu **sai**: hai tab trên cùng một kết nối
+sẽ hiện cùng một transaction hai lần, không có cách nào để người dùng biết đó là **một**. Lý lẽ trong
+comment gốc vẫn đúng, chỉ "thanh tiêu đề" là phần cần sửa.
+
+Chốt chia ba tầng, mỗi phần về đúng chỗ nó thuộc về:
+
+| Tầng | Trách nhiệm |
+|---|---|
+| **Rail bên trái** (`DbRail`) | **Trạng thái per-connection.** Mỗi item một badge pending (dot + số). Đây là phần *chỉ* rail làm được |
+| **Thanh tiêu đề** | **Control của kết nối đang chọn.** Giữ nguyên capsule hiện có, scope theo kết nối đang chọn, cộng một dấu hiệu tổng khi kết nối **khác** đang dirty |
+| **Dialog** | Per-connection, thêm tên kết nối vào header. Mở được từ cả hai chỗ trên |
+
+Lý do rail là chỗ đúng cho phần trạng thái: nó là chỗ **duy nhất** trong UI mà mỗi item *chính là* một
+kết nối, 1:1 với `conn_id` (§4.3). Và nó là phương án duy nhất cho thấy **N phiên cùng lúc** — với một
+nút trên thanh tiêu đề thì N−1 phiên còn lại vô hình, tức có thể đang có ba transaction chưa commit mà
+chỉ thấy một. Badge ở rail giải trực tiếp rủi ro #2 ở §6: người dùng **thấy** kết nối nào dirty trước
+khi đóng cửa sổ, thay vì gặp một dialog bất ngờ. `any_pending()` (ở trên) chính là hàm nuôi dấu hiệu
+tổng trên thanh tiêu đề.
+
+Lý do thanh tiêu đề **vẫn phải giữ** một phần, chứ không dồn hết vào rail — ba rào, và không rào nào nhỏ:
+
+1. **Rail ẩn khi < 2 kết nối** (`DbRail.tsx:44` + guard `< 2`; comment trong file: *"With a single
+   connection the title bar popover is enough"*). Dồn hết vào rail thì với **một** kết nối — trường hợp
+   phổ biến nhất — không còn UI transaction nào. Đó là regression.
+2. **Rail ẩn cùng sidebar** (`App.tsx:1353` là `{showSidebar && <DbRail …>}`, và comment ghi việc gắn
+   với sidebar là *cố ý*). Nên `Ctrl+P` sẽ ẩn luôn trạng thái transaction — có dữ liệu chưa commit mà
+   không còn dấu hiệu nào. Rào này nguy hiểm hơn rào trên.
+3. **Rail quá hẹp cho controls.** Badge thì vừa; Commit / Rollback / ô isolation / Monaco xem SQL chưa
+   commit thì không. Nên rail chỉ làm *chỉ báo + cửa vào*. Cộng: item rail đã có primary action là
+   "chuyển kết nối", nên badge cần hit area riêng (~14px ở góc icon), không dùng chung được.
+
+Chi phí: badge ở rail + scope thanh tiêu đề + dấu hiệu tổng + header dialog. **Không component mới,
+không dialog mới.**
+
+#### 4.2c Rail hiện gì — ✅ ĐÃ CHỐT: chỉ các kết nối **đang mở**
+
+Hôm nay `DbRail` gọi `dbHelper.listDatabases()` và liệt kê **mọi** database trên server. Đổi thành:
+rail liệt kê **đúng tập `conn_id` đang sống**, tức chỉ những kết nối người dùng đã chủ động mở.
+
+Ba thứ có được từ quyết định này:
+
+- **Hết vấn đề danh sách phẳng.** Nếu rail liệt kê mọi database thì với §4.3 nó sẽ **trộn** "database
+  của server A" với "database của server B" mà không phân biệt được, trong khi cây Sidebar lại có
+  server ở cấp trên. Chỉ hiện kết nối đã mở thì tập hiển thị *chính là* tập `conn_id`, không còn chỗ
+  cho sự trộn đó.
+- **Badge có chỗ đặt đúng nghĩa.** Một phiên transaction chỉ tồn tại trên một kết nối **đã mở**; một
+  database chưa mở không có phiên nào để hiện.
+- **Bỏ được một truy vấn.** `list_databases` chạy một query thật trên kết nối đang hoạt động
+  (`DbRail.tsx:42-43` đã ghi chú đúng điều đó). Rail chuyển sang đọc registry kết nối, không cần query.
+  `list_databases` vẫn cần, nhưng cho **cây Sidebar** — nơi người dùng chọn database để mở.
+
+Giữ nguyên guard `< 2`: một kết nối thì không có gì để chuyển, và tầng thanh tiêu đề đã phủ trường hợp
+đó (rào 1 ở trên).
 
 ### 4.3 Identity = `(server, database)`; mở database thứ hai **sinh `conn_id` mới**
 
@@ -409,11 +501,65 @@ shadowing đã dùng cho `backendErrors.ts`).
 race đã loại ở §4.1. Nó chỉ được phép tồn tại khi N == 1, và điều kiện ra khỏi Phase 2 là `dbHelper`
 không còn đọc id ngầm ở đâu.
 
-- **1a.** Bọc `DbConnection` + đổi tên `DbKind` + `ConnId::Adhoc` (§4.4a). ~70 chỗ compiler chỉ.
-  `tx_session` còn global; `should_route` trả `false` cho `Adhoc` → **ship luôn bản sửa lỗi §0**.
-- **1b.** `state.rs` mới (`ConnRegistry`, `ConnCtx`, `Arc<ServerHandle>`); **xoá
-  `AppState::db_manager`**; sửa 56 `E0609`.
-- **1c.** Mọi lệnh chạm kết nối nhận `conn_id: String`; `dbHelper` chuyển tiếp.
+- **1a.** `state.rs` mới (`ConnRegistry`, `ConnCtx`, `Arc<ServerHandle>`), chưa wire — ✅ **đã làm**.
+- **1b.** **Xoá `AppState::db_manager`**; sửa 56 `E0609` bằng `ConnRegistry::acquire`. Bên trong 1b,
+  thứ tự cũng bắt buộc: **các chỗ GHI trước các chỗ ĐỌC.** `connect_db`/`disconnect_db` phải nạp
+  registry xong thì reader mới có gì để `acquire()`; làm ngược lại thì reader đọc một registry rỗng.
+  - **1b-1** ✅ `AppState.connections` + `connect_db` mint `conn_id` (UUID) và ghi vào registry,
+    `disconnect_db` xoá. Chưa lệnh nào đọc, nên hành vi không đổi.
+  - **1b-2** ✅ `tx_session::current_conn` + `data_generator::active_conn` (chữ ký giữ nguyên nên
+    không caller nào đổi). Shim là `ConnRegistry::sole()`, **từ chối khi có >1 entry** thay vì chọn
+    bừa — nhờ đó không thể ship Phase 2 khi còn caller của nó.
+  - **1b-3** ✅ 39 chỗ đọc trong `database.rs`, đúng hai hình dạng, đổi bằng pass cơ học. Xoá được
+    `pg_schema()` (0 caller còn lại) — `ConnCtx::schema()` đã defaulted nên "quên default" thành
+    không biểu diễn được.
+  - **1b-4** ✅ `SshTunnel` chuyển sang `ServerHandle` (port đóng khi `Arc` cuối cùng drop), 2 chỗ
+    đọc server-level, `db_compare`/`db_stats`/`get_connection_status`, 8 chỗ ghi lifecycle, rồi
+    **xoá `db_manager` + `DatabaseManager`**.
+
+**Kết quả 1b:** 56 → 0 chỗ khoá `db_manager`; 48 chỗ đi qua registry; `database.rs` ngắn đi ~50 dòng.
+Còn đúng hai `#[allow(dead_code)]` có phạm vi hàm, kèm lý do: `acquire()` (1d dùng) và `ConnCtx::db()`
+(rail của Phase 3 dùng).
+
+Ba điều phát sinh khi làm, ghi lại để khỏi tìm lại:
+
+- **`ServerHandle::last_config` phải là `Mutex<Value>`**, vì `USE` trong restore và `switch_database`
+  đều ghi lại `database` trong đó, mà `ServerHandle` nằm sau `Arc`. Phase 3 bỏ được `Mutex` này: khi
+  database đến từ `ConnEntry::db` thì `last_config` thành server-level thật và thôi thay đổi.
+- **Task refresh IAM không còn cần `generation` để bảo vệ phép swap.** Nó swap theo `conn_id`, mà
+  disconnect thì xoá entry đó còn reconnect thì mint id *khác* — nên một task cũ chỉ có thể ghi vào
+  một entry đã biến mất, và `replace_conn` no-op. `generation` giờ chỉ còn để dừng vòng lặp. Đây là
+  một phần của §4.6 tự giải quyết sớm.
+- **`get_connection_status` và `db_compare::resolve_side` phải dùng `sole().ok()`, không phải `?`.**
+  Cả hai *dung thứ* trạng thái chưa kết nối: cái đầu rơi xuống nhánh Redis, cái sau để `base` quyết
+  định từ config của từng phía. Dùng `?` là biến "chưa kết nối SQL" thành lỗi và chặn cả hai đường đó.
+- **1c.** ✅ Bọc `DbConnection` + đổi tên `DbKind` + `ConnId::Adhoc` (§4.4a), làm §0 thành cấu trúc.
+  Tách hai nửa qua một **type alias trung gian** (`pub type DbConnection = DbKind`): nửa đầu là rename
+  149 chỗ mà grep tự chứng minh, nửa sau là thay đổi ngữ nghĩa phá 46 `match` + 14 `matches!` + 6 chỗ
+  dựng. Nhờ tách, một lỗi biên dịch chỉ có thể đến từ một nửa.
+- **1d.** ✅ 45 lệnh + 4 helper nhận `conn_id`; `dbHelper.ts:24` tiêm `connId` cho **mọi** lệnh nên
+  **0/210 call site frontend phải sửa**; `sole()` đã xoá.
+
+Bốn thứ chỉ lộ ra khi làm, ghi lại để khỏi tìm lại:
+
+- **Pass cơ học phải kiểm ngược, không kiểm xuôi.** Cách bắt được chỗ sót không phải "đếm số chỗ đã
+  đổi" mà là: *mọi* `match` có arm `DbKind::` phải có `.kind` ở target. Kiểm xuôi báo 46/46 đẹp; kiểm
+  ngược lộ ra **2 tuple-match** (`match (conn, schema)`, `match (&conn_type, restart_identity)`) mà
+  regex không khớp, và **1 chỗ không được đổi** (`let conn = match conn { Some(c) => … }` trong
+  `get_connection_status` — match trên `Option<DbConnection>`, không phải trên connection).
+- **`build_iam_conn` phải trả `DbKind`, không phải `DbConnection`.** Pool mới thay chỗ một kết nối
+  *đang có*, nên id phải là id của kết nối đó — mà hàm dựng pool không biết id. Caller bọc. Cùng lý do
+  đó, restore-`USE` và `switch_database` bọc bằng id của entry hiện tại, **không** mint id mới.
+- **`connect_db` không nhận `conn_id`** (nó tự mint), nên chỗ đọc "kết nối cũ" để rollback lấy từ giá
+  trị trả về của `clear()`. Việc đó sửa luôn một chi tiết cũ: connect **thất bại** không còn rollback
+  transaction của kết nối mà nó chưa hề thay thế.
+- **`disconnect_db` coi id lạ là hợp lệ**, không phải lỗi: ngắt một thứ đã biến mất chính là trạng
+  thái người gọi muốn. `reset(None)` vẫn chạy để xoá state machine.
+
+**Thứ tự 1b trước 1c là bắt buộc, đã đo.** Có **319** chỗ nhắc `DbConnection::` trong `src-tauri/src`,
+trong đó **170** là các cặp `Some(DbConnection::X(y)) => DbConnection::X(y.clone())` **nằm trong 56
+khối acquire mà 1b xoá sạch**. Làm wrapper trước thì phải sửa 170 chỗ chỉ để bước sau ném đi; làm sau
+thì chỉ còn ~149 chỗ dư. (Bản đầu của tài liệu này xếp ngược, đã sửa.)
 
 ### Phase 2 — N kết nối, mỗi kết nối một database
 
@@ -433,9 +579,13 @@ Backend: `open_database(conn_id, db) -> conn_id` (thân đã có ở `database.r
 cho phase này (restore là thao tác modal một tab).
 
 Frontend: `TabInfo` mang scope + đảo mô hình lưu tab (§4.5); key `catalog.ts` / `dbIndexRegistry.ts`
-theo `(connId, db, schema)`; thêm conn id vào 4 CustomEvent; **dỡ either/or `App.tsx:1324`**;
-`DbRail` thành bộ chọn **kết nối** (hiện nó chọn database); cây Sidebar 2 cấp — lưu ý
-`SidebarProps.dbType` hiện chưa có `'redis'`.
+theo `(connId, db, schema)`; thêm conn id vào 4 CustomEvent; **dỡ either/or `App.tsx:1324`**; cây
+Sidebar 2 cấp — lưu ý `SidebarProps.dbType` hiện chưa có `'redis'`, và đây là nơi người dùng chọn
+database để **mở** (nguồn dùng `list_databases`).
+
+`DbRail` thành bộ chọn **kết nối đang mở** (hiện nó liệt kê mọi database qua `list_databases`) và mang
+badge pending của từng kết nối — §4.2b/§4.2c. Thanh tiêu đề giữ capsule `TxControl` scope theo kết nối
+đang chọn cộng dấu hiệu tổng từ `any_pending()`.
 
 Cây đích:
 
@@ -528,16 +678,28 @@ Nghĩa vụ cơ học kèm theo:
 
 ## 8. Trạng thái
 
-**Chưa bắt đầu code.** Tài liệu này thay bản đầu tiên.
+**Phase 1 đã xong** (1a–1d). Tài liệu này thay bản đầu tiên.
+
+Kết quả đo được của Phase 1: 56 → **0** chỗ khoá `db_manager`; `DatabaseManager` đã xoá; 45 lệnh + 4
+helper nhận `conn_id`; **0/210** call site frontend phải sửa (nhờ tiêm ở `dbHelper.ts:24`); `sole()` đã
+xoá nên compiler bảo đảm không còn đường ngầm nào. Xoá thêm `pg_schema()` và
+`execute_raw_sql_unrouted` — cả hai thành dư sau khi `ConnCtx::schema()` defaulted và `ConnId::Adhoc`
+thành cấu trúc. `cargo check` sạch, `tsc -b` 0 lỗi, 534 test pass, oxlint sạch.
+
+Đã kiểm tay: manual mode → sửa lưới → Lưu → Discard → đổi database → có câu chờ thì bị chặn.
+**Chưa kiểm tay**: So sánh 2 database, disconnect, restore có `USE`, và refresh token IAM (§4.6 — cái
+này cần build nháp với chu kỳ rút ngắn, không kiểm được dưới 15 phút).
 
 Đã chốt: §4.1 (`conn_id` tường minh, không có `active_conn_id`), §4.3 (identity = `(server,
 database)`, đường (iii)), §4.4 (id nằm trong `DbConnection`; xoá `AppState::db_manager` để compiler
 chỉ chỗ sót), và phạm vi (bỏ federation, Redis ngoài phạm vi).
 
-**Còn một quyết định chặn Phase 2:** §4.2 — `TxControl` đặt ở đâu khi có N phiên (nút theo kết nối
-đang chọn, hay chuyển vào toolbar từng tab).
+Cộng §4.2b (chỗ đặt `TxControl`: chia ba tầng rail / thanh tiêu đề / dialog) và §4.2c (rail chỉ hiện
+các kết nối **đang mở**).
 
-Việc nên làm trước, độc lập với mọi thứ còn lại: **sửa lỗi §0**.
+**Đã làm: §0** — lỗi `db_compare` bị pin làm phiên transaction. Đứng ngoài mọi phase, đã ship.
+
+**Không còn quyết định nào bị chặn.** Việc tiếp theo là Phase 0 (merge phần đang dở) rồi Phase 1a.
 
 ---
 

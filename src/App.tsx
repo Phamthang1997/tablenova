@@ -1171,6 +1171,13 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleRunAiSql = (sql: string) => {
+    handleInsertSql(sql);
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('execute-active-query'));
+    }, 150);
+  };
+
   // Config cho Terminal: nếu kết nối hiện tại dùng SSH -> kế thừa để mở shell VÀO MÁY CHỦ/VM đó;
   // ngược lại mở shell máy cục bộ.
   const terminalConfig = (): DbConnectionConfig => {
@@ -1508,7 +1515,9 @@ export const App: React.FC = () => {
                 {showAi && (
                   <AiAssistant
                     onInsertSql={handleInsertSql}
+                    onRunSql={handleRunAiSql}
                     tableNameContext={activeTable}
+                    dbType={connection?.dbType}
                   />
                 )}
               </div>

@@ -29,6 +29,52 @@ function rememberExportDir(dir: string): void {
 }
 
 /**
+ * Mở hộp thoại chọn tệp của hệ điều hành.
+ * Trả về đường dẫn tệp đã chọn, hoặc null nếu người dùng huỷ / không có backend Tauri.
+ */
+export async function pickOpenFile(options?: {
+  title?: string;
+  defaultPath?: string;
+  filters?: { name: string; extensions: string[] }[];
+}): Promise<string | null> {
+  try {
+    const res = await invoke<string | string[] | null>('plugin:dialog|open', {
+      options: {
+        directory: false,
+        multiple: false,
+        title: options?.title || 'Chọn tệp',
+        defaultPath: options?.defaultPath || undefined,
+        filters: options?.filters,
+      },
+    });
+    const file = Array.isArray(res) ? res[0] : res;
+    return file || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Chọn tệp cơ sở dữ liệu SQLite (.db, .sqlite, .sqlite3, .db3, .s3db).
+ */
+export async function pickSqliteDatabaseFile(defaultPath?: string): Promise<string | null> {
+  return pickOpenFile({
+    title: 'Chọn tệp SQLite',
+    defaultPath,
+    filters: [
+      {
+        name: 'SQLite Database (*.db, *.sqlite, *.sqlite3, *.db3, *.s3db)',
+        extensions: ['db', 'sqlite', 'sqlite3', 'db3', 's3db'],
+      },
+      {
+        name: 'All Files (*.*)',
+        extensions: ['*'],
+      },
+    ],
+  });
+}
+
+/**
  * Mở hộp thoại chọn thư mục của hệ điều hành.
  * Trả về đường dẫn đã chọn, hoặc null nếu người dùng huỷ / không có backend Tauri.
  */

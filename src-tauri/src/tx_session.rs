@@ -3,8 +3,14 @@
 //! Why a module-level static instead of `AppState`: the ~60 call sites that reach the database go
 //! through `database::execute_raw_sql_generic`, which receives a `&DbConnection` and no `AppState`.
 //! Threading a session handle down to all of them would mean changing hundreds of signatures for a
-//! value that is always the same one — `DatabaseManager` holds exactly ONE connection for the whole
-//! app, so there is exactly one session. The static is reset by `connect_db` / `disconnect_db`.
+//! value that is always the same one — Phase 1 of multi-connection keeps `AppState::connections` at
+//! exactly ONE entry, so there is exactly one session. Reset by `connect_db` / `disconnect_db`.
+//!
+//! **This static is what Phase 2 replaces**, and it is a hard ordering constraint rather than a
+//! preference: with N entries in the registry and one global session, the first statement issued in
+//! manual mode pins whichever connection asked first, and every later statement of every other
+//! connection then runs on it — the wrong database, not merely a slow one. See
+//! `docs/multi-connection-plan.md` §4.2.
 //!
 //! The three rules that make this correct:
 //!
@@ -18,7 +24,7 @@
 //! 3. The state machine also watches statements the *user* typed (`COMMIT`, `ROLLBACK`) and the
 //!    ones MySQL commits implicitly (DDL). Without that the pending counter lies.
 //!
-//! SQLite needs no pinning: `DbConnection::Sqlite` is a single `Arc<Mutex<Connection>>` shared by
+//! SQLite needs no pinning: `DbKind::Sqlite` is a single `Arc<Mutex<Connection>>` shared by
 //! the whole app, so it is already one session. Only the state machine applies there.
 
 use std::sync::{Mutex, OnceLock};
@@ -28,7 +34,7 @@ use serde_json::{json, Value};
 use tauri::Emitter;
 use tauri::ipc::Channel;
 
-use crate::database::{self, DbConnection};
+use crate::database::{self, DbConnection, DbKind};
 
 /// What a statement does to the transaction around it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -244,10 +250,10 @@ pub fn is_aborted_error(err: &str) -> bool {
 }
 
 pub fn dialect_of(conn: &DbConnection) -> &'static str {
-    match conn {
-        DbConnection::Sqlite(_) => "sqlite",
-        DbConnection::Postgres(_) => "postgres",
-        DbConnection::Mysql(_) => "mysql",
+    match &conn.kind {
+        DbKind::Sqlite(_) => "sqlite",
+        DbKind::Postgres(_) => "postgres",
+        DbKind::Mysql(_) => "mysql",
     }
 }
 
@@ -457,8 +463,23 @@ pub fn reject_if_manual_or_open(action: &str) -> Result<(), String> {
 
 /// For operations that only break when a transaction is actually *open* (switching database drops
 /// the pool underneath it). Manual mode with nothing open is harmless here.
-pub fn reject_if_open(action: &str) -> Result<(), String> {
-    if is_open() {
+/// Guard for operations that replace the connection underneath the session (switching database).
+///
+/// Keys on `has_pending()`, **not** `is_open()`, and that distinction is the whole point. In manual
+/// mode `should_route` sends every statement through the session and `run_raw` calls `ensure_begin`
+/// on the first one *whatever it is* — a plain `SELECT` from a grid refresh opens a transaction. So
+/// `is_open()` is true almost all the time once manual mode is on, and guarding on it made switching
+/// database impossible: right after a Discard the next grid read reopened the transaction and the
+/// refusal came back, with nothing pending to commit or roll back.
+///
+/// `has_pending()` is `open && statements > 0`, and `statements` counts *writes* only. So an open
+/// transaction with nothing pending has done nothing but read, and rolling it back to swap the pool
+/// loses nothing — which is why the caller may do that itself instead of asking the user.
+///
+/// Reuses the wording of the old `reject_if_open` verbatim: with pending writes it is exactly as
+/// true as before, and keeping the literal identical costs `src/utils/backendErrors.ts` nothing.
+pub fn reject_if_pending(action: &str) -> Result<(), String> {
+    if has_pending() {
         return Err(format!(
             "Transaction đang mở — hãy commit hoặc rollback trước khi {}",
             action
@@ -474,6 +495,14 @@ pub fn reject_if_open(action: &str) -> Result<(), String> {
 /// another one, and the connection carrying the open transaction went back to the pool holding
 /// locks. The statement that opens a transaction has to create the session it belongs to.
 pub fn should_route(conn: &DbConnection, sql: &str) -> bool {
+    // A pool this process opened for itself is never the user's session. This check is FIRST because
+    // everything below answers from global session state without looking at the connection: with
+    // manual commit on, an ad-hoc pool used to be pinned as the session and `BEGIN` ran on it, so
+    // every later statement of the user went to the compare database — and the pool was then closed
+    // under the session. See `ConnId::Adhoc` and §0 of docs/multi-connection-plan.md.
+    if matches!(conn.id, crate::state::ConnId::Adhoc) {
+        return false;
+    }
     let m = match g().meta.lock() {
         Ok(m) => m,
         Err(e) => e.into_inner(),
@@ -495,12 +524,12 @@ async fn lock_pinned(
 ) -> Result<tokio::sync::MutexGuard<'static, Option<Pinned>>, String> {
     let mut guard = g().pinned.lock().await;
     if guard.is_none() {
-        *guard = Some(match conn {
-            DbConnection::Sqlite(_) => Pinned::Sqlite,
-            DbConnection::Postgres(pool) => {
+        *guard = Some(match &conn.kind {
+            DbKind::Sqlite(_) => Pinned::Sqlite,
+            DbKind::Postgres(pool) => {
                 Pinned::Postgres(pool.acquire().await.map_err(|e| e.to_string())?)
             }
-            DbConnection::Mysql(pool) => {
+            DbKind::Mysql(pool) => {
                 Pinned::Mysql(pool.acquire().await.map_err(|e| e.to_string())?)
             }
         });
@@ -515,8 +544,8 @@ async fn raw_on_pinned(
     sql: &str,
 ) -> Result<Vec<Value>, String> {
     match pinned {
-        Pinned::Sqlite => match conn {
-            DbConnection::Sqlite(arc) => database::sqlite_raw(arc, sql),
+        Pinned::Sqlite => match &conn.kind {
+            DbKind::Sqlite(arc) => database::sqlite_raw(arc, sql),
             _ => Err("Kết nối không khớp với phiên transaction".to_string()),
         },
         Pinned::Postgres(c) => database::pg_raw(&mut **c, sql).await,
@@ -674,8 +703,8 @@ pub(crate) async fn run_bound(
     ensure_begin(pinned, conn, &effect).await?;
 
     let out = match pinned {
-        Pinned::Sqlite => match conn {
-            DbConnection::Sqlite(arc) => database::sqlite_bound(arc, &sql, params),
+        Pinned::Sqlite => match &conn.kind {
+            DbKind::Sqlite(arc) => database::sqlite_bound(arc, &sql, params),
             _ => Err("Kết nối không khớp với phiên transaction".to_string()),
         },
         Pinned::Postgres(c) => database::pg_bound(&mut **c, &sql, params).await,
@@ -714,8 +743,8 @@ pub(crate) async fn run_stream(
         // SQLite streams off the shared handle exactly as it does outside a transaction — the
         // handle IS the session. Calling the dialect helper directly (not `stream_one_statement`)
         // matters: that one routes back here and would recurse.
-        Pinned::Sqlite => match conn {
-            DbConnection::Sqlite(arc) => {
+        Pinned::Sqlite => match &conn.kind {
+            DbKind::Sqlite(arc) => {
                 database::sqlite_stream(arc, sql, params, stmt_index, channel, cancel).await
             }
             _ => Err("Kết nối không khớp với phiên transaction".to_string()),
@@ -802,9 +831,11 @@ pub async fn reset(conn: Option<&DbConnection>) {
 // Commands
 // ---------------------------------------------------------------------------
 
-fn current_conn(state: &tauri::State<'_, crate::AppState>) -> Result<DbConnection, String> {
-    let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-    manager.connection.clone().ok_or_else(|| "Chưa kết nối CSDL".to_string())
+fn current_conn(
+    state: &tauri::State<'_, crate::AppState>,
+    conn_id: &str,
+) -> Result<DbConnection, String> {
+    Ok(state.connections.acquire(conn_id)?.conn().clone())
 }
 
 #[tauri::command]
@@ -817,7 +848,7 @@ pub async fn tx_status() -> Result<Value, String> {
 /// guessing which one was meant is not ours to do.
 #[tauri::command]
 pub async fn tx_set_autocommit(
-    state: tauri::State<'_, crate::AppState>,
+    state: tauri::State<'_, crate::AppState>, conn_id: String,
     enabled: bool,
 ) -> Result<Value, String> {
     if enabled && has_pending() {
@@ -825,7 +856,7 @@ pub async fn tx_set_autocommit(
     }
     // An open-but-empty transaction has nothing to lose, so close it quietly.
     if enabled && is_open() {
-        let conn = current_conn(&state).ok();
+        let conn = current_conn(&state, &conn_id).ok();
         if let Some(c) = &conn {
             let mut guard = lock_pinned(c).await?;
             if let Some(pinned) = guard.as_mut() {
@@ -849,11 +880,11 @@ pub async fn tx_set_autocommit(
 
 #[tauri::command]
 pub async fn tx_set_isolation(
-    state: tauri::State<'_, crate::AppState>,
+    state: tauri::State<'_, crate::AppState>, conn_id: String,
     level: Option<String>,
     read_only: Option<bool>,
 ) -> Result<Value, String> {
-    let conn = current_conn(&state)?;
+    let conn = current_conn(&state, &conn_id)?;
     let dialect = dialect_of(&conn);
     if let Some(l) = &level {
         if !isolation_allowed(dialect, l) {
@@ -871,11 +902,16 @@ pub async fn tx_set_isolation(
     Ok(status_json())
 }
 
-async fn end_tx(state: tauri::State<'_, crate::AppState>, sql: &str) -> Result<Value, String> {
+async fn end_tx(
+    state: tauri::State<'_, crate::AppState>,
+    conn_id: &str,
+    sql: &str,
+) -> Result<Value, String> {
     if !is_open() {
         return Err("Không có transaction nào đang mở".to_string());
     }
-    let conn = current_conn(&state)?;
+    // `conn_id` is already a `&str` here, unlike the commands that own a `String`.
+    let conn = current_conn(&state, conn_id)?;
     let mut guard = lock_pinned(&conn).await?;
     let pinned = guard.as_mut().ok_or("Phiên transaction không sẵn sàng")?;
     let out = raw_on_pinned(pinned, &conn, sql).await;
@@ -894,33 +930,39 @@ async fn end_tx(state: tauri::State<'_, crate::AppState>, sql: &str) -> Result<V
 }
 
 #[tauri::command]
-pub async fn tx_commit(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
-    end_tx(state, "COMMIT").await
+pub async fn tx_commit(
+    state: tauri::State<'_, crate::AppState>,
+    conn_id: String,
+) -> Result<Value, String> {
+    end_tx(state, &conn_id, "COMMIT").await
 }
 
 #[tauri::command]
-pub async fn tx_rollback(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
-    end_tx(state, "ROLLBACK").await
+pub async fn tx_rollback(
+    state: tauri::State<'_, crate::AppState>,
+    conn_id: String,
+) -> Result<Value, String> {
+    end_tx(state, &conn_id, "ROLLBACK").await
 }
 
 #[tauri::command]
 pub async fn tx_savepoint(
-    state: tauri::State<'_, crate::AppState>,
+    state: tauri::State<'_, crate::AppState>, conn_id: String,
     name: String,
 ) -> Result<Value, String> {
     let clean = sanitize_savepoint(&name)?;
-    let conn = current_conn(&state)?;
+    let conn = current_conn(&state, &conn_id)?;
     run_raw(&conn, format!("SAVEPOINT {}", clean)).await?;
     Ok(status_json())
 }
 
 #[tauri::command]
 pub async fn tx_rollback_to(
-    state: tauri::State<'_, crate::AppState>,
+    state: tauri::State<'_, crate::AppState>, conn_id: String,
     name: String,
 ) -> Result<Value, String> {
     let clean = sanitize_savepoint(&name)?;
-    let conn = current_conn(&state)?;
+    let conn = current_conn(&state, &conn_id)?;
     run_raw(&conn, format!("ROLLBACK TO SAVEPOINT {}", clean)).await?;
     Ok(status_json())
 }

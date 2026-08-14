@@ -432,6 +432,7 @@ const ja: typeof en = {
     sqlitePathLabel: 'ファイルパス (.db, .sqlite)',
     sqlitePathPlaceholder: 'my_database.db',
     sqliteHint: 'ファイルが存在しない場合、接続時に TableNova が新規作成します。',
+    pickSqliteTitle: 'SQLite データベースファイルを選択',
 
     redisSection: 'Redis サーバー',
     redisDesc: '認証情報はこの端末にローカル保存されます。',
@@ -877,12 +878,24 @@ const ja: typeof en = {
   ai: {
     title: 'AI アシスタント',
     you: 'あなた',
+    justNow: 'たった今',
+    insert: '挿入',
+    run: '実行',
+    runQuery: 'クエリを実行',
+    compareTitle: '他のモデルの回答と比較...',
+    chatHistory: 'チャット履歴',
+    newChat: '新しいチャット',
+    attachTable: 'テーブル添付',
+    attachTableHint: 'テーブルスキーマをプロンプトコンテキストに添付',
+    searchTables: 'テーブルを検索...',
+    noTablesFound: 'テーブルが見つかりません',
+    settingsTitle: 'AI アシスタント＆API設定',
     greeting:
       'こんにちは。TableNova の SQL アシスタントです。自然な言葉の質問を SQL クエリに変換できます。\n\n例:「users テーブルのアクティブな管理者を一覧表示」「全注文の売上合計」',
-    schemaCurrentTable: '現在のテーブル: {{table}}。その他: users, products, orders',
+    schemaCurrentTable: '現在のテーブル: {{table}}',
     insertIntoEditor: 'エディタに挿入',
-    thinking: '考え中...',
-    inputPlaceholder: 'AI に SQL を聞く (Enter で送信)...',
+    thinking: 'スキーマを分析して SQL を生成中...',
+    inputPlaceholder: 'AI アシスタントに SQL を聞く...',
   },
 
   explain: {
