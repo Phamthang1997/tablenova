@@ -22,7 +22,10 @@ export interface AiAssistantProfile {
 export interface AiSettings {
   activeProfileId: string;
   profiles: AiAssistantProfile[];
+  googleClientId?: string;
+  googleClientSecret?: string;
   googleAuthToken?: string;
+  googleRefreshToken?: string;
   googleAuthEmail?: string;
   googleAuthExpiresAt?: number;
   autoAttachActiveTable: boolean;

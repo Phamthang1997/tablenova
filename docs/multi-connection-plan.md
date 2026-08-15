@@ -561,15 +561,100 @@ trong đó **170** là các cặp `Some(DbConnection::X(y)) => DbConnection::X(y
 khối acquire mà 1b xoá sạch**. Làm wrapper trước thì phải sửa 170 chỗ chỉ để bước sau ném đi; làm sau
 thì chỉ còn ~149 chỗ dư. (Bản đầu của tài liệu này xếp ngược, đã sửa.)
 
-### Phase 2 — N kết nối, mỗi kết nối một database
+### Phase 2 — N kết nối, mỗi kết nối một database — ✅ CODE XONG
 
-Registry nhận nhiều entry; `connect_db` thôi đóng cái trước; `disconnect_db(conn_id)`; frontend truyền
-id thật (≈63 method `dbHelper` có kiểu, không phải 210 call site thô); xoá shim của Phase 1.
+Bảy việc backend + frontend tối thiểu đã làm; `cargo check` sạch, `tsc -b` 0 lỗi, 534 test pass,
+oxlint sạch. **Chưa thử tay** — xem §8.
 
-**`tx_session` map + `pinned`/`meta` per-session phải nằm ở ĐÂY** (§4.2) — N entry với một `pinned`
-global là ghi sai database, không phải chỉ chậm. Cùng phase: `conn_generation` → `ServerHandle`
-(§4.6), `CANCEL_KEY` scoped theo `conn_id`, `reject_if_manual_or_open` per-conn, dedupe SQLite theo
-path, `any_pending()` cho guard đóng cửa sổ.
+Bốn thứ chỉ lộ ra khi làm, ghi lại để khỏi tìm lại:
+
+- **`Session.pinned` phải là `Arc<tokio::Mutex<…>>` + `lock_owned()`.** Khi phiên còn là `&'static
+  Global` thì guard mượn từ static nên không có vấn đề vòng đời; chuyển sang `Arc<Session>` thì
+  `MutexGuard<'_, _>` không thể sống lâu hơn `Arc` mà `lock_pinned` vừa tra, trong khi caller giữ
+  guard suốt cả câu lệnh. `lock_owned()` trả guard tự mang keep-alive. Đây cũng là thứ cho phép
+  **thả khoá map trước khi await** — giữ nó qua `.await` là dựng lại đúng cái serialization vừa bỏ.
+- **`use_session` nhận `&DbConnection`, còn `reject_if_manual_or_open` nhận `&str`.** Không thống
+  nhất được: guard của restore và sinh dữ liệu chạy *trước khi* có handle, chỉ biết id. Nên vị từ
+  được viết thẳng ở đó thay vì gọi lại `use_session` — giữ được tính chất "handle mang identity của
+  chính nó" ở chỗ có handle, mà không ép chỗ không có phải bịa ra một cái.
+- **Reconnect mint `conn_id` MỚI.** `handleReconnect` không cập nhật state thì React giữ id cũ:
+  lệnh vẫn chạy (shim `dbHelper` đã đổi) nên không lộ ra ngay, biểu hiện là **thanh transaction chết
+  im** vì `TxControl` lọc bỏ mọi event do id không khớp.
+- **Chuyển kết nối phải qua `guardDirty`.** Nó swap danh sách tab y như đổi database, nên sửa dở ở
+  lưới mất trắng nếu không hỏi — và người dùng sẽ chuyển kết nối thường xuyên hơn nhiều so với đổi
+  database, từ lúc có rail.
+
+#### `open_database` kéo lên từ Phase 3, và nó xoá luôn một lớp lỗi
+
+Phát sinh khi thử tay: bộ chọn database trên thanh tiêu đề gọi `switch_database`, mà lệnh đó *thay*
+pool nên bị `reject_if_pending` chặn khi database hiện tại còn thay đổi chưa commit — người dùng
+không có cách nào xoá lời từ chối đó nếu không bỏ chính phần việc đang làm.
+
+Chốt: bộ chọn database **mở thêm một kết nối**, không đổi kết nối đang có. Đó chính là
+`open_database(conn_id, db) -> conn_id mới` của §4.3, vốn xếp ở Phase 3. Kéo lên vì nó không chỉ là
+tính năng mà là **cách lớp lỗi kia biến mất**: mở là *thêm* pool nên không đụng gì đang có, không có
+gì để từ chối, và transaction đang mở ở database cũ cứ chạy tiếp.
+
+Ba tính chất đến từ việc chia sẻ `Arc<ServerHandle>`, không phải viết thêm: dùng chung tunnel, dùng
+chung credential (**không xác thực lại** — quan trọng với token IAM sống 15 phút), và tunnel chỉ đóng
+khi kết nối *cuối cùng* trên server đó đóng. `find(server, db)` làm lệnh idempotent: chọn lại database
+đã mở thì trả về kết nối đang giữ nó.
+
+**`switch_database` được giữ lại**, không xoá: còn ba đường thật sự muốn thay pool tại chỗ — bước
+"đổi sang database đích" của luồng nhập/phục hồi, popup thống kê, và một chỗ ở Sidebar. Hai chỗ sau
+có lẽ nên chuyển sang *mở thêm* cho nhất quán, nhưng đó là quyết định riêng.
+
+#### Rail: chỉ hiện, chuyển, đóng
+
+Chốt sau khi thử tay: rail **không** có nút thêm. Thêm kết nối tới server khác đi qua thanh tiêu đề
+(*Kết nối mới*); thêm database trên cùng server đi qua bộ chọn database. Rail mang menu chuột phải
+với *Đóng kết nối* / *Đóng các kết nối khác*.
+
+Một lỗi tự tạo đáng ghi: bản đầu tôi đặt nút `+` **trong** rail mà rail lại tự ẩn khi `< 2` kết nối —
+nút mở kết nối thứ hai chỉ hiện ra khi đã có kết nối thứ hai. Bê nguyên ngưỡng của rail cũ (liệt kê
+*database*, ẩn khi chỉ có một) sang rail mới mà không soát lại điều kiện còn đúng không.
+
+Một chỗ **cố ý bỏ ngỏ**: Redis không vào rail. Nó không đi qua `connect_db` nên không có `conn_id`.
+Kết nối Redis khi đang có kết nối SQL vẫn swap workspace sang `RedisBrowser` còn rail giữ nguyên các
+kết nối SQL với không cái nào active. Hơi lạ nhưng không hỏng, và Redis vốn ngoài phạm vi.
+
+#### Kế hoạch gốc của Phase 2 (giữ lại để đối chiếu)
+
+**Invariant kết thúc phase** — thứ làm Phase 1 an toàn là có một câu kiểm được, phase này cần cái
+tương đương: *hai kết nối mở đồng thời, mỗi kết nối một phiên transaction riêng; chuyển qua lại giữ
+nguyên trạng thái từng cái; ghi vào đúng kết nối của tab đang mở.* Ca chặn: hai kết nối cùng có bảng
+trùng tên → manual mode ở A, sửa một dòng → sang B, sửa một dòng → `TxControl` báo đúng phiên của B →
+commit ở B → quay lại A, phần chưa commit của A **vẫn còn**.
+
+Backend, 7 việc:
+
+1. **`tx_session` thành map** — ràng buộc cứng, phải cùng phase với việc registry nhận nhiều entry
+   (§4.2). Phần load-bearing là `Arc<Session>`. Phase 1 đã đưa `conn_id` tới **mọi** chỗ gọi
+   `is_open` / `use_session` / `has_pending` / `reject_if_pending` / `reject_if_manual_or_open` /
+   `should_route`, và `should_route` đã có sẵn `conn.id` từ 1c — nên phần này chủ yếu là cơ học.
+2. **Xoá `conn_generation`** — *không* phải "chuyển vào `ServerHandle`" như §4.6 viết ban đầu. Điều
+   kiện dừng của task refresh IAM thành **"`conn_id` của tôi không còn trong registry"**. Bộ đếm
+   generation đúng ở Phase 1 nhưng **sai ở Phase 2**: global thì kết nối thứ hai giết task của kết nối
+   thứ nhất (đúng lỗi §4.6 mô tả), per-server thì reconnect một cái giết task của các cái cùng server.
+   Kiểm tồn tại theo id đúng ở cả hai, vì "id còn trong registry" nghĩa là kết nối còn sống và token
+   vẫn cần refresh. Xoá cả `AppState.conn_generation` lẫn `ServerHandle.generation` (cái sau hiện có
+   **0 người đọc**).
+3. `connect_db` thôi xoá cái cũ, chỉ insert; `clear()` chỉ còn cho teardown.
+4. `CANCEL_KEY` của Data Generator scoped theo `conn_id`.
+5. `any_pending()` (**không** mang id) cho guard `onCloseRequested`.
+6. Dedupe SQLite theo đường dẫn đã normalize — mở lại cùng tệp thì trả `conn_id` đã có (`find()`).
+7. `emit_state()` mang thêm `connId`; `tx_status(conn_id)`; `TxControl` lọc theo nó.
+
+**Sửa lại một điểm của bản trước: xoá shim `currentConnId` thuộc Phase 3, không phải Phase 2.** Mô
+hình UI của Phase 2 vẫn là *một kết nối đang chọn tại một thời điểm* (workspace swap khi chuyển, đúng
+như `switch_database` hôm nay). Với mô hình đó, một id ambient **mô tả đúng** hiện thực. Race mà §4.1
+cảnh báo chỉ thành thật khi **tab cùng tồn tại** — tức Phase 3; xoá shim sớm hơn thì không có gì thay
+thế nó.
+
+Frontend tối thiểu: `App.tsx` giữ `connections[]` + `activeConnId`; `DbRail` liệt kê kết nối đang mở
+(§4.2c) kèm nút `+` mở `ConnectionManager` trong `Modal` (tái dùng nguyên component); `TxControl` lọc
+event theo `connId` và mang badge pending cho từng item rail (§4.2b). Chuyển kết nối thì **workspace
+swap** — bước trung gian có chủ ý, §4.5 là Phase 3.
 
 ### Phase 3 — nhiều database mỗi server, và UI
 
@@ -687,8 +772,20 @@ xoá nên compiler bảo đảm không còn đường ngầm nào. Xoá thêm `p
 thành cấu trúc. `cargo check` sạch, `tsc -b` 0 lỗi, 534 test pass, oxlint sạch.
 
 Đã kiểm tay: manual mode → sửa lưới → Lưu → Discard → đổi database → có câu chờ thì bị chặn.
-**Chưa kiểm tay**: So sánh 2 database, disconnect, restore có `USE`, và refresh token IAM (§4.6 — cái
-này cần build nháp với chu kỳ rút ngắn, không kiểm được dưới 15 phút).
+
+**Phase 2 code đã xong**, `cargo check` sạch, `tsc -b` 0 lỗi, 534 test pass, oxlint sạch. Backend giờ
+giữ N kết nối, mỗi kết nối một phiên transaction riêng; rail liệt kê kết nối đang mở kèm badge
+pending; nút `+` thêm kết nối mà không thay cái đang có.
+
+**Đã kiểm tay và chạy được**, gồm cả phần tồn từ Phase 1: hai kết nối song song với phiên transaction
+tách riêng, mở thêm database từ bộ chọn khi database cũ còn thay đổi chưa commit, đóng kết nối và
+đóng-các-kết-nối-khác từ menu chuột phải của rail, So sánh 2 database, disconnect, restore có `USE`.
+
+**Còn đúng một thứ chưa kiểm, và nó không kiểm được bằng cách dùng thường:** refresh token IAM (§4.6).
+Chu kỳ là ~13 phút nên phải build nháp với chu kỳ rút ngắn mới thấy. Điều cần xác nhận là task của
+kết nối **thứ nhất** vẫn sống sau khi mở kết nối thứ hai — đây chính là chỗ bộ đếm generation sai và
+là lý do nó bị thay bằng "id còn trong registry". Đến khi kiểm được thì nó là **invariant khi review**,
+không phải test.
 
 Đã chốt: §4.1 (`conn_id` tường minh, không có `active_conn_id`), §4.3 (identity = `(server,
 database)`, đường (iii)), §4.4 (id nằm trong `DbConnection`; xoá `AppState::db_manager` để compiler
@@ -699,7 +796,21 @@ các kết nối **đang mở**).
 
 **Đã làm: §0** — lỗi `db_compare` bị pin làm phiên transaction. Đứng ngoài mọi phase, đã ship.
 
-**Không còn quyết định nào bị chặn.** Việc tiếp theo là Phase 0 (merge phần đang dở) rồi Phase 1a.
+**Không còn quyết định nào bị chặn.** Việc tiếp theo: chạy 5 nhóm ca thử tay ở trên, rồi Phase 3.
+
+Phase 3 còn lại: tab tự mang scope + đảo mô hình lưu tab (§4.5) — đây cũng là bước **xoá shim
+`currentConnId`** ở `dbHelper`, vì chỉ từ lúc tab cùng tồn tại thì một id ambient mới thành nói dối;
+cây Sidebar 2 cấp; key `catalog.ts`/`dbIndexRegistry.ts` theo `(connId, db, schema)`; conn id trong 4
+CustomEvent; dỡ either/or ở `App.tsx`.
+
+**`open_database` đã làm ở Phase 2** (xem trên), nên phần "nhiều database mỗi server" của Phase 3 coi
+như xong. `ServerHandle::last_config` vẫn còn `Mutex` vì `switch_database` và reconnect `USE` của
+restore còn ghi vào nó; bỏ được khi hai đường đó cũng chuyển sang *mở thêm*.
+
+Ngoài Phase 3, một việc riêng người dùng đã nêu: **"Move Tab to New Window"**. Đó là tính năng đa cửa
+sổ, không phải một mục menu — app đã có tiền lệ cửa sổ terminal độc lập (`?term=`) nên khả thi, nhưng
+nó phụ thuộc câu trả lời của Phase 3 cho ba câu: tab thuộc kết nối nào, state nào chia sẻ giữa hai
+cửa sổ, và `tx-state-changed` phát tới cửa sổ nào.
 
 ---
 

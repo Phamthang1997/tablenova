@@ -2647,7 +2647,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                           className="cm-pop-item"
                           onClick={() => { setShowNewMenu(false); handleCreateNewProfile(nt.val); }}
                         >
-                          <span className="cm-badge sm" style={{ background: m.color }}><m.Icon size={13} /></span>
+                          <span className={`cm-badge sm ${nt.val}`}><m.Icon size={13} /></span>
                           <span>{nt.label}</span>
                         </button>
                       );
@@ -2706,9 +2706,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                     {!collapsed && groupedProfiles[groupName].map(p => {
                       const m = TYPE_META[p.type] || TYPE_META.sqlite;
                       const isActive = activeProfileId === p.id && !isBrMode;
+                      const sqliteFile = p.config?.sqlitePath ? (p.config.sqlitePath.split(/[/\\]/).pop() || p.config.sqlitePath) : '';
                       const sub = p.config?.host
                         ? `${p.config.host}${p.config.database ? ' / ' + p.config.database : ''}`
-                        : (p.config?.sqlitePath || '');
+                        : sqliteFile;
+                      const fullSubInfo = p.config?.sqlitePath || sub;
                       // Đèn trạng thái: chỉ dòng đang được tác động mới có, và chỉ
                       // 'busy' được nháy. Màn hình này chỉ tồn tại khi chưa có kết
                       // nối nào mở, nên "đang mở" không phải trạng thái khả dụng —
@@ -2726,15 +2728,20 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                           onClick={() => selectProfile(p)}
                           onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenu({ x: e.clientX, y: e.clientY, scope: 'single', groupName, profile: p }); }}
                         >
-                          <span className="cm-badge" style={{ background: m.color }}><m.Icon size={15} /></span>
+                          <span
+                            className={`cm-badge ${p.type}`}
+                            style={p.color ? { background: p.color } : undefined}
+                          >
+                            <m.Icon size={16} />
+                          </span>
                           <div className="cm-item-body">
                             <div className="cm-item-name">
                               <span className="cm-ellipsis">{p.name}</span>
                               {/* Đèn trạng thái: chỉ 'busy' nháy. */}
                               {led && <span className={`cm-item-led ${led}`} title={ledTitle[led]} />}
-                              {defaultProfileId === p.id && <Star size={10} style={{ fill: 'var(--st-warn)', color: 'var(--st-warn)', flexShrink: 0 }} aria-label={t('connection.defaultConnectionAria')} />}
+                              {defaultProfileId === p.id && <Star size={10} className="cm-default-star" aria-label={t('connection.defaultConnectionAria')} />}
                             </div>
-                            <div className="cm-item-sub">{m.label}{sub ? ` · ${sub}` : ''}</div>
+                            <div className="cm-item-sub" title={fullSubInfo}>{m.label}{sub ? ` · ${sub}` : ''}</div>
                           </div>
                           <div className="cm-item-actions">
                             <button
@@ -2742,9 +2749,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                               onClick={(e) => handleToggleDefaultProfile(p.id, e)}
                               title={defaultProfileId === p.id ? t('connection.unsetDefault') : t('connection.setDefault')}
                             >
-                              {/* fill đặt qua CSS chứ không qua prop: prop thành thuộc
-                                  tính SVG, mà thuộc tính SVG không nhận var(). */}
-                              <Star size={12} style={{ fill: defaultProfileId === p.id ? 'var(--st-warn)' : 'none', color: defaultProfileId === p.id ? 'var(--st-warn)' : 'currentColor' }} />
+                              <Star size={12} className={defaultProfileId === p.id ? 'cm-star-active' : ''} />
                             </button>
                             <button className="cm-icon-btn sm" onClick={(e) => handleDuplicateProfile(p, e)} title={t('connection.duplicateProfile')}>
                               <Copy size={12} />
@@ -2787,7 +2792,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
             ) : hasProfile ? (
               <>
                 <header className="cm-main-head">
-                  <div className="cm-avatar" style={{ background: activeMeta.color }}>
+                  <div
+                    className={`cm-avatar ${activeType}`}
+                    style={profiles.find(p => p.id === activeProfileId)?.color ? { background: profiles.find(p => p.id === activeProfileId)?.color } : undefined}
+                  >
                     <activeMeta.Icon size={22} />
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>

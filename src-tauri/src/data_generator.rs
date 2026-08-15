@@ -41,10 +41,15 @@ use crate::database::{execute_raw_sql_generic, DbConnection, Exec};
 use crate::datasets as ds;
 use crate::AppState;
 
-/// Key under which the run registers its cancel flag in `AppState::cancel_flags`. A single
-/// generation runs at a time (it is a modal dialog), so one fixed key is enough and no new
-/// field on `AppState` is needed.
-const CANCEL_KEY: &str = "__data_generator__";
+/// Key under which a run registers its cancel flag in `AppState::cancel_flags`.
+///
+/// Scoped by `conn_id`, not fixed. One generation runs at a time **per connection** (it is a modal
+/// dialog), but with several connections open two runs can overlap — and a single fixed key made the
+/// second `insert` replace the first run.s flag, so that run became uncancellable and whichever run
+/// finished first orphaned the other.s flag on `remove`.
+fn cancel_key(conn_id: &str) -> String {
+    format!("__data_generator__:{conn_id}")
+}
 
 /// Used when the frontend sends no seed. Any constant works; it must not come from the clock.
 const DEFAULT_SEED: u64 = 20_260_806;
@@ -2233,9 +2238,12 @@ pub async fn preview_generated_data(
 
 /// Marks the running generation as cancelled. Safe to call when nothing is running.
 #[tauri::command]
-pub async fn cancel_data_generation(state: State<'_, AppState>) -> Result<Value, String> {
+pub async fn cancel_data_generation(
+    state: State<'_, AppState>,
+    conn_id: String,
+) -> Result<Value, String> {
     let flags = state.cancel_flags.lock().map_err(|e| e.to_string())?;
-    if let Some(flag) = flags.get(CANCEL_KEY) {
+    if let Some(flag) = flags.get(&cancel_key(&conn_id)) {
         flag.store(true, Ordering::Relaxed);
     }
     Ok(json!({ "success": true }))
@@ -2253,7 +2261,7 @@ pub async fn generate_data(
 ) -> Result<Value, String> {
     // Same reason as restore_backup: this runs on its own connection and would block on the locks
     // an open manual transaction holds. See tx_session::reject_if_manual_or_open.
-    crate::tx_session::reject_if_manual_or_open("sinh dữ liệu")?;
+    crate::tx_session::reject_if_manual_or_open(&conn_id, "sinh dữ liệu")?;
     let (conn, dialect, schema) = active_conn(&state, &conn_id)?;
     if spec.tables.is_empty() {
         return Err("Chưa chọn bảng nào để sinh dữ liệu".to_string());
@@ -2308,7 +2316,7 @@ pub async fn generate_data(
     let cancel = Arc::new(AtomicBool::new(false));
     {
         let mut flags = state.cancel_flags.lock().map_err(|e| e.to_string())?;
-        flags.insert(CANCEL_KEY.to_string(), cancel.clone());
+        flags.insert(cancel_key(&conn_id), cancel.clone());
     }
 
     let outcome = run_generation(
@@ -2329,7 +2337,7 @@ pub async fn generate_data(
     .await;
 
     if let Ok(mut flags) = state.cancel_flags.lock() {
-        flags.remove(CANCEL_KEY);
+        flags.remove(&cancel_key(&conn_id));
     }
 
     match outcome {

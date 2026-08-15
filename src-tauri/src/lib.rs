@@ -17,7 +17,7 @@ pub mod oauth;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::atomic::AtomicBool;
 
 pub struct AppState {
     // Mọi kết nối SQL đang mở, khoá theo `conn_id` (docs/multi-connection-plan.md §4.3). Đây là
@@ -31,8 +31,6 @@ pub struct AppState {
     pub ssh_terminals: ssh_terminal::SshTerminalMap,
     // Các phiên Local Terminal (shell cục bộ) đang mở.
     pub local_terminals: local_terminal::LocalTerminalMap,
-    // Tăng mỗi lần connect/disconnect. Task làm mới token IAM dùng để biết kết nối còn "đời" của nó không.
-    pub conn_generation: AtomicU64,
     // Kết nối Redis (tách biệt khỏi DbConnection SQL).
     pub redis: redis_db::RedisState,
 }
@@ -98,12 +96,12 @@ pub fn run() {
             cancel_flags: Mutex::new(HashMap::new()),
             ssh_terminals: Mutex::new(HashMap::new()),
             local_terminals: Mutex::new(HashMap::new()),
-            conn_generation: AtomicU64::new(0),
             redis: redis_db::RedisState::new(),
         })
         .invoke_handler(tauri::generate_handler![
             database::connect_db,
             database::disconnect_db,
+            database::list_connections,
             database::get_connection_status,
             database::get_tables,
             database::get_full_catalog,
@@ -116,6 +114,7 @@ pub fn run() {
             database::execute_query_stream,
             database::cancel_query,
             tx_session::tx_status,
+            tx_session::tx_any_pending,
             tx_session::tx_set_autocommit,
             tx_session::tx_set_isolation,
             tx_session::tx_commit,
@@ -145,6 +144,7 @@ pub fn run() {
             database::get_databases_list,
             database::list_databases,
             database::switch_database,
+            database::open_database,
             database::list_schemas,
             database::set_current_schema,
             database::create_database,

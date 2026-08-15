@@ -19,12 +19,10 @@
 //    that shape stays reachable, "did I convert every site" is a grep question. With `inner`
 //    private to this module it becomes a compile question.
 //
-// Not yet in this file, and deliberately: `ConnId` inside `DbConnection` (§4.4a). That is the next
-// slice — it touches ~149 mentions of the connection type and must land after the 56 acquire blocks
-// are deleted, not before, or 170 of those mentions get edited only to be thrown away.
+// `ConnId` lives here too (§4.4a): it is identity, and putting it next to `SessionId` keeps the one
+// question "which connection is this" answered in a single place.
 
 use std::collections::HashMap;
-use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
@@ -88,21 +86,15 @@ pub struct ServerHandle {
     /// (host/port/credentials) and stops changing. Read it with `config()`, not by locking directly.
     last_config: Mutex<Value>,
     pub ssh_tunnel: Option<SshTunnel>,
-    /// Bumped when this server's connections are replaced. **Per server, not global** (§4.6): a
-    /// single global counter meant opening a second connection invalidated the *first* one's IAM
-    /// refresh task, and that connection then died ~15 minutes later with an auth error and nothing
-    /// pointing at the cause.
-    pub generation: AtomicU64,
 }
 
 impl ServerHandle {
-    pub fn new(id: ServerId, db_type: String, last_config: Value, ssh_tunnel: Option<SshTunnel>, generation: u64) -> Self {
+    pub fn new(id: ServerId, db_type: String, last_config: Value, ssh_tunnel: Option<SshTunnel>) -> Self {
         ServerHandle {
             id,
             db_type,
             last_config: Mutex::new(last_config),
             ssh_tunnel,
-            generation: AtomicU64::new(generation),
         }
     }
 
@@ -165,6 +157,13 @@ impl ConnCtx {
     /// statement. Several `ConnCtx` on the same server hand back the same `Arc`.
     pub fn server(&self) -> &ServerHandle {
         &self.server
+    }
+
+    /// The shared handle itself, for `open_database`: a second database on this server must hold the
+    /// **same** `Arc`, or it would open its own tunnel and re-authenticate, and the tunnel would
+    /// close as soon as the first connection went away.
+    pub fn server_arc(&self) -> Arc<ServerHandle> {
+        self.server.clone()
     }
 
     /// Derived from the live connection, never from `ServerHandle::db_type`.
@@ -245,6 +244,34 @@ impl ConnRegistry {
         Ok(ctx_of(key, entry))
     }
 
+    /// Every open connection, as the left rail needs to draw it (§4.2c): the rail lists **open
+    /// connections**, not every database on the server, so this replaces the `list_databases` query
+    /// it used to run against the active connection.
+    ///
+    /// Sorted by id so the rail does not reshuffle itself on every poll — a `HashMap` has no order.
+    pub fn list(&self) -> Result<Vec<Value>, String> {
+        let map = self.inner.lock().map_err(|e| e.to_string())?;
+        let mut out: Vec<(SessionId, Value)> = map
+            .iter()
+            .map(|(id, e)| {
+                (
+                    id.clone(),
+                    serde_json::json!({
+                        "connId": &**id,
+                        "db": e.db,
+                        "dialect": crate::tx_session::dialect_of(&e.conn),
+                        "serverId": &*e.server.id,
+                        "schema": e.current_schema,
+                        // Badge của rail (§4.2b): số câu GHI đang chờ commit trên kết nối này.
+                        "pending": crate::tx_session::pending_count(id),
+                    }),
+                )
+            })
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(out.into_iter().map(|(_, v)| v).collect())
+    }
+
     pub fn insert(&self, id: SessionId, entry: ConnEntry) -> Result<(), String> {
         let mut map = self.inner.lock().map_err(|e| e.to_string())?;
         map.insert(id, entry);
@@ -260,18 +287,50 @@ impl ConnRegistry {
         Ok(())
     }
 
+    /// The connection already open on this `(server, database)`, if any. Makes `open_database`
+    /// idempotent: clicking a database twice must not mint a second pool for the same place.
+    pub fn find(&self, server: &str, db: &str) -> Result<Option<SessionId>, String> {
+        let map = self.inner.lock().map_err(|e| e.to_string())?;
+        Ok(map
+            .iter()
+            .find(|(_, e)| &*e.server.id == server && e.db == db)
+            .map(|(id, _)| id.clone()))
+    }
+
+    /// An already-open SQLite connection on the same file, if any.
+    ///
+    /// SQLite is the one dialect where a second connection to the same database is not just
+    /// redundant but harmful: two `rusqlite::Connection`s on one file mean `SQLITE_BUSY` the moment
+    /// both write. Postgres and MySQL are left alone — opening the same database twice there is a
+    /// legitimate thing to want (two independent sessions), and the credentials may even differ.
+    ///
+    /// Paths are compared after `canonicalize`, which folds `..`, relative paths and — on Windows —
+    /// case. A path that cannot be canonicalized (the file is gone) falls back to a raw compare, so
+    /// a missing file never *matches* something it should not.
+    pub fn find_sqlite(&self, path: &str) -> Result<Option<SessionId>, String> {
+        let want = std::fs::canonicalize(path).ok();
+        let map = self.inner.lock().map_err(|e| e.to_string())?;
+        Ok(map
+            .iter()
+            .find(|(_, e)| {
+                if !matches!(e.conn.kind, crate::database::DbKind::Sqlite(_)) {
+                    return false;
+                }
+                match (&want, std::fs::canonicalize(&e.db).ok()) {
+                    // `want` is matched by reference (it is reused on every iteration), so `a` is a
+                    // `&PathBuf` while `b` is owned.
+                    (Some(a), Some(b)) => *a == b,
+                    _ => e.db == path,
+                }
+            })
+            .map(|(id, _)| id.clone()))
+    }
+
     /// Drops one entry and hands it back, so the caller can roll back its transaction session and
     /// close its pool *after* the registry lock is released — neither may run while a guard is held.
     pub fn remove(&self, id: &str) -> Result<Option<ConnEntry>, String> {
         let mut map = self.inner.lock().map_err(|e| e.to_string())?;
         Ok(map.remove(id))
-    }
-
-    /// Drops every entry, returning them for the same reason `remove` does. `connect_db` uses this:
-    /// Phase 1 replaces the one connection rather than adding to it.
-    pub fn clear(&self) -> Result<Vec<ConnEntry>, String> {
-        let mut map = self.inner.lock().map_err(|e| e.to_string())?;
-        Ok(map.drain().map(|(_, e)| e).collect())
     }
 
     pub fn set_schema(&self, id: &str, schema: Option<String>) -> Result<(), String> {

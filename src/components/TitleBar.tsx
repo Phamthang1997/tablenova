@@ -19,6 +19,8 @@ import { ConfirmDialog } from './ConfirmDialog';
 
 interface TitleBarProps {
   hasConnection: boolean;
+  /** Kết nối đang hiển thị — `TxControl` lọc sự kiện `tx-state-changed` theo id này. */
+  connId?: string;
   readOnly?: boolean;
   onToggleReadOnly?: () => void;
   activeConnectionInfo?: {
@@ -50,7 +52,8 @@ interface TitleBarProps {
   /** Panel AI Copilot đang mở -> tô nút bằng màu accent. */
   aiOpen?: boolean;
   onToggleAiAssistant?: () => void;
-  onDatabaseChanged?: (dbName: string, schema?: string | null) => void;
+  /** Người dùng chọn một database khác -> backend đã mở nó thành kết nối MỚI (`open_database`). */
+  onDatabaseOpened?: (connId: string, dbName: string, schema?: string | null) => void;
   onOpenAllDbStats?: () => void;
   onOpenDocs?: () => void;
   onOpenCompare?: () => void;
@@ -58,6 +61,7 @@ interface TitleBarProps {
 
 export const TitleBar: React.FC<TitleBarProps> = ({
   hasConnection,
+  connId,
   readOnly = false,
   onToggleReadOnly,
   activeConnectionInfo,
@@ -81,7 +85,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
   onToggleTerminal,
   aiOpen = false,
   onToggleAiAssistant,
-  onDatabaseChanged,
+  onDatabaseOpened,
   onOpenAllDbStats,
   onOpenDocs,
   onOpenCompare,
@@ -174,11 +178,16 @@ export const TitleBar: React.FC<TitleBarProps> = ({
       return;
     }
     setShowDbPopover(false);
-    const res = await dbHelper.switchDatabase(name);
-    if (res.success) {
-      onDatabaseChanged?.(res.database || name, res.schema);
+    // Picking a database OPENS it as another connection rather than switching this one onto it.
+    // Switching replaced the pool, so it had to refuse whenever the current database had
+    // uncommitted work — a refusal the user could not clear without losing that work. Opening adds
+    // a pool on the same `ServerHandle` (same tunnel, same credentials, no re-auth), so there is
+    // nothing to refuse and the transaction on the old database keeps running.
+    const res = await dbHelper.openDatabase(connId || '', name);
+    if (res.success && res.connId) {
+      onDatabaseOpened?.(res.connId, res.database || name, res.schema);
     } else {
-      alert(`Error switching database: ${res.error}`);
+      alert(t('sidebar.errOpenDb', { message: res.error || '' }));
     }
   };
 
@@ -650,7 +659,8 @@ export const TitleBar: React.FC<TitleBarProps> = ({
             không ở toolbar của từng tab. Xem TxControl.tsx. */}
         <TxControl
           connected={hasConnection}
-          dbType={(connStatus?.dbType || activeConnectionInfo?.dbType || '').toLowerCase()}
+          connId={connId || ""}
+          dbType={(connStatus?.dbType || activeConnectionInfo?.dbType || "").toLowerCase()}
         />
         {renderCapsule(rightTools)}
 

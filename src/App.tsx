@@ -29,7 +29,7 @@ import { WhatsNewModal, WHATS_NEW_STORAGE_KEY, WHATS_NEW_AUTO_SHOW_KEY } from '.
 import { X } from 'lucide-react';
 import { getVersion } from '@tauri-apps/api/app';
 import { PostgresIcon, MySqlIcon, RedisIcon, SqliteIcon } from './components/DbIcons';
-import { dbHelper } from './utils/dbHelper';
+import { dbHelper, activeConnId, setActiveConnId } from './utils/dbHelper';
 import type { DbConnectionConfig } from './utils/dbHelper';
 import { invalidateCatalog } from './sql/catalog';
 import { splitStatements } from './sql/statements';
@@ -179,6 +179,26 @@ export const App: React.FC = () => {
   } | null>(null);
   // Cấu hình kết nối đang dùng (gồm cả SSH) để Terminal kế thừa -> mở shell vào đúng máy chủ/VM
   const [activeConnConfig, setActiveConnConfig] = useState<DbConnectionConfig | null>(null);
+  /** `conn_id` của kết nối đang hiển thị. Backend sinh, `dbHelper` bắt được từ `connect()`. */
+  const [activeConnIdState, setActiveConnIdState] = useState('');
+  /**
+   * Đang mở Connection Manager để **thêm** một kết nối nữa (nút `+` của rail).
+   *
+   * Khác với đường cũ: "kết nối mới" trước đây là `handleDisconnect` — ngắt cái đang có rồi hiện
+   * lại màn hình quản lý. Giờ backend giữ được nhiều kết nối nên thêm là thêm, không phải thay.
+   */
+  const [addingConn, setAddingConn] = useState(false);
+  /**
+   * Mọi kết nối đang mở, kèm config đã dùng để mở nó.
+   *
+   * Backend cố ý không trả config về (nó mang credential), nhưng chuyển giữa các kết nối cần config
+   * để key tab của kết nối đó (`tabsStorageKey`) và để hiện tên/màu profile. Đây là bản đồ
+   * `conn_id -> những gì chỉ frontend biết`; phần "kết nối nào đang mở" vẫn là backend nói
+   * (`list_connections`).
+   */
+  const [openConns, setOpenConns] = useState<
+    { connId: string; config: DbConnectionConfig | null; dbType: 'sqlite' | 'postgres' | 'mysql' | 'redis'; profileName: string; color: string }[]
+  >([]);
 
   const [tabs, setTabs] = useState<TabInfo[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
@@ -711,9 +731,18 @@ export const App: React.FC = () => {
   // xoá cache catalog vì server có thể đã đổi schema trong lúc mất kết nối.
   const handleReconnect = async (): Promise<{ success: boolean; message?: string }> => {
     if (!activeConnConfig) return { success: false };
+    const oldId = activeConnIdState;
     await dbHelper.disconnect();
     const res = await dbHelper.connect(activeConnConfig);
     if (!res.success) return { success: false, message: res.message };
+    // Reconnect mints a NEW conn_id — the old entry is gone from the registry. Without this the
+    // rail would keep drawing a dead connection and, worse, `TxControl` would filter out every
+    // `tx-state-changed` event because it is still comparing against the old id.
+    const newId = activeConnId();
+    setActiveConnIdState(newId);
+    setOpenConns((prev) =>
+      prev.map((c) => (c.connId === oldId ? { ...c, connId: newId } : c)),
+    );
     invalidateCatalog();
     setDbReloadKey((prev) => prev + 1);
     return { success: true };
@@ -821,6 +850,19 @@ export const App: React.FC = () => {
     setConnection({ dbName, dbType, schema: schema ?? null });
     setActiveProfile({ id: profile?.id || '', name: profile?.name || dbName, color: color || '' });
     setActiveConnConfig(config || null);
+
+    // Remember which config produced which `conn_id`. The backend deliberately does not hand the
+    // config back — it carries credentials — but switching between open connections needs it, both
+    // to key that connection's tabs (`tabsStorageKey`) and to label it. Keyed by the id the backend
+    // just minted, which `dbHelper` captured from `connect()`.
+    const id = activeConnId();
+    setActiveConnIdState(id);
+    if (id) {
+      setOpenConns((prev) => [
+        ...prev.filter((c) => c.connId !== id),
+        { connId: id, config: config || null, dbType, profileName: profile?.name || dbName, color: color || '' },
+      ]);
+    }
 
     // Đổi kết nối -> xoá cache bảng/cột để autocomplete & hover không còn dữ liệu của DB cũ
     invalidateCatalog();
@@ -947,13 +989,146 @@ export const App: React.FC = () => {
 
   const handleDisconnect = () => {
     guardDirty(async () => {
+      const gone = activeConnId();
       await dbHelper.disconnect();
+      const rest = openConns.filter((c) => c.connId !== gone);
+      setOpenConns(rest);
+      // Disconnecting one of several connections leaves the app connected — fall through to
+      // whichever is left instead of dropping the user back to the connection manager.
+      const next = rest[rest.length - 1];
+      if (next) {
+        selectConnection(next.connId);
+        return;
+      }
+      setActiveConnIdState('');
       setConnection(null);
       setActiveProfile({ id: '', name: '', color: '' });
       setTabs([]);
       setActiveTabId(null);
       setQueryCount(1);
       setShowSidebar(true);
+    });
+  };
+
+  const handleNewConnection = () => setAddingConn(true);
+
+  /**
+   * Close one connection from the rail.
+   *
+   * Closing the one on screen falls through to whichever is left rather than dropping the user back
+   * to the connection manager — same rule as `handleDisconnect`. Closing one that is NOT on screen
+   * touches nothing else: the workspace, its tabs and its transaction all stay where they are, which
+   * is the whole reason each connection has its own session.
+   */
+  const closeConnection = (connId: string) => {
+    const isActive = connId === activeConnIdState;
+    const finish = async () => {
+      await dbHelper.disconnect(connId);
+      const rest = openConns.filter((c) => c.connId !== connId);
+      setOpenConns(rest);
+      if (!isActive) return;
+      const next = rest[rest.length - 1];
+      if (next) {
+        selectConnection(next.connId);
+        return;
+      }
+      setActiveConnIdState('');
+      setConnection(null);
+      setActiveProfile({ id: '', name: '', color: '' });
+      setTabs([]);
+      setActiveTabId(null);
+      setQueryCount(1);
+      setShowSidebar(true);
+    };
+    // Only guard when the tabs about to be swapped are the ones with unsaved edits in them.
+    if (isActive) guardDirty(finish);
+    else void finish();
+  };
+
+  const closeOtherConnections = (keepId: string) => {
+    const doomed = openConns.filter((c) => c.connId !== keepId);
+    if (!doomed.length) return;
+    const run = async () => {
+      for (const c of doomed) await dbHelper.disconnect(c.connId);
+      setOpenConns((prev) => prev.filter((c) => c.connId === keepId));
+      // Already on the survivor: nothing to reload. Otherwise the workspace has to move to it,
+      // because the connection it was showing no longer exists.
+      if (keepId !== activeConnIdState) selectConnection(keepId);
+    };
+    if (keepId !== activeConnIdState) guardDirty(run);
+    else void run();
+  };
+
+  /**
+   * A database picked from the title bar was **opened as another connection**, sharing the server
+   * of the one it was picked from (same tunnel, same credentials). Register it and switch to it.
+   *
+   * It inherits that connection's `config` because it is the same server; only the database differs,
+   * and `tabsStorageKey` already keys on `(config, database, schema)` — so the two get separate tab
+   * lists without any extra bookkeeping.
+   */
+  const handleDatabaseOpened = (newId: string, dbName: string, schema?: string | null) => {
+    const from = openConns.find((c) => c.connId === activeConnIdState);
+    setOpenConns((prev) => [
+      ...prev.filter((c) => c.connId !== newId),
+      {
+        connId: newId,
+        config: from?.config ? { ...from.config, database: dbName } : null,
+        dbType: from?.dbType ?? 'mysql',
+        profileName: dbName,
+        color: from?.color ?? '',
+      },
+    ]);
+    // `selectConnection` reads `openConns`, which this render has not committed yet — point the
+    // workspace at the new connection directly instead of racing the state update.
+    setActiveConnId(newId);
+    setActiveConnIdState(newId);
+    setActiveConnConfig(from?.config ? { ...from.config, database: dbName } : null);
+    setConnection((prev) => (prev ? { ...prev, dbName, schema: schema ?? null } : prev));
+    invalidateCatalog();
+    setDbReloadKey((k) => k + 1);
+    if (from && restoreTabs({ ...(from.config as DbConnectionConfig), database: dbName }, from.dbType, dbName, schema)) return;
+    const initialTabId = 'query_1';
+    setTabs([
+      { id: initialTabId, type: 'query', name: 'SQL Query', label: t('app.queryTabLabel', { n: 1 }) },
+    ]);
+    setActiveTabId(initialTabId);
+    setQueryCount(2);
+  };
+
+  /**
+   * Point the whole workspace at another open connection.
+   *
+   * Phase 2 keeps the "one connection on screen at a time" model: switching swaps the tab list the
+   * way changing database already does. Tabs from different connections coexisting is Phase 3
+   * (§4.5), and it is the step that also removes the ambient id `setActiveConnId` writes here.
+   */
+  const selectConnection = (connId: string) => {
+    const entry = openConns.find((c) => c.connId === connId);
+    if (!entry) return;
+    // Switching swaps the tab list, so unsaved grid edits would vanish without a word — the same
+    // guard `handleDisconnect` uses. This matters more here than on a database change: switching
+    // connections is something the user does often once the rail exists.
+    guardDirty(() => {
+      setActiveConnId(connId);
+      setActiveConnIdState(connId);
+      invalidateCatalog();
+      void (async () => {
+        const list = await dbHelper.listConnections().catch(() => []);
+        const info = list.find((c) => c.connId === connId);
+        if (!info) return;
+        setConnection({ dbName: info.db, dbType: entry.dbType, schema: info.schema });
+        setActiveConnConfig(entry.config);
+        setActiveProfile({ id: '', name: entry.profileName, color: entry.color });
+        setDbReloadKey((k) => k + 1);
+        if (restoreTabs(entry.config, entry.dbType, info.db, info.schema)) return;
+        const initialTabId = 'query_1';
+        setTabs([
+          { id: initialTabId, type: 'query', name: 'SQL Query', label: t('app.queryTabLabel', { n: 1 }) },
+        ]);
+        setActiveTabId(initialTabId);
+        setQueryCount(2);
+      })();
     });
   };
 
@@ -1291,6 +1466,7 @@ export const App: React.FC = () => {
   const titleBar = (
     <TitleBar
       hasConnection={!!connection}
+      connId={activeConnIdState}
       readOnly={readOnly}
       onToggleReadOnly={toggleReadOnly}
       // version/tls không còn ở đây: TitleBar đọc số thật từ get_connection_status,
@@ -1307,7 +1483,7 @@ export const App: React.FC = () => {
       onThemeChange={applyTheme}
       onReconnect={handleReconnect}
       activeTableName={activeTable}
-      onNewConnection={handleDisconnect}
+      onNewConnection={handleNewConnection}
       onDisconnect={handleDisconnect}
       onNewQuery={handleNewQueryTab}
       onExportDatabase={() => setShowExportDbDialog(true)}
@@ -1320,7 +1496,7 @@ export const App: React.FC = () => {
       onToggleTerminal={() => { }}
       aiOpen={showAi}
       onToggleAiAssistant={() => setShowAi(prev => !prev)}
-      onDatabaseChanged={handleDatabaseChanged}
+      onDatabaseOpened={handleDatabaseOpened}
       onOpenAllDbStats={() => { setDbInfoTab('all'); setShowDbInfoModal(true); }}
       onOpenDocs={() => setShowDocModal(true)}
     />
@@ -1328,6 +1504,27 @@ export const App: React.FC = () => {
 
   return (
     <>
+      {/* Thêm một kết nối nữa trong khi vẫn đang kết nối (nút `+` của rail). Dùng lại nguyên
+          `ConnectionManager` chứ không viết màn hình thứ hai; `handleConnect` đã làm đúng việc
+          (đẩy vào `openConns` rồi chuyển workspace sang kết nối mới). */}
+      {addingConn && connection && (
+        <Modal
+          title={t('titlebar.newConnection')}
+          onClose={() => setAddingConn(false)}
+          zIndex={10000}
+          width="min(1100px, 94vw)"
+        >
+          <ModalBody>
+            <ConnectionManager
+              onConnect={(...args) => {
+                setAddingConn(false);
+                handleConnect(...args);
+              }}
+            />
+          </ModalBody>
+        </Modal>
+      )}
+
       {!connection ? (
         // Thanh tiêu đề nằm trong .cm-screen chứ không đứng trên nó: lớp aurora
         // là ::before của shell nên chỉ phủ được những gì shell chứa. Đứng
@@ -1352,16 +1549,18 @@ export const App: React.FC = () => {
         <>
           {titleBar}
           <div className="workspace-container">
-            {/* Database column left of the sidebar. Tied to the sidebar (Ctrl+P is about
+            {/* Connection column left of the sidebar. Tied to the sidebar (Ctrl+P is about
                 reclaiming space, hiding half of it makes no sense) and only shown from 2
-                connections up. `connection` is ONE object, not a list — the backend holds a
-                single connection too — so this is always 1 and the rail stays hidden until
-                multi-connection lands. */}
+                connections up — with one there is nothing to switch between and the title bar
+                already carries its state. It lists what is OPEN, not every database on the
+                server; see DbRail.tsx. */}
             {showSidebar && (
               <DbRail
-                dbName={connection.dbName}
-                connectionCount={connection ? 1 : 0}
-                onDatabaseChanged={handleDatabaseChanged}
+                activeConnId={activeConnIdState}
+                onSelect={(c) => selectConnection(c.connId)}
+                onClose={closeConnection}
+                onCloseOthers={closeOtherConnections}
+                reloadKey={openConns.length}
               />
             )}
 

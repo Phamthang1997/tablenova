@@ -3,13 +3,14 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
+pub const DEFAULT_GOOGLE_CLIENT_ID: &str = "REDACTED_CLIENT_ID.apps.googleusercontent.com";
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct OAuthCallbackResult {
     pub success: bool,
     pub code: Option<String>,
-    pub token: Option<String>,
+    pub redirect_uri: Option<String>,
     pub error: Option<String>,
-    pub email: Option<String>,
 }
 
 fn simple_url_decode(input: &str) -> String {
@@ -36,7 +37,15 @@ fn simple_url_decode(input: &str) -> String {
 }
 
 #[tauri::command]
-pub async fn start_google_oauth_flow(client_id: Option<String>) -> Result<OAuthCallbackResult, String> {
+pub async fn start_google_oauth_flow(
+    client_id: Option<String>,
+    code_challenge: Option<String>,
+) -> Result<OAuthCallbackResult, String> {
+    let cid = match client_id {
+        Some(ref id) if !id.trim().is_empty() => id.trim().to_string(),
+        _ => DEFAULT_GOOGLE_CLIENT_ID.to_string(),
+    };
+
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .map_err(|e| format!("Không thể mở cổng OAuth loopback: {}", e))?;
@@ -46,14 +55,19 @@ pub async fn start_google_oauth_flow(client_id: Option<String>) -> Result<OAuthC
         .map_err(|e| e.to_string())?
         .port();
 
-    let cid = client_id.unwrap_or_else(|| "936475207038-tablenova-gemini.apps.googleusercontent.com".to_string());
-    let redirect_uri = format!("http://localhost:{}/oauth/callback", port);
+    let redirect_uri = format!("http://127.0.0.1:{}/oauth/callback", port);
     
+    let challenge_param = if let Some(ref ch) = code_challenge {
+        format!("&code_challenge={}&code_challenge_method=S256", ch)
+    } else {
+        String::new()
+    };
+
     let auth_url = format!(
-        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=token%20id_token&scope=openid%20email%20profile%20https://www.googleapis.com/auth/generative-language&nonce=tablenova_{}",
+        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope=openid%20email%20profile%20https://www.googleapis.com/auth/generative-language{}&access_type=offline&prompt=consent",
         cid,
         redirect_uri,
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()
+        challenge_param
     );
 
     // Mở URL đăng nhập Google trên trình duyệt mặc định
@@ -86,13 +100,13 @@ pub async fn start_google_oauth_flow(client_id: Option<String>) -> Result<OAuthC
 
         // Trang HTML thành công gửi về trình duyệt
         let html_body = r#"<!DOCTYPE html>
-<html>
+<html lang="vi">
 <head>
   <meta charset="utf-8">
   <title>TableNova - Xác thực thành công</title>
   <style>
     body { font-family: system-ui, -apple-system, sans-serif; background: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-    .card { background: #1e293b; padding: 36px 48px; border-radius: 16px; border: 1px solid #334155; text-align: center; box-shadow: 0 16px 36px rgba(0,0,0,0.5); max-width: 420px; }
+    .card { background: #1e293b; padding: 36px 48px; border-radius: 16px; border: 1px solid #334155; text-align: center; box-shadow: 0 16px 36px rgba(0,0,0,0.5); max-width: 440px; }
     h2 { color: #38bdf8; margin: 16px 0 8px; font-size: 22px; }
     p { color: #94a3b8; font-size: 14px; line-height: 1.5; margin: 0; }
     .icon { font-size: 48px; }
@@ -102,14 +116,8 @@ pub async fn start_google_oauth_flow(client_id: Option<String>) -> Result<OAuthC
   <div class="card">
     <div class="icon">✨</div>
     <h2>Đăng nhập thành công!</h2>
-    <p>Xác thực Google OAuth đã hoàn tất. Bạn có thể đóng tab này và quay lại ứng dụng <strong>TableNova</strong>.</p>
+    <p>Xác thực tài khoản Google qua Web Browser đã hoàn tất. Bạn có thể đóng tab này và quay lại ứng dụng <strong>TableNova</strong>.</p>
   </div>
-  <script>
-    if (window.location.hash) {
-      const hash = window.location.hash.substring(1);
-      fetch('/oauth/token_relay?' + hash).catch(() => {});
-    }
-  </script>
 </body>
 </html>"#;
 
@@ -127,8 +135,6 @@ pub async fn start_google_oauth_flow(client_id: Option<String>) -> Result<OAuthC
 
     match tokio::time::timeout(timeout, accept_future).await {
         Ok(Ok(request_str)) => {
-            // Phân tích token hoặc code từ request HTTP
-            let mut token = None;
             let mut code = None;
             let mut error = None;
 
@@ -139,9 +145,7 @@ pub async fn start_google_oauth_flow(client_id: Option<String>) -> Result<OAuthC
                         for pair in query.split('&') {
                             let mut parts = pair.split('=');
                             if let (Some(k), Some(v)) = (parts.next(), parts.next()) {
-                                if k == "access_token" {
-                                    token = Some(simple_url_decode(v));
-                                } else if k == "code" {
+                                if k == "code" {
                                     code = Some(simple_url_decode(v));
                                 } else if k == "error" {
                                     error = Some(simple_url_decode(v));
@@ -153,14 +157,13 @@ pub async fn start_google_oauth_flow(client_id: Option<String>) -> Result<OAuthC
             }
 
             Ok(OAuthCallbackResult {
-                success: token.is_some() || code.is_some(),
+                success: code.is_some(),
                 code,
-                token,
+                redirect_uri: Some(redirect_uri),
                 error,
-                email: None,
             })
         }
-        Ok(Err(e)) => Err(format!("Lỗi xác thực OAuth: {}", e)),
+        Ok(Err(e)) => Err(format!("Lỗi kết nối OAuth: {}", e)),
         Err(_) => Err("Quá thời gian xác thực (120s). Vui lòng thử lại.".to_string()),
     }
 }

@@ -400,40 +400,43 @@ async fn build_iam_conn(db_type: &str, orig_config: &Value) -> Result<DbKind, St
     }
 }
 
-// Task nền: cứ ~13 phút sinh token mới và thay pool, chừng nào kết nối vẫn còn "đời" (generation) này.
+// Task nền: cứ ~13 phút sinh token mới và thay pool, chừng nào conn_id này còn trong registry.
 fn spawn_iam_refresh(
     app: tauri::AppHandle,
     db_type: String,
     config: Value,
-    generation: u64,
     conn_id: crate::state::SessionId,
 ) {
     tauri::async_runtime::spawn(async move {
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(IAM_REFRESH_SECS)).await;
             let state = app.state::<crate::AppState>();
-            if state.conn_generation.load(Ordering::SeqCst) != generation {
-                break; // đã connect/disconnect khác -> dừng
+            // Stop when this task's connection is gone from the registry.
+            //
+            // This replaced a generation counter, and the replacement is not cosmetic. A counter was
+            // right only while `connect_db` closed the previous connection: once Phase 2 lets N
+            // connections coexist, a **global** counter makes the second connect kill the first
+            // connection's refresh task — that connection then dies ~15 minutes later with an auth
+            // error and nothing pointing at the cause (§4.6) — and a **per-server** counter does the
+            // same to sibling connections when one of them reconnects. Existence of the id is right
+            // in both worlds: the id is in the registry exactly while that connection is alive and
+            // its token still needs refreshing.
+            if state.connections.acquire(&conn_id).is_err() {
+                break;
             }
             // Replacing the pool would drop the connection an open manual transaction is pinned to,
             // silently losing everything the user has not committed. The token is still valid for
             // ~2 more minutes; wait for the next cycle instead.
-            if crate::tx_session::is_open() {
+            if crate::tx_session::is_open(&conn_id) {
                 continue;
             }
             match build_iam_conn(&db_type, &config).await {
                 Ok(kind) => {
-                    if state.conn_generation.load(Ordering::SeqCst) != generation {
-                        break;
-                    }
                     let new_conn = DbConnection::session(conn_id.clone(), kind);
-                    // The old code did this check and the swap inside ONE `db_manager` lock, because
-                    // it swapped a single global slot and a connect landing in between would have
-                    // been overwritten. That is no longer possible: the swap names `conn_id`, and a
-                    // disconnect removes that entry while a reconnect mints a *different* id — so a
-                    // stale task can only ever write to an entry that is already gone, and
-                    // `replace_conn` no-ops. The generation check above is now only what stops the
-                    // task from looping forever, not what protects the swap.
+                    // No second guard before the swap, and none is needed: the swap names `conn_id`.
+                    // A disconnect removes that entry and a reconnect mints a *different* id, so a
+                    // stale task can only ever write to an entry that is already gone, where
+                    // `replace_conn` no-ops.
                     if state.connections.replace_conn(&conn_id, new_conn).is_err() {
                         break; // registry poisoned -> nothing left to refresh
                     }
@@ -444,14 +447,34 @@ fn spawn_iam_refresh(
     });
 }
 
+/// Every connection currently open, for the left rail (§4.2c).
+///
+/// Deliberately takes no `conn_id`: it is a question about the whole app, not about one connection —
+/// the same exception `tx_any_pending` is.
+#[tauri::command]
+pub async fn list_connections(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
+    Ok(json!({ "connections": state.connections.list()? }))
+}
+
 #[tauri::command]
 pub async fn connect_db(app: tauri::AppHandle, state: tauri::State<'_, crate::AppState>, config: Value) -> Result<Value, String> {
     let db_type = config.get("dbType").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
-    // The old connection is about to be replaced: roll back and clear any manual transaction on it
-    // first. Isolation levels are dialect-specific, so the whole transaction preference resets.
-    // Mỗi lần connect tăng generation -> vô hiệu task refresh IAM của kết nối trước đó
-    let generation = state.conn_generation.fetch_add(1, Ordering::SeqCst) + 1;
+    // Opening the same SQLite file twice would be two `rusqlite::Connection`s on one file, i.e.
+    // `SQLITE_BUSY` as soon as both write. Hand back the connection that is already open instead.
+    // Postgres/MySQL are deliberately not deduplicated — see `ConnRegistry::find_sqlite`.
+    if db_type == "sqlite" {
+        if let Some(path) = config.get("filePath").and_then(|v| v.as_str()) {
+            if let Some(existing) = state.connections.find_sqlite(path)? {
+                let ctx = state.connections.acquire(&existing)?;
+                return Ok(json!({
+                    "success": true,
+                    "schema": ctx.raw_schema(),
+                    "connId": &*existing,
+                }));
+            }
+        }
+    }
 
     let mut ssh_tunnel: Option<SshTunnel> = None;
 
@@ -506,23 +529,12 @@ pub async fn connect_db(app: tauri::AppHandle, state: tauri::State<'_, crate::Ap
             // nên đúng một bên được giữ — và đây là bên đúng: `ConnEntry` cuối cùng của server bị
             // drop thì `Arc` cuối cùng đi theo và port tự đóng, không cần refcount tay.
             ssh_tunnel.take(),
-            // Vẫn theo bộ đếm global ở bước này để không đổi hành vi; §4.6 chuyển hẳn vào đây ở
-            // Phase 2, vì một bộ đếm chung làm kết nối thứ nhất mất task refresh IAM của nó.
-            generation,
         ));
-        // The connection being replaced still has to roll back and clear its manual transaction, and
-        // that must happen while its pool is alive: dropping a pool with a transaction open leaves
-        // the server holding its locks until it notices the socket died. Isolation levels are
-        // dialect-specific, so the whole transaction preference resets.
-        //
-        // Taking the outgoing entry from `clear()` rather than looking it up at the top of the
-        // command also fixes a detail: a connect that FAILS while building the new pool no longer
-        // rolls back the transaction of the connection it never replaced. `.first()` keeps
-        // `reset(None)` on a first connect, which is what resets the state machine itself.
-        let dropped = state.connections.clear()?;
-        crate::tx_session::reset(dropped.first().map(|e| &e.conn)).await;
-        drop(dropped);
-
+        // Nothing is dropped here any more: connecting ADDS a connection, it no longer replaces the
+        // one before it. That is the whole of Phase 2 in one line — and it is also why nothing
+        // resets a transaction session here. Each connection owns its own session now, so an open
+        // transaction on connection A is none of connection B's business; A's session ends when A
+        // is disconnected (`disconnect_db`) or replaced under it (`switch_database`).
         state.connections.insert(
             conn_id.clone(),
             crate::state::ConnEntry {
@@ -536,7 +548,7 @@ pub async fn connect_db(app: tauri::AppHandle, state: tauri::State<'_, crate::Ap
 
     // Kết nối IAM: chạy task làm mới token định kỳ (token chỉ sống 15 phút)
     if is_iam(&config) && (db_type == "postgres" || db_type == "mysql") {
-        spawn_iam_refresh(app, db_type, config, generation, conn_id.clone());
+        spawn_iam_refresh(app, db_type, config, conn_id.clone());
     }
 
     // The frontend keys its per-connection localStorage on the effective schema, so it has to
@@ -554,8 +566,6 @@ pub async fn disconnect_db(
     state: tauri::State<'_, crate::AppState>,
     conn_id: String,
 ) -> Result<Value, String> {
-    // Vô hiệu task refresh IAM (nếu có)
-    state.conn_generation.fetch_add(1, Ordering::SeqCst);
 
     // Take the entry out first, then roll back its manual transaction while its pool is still alive:
     // dropping a pool with a transaction open leaves the server holding its locks until it notices
@@ -2451,7 +2461,7 @@ pub async fn commit_changes(state: tauri::State<'_, crate::AppState>, conn_id: S
     // `use_session()`, NOT `is_open()`: the transaction does not exist until its first statement,
     // and pressing Save right after switching to manual is exactly that case. Checking `is_open()`
     // sent it down the auto-commit branch below and committed it.
-    if crate::tx_session::use_session() {
+    if crate::tx_session::use_session(&conn_type) {
         for sql in sqls {
             execute_raw_sql_generic(&conn_type, sql).await?;
         }
@@ -2521,7 +2531,7 @@ pub async fn restore_backup(
     // Restore acquires its own connection and runs its own transaction. It would not corrupt the
     // user's open transaction — different session — but it would block on the locks that
     // transaction holds, and a frozen progress bar is a worse answer than a clear refusal.
-    crate::tx_session::reject_if_manual_or_open("phục hồi dữ liệu")?;
+    crate::tx_session::reject_if_manual_or_open(&conn_id, "phục hồi dữ liệu")?;
     let conn_type = {
         let ctx = state.connections.acquire(&conn_id)?;
         ctx.conn().clone()
@@ -3044,7 +3054,7 @@ async fn run_fk_wrapped(
     sql: String,
     optional: Option<String>,
 ) -> Result<(), String> {
-    if crate::tx_session::use_session() {
+    if crate::tx_session::use_session(conn) {
         // execute_raw_sql_generic routes to the pinned session, so all of these share one
         // connection exactly like the `Exec` branch below.
         if disable_fk {
@@ -3843,13 +3853,91 @@ pub async fn list_databases(state: tauri::State<'_, crate::AppState>, conn_id: S
     Ok(json!({ "success": true, "databases": databases }))
 }
 
-// Đổi database đang dùng: kết nối lại bằng last_config với database mới (đi qua SSH tunnel nếu đang bật)
+/// Open another database on the SAME server as a **new connection** (§4.3).
+///
+/// This is what the database picker calls, and it is a different thing from `switch_database`:
+/// switching *replaces* the pool, so uncommitted work on it has to be refused first and the
+/// transaction session is reset. Opening *adds* a pool, so it touches nothing that already exists —
+/// there is nothing to refuse, and a transaction open on the current database keeps running while
+/// the user works in another one.
+///
+/// The `Arc<ServerHandle>` is shared, which is the point: the SSH tunnel, the credentials and the
+/// IAM token are the server's, not this database's. No re-auth, and the tunnel stays up as long as
+/// any connection on that server is open — the last one closing drops the last `Arc` and with it the
+/// forwarded port.
+///
+/// Idempotent: asking for a database that is already open hands back the connection that has it,
+/// rather than minting a second pool for the same place.
+#[tauri::command]
+pub async fn open_database(
+    state: tauri::State<'_, crate::AppState>,
+    conn_id: String,
+    name: String,
+) -> Result<Value, String> {
+    let (server, db_type, tunnel_port) = {
+        let ctx = state.connections.acquire(&conn_id)?;
+        (
+            ctx.server_arc(),
+            ctx.server().db_type.clone(),
+            ctx.server().ssh_tunnel.as_ref().map(|t| t.local_port),
+        )
+    };
+
+    if db_type == "sqlite" {
+        return Err("SQLite không hỗ trợ nhiều database trên một kết nối".to_string());
+    }
+
+    if let Some(existing) = state.connections.find(&server.id, &name)? {
+        let ctx = state.connections.acquire(&existing)?;
+        return Ok(json!({
+            "success": true, "database": name,
+            "schema": ctx.raw_schema(), "connId": &*existing,
+        }));
+    }
+
+    // Config để dựng URL: nếu có tunnel thì trỏ qua 127.0.0.1:<local_port>
+    let mut url_conf = server.config();
+    if let Some(port) = tunnel_port {
+        if let Some(obj) = url_conf.as_object_mut() {
+            obj.insert("host".to_string(), json!("127.0.0.1"));
+            obj.insert("port".to_string(), json!(port));
+        }
+    }
+
+    let new_id = crate::state::mint_id();
+    let kind = match db_type.as_str() {
+        "postgres" => {
+            let url = build_pg_url(&url_conf, Some(name.as_str()));
+            DbKind::Postgres(PgPool::connect(&url).await.map_err(|e| e.to_string())?)
+        }
+        "mysql" => {
+            let url = build_mysql_url(&url_conf, Some(name.as_str()));
+            DbKind::Mysql(MySqlPool::connect(&url).await.map_err(|e| e.to_string())?)
+        }
+        _ => return Err("Hệ quản trị CSDL không được hỗ trợ".to_string()),
+    };
+    let conn = DbConnection::session(new_id.clone(), kind);
+
+    // Each database has its own schemas, so probe rather than inherit the one selected elsewhere.
+    let schema = probe_pg_schema(&conn).await;
+    state.connections.insert(
+        new_id.clone(),
+        crate::state::ConnEntry { server, db: name.clone(), conn, current_schema: schema.clone() },
+    )?;
+    Ok(json!({ "success": true, "database": name, "schema": schema, "connId": &*new_id }))
+}
+
+// Đổi database đang dùng: kết nối lại bằng last_config với database mới (đi qua SSH tunnel nếu đang bật).
+//
+// Giữ lại cho các đường THẬT SỰ muốn thay pool tại chỗ: bước "đổi sang database đích" của luồng
+// nhập/phục hồi, và popup thống kê. Bộ chọn database trên thanh tiêu đề đã chuyển sang
+// `open_database` — mở thêm thay vì thay, nên không phải từ chối khi còn thay đổi chưa commit.
 #[tauri::command]
 pub async fn switch_database(state: tauri::State<'_, crate::AppState>, conn_id: String, name: String) -> Result<Value, String> {
     // Switching database replaces the pool, so uncommitted work would die without a word. Refuse
     // only when there IS uncommitted work — see `reject_if_pending`. An open-but-read-only session
     // is rolled back below instead of being turned into a refusal the user cannot clear.
-    crate::tx_session::reject_if_pending("đổi database")?;
+    crate::tx_session::reject_if_pending(&conn_id, "đổi database")?;
     let (last_conf_opt, db_type, tunnel_port) = {
         // Server-level, xem ghi chú cùng loại ở `restore_backup`.
         let ctx = state.connections.acquire(&conn_id)?;

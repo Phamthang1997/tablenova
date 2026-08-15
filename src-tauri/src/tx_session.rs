@@ -1,18 +1,17 @@
-//! Manual transaction mode — one pinned session for the whole app.
+//! Manual transaction mode — **one pinned session per connection**.
 //!
 //! Why a module-level static instead of `AppState`: the ~60 call sites that reach the database go
 //! through `database::execute_raw_sql_generic`, which receives a `&DbConnection` and no `AppState`.
-//! Threading a session handle down to all of them would mean changing hundreds of signatures for a
-//! value that is always the same one — Phase 1 of multi-connection keeps `AppState::connections` at
-//! exactly ONE entry, so there is exactly one session. Reset by `connect_db` / `disconnect_db`.
+//! Threading a session handle down to all of them would mean changing hundreds of signatures. The
+//! handle already carries its own identity (`DbConnection::id`, §4.4a), so this module can look the
+//! session up itself — that is exactly what the id inside the handle bought.
 //!
-//! **This static is what Phase 2 replaces**, and it is a hard ordering constraint rather than a
-//! preference: with N entries in the registry and one global session, the first statement issued in
-//! manual mode pins whichever connection asked first, and every later statement of every other
-//! connection then runs on it — the wrong database, not merely a slow one. See
-//! `docs/multi-connection-plan.md` §4.2.
+//! **Keyed by `conn_id`, and both `meta` and `pinned` are per session.** A single global `pinned`
+//! was correct only while the app held one connection: with N, the first statement issued in manual
+//! mode pins whichever connection asked first and every later statement of every *other* connection
+//! then runs on it — the wrong database, not merely a slow one. See §4.2 of the plan.
 //!
-//! The three rules that make this correct:
+//! The five rules that make this correct:
 //!
 //! 1. **Every** SQL path asks the session first (`execute_raw_sql_generic`, `run_bound_query`,
 //!    `stream_one_statement`). Routing only the SQL editor would make the grid re-read through a
@@ -23,11 +22,18 @@
 //!    dialects we support.
 //! 3. The state machine also watches statements the *user* typed (`COMMIT`, `ROLLBACK`) and the
 //!    ones MySQL commits implicitly (DDL). Without that the pending counter lies.
+//! 4. `should_route` uses `get_session`, which never creates. It runs on EVERY statement, including
+//!    each of the 50k in a restore, so the check path must not write to the map. No entry reads as
+//!    auto-commit, which is the right answer for a connection never switched to manual mode.
+//! 5. `reset` **removes** the entry rather than resetting its fields. Leaving it leaks one entry per
+//!    connect/disconnect cycle, and a later connection reusing the id would inherit
+//!    `autocommit = false` and open a transaction the user never asked for.
 //!
 //! SQLite needs no pinning: `DbKind::Sqlite` is a single `Arc<Mutex<Connection>>` shared by
 //! the whole app, so it is already one session. Only the state machine applies there.
 
-use std::sync::{Mutex, OnceLock};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
 use serde_json::{json, Value};
@@ -354,39 +360,108 @@ impl Meta {
     }
 }
 
-struct Global {
+/// One manual-transaction session — one per open connection.
+struct Session {
     /// Small and synchronous — never locked across an `.await`.
     meta: Mutex<Meta>,
-    /// Held across the whole statement on purpose: one session means one statement at a time.
-    pinned: tokio::sync::Mutex<Option<Pinned>>,
-    app: Mutex<Option<tauri::AppHandle>>,
+    /// Held across the whole statement on purpose: one session runs one statement at a time.
+    /// **Per session, not global.** One shared lock would serialise every connection behind
+    /// whichever one is mid-statement, and — far worse before the map existed — would pin one
+    /// connection as *the* session and send every other connection's statements to it.
+    ///
+    /// `Arc` so `lock_owned()` can hand back a guard that owns its keep-alive. A borrowed
+    /// `MutexGuard<'_, _>` cannot outlive the `Arc<Session>` that `lock_pinned` looked up, and the
+    /// callers hold the guard across their whole statement.
+    pinned: Arc<tokio::sync::Mutex<Option<Pinned>>>,
 }
 
-static G: OnceLock<Global> = OnceLock::new();
+impl Session {
+    fn new() -> Self {
+        Session {
+            meta: Mutex::new(Meta::new()),
+            pinned: Arc::new(tokio::sync::Mutex::new(None)),
+        }
+    }
+}
 
-fn g() -> &'static Global {
-    G.get_or_init(|| Global {
-        meta: Mutex::new(Meta::new()),
-        pinned: tokio::sync::Mutex::new(None),
-        app: Mutex::new(None),
-    })
+static SESSIONS: OnceLock<Mutex<HashMap<crate::state::SessionId, Arc<Session>>>> = OnceLock::new();
+static APP: OnceLock<Mutex<Option<tauri::AppHandle>>> = OnceLock::new();
+
+fn sessions() -> &'static Mutex<HashMap<crate::state::SessionId, Arc<Session>>> {
+    SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn app_slot() -> &'static Mutex<Option<tauri::AppHandle>> {
+    APP.get_or_init(|| Mutex::new(None))
+}
+
+/// The session of a connection, **without creating one**.
+///
+/// `should_route` runs on every statement — including each of the 50k in a restore — so the check
+/// path must not write to the map. A connection with no session yet behaves as auto-commit, which is
+/// already the right answer for one that has never been switched to manual mode.
+fn get_session(id: &str) -> Option<Arc<Session>> {
+    let map = match sessions().lock() {
+        Ok(m) => m,
+        Err(e) => e.into_inner(),
+    };
+    map.get(id).cloned()
+}
+
+/// The session of a connection, creating it on first use. Only the paths that actually open or
+/// configure a session call this.
+///
+/// Returns an `Arc` so the caller can **drop the registry lock before awaiting** `pinned`. Holding
+/// the map guard across that await would violate `CODING_STANDARDS.md` §6.3 and would put the global
+/// serialisation back one level up — the very thing the per-session `pinned` removes.
+fn session_for(id: &str) -> Arc<Session> {
+    let mut map = match sessions().lock() {
+        Ok(m) => m,
+        Err(e) => e.into_inner(),
+    };
+    if let Some(s) = map.get(id) {
+        return s.clone();
+    }
+    let s = Arc::new(Session::new());
+    map.insert(Arc::from(id), s.clone());
+    s
+}
+
+/// The session a live connection belongs to. `ConnId::Adhoc` has none and never gets one — see
+/// `should_route`.
+fn session_key(conn: &DbConnection) -> Option<&str> {
+    match &conn.id {
+        crate::state::ConnId::Session(s) => Some(s),
+        crate::state::ConnId::Adhoc => None,
+    }
 }
 
 /// Called once from `lib.rs` setup. The state changes from inside the SQL funnels, which have no
 /// `AppHandle`, so the handle is parked here and the UI is told by event instead of by threading a
 /// `tx` field through every command's response shape.
 pub fn set_app_handle(app: tauri::AppHandle) {
-    if let Ok(mut slot) = g().app.lock() {
+    if let Ok(mut slot) = app_slot().lock() {
         *slot = Some(app);
     }
 }
 
-pub fn status_json() -> Value {
-    let m = match g().meta.lock() {
-        Ok(m) => m,
-        Err(e) => e.into_inner(),
+/// The status of one connection's session. A connection with no session reports the default —
+/// auto-commit on, nothing open — which is exactly its state.
+pub fn status_json(conn_id: &str) -> Value {
+    let session = get_session(conn_id);
+    let fallback = Meta::new();
+    let m = match session.as_ref() {
+        Some(s) => match s.meta.lock() {
+            Ok(m) => m,
+            Err(e) => e.into_inner(),
+        },
+        None => return meta_json(conn_id, &fallback),
     };
-    json!({
+    meta_json(conn_id, &m)
+}
+
+fn meta_json(conn_id: &str, m: &Meta) -> Value {
+    let mut v = json!({
         "autocommit": m.autocommit,
         "open": m.open,
         "aborted": m.aborted,
@@ -398,12 +473,19 @@ pub fn status_json() -> Value {
         "readOnly": m.read_only,
         "savepoints": m.savepoints.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>(),
         "implicitCommit": m.last_implicit_commit,
-    })
+    });
+    // ONE added field, not a re-wrapped payload: `TxControl` filters on it
+    // (`payload.connId !== activeConnId`), and wrapping would break every field access in that
+    // component and the `TxStatus` type at once, for nothing. See §4.2 of the plan.
+    if let Some(o) = v.as_object_mut() {
+        o.insert("connId".to_string(), json!(conn_id));
+    }
+    v
 }
 
-fn emit_state() {
-    let payload = status_json();
-    let handle = match g().app.lock() {
+fn emit_state(conn_id: &str) {
+    let payload = status_json(conn_id);
+    let handle = match app_slot().lock() {
         Ok(h) => h.clone(),
         Err(e) => e.into_inner().clone(),
     };
@@ -412,30 +494,58 @@ fn emit_state() {
     }
 }
 
-/// True when a transaction is open and holding changes the user has not committed.
-pub fn has_pending() -> bool {
-    let m = match g().meta.lock() {
-        Ok(m) => m,
-        Err(e) => e.into_inner(),
-    };
-    m.open && m.statements > 0
+/// Read one field out of a connection's `Meta`. A connection with no session yet has the default
+/// state, so the three predicates below answer `false` for it without creating anything.
+fn with_meta<T>(conn_id: &str, f: impl FnOnce(&Meta) -> T, default: T) -> T {
+    match get_session(conn_id) {
+        Some(s) => {
+            let m = match s.meta.lock() {
+                Ok(m) => m,
+                Err(e) => e.into_inner(),
+            };
+            f(&m)
+        }
+        None => default,
+    }
 }
 
-pub fn is_open() -> bool {
-    let m = match g().meta.lock() {
+/// True when a transaction is open and holding changes the user has not committed.
+pub fn has_pending(conn_id: &str) -> bool {
+    with_meta(conn_id, |m| m.open && m.statements > 0, false)
+}
+
+/// How many uncommitted **write** statements one connection is holding — the number the left rail
+/// puts on that connection's badge (§4.2b). Zero for a connection with no session, or one that is
+/// open but has only read.
+pub fn pending_count(conn_id: &str) -> usize {
+    with_meta(conn_id, |m| if m.open { m.statements } else { 0 }, 0)
+}
+
+/// **Any** connection with uncommitted changes.
+///
+/// Deliberately not per-connection: the window-close guard asks "is anything dirty", and asking it
+/// per connection would let closing the window silently discard another tab's transaction.
+pub fn any_pending() -> bool {
+    let map = match sessions().lock() {
         Ok(m) => m,
         Err(e) => e.into_inner(),
     };
-    m.open
+    map.values().any(|s| {
+        let m = match s.meta.lock() {
+            Ok(m) => m,
+            Err(e) => e.into_inner(),
+        };
+        m.open && m.statements > 0
+    })
+}
+
+pub fn is_open(conn_id: &str) -> bool {
+    with_meta(conn_id, |m| m.open, false)
 }
 
 /// Auto-commit is off, whether or not a transaction happens to be open right now.
-pub fn manual_mode() -> bool {
-    let m = match g().meta.lock() {
-        Ok(m) => m,
-        Err(e) => e.into_inner(),
-    };
-    !m.autocommit
+pub fn manual_mode(conn_id: &str) -> bool {
+    with_meta(conn_id, |m| !m.autocommit, false)
 }
 
 /// Should a command that writes run on the pinned session?
@@ -443,16 +553,24 @@ pub fn manual_mode() -> bool {
 /// **Not** `is_open()`: a transaction only opens when the first statement runs, so a command that
 /// checks `is_open()` and finds `false` would happily commit on its own connection — manual commit
 /// that commits by itself. Every write path outside the three SQL funnels must ask *this*.
-pub fn use_session() -> bool {
-    manual_mode() || is_open()
+/// Takes the **connection**, not an id string: both call sites already hold one, and letting the
+/// handle carry its own identity is what keeps a caller from pairing connection A with id B (§4.4a).
+/// An ad-hoc pool has no session and never joins one.
+pub fn use_session(conn: &DbConnection) -> bool {
+    match session_key(conn) {
+        Some(k) => manual_mode(k) || is_open(k),
+        None => false,
+    }
 }
 
 /// Guard for the batch commands that must own their connection and their own transaction
 /// (Data Generator, restore): they issue periodic commits by design, so they cannot join the
 /// user's transaction, and they would block on the locks it holds. Refusing beats freezing —
 /// and beats committing behind the user's back while the mode says "manual".
-pub fn reject_if_manual_or_open(action: &str) -> Result<(), String> {
-    if use_session() {
+pub fn reject_if_manual_or_open(conn_id: &str, action: &str) -> Result<(), String> {
+    // Same predicate as `use_session`, spelled out because the callers (restore, data generation)
+    // guard *before* they have a connection handle — they only know the id.
+    if manual_mode(conn_id) || is_open(conn_id) {
         return Err(format!(
             "Đang bật commit thủ công — hãy kết thúc transaction và chuyển về tự động trước khi {}",
             action
@@ -478,8 +596,8 @@ pub fn reject_if_manual_or_open(action: &str) -> Result<(), String> {
 ///
 /// Reuses the wording of the old `reject_if_open` verbatim: with pending writes it is exactly as
 /// true as before, and keeping the literal identical costs `src/utils/backendErrors.ts` nothing.
-pub fn reject_if_pending(action: &str) -> Result<(), String> {
-    if has_pending() {
+pub fn reject_if_pending(conn_id: &str, action: &str) -> Result<(), String> {
+    if has_pending(conn_id) {
         return Err(format!(
             "Transaction đang mở — hãy commit hoặc rollback trước khi {}",
             action
@@ -495,22 +613,23 @@ pub fn reject_if_pending(action: &str) -> Result<(), String> {
 /// another one, and the connection carrying the open transaction went back to the pool holding
 /// locks. The statement that opens a transaction has to create the session it belongs to.
 pub fn should_route(conn: &DbConnection, sql: &str) -> bool {
-    // A pool this process opened for itself is never the user's session. This check is FIRST because
-    // everything below answers from global session state without looking at the connection: with
-    // manual commit on, an ad-hoc pool used to be pinned as the session and `BEGIN` ran on it, so
-    // every later statement of the user went to the compare database — and the pool was then closed
-    // under the session. See `ConnId::Adhoc` and §0 of docs/multi-connection-plan.md.
-    if matches!(conn.id, crate::state::ConnId::Adhoc) {
+    // A pool this process opened for itself is never the user's session — `ConnId::Adhoc` has no
+    // session key at all. See §0 of docs/multi-connection-plan.md for what that used to cost.
+    let Some(key) = session_key(conn) else {
         return false;
-    }
-    let m = match g().meta.lock() {
-        Ok(m) => m,
-        Err(e) => e.into_inner(),
     };
-    if !m.autocommit || m.open {
-        return true;
+    // `get_session`, not `session_for`: this runs on EVERY statement, including each of the 50k in a
+    // restore, and the check path must not write to the map. No session yet == auto-commit, which is
+    // the right answer for a connection never switched to manual mode.
+    if let Some(s) = get_session(key) {
+        let m = match s.meta.lock() {
+            Ok(m) => m,
+            Err(e) => e.into_inner(),
+        };
+        if !m.autocommit || m.open {
+            return true;
+        }
     }
-    drop(m);
     tx_effect(dialect_of(conn), database::strip_leading_comments(sql)) == TxEffect::Begin
 }
 
@@ -518,11 +637,20 @@ pub fn should_route(conn: &DbConnection, sql: &str) -> bool {
 // Running statements through the session
 // ---------------------------------------------------------------------------
 
-/// Take the session lock, pinning a connection on first use.
+/// Take this connection's session lock, pinning a connection on first use.
+///
+/// The `Arc` is cloned out and the **registry lock is already released** by the time we await:
+/// holding the map guard across `.await` would violate `CODING_STANDARDS.md` §6.3 and would put the
+/// global serialisation back one level up — exactly what the per-session `pinned` removes.
 async fn lock_pinned(
     conn: &DbConnection,
-) -> Result<tokio::sync::MutexGuard<'static, Option<Pinned>>, String> {
-    let mut guard = g().pinned.lock().await;
+) -> Result<tokio::sync::OwnedMutexGuard<Option<Pinned>>, String> {
+    // English, and deliberately not in `backendErrors.ts`: unreachable in practice, because every
+    // caller got here through `should_route`, which returns false for `ConnId::Adhoc`. A developer
+    // diagnostic, not a user condition — same call as the one made for `sole()` in Phase 1b.
+    let key = session_key(conn).ok_or("internal: ad-hoc connection has no transaction session")?;
+    let pinned = session_for(key).pinned.clone();
+    let mut guard = pinned.lock_owned().await;
     if guard.is_none() {
         *guard = Some(match &conn.kind {
             DbKind::Sqlite(_) => Pinned::Sqlite,
@@ -562,8 +690,12 @@ async fn ensure_begin(
     conn: &DbConnection,
     effect: &TxEffect,
 ) -> Result<(), String> {
+    // Same invariant as `lock_pinned`, which every caller went through first.
+    let session = session_for(
+        session_key(conn).ok_or("internal: ad-hoc connection has no transaction session")?,
+    );
     let (already_open, isolation, read_only) = {
-        let m = g().meta.lock().map_err(|e| e.to_string())?;
+        let m = session.meta.lock().map_err(|e| e.to_string())?;
         (m.open, m.isolation.clone(), m.read_only)
     };
     if already_open || *effect == TxEffect::Begin {
@@ -572,7 +704,7 @@ async fn ensure_begin(
     for stmt in begin_statements(dialect_of(conn), isolation.as_deref(), read_only) {
         raw_on_pinned(pinned, conn, &stmt).await?;
     }
-    let mut m = g().meta.lock().map_err(|e| e.to_string())?;
+    let mut m = session.meta.lock().map_err(|e| e.to_string())?;
     m.open = true;
     m.aborted = false;
     m.statements = 0;
@@ -584,8 +716,9 @@ async fn ensure_begin(
 /// Fold the statement's outcome into the transaction state.
 ///
 /// `is_write` decides whether the pending counter moves — see `is_write_stmt`.
-fn apply_effect(effect: &TxEffect, is_write: bool, sql: &str, failed_with: Option<&str>) {
-    let mut m = match g().meta.lock() {
+fn apply_effect(conn_id: &str, effect: &TxEffect, is_write: bool, sql: &str, failed_with: Option<&str>) {
+    let session = session_for(conn_id);
+    let mut m = match session.meta.lock() {
         Ok(m) => m,
         Err(e) => e.into_inner(),
     };
@@ -598,7 +731,7 @@ fn apply_effect(effect: &TxEffect, is_write: bool, sql: &str, failed_with: Optio
             m.aborted = true;
         }
         drop(m);
-        emit_state();
+        emit_state(conn_id);
         return;
     }
 
@@ -645,11 +778,14 @@ fn apply_effect(effect: &TxEffect, is_write: bool, sql: &str, failed_with: Optio
         }
     }
     drop(m);
-    emit_state();
+    emit_state(conn_id);
 }
 
-fn check_not_aborted(effect: &TxEffect) -> Result<(), String> {
-    let m = match g().meta.lock() {
+fn check_not_aborted(conn_id: &str, effect: &TxEffect) -> Result<(), String> {
+    let Some(session) = get_session(conn_id) else {
+        return Ok(());
+    };
+    let m = match session.meta.lock() {
         Ok(m) => m,
         Err(e) => e.into_inner(),
     };
@@ -668,7 +804,8 @@ pub(crate) async fn run_raw(conn: &DbConnection, sql: String) -> Result<Vec<Valu
     let stripped = database::strip_leading_comments(&sql);
     let effect = tx_effect(dialect_of(conn), stripped);
     let is_write = is_write_stmt(stripped);
-    check_not_aborted(&effect)?;
+    let key = session_key(conn).ok_or("internal: ad-hoc connection has no transaction session")?;
+    check_not_aborted(key, &effect)?;
 
     let mut guard = lock_pinned(conn).await?;
     let pinned = guard.as_mut().ok_or("Phiên transaction không sẵn sàng")?;
@@ -678,12 +815,12 @@ pub(crate) async fn run_raw(conn: &DbConnection, sql: String) -> Result<Vec<Valu
     drop(guard);
 
     match &out {
-        Ok(_) => apply_effect(&effect, is_write, &sql, None),
-        Err(e) => apply_effect(&effect, is_write, &sql, Some(e)),
+        Ok(_) => apply_effect(key, &effect, is_write, &sql, None),
+        Err(e) => apply_effect(key, &effect, is_write, &sql, Some(e)),
     }
     // A COMMIT/ROLLBACK frees the connection back to the pool; holding it after the transaction
     // ended would starve the pool for no reason.
-    release_if_closed().await;
+    release_if_closed(key).await;
     out
 }
 
@@ -696,7 +833,8 @@ pub(crate) async fn run_bound(
     let stripped = database::strip_leading_comments(&sql);
     let effect = tx_effect(dialect_of(conn), stripped);
     let is_write = is_write_stmt(stripped);
-    check_not_aborted(&effect)?;
+    let key = session_key(conn).ok_or("internal: ad-hoc connection has no transaction session")?;
+    check_not_aborted(key, &effect)?;
 
     let mut guard = lock_pinned(conn).await?;
     let pinned = guard.as_mut().ok_or("Phiên transaction không sẵn sàng")?;
@@ -713,10 +851,10 @@ pub(crate) async fn run_bound(
     drop(guard);
 
     match &out {
-        Ok(_) => apply_effect(&effect, is_write, &sql, None),
-        Err(e) => apply_effect(&effect, is_write, &sql, Some(e)),
+        Ok(_) => apply_effect(key, &effect, is_write, &sql, None),
+        Err(e) => apply_effect(key, &effect, is_write, &sql, Some(e)),
     }
-    release_if_closed().await;
+    release_if_closed(key).await;
     out
 }
 
@@ -733,7 +871,8 @@ pub(crate) async fn run_stream(
     let stripped = database::strip_leading_comments(sql);
     let effect = tx_effect(dialect_of(conn), stripped);
     let is_write = is_write_stmt(stripped);
-    check_not_aborted(&effect)?;
+    let key = session_key(conn).ok_or("internal: ad-hoc connection has no transaction session")?;
+    check_not_aborted(key, &effect)?;
 
     let mut guard = lock_pinned(conn).await?;
     let pinned = guard.as_mut().ok_or("Phiên transaction không sẵn sàng")?;
@@ -759,26 +898,30 @@ pub(crate) async fn run_stream(
     drop(guard);
 
     match &out {
-        Ok(_) => apply_effect(&effect, is_write, sql, None),
-        Err(e) => apply_effect(&effect, is_write, sql, Some(e)),
+        Ok(_) => apply_effect(key, &effect, is_write, sql, None),
+        Err(e) => apply_effect(key, &effect, is_write, sql, Some(e)),
     }
-    release_if_closed().await;
+    release_if_closed(key).await;
     out
 }
 
 /// Give the pinned connection back once no transaction is open and the user is in auto-commit.
 /// In manual mode the connection is kept: the next statement opens a new transaction on it anyway,
 /// and re-acquiring per statement would reintroduce the session-hopping this module exists to fix.
-async fn release_if_closed() {
+async fn release_if_closed(conn_id: &str) {
+    let Some(session) = get_session(conn_id) else {
+        return;
+    };
     let (open, autocommit) = {
-        let m = match g().meta.lock() {
+        let m = match session.meta.lock() {
             Ok(m) => m,
             Err(e) => e.into_inner(),
         };
         (m.open, m.autocommit)
     };
     if !open && autocommit {
-        let mut guard = g().pinned.lock().await;
+        let pinned = session.pinned.clone();
+        let mut guard = pinned.lock_owned().await;
         *guard = None;
     }
 }
@@ -791,40 +934,53 @@ async fn release_if_closed() {
 /// disappear (disconnect, connect elsewhere, IAM pool swap): the transaction would die anyway, and
 /// dying silently is what makes users lose work without knowing it.
 pub async fn abandon(conn: Option<&DbConnection>) {
-    let was_open = is_open();
-    let mut guard = g().pinned.lock().await;
+    let Some(key) = conn.and_then(session_key).map(str::to_string) else {
+        return;
+    };
+    let Some(session) = get_session(&key) else {
+        return;
+    };
+    let was_open = is_open(&key);
+    let pinned = session.pinned.clone();
+    let mut guard = pinned.lock_owned().await;
     if was_open {
-        if let (Some(pinned), Some(c)) = (guard.as_mut(), conn) {
-            let _ = raw_on_pinned(pinned, c, "ROLLBACK").await;
+        if let (Some(p), Some(c)) = (guard.as_mut(), conn) {
+            let _ = raw_on_pinned(p, c, "ROLLBACK").await;
         }
     }
     *guard = None;
     drop(guard);
     {
-        let mut m = match g().meta.lock() {
+        let mut m = match session.meta.lock() {
             Ok(m) => m,
             Err(e) => e.into_inner(),
         };
         m.close();
         m.last_implicit_commit = false;
     }
-    emit_state();
+    emit_state(&key);
 }
 
 /// Full reset on a new connection: auto-commit preference included, because isolation levels are
 /// dialect-specific and carrying "REPEATABLE READ" over to SQLite would be meaningless.
 pub async fn reset(conn: Option<&DbConnection>) {
     abandon(conn).await;
+    let Some(key) = conn.and_then(session_key).map(str::to_string) else {
+        return;
+    };
+    // **Remove the entry, do not just reset its fields.** Leaving it behind leaks one entry per
+    // connect/disconnect cycle, and — the part that bites — a later connection reusing this id would
+    // inherit `autocommit = false` and silently open a transaction the user never asked for.
+    // Removal also *is* the reset: a missing entry reads as auto-commit on, nothing open, no
+    // isolation override, which is exactly the state this used to write by hand.
     {
-        let mut m = match g().meta.lock() {
+        let mut map = match sessions().lock() {
             Ok(m) => m,
             Err(e) => e.into_inner(),
         };
-        m.autocommit = true;
-        m.isolation = None;
-        m.read_only = false;
+        map.remove(key.as_str());
     }
-    emit_state();
+    emit_state(&key);
 }
 
 // ---------------------------------------------------------------------------
@@ -839,8 +995,18 @@ fn current_conn(
 }
 
 #[tauri::command]
-pub async fn tx_status() -> Result<Value, String> {
-    Ok(status_json())
+pub async fn tx_status(conn_id: String) -> Result<Value, String> {
+    Ok(status_json(&conn_id))
+}
+
+/// Is **any** connection holding uncommitted changes?
+///
+/// For the window-close guard, which is the one question that is not per-connection: closing the
+/// window discards every session, so asking only about the connection the UI happens to be showing
+/// would silently throw away another tab's transaction.
+#[tauri::command]
+pub async fn tx_any_pending() -> Result<Value, String> {
+    Ok(json!({ "anyPending": any_pending() }))
 }
 
 /// Turn auto-commit on or off. Turning it ON while a transaction is open is rejected rather than
@@ -851,11 +1017,11 @@ pub async fn tx_set_autocommit(
     state: tauri::State<'_, crate::AppState>, conn_id: String,
     enabled: bool,
 ) -> Result<Value, String> {
-    if enabled && has_pending() {
+    if enabled && has_pending(&conn_id) {
         return Err("Transaction đang mở — hãy commit hoặc rollback trước khi bật lại auto-commit".to_string());
     }
     // An open-but-empty transaction has nothing to lose, so close it quietly.
-    if enabled && is_open() {
+    if enabled && is_open(&conn_id) {
         let conn = current_conn(&state, &conn_id).ok();
         if let Some(c) = &conn {
             let mut guard = lock_pinned(c).await?;
@@ -864,18 +1030,20 @@ pub async fn tx_set_autocommit(
             }
             *guard = None;
         }
-        let mut m = g().meta.lock().map_err(|e| e.to_string())?;
+        let session = session_for(&conn_id);
+        let mut m = session.meta.lock().map_err(|e| e.to_string())?;
         m.close();
     }
     {
-        let mut m = g().meta.lock().map_err(|e| e.to_string())?;
+        let session = session_for(&conn_id);
+        let mut m = session.meta.lock().map_err(|e| e.to_string())?;
         m.autocommit = enabled;
     }
     if enabled {
-        release_if_closed().await;
+        release_if_closed(&conn_id).await;
     }
-    emit_state();
-    Ok(status_json())
+    emit_state(&conn_id);
+    Ok(status_json(&conn_id))
 }
 
 #[tauri::command]
@@ -892,14 +1060,15 @@ pub async fn tx_set_isolation(
         }
     }
     {
-        let mut m = g().meta.lock().map_err(|e| e.to_string())?;
+        let session = session_for(&conn_id);
+        let mut m = session.meta.lock().map_err(|e| e.to_string())?;
         m.isolation = level.map(|l| l.to_uppercase());
         if let Some(ro) = read_only {
             m.read_only = ro;
         }
     }
-    emit_state();
-    Ok(status_json())
+    emit_state(&conn_id);
+    Ok(status_json(&conn_id))
 }
 
 async fn end_tx(
@@ -907,7 +1076,7 @@ async fn end_tx(
     conn_id: &str,
     sql: &str,
 ) -> Result<Value, String> {
-    if !is_open() {
+    if !is_open(conn_id) {
         return Err("Không có transaction nào đang mở".to_string());
     }
     // `conn_id` is already a `&str` here, unlike the commands that own a `String`.
@@ -921,12 +1090,13 @@ async fn end_tx(
     // deferred constraint) has already rolled the whole thing back, and leaving the UI showing an
     // open transaction would invite a second COMMIT against nothing.
     {
-        let mut m = g().meta.lock().map_err(|e| e.to_string())?;
+        let session = session_for(conn_id);
+        let mut m = session.meta.lock().map_err(|e| e.to_string())?;
         m.close();
     }
-    release_if_closed().await;
-    emit_state();
-    out.map(|_| status_json())
+    release_if_closed(conn_id).await;
+    emit_state(conn_id);
+    out.map(|_| status_json(conn_id))
 }
 
 #[tauri::command]
@@ -953,7 +1123,7 @@ pub async fn tx_savepoint(
     let clean = sanitize_savepoint(&name)?;
     let conn = current_conn(&state, &conn_id)?;
     run_raw(&conn, format!("SAVEPOINT {}", clean)).await?;
-    Ok(status_json())
+    Ok(status_json(&conn_id))
 }
 
 #[tauri::command]
@@ -964,7 +1134,7 @@ pub async fn tx_rollback_to(
     let clean = sanitize_savepoint(&name)?;
     let conn = current_conn(&state, &conn_id)?;
     run_raw(&conn, format!("ROLLBACK TO SAVEPOINT {}", clean)).await?;
-    Ok(status_json())
+    Ok(status_json(&conn_id))
 }
 
 /// Savepoint names go into SQL by formatting like every other identifier in this app. Unlike a

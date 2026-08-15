@@ -53,8 +53,17 @@ const en = {
     catWindow: 'Window',
     catMath: 'Math',
     catSpatialVector: 'Vector / GIS',
-    catCommand: 'Commands',
+    catCommand: 'Redis Commands',
     catPragma: 'PRAGMAs',
+    categoriesHeader: 'Categories',
+    commandsHeader: 'Commands & Functions',
+    paramName: 'Parameter',
+    paramType: 'Type',
+    paramRequired: 'Required',
+    paramDescription: 'Description',
+    paramOptionalBadge: 'Optional',
+    paramRequiredBadge: 'Required',
+    selectToView: 'Select a function or command to view documentation.',
   },
 
   language: {
@@ -272,6 +281,9 @@ const en = {
     objDefView: 'View',
 
     errSwitchDb: 'Failed to switch database: {{message}}',
+    errOpenDb: 'Failed to open database: {{message}}',
+    closeConnection: 'Close connection',
+    closeOtherConnections: 'Close other connections',
     schema: 'Schema',
     schemaHint: 'PostgreSQL schema every query, export and edit works in',
     errSwitchSchema: 'Failed to switch schema: {{message}}',
@@ -1455,6 +1467,9 @@ const en = {
     errDefinition: 'Could not load the definition',
     errAllStats: 'Could not read the statistics of every database',
     errSwitchDb: 'Failed to switch database: {{message}}',
+    errOpenDb: 'Failed to open database: {{message}}',
+    closeConnection: 'Close connection',
+    closeOtherConnections: 'Close other connections',
 
     titleAll: 'Server-wide statistics: <accent>{{n}} databases</accent>',
     titleCurrent: 'Database information: <accent>{{name}}</accent>',

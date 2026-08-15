@@ -33,6 +33,28 @@ export function activeConnId(): string {
 }
 
 /**
+ * Point every later command at a different open connection. The rail calls this when the user
+ * switches; `connect()` sets it for a brand-new connection.
+ *
+ * Still the ambient shim §4.1 rules out as a *design* — it is honest only while the UI shows one
+ * connection at a time. Phase 3 replaces it with each tab passing the `connId` it owns.
+ */
+export function setActiveConnId(id: string): void {
+  currentConnId = id;
+}
+
+/** One entry of the backend's connection registry — see `list_connections`. */
+export interface OpenConnection {
+  connId: string;
+  db: string;
+  dialect: 'sqlite' | 'postgres' | 'mysql';
+  serverId: string;
+  schema: string | null;
+  /** Số câu GHI đang chờ commit trên kết nối này — badge của rail (§4.2b). */
+  pending: number;
+}
+
+/**
  * Every backend call goes through here so the Vietnamese error text the Rust side
  * returns is mapped to the active UI language in ONE place — see `backendErrors.ts`.
  * Shadowing the imported name keeps all existing `await invoke(...)` call sites
@@ -182,6 +204,15 @@ export interface TxStatus {
   savepoints: string[];
   /** Câu lệnh vừa chạy đã tự commit (DDL trên MySQL) -> bộ đếm về 0 không phải do người dùng. */
   implicitCommit: boolean;
+  /**
+   * Kết nối mà trạng thái này thuộc về. Mỗi kết nối một phiên, và backend phát một
+   * `tx-state-changed` cho từng phiên — `TxControl` lọc theo field này, nếu không thì event của
+   * kết nối thứ hai sẽ ghi đè hiển thị của kết nối thứ nhất.
+   *
+   * Không bắt buộc: backend cũ hơn cửa sổ đang chạy sẽ không gửi nó (`tauri dev` giữ lại binary
+   * build được gần nhất khi Rust lỗi biên dịch).
+   */
+  connId?: string;
 }
 
 export const TX_EVENT = 'tx-state-changed';
@@ -425,16 +456,23 @@ export const dbHelper = {
     }
   },
 
-  async disconnect(): Promise<{ success: boolean }> {
+  /**
+   * Đóng một kết nối. Không truyền `connId` thì đóng kết nối đang active.
+   *
+   * Truyền tường minh là cách rail đóng một kết nối **không** phải cái đang xem — và khi đó
+   * `currentConnId` phải giữ nguyên, vì kết nối đang xem không hề bị đụng tới.
+   */
+  async disconnect(connId?: string): Promise<{ success: boolean }> {
+    const target = connId ?? currentConnId;
     try {
-      const res: any = await invoke('disconnect_db');
-      // Cleared after the call, not before: the command needs the id to know which entry to drop.
-      // An empty id then makes every later command fail with the standard "not connected" error,
-      // because `ConnRegistry::acquire` cannot resolve it — which is exactly the right answer.
-      currentConnId = '';
+      const res: any = await invoke('disconnect_db', { connId: target });
+      // Xoá SAU khi gọi, và chỉ khi đóng đúng cái đang active: lệnh cần id để biết xoá entry nào.
+      // Id rỗng thì mọi lệnh sau đó fail bằng đúng lỗi "chưa kết nối" vì `acquire` không resolve
+      // được — đó chính là câu trả lời đúng.
+      if (target === currentConnId) currentConnId = '';
       return { success: !!res.success };
     } catch {
-      currentConnId = '';
+      if (target === currentConnId) currentConnId = '';
       return { success: false };
     }
   },
@@ -756,8 +794,28 @@ export const dbHelper = {
   // Lỗi được ném ra (không nuốt) vì mọi thao tác ở đây đều do người dùng bấm trực tiếp:
   // "Commit không thành công" mà im lặng là kiểu sai tệ nhất trong nhóm này.
 
+  /**
+   * Every connection the backend currently holds — what the left rail lists. The rail shows *open
+   * connections*, not every database on the server, so this replaces the `list_databases` query it
+   * used to run against the active connection.
+   */
+  async listConnections(): Promise<OpenConnection[]> {
+    const res = await invoke<{ connections: OpenConnection[] }>('list_connections');
+    return res.connections || [];
+  },
+
   async txStatus(): Promise<TxStatus> {
     return await invoke<TxStatus>('tx_status');
+  },
+
+  /**
+   * Is any connection holding uncommitted changes? The window-close guard asks this instead of
+   * reading the shown connection's status — closing the window ends every session, so a per-
+   * connection answer would silently discard another tab's transaction.
+   */
+  async txAnyPending(): Promise<boolean> {
+    const res = await invoke<{ anyPending: boolean }>('tx_any_pending');
+    return !!res.anyPending;
   },
 
   async txSetAutocommit(enabled: boolean): Promise<TxStatus> {
@@ -1106,6 +1164,27 @@ export const dbHelper = {
       return { success: !!res.success, databases: res.databases || [], error: res.message };
     } catch (err: any) {
       return { success: false, databases: [], error: err.toString() };
+    }
+  },
+
+  /**
+   * Mở một database khác trên **cùng server** thành một kết nối MỚI (§4.3).
+   *
+   * Khác `switchDatabase`: cái kia *thay* pool nên phải từ chối khi còn thay đổi chưa commit và
+   * phải reset phiên transaction. Cái này *thêm* pool nên không đụng gì đang có — transaction đang
+   * mở ở database hiện tại cứ chạy tiếp trong khi người dùng làm việc ở database khác.
+   *
+   * Idempotent: database đã mở rồi thì trả về kết nối đang giữ nó.
+   */
+  async openDatabase(
+    connId: string,
+    name: string,
+  ): Promise<{ success: boolean; connId?: string; database?: string; schema?: string | null; error?: string }> {
+    try {
+      const res: any = await invoke('open_database', { connId, name });
+      return { success: !!res.success, connId: res.connId, database: res.database, schema: res.schema ?? null };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
     }
   },
 

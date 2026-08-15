@@ -48,6 +48,15 @@ const vi: typeof en = {
     catSpatialVector: 'Vector & GIS',
     catCommand: 'Lệnh Redis',
     catPragma: 'PRAGMAs',
+    categoriesHeader: 'Danh mục',
+    commandsHeader: 'Lệnh & Hàm',
+    paramName: 'Tham số',
+    paramType: 'Kiểu',
+    paramRequired: 'Bắt buộc',
+    paramDescription: 'Mô tả',
+    paramOptionalBadge: 'Tùy chọn',
+    paramRequiredBadge: 'Bắt buộc',
+    selectToView: 'Chọn một hàm hoặc lệnh để xem tài liệu chi tiết.',
   },
 
   language: {
@@ -264,6 +273,9 @@ const vi: typeof en = {
     objDefView: 'Khung nhìn',
 
     errSwitchDb: 'Lỗi đổi database: {{message}}',
+    errOpenDb: 'Lỗi mở database: {{message}}',
+    closeConnection: 'Đóng kết nối',
+    closeOtherConnections: 'Đóng các kết nối khác',
     schema: 'Schema',
     schemaHint: 'Schema PostgreSQL mà mọi truy vấn, xuất dữ liệu và sửa đổi sẽ dùng',
     errSwitchSchema: 'Lỗi đổi schema: {{message}}',
@@ -1446,6 +1458,9 @@ const vi: typeof en = {
     errDefinition: 'Không lấy được định nghĩa',
     errAllStats: 'Không thể lấy thống kê toàn bộ database',
     errSwitchDb: 'Lỗi đổi database: {{message}}',
+    errOpenDb: 'Lỗi mở database: {{message}}',
+    closeConnection: 'Đóng kết nối',
+    closeOtherConnections: 'Đóng các kết nối khác',
 
     titleAll: 'Thống kê toàn máy chủ: <accent>{{n}} database</accent>',
     titleCurrent: 'Thông tin Database: <accent>{{name}}</accent>',

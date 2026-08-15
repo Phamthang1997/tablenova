@@ -47,6 +47,15 @@ const ja: typeof en = {
     catSpatialVector: 'ベクトル / GIS',
     catCommand: 'コマンド',
     catPragma: 'PRAGMA',
+    categoriesHeader: 'カテゴリー',
+    commandsHeader: 'コマンド & 関数',
+    paramName: 'パラメータ',
+    paramType: '型',
+    paramRequired: '必須',
+    paramDescription: '説明',
+    paramOptionalBadge: '省略可能',
+    paramRequiredBadge: '必須',
+    selectToView: '詳細を表示する関数またはコマンドを選択してください。',
   },
 
   language: {
@@ -263,6 +272,9 @@ const ja: typeof en = {
     objDefView: 'ビュー',
 
     errSwitchDb: 'データベースの切り替えに失敗しました: {{message}}',
+    errOpenDb: 'データベースを開けませんでした: {{message}}',
+    closeConnection: '接続を閉じる',
+    closeOtherConnections: '他の接続を閉じる',
     schema: 'スキーマ',
     schemaHint: 'クエリ・エクスポート・編集のすべてが対象とする PostgreSQL スキーマ',
     errSwitchSchema: 'スキーマの切り替えに失敗しました: {{message}}',
@@ -1442,6 +1454,9 @@ const ja: typeof en = {
     errDefinition: '定義を取得できませんでした',
     errAllStats: '全データベースの統計を取得できませんでした',
     errSwitchDb: 'データベースの切り替えに失敗しました: {{message}}',
+    errOpenDb: 'データベースを開けませんでした: {{message}}',
+    closeConnection: '接続を閉じる',
+    closeOtherConnections: '他の接続を閉じる',
 
     titleAll: 'サーバー全体の統計: <accent>{{n}} データベース</accent>',
     titleCurrent: 'データベース情報: <accent>{{name}}</accent>',

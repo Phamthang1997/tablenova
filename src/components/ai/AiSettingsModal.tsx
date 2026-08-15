@@ -14,10 +14,8 @@ import {
   ShieldCheck,
   ExternalLink,
   ClipboardPaste,
-  Sparkles,
   DownloadCloud,
   LogOut,
-  UserCheck,
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { AiProviderIcon } from './AiIcons';
@@ -47,7 +45,7 @@ interface AiSettingsModalProps {
 }
 
 const PROVIDER_OPTIONS: Array<{ value: AiProviderType; label: string; defaultModel: string; placeholderUrl?: string }> = [
-  { value: 'gemini', label: 'Google Gemini (Hỗ trợ Browser Auth)', defaultModel: 'gemini-2.0-flash' },
+  { value: 'gemini', label: 'Google Gemini (Web Auth 1-Click & API Key)', defaultModel: 'gemini-2.0-flash' },
   { value: 'claude', label: 'Anthropic Claude', defaultModel: 'claude-3-7-sonnet-20250219' },
   { value: 'deepseek', label: 'DeepSeek', defaultModel: 'deepseek-chat', placeholderUrl: 'https://api.deepseek.com/v1' },
   { value: 'openai', label: 'OpenAI', defaultModel: 'gpt-4o-mini' },
@@ -68,8 +66,13 @@ export const AiSettingsModal: React.FC<AiSettingsModalProps> = ({ open, onClose 
   const [pasteSuccess, setPasteSuccess] = useState(false);
   const [liveModelsMap, setLiveModelsMap] = useState<Record<string, AiModelOption[]>>({});
   const [googleAuth, setGoogleAuth] = useState(() => getGoogleAuthState());
-
   const [authenticatingGoogle, setAuthenticatingGoogle] = useState(false);
+  
+  // Gemini authentication mode: 'oauth' (Web Browser 1-Click) or 'apikey' (Google AI Studio Key)
+  const [geminiAuthMode, setGeminiAuthMode] = useState<'oauth' | 'apikey'>(() => {
+    const auth = getGoogleAuthState();
+    return auth.isLoggedIn ? 'oauth' : 'oauth';
+  });
 
   const currentProfile =
     settings.profiles.find((p) => p.id === selectedProfileId) || settings.profiles[0];
@@ -166,44 +169,40 @@ export const AiSettingsModal: React.FC<AiSettingsModalProps> = ({ open, onClose 
     }
   };
 
-  const handleOpenBrowserAuth = async () => {
-    if (currentProfile.provider === 'gemini') {
-      setAuthenticatingGoogle(true);
-      setTestResult(null);
-      try {
-        const res = await startGoogleBrowserOAuth();
-        if (res.success) {
-          const newAuth = getGoogleAuthState();
-          setGoogleAuth(newAuth);
-          setTestResult({
-            success: true,
-            message: `Đăng nhập Google thành công: ${res.email || 'Tài khoản đang hoạt động'}`,
-          });
-          // Tự động tải danh sách live models cho Gemini
-          fetchLiveModels(currentProfile).then((models) => {
-            if (models.length > 0) {
-              setLiveModelsMap((prev) => ({
-                ...prev,
-                [currentProfile.id]: models,
-              }));
-            }
-          });
-        } else if (res.error) {
-          setTestResult({ success: false, message: `Lỗi đăng nhập Google: ${res.error}` });
-        }
-      } catch (err: any) {
-        setTestResult({ success: false, message: `Lỗi xác thực: ${err?.message || String(err)}` });
-      } finally {
-        setAuthenticatingGoogle(false);
+  const handleGoogleWebOAuthLogin = async () => {
+    setAuthenticatingGoogle(true);
+    setTestResult(null);
+    try {
+      const res = await startGoogleBrowserOAuth();
+      if (res.success) {
+        const newAuth = getGoogleAuthState();
+        setGoogleAuth(newAuth);
+        setSettings(getAiSettings());
+        setTestResult({
+          success: true,
+          message: `Đăng nhập Google Web thành công: ${res.email || 'Tài khoản đang hoạt động'}`,
+        });
+        fetchLiveModels(currentProfile).then((models) => {
+          if (models.length > 0) {
+            setLiveModelsMap((prev) => ({
+              ...prev,
+              [currentProfile.id]: models,
+            }));
+          }
+        });
+      } else {
+        setTestResult({
+          success: false,
+          message: `Lỗi đăng nhập Google: ${res.error || 'Không thể hoàn tất xác thực.'}`,
+        });
       }
-    } else {
-      const info = PROVIDER_AUTH_URLS[currentProfile.provider];
-      if (!info) return;
-      try {
-        await invoke('open_url', { url: info.url });
-      } catch {
-        window.open(info.url, '_blank');
-      }
+    } catch (err: any) {
+      setTestResult({
+        success: false,
+        message: `Lỗi xác thực: ${err?.message || String(err)}`,
+      });
+    } finally {
+      setAuthenticatingGoogle(false);
     }
   };
 
@@ -211,6 +210,19 @@ export const AiSettingsModal: React.FC<AiSettingsModalProps> = ({ open, onClose 
     logoutGoogleAuth();
     setGoogleAuth(getGoogleAuthState());
     setSettings(getAiSettings());
+    setTestResult({
+      success: true,
+      message: 'Đã đăng xuất tài khoản Google.',
+    });
+  };
+
+  const handleOpenBrowserAuth = async () => {
+    const info = PROVIDER_AUTH_URLS[currentProfile.provider] || { url: 'https://aistudio.google.com/app/apikey' };
+    try {
+      await invoke('open_url', { url: info.url });
+    } catch {
+      window.open(info.url, '_blank');
+    }
   };
 
   const handlePasteApiKey = async () => {
@@ -222,13 +234,11 @@ export const AiSettingsModal: React.FC<AiSettingsModalProps> = ({ open, onClose 
         setPasteSuccess(true);
         setTimeout(() => setPasteSuccess(false), 2000);
 
-        // If it looks like a Google token or key, also save to googleAuthToken
         if (currentProfile.provider === 'gemini') {
           saveGoogleAuthToken(trimmed, 'Tài khoản Google (Đã xác thực)');
           setGoogleAuth(getGoogleAuthState());
         }
 
-        // Auto trigger live model fetch with the new key
         const tempProfile = { ...currentProfile, apiKey: trimmed };
         fetchLiveModels(tempProfile).then((models) => {
           if (models.length > 0) {
@@ -338,112 +348,6 @@ export const AiSettingsModal: React.FC<AiSettingsModalProps> = ({ open, onClose 
                 </div>
               </div>
 
-              {/* DEDICATED GOOGLE BROWSER OAUTH CARD FOR GEMINI */}
-              {currentProfile.provider === 'gemini' && (
-                <div className="ai-google-oauth-card">
-                  <div className="ai-google-oauth-header">
-                    <div className="ai-google-logo-box">
-                      <span className="ai-google-g-text">G</span>
-                    </div>
-                    <div className="ai-google-oauth-info">
-                      <div className="ai-google-oauth-title">
-                        {googleAuth.isLoggedIn
-                          ? 'Đã đăng nhập bằng tài khoản Google'
-                          : 'Đăng nhập 1-Click bằng Google (Browser Auth)'}
-                      </div>
-                      <div className="ai-google-oauth-desc">
-                        {googleAuth.isLoggedIn
-                          ? `${googleAuth.email} • Sử dụng trực tiếp Gemini 2.0 Flash / Pro`
-                          : 'Đăng nhập bằng tài khoản Google trên trình duyệt để sử dụng Gemini 2.0 miễn phí không cần cấu hình phức tạp.'}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="ai-browser-auth-action-row">
-                    {googleAuth.isLoggedIn ? (
-                      <div className="ai-google-connected-actions">
-                        <span className="ai-google-active-badge">
-                          <UserCheck size={12} />
-                          <span>Tài khoản đang hoạt động</span>
-                        </span>
-                        <button
-                          type="button"
-                          className="ai-google-logout-btn"
-                          onClick={handleGoogleLogout}
-                        >
-                          <LogOut size={12} />
-                          <span>Đăng xuất</span>
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        className="ai-google-login-btn"
-                        onClick={handleOpenBrowserAuth}
-                        disabled={authenticatingGoogle}
-                      >
-                        <RefreshCw size={13} className={authenticatingGoogle ? 'ai-spinning' : ''} />
-                        <span>
-                          {authenticatingGoogle
-                            ? 'Đang chờ đăng nhập trên trình duyệt...'
-                            : 'Đăng nhập bằng Google (Browser Auth)'}
-                        </span>
-                      </button>
-                    )}
-
-                    <button
-                      type="button"
-                      className="ai-browser-paste-btn"
-                      onClick={handlePasteApiKey}
-                      title="Dán Token hoặc Key sao chép từ trình duyệt"
-                    >
-                      {pasteSuccess ? <Check size={13} className="ai-check-icon" /> : <ClipboardPaste size={13} />}
-                      <span>{pasteSuccess ? 'Đã dán Token!' : 'Dán từ Clipboard'}</span>
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* 1-Click Platform Portal for Other Providers */}
-              {currentProfile.provider !== 'gemini' && authInfo && (
-                <div className="ai-browser-auth-card">
-                  <div className="ai-browser-auth-header">
-                    <div className="ai-browser-auth-icon-wrap">
-                      <Sparkles size={14} className="ai-browser-auth-sparkle" />
-                    </div>
-                    <div className="ai-browser-auth-info">
-                      <div className="ai-browser-auth-title">
-                        Xác thực qua Trình duyệt ({authInfo.name})
-                      </div>
-                      <div className="ai-browser-auth-desc">{authInfo.note}</div>
-                    </div>
-                  </div>
-
-                  <div className="ai-browser-auth-action-row">
-                    <button
-                      type="button"
-                      className="ai-browser-auth-btn"
-                      onClick={handleOpenBrowserAuth}
-                    >
-                      <ExternalLink size={13} />
-                      <span>Mở trình duyệt lấy Key</span>
-                    </button>
-
-                    {currentProfile.provider !== 'ollama' && (
-                      <button
-                        type="button"
-                        className="ai-browser-paste-btn"
-                        onClick={handlePasteApiKey}
-                        title="Dán nhanh API Key vừa sao chép từ trình duyệt"
-                      >
-                        {pasteSuccess ? <Check size={13} className="ai-check-icon" /> : <ClipboardPaste size={13} />}
-                        <span>{pasteSuccess ? 'Đã dán!' : 'Dán từ Clipboard'}</span>
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
-
               <div className="ai-modal-form-grid">
                 {/* Assistant Name */}
                 <div className="ai-form-group">
@@ -480,24 +384,208 @@ export const AiSettingsModal: React.FC<AiSettingsModalProps> = ({ open, onClose 
                   </select>
                 </div>
 
-                {/* Latest / Live Dynamic Models Selection Dropdown & Custom Model Input */}
+                {/* ======================================================== */}
+                {/* DEDICATED CLEAN AUTH SECTION FOR GEMINI                  */}
+                {/* ======================================================== */}
+                {currentProfile.provider === 'gemini' && (
+                  <div className="ai-auth-card">
+                    <div className="ai-auth-card-top">
+                      <div className="ai-auth-segmented-control">
+                        <button
+                          type="button"
+                          className={`ai-auth-segment-btn ${geminiAuthMode === 'oauth' ? 'active' : ''}`}
+                          onClick={() => setGeminiAuthMode('oauth')}
+                        >
+                          <Globe size={13} />
+                          <span>Google Web Auth (1-Click)</span>
+                          {googleAuth.isLoggedIn && <span className="ai-auth-dot-active" title="Đã kết nối" />}
+                        </button>
+                        <button
+                          type="button"
+                          className={`ai-auth-segment-btn ${geminiAuthMode === 'apikey' ? 'active' : ''}`}
+                          onClick={() => setGeminiAuthMode('apikey')}
+                        >
+                          <Key size={13} />
+                          <span>API Key (Google AI Studio)</span>
+                          {currentProfile.apiKey && <span className="ai-auth-dot-active" title="Đã có Key" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* SUB-TAB 1: GOOGLE WEB OAUTH 1-CLICK */}
+                    {geminiAuthMode === 'oauth' && (
+                      <div className="ai-auth-tab-content">
+                        {googleAuth.isLoggedIn ? (
+                          <div className="ai-google-logged-in-box">
+                            <div className="ai-google-account-left">
+                              <div className="ai-google-logo-box">
+                                <span className="ai-google-g-text">G</span>
+                              </div>
+                              <div className="ai-google-account-details">
+                                <div className="ai-google-account-email">{googleAuth.email}</div>
+                                <div className="ai-google-account-status">
+                                  <span className="ai-dot-green" />
+                                  <span>Đã kết nối qua Google Web Auth</span>
+                                </div>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              className="ai-google-logout-btn"
+                              onClick={handleGoogleLogout}
+                            >
+                              <LogOut size={12} />
+                              <span>Đăng xuất</span>
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="ai-google-login-box">
+                            <div className="ai-google-login-desc">
+                              Đăng nhập tài khoản Google qua trình duyệt để tự động kết nối và sử dụng Gemini 2.0 Flash / Pro chỉ với 1 click.
+                            </div>
+                            <div className="ai-google-login-action-row">
+                              <button
+                                type="button"
+                                className="ai-google-primary-login-btn"
+                                onClick={handleGoogleWebOAuthLogin}
+                                disabled={authenticatingGoogle}
+                              >
+                                <span className="ai-google-btn-g">G</span>
+                                <span>
+                                  {authenticatingGoogle
+                                    ? 'Đang chờ xác thực trên trình duyệt...'
+                                    : 'Đăng nhập bằng tài khoản Google (1-Click)'}
+                                </span>
+                                {authenticatingGoogle && <RefreshCw size={13} className="ai-spinning" />}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* SUB-TAB 2: GOOGLE AI STUDIO API KEY */}
+                    {geminiAuthMode === 'apikey' && (
+                      <div className="ai-auth-tab-content">
+                        <div className="ai-apikey-form-wrap">
+                          <div className="ai-form-key-input-box">
+                            <Key size={13} className="ai-form-key-icon" />
+                            <input
+                              type={showKey ? 'text' : 'password'}
+                              className="ai-form-input with-icon"
+                              placeholder="Dán API Key Gemini (AIzaSy...)"
+                              value={currentProfile.apiKey || ''}
+                              onChange={(e) => handleUpdateProfile({ apiKey: e.target.value })}
+                            />
+                            <button
+                              type="button"
+                              className="ai-form-key-toggle-btn"
+                              onClick={() => setShowKey(!showKey)}
+                              title={showKey ? 'Ẩn key' : 'Hiện key'}
+                            >
+                              {showKey ? <EyeOff size={13} /> : <Eye size={13} />}
+                            </button>
+                          </div>
+
+                          <div className="ai-apikey-action-chips">
+                            <button
+                              type="button"
+                              className="ai-chip-action-btn"
+                              onClick={handleOpenBrowserAuth}
+                              title="Mở Google AI Studio để tạo API Key miễn phí"
+                            >
+                              <ExternalLink size={12} />
+                              <span>Lấy Key miễn phí từ Google AI Studio (1-Click)</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              className="ai-chip-paste-btn"
+                              onClick={handlePasteApiKey}
+                              title="Dán API Key từ Clipboard"
+                            >
+                              {pasteSuccess ? <Check size={12} className="ai-check-icon" /> : <ClipboardPaste size={12} />}
+                              <span>{pasteSuccess ? 'Đã dán Key!' : 'Dán từ Clipboard'}</span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ======================================================== */}
+                {/* AUTH SECTION FOR OTHER PROVIDERS (CLAUDE, OPENAI, ETC)  */}
+                {/* ======================================================== */}
+                {currentProfile.provider !== 'gemini' && currentProfile.provider !== 'ollama' && (
+                  <div className="ai-form-group">
+                    <div className="ai-form-label-row">
+                      <label className="ai-form-label">API Key / Token</label>
+                    </div>
+                    <div className="ai-form-key-input-box">
+                      <Key size={13} className="ai-form-key-icon" />
+                      <input
+                        type={showKey ? 'text' : 'password'}
+                        className="ai-form-input with-icon"
+                        placeholder="sk-... hoặc API Key"
+                        value={currentProfile.apiKey || ''}
+                        onChange={(e) => handleUpdateProfile({ apiKey: e.target.value })}
+                      />
+                      <button
+                        type="button"
+                        className="ai-form-key-toggle-btn"
+                        onClick={() => setShowKey((prev) => !prev)}
+                        title={showKey ? 'Ẩn Key' : 'Hiện Key'}
+                      >
+                        {showKey ? <EyeOff size={13} /> : <Eye size={13} />}
+                      </button>
+                    </div>
+
+                    {authInfo && (
+                      <div className="ai-apikey-action-chips">
+                        <button
+                          type="button"
+                          className="ai-chip-action-btn"
+                          onClick={handleOpenBrowserAuth}
+                          title={`Mở trang ${authInfo.name} để lấy API Key`}
+                        >
+                          <ExternalLink size={12} />
+                          <span>Lấy API Key ({authInfo.name})</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="ai-chip-paste-btn"
+                          onClick={handlePasteApiKey}
+                          title="Dán từ Clipboard"
+                        >
+                          {pasteSuccess ? <Check size={12} className="ai-check-icon" /> : <ClipboardPaste size={12} />}
+                          <span>{pasteSuccess ? 'Đã dán!' : 'Dán từ Clipboard'}</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ======================================================== */}
+                {/* MODEL SELECTION                                          */}
+                {/* ======================================================== */}
                 <div className="ai-form-group">
                   <div className="ai-form-label-row">
                     <div className="ai-form-label-with-badge">
                       <label className="ai-form-label">Danh sách Model</label>
                       {isLiveFetched ? (
                         <span className="ai-live-model-badge">
-                          ✓ Đã tải {dynamicOptions.length} models trực tiếp từ tài khoản
+                          ✓ Đã tải {dynamicOptions.length} models từ tài khoản
                         </span>
                       ) : (
-                        <span className="ai-form-label-hint">Các mẫu model gợi ý mới nhất</span>
+                        <span className="ai-form-label-hint">Gợi ý mới nhất</span>
                       )}
                     </div>
 
                     <button
                       type="button"
                       className="ai-fetch-live-models-btn"
-                      onClick={handleFetchLiveModels}
+                      onClick={() => handleFetchLiveModels()}
                       disabled={
                         fetchingModels ||
                         (currentProfile.provider !== 'ollama' &&
@@ -538,40 +626,6 @@ export const AiSettingsModal: React.FC<AiSettingsModalProps> = ({ open, onClose 
                     onChange={(e) => handleUpdateProfile({ model: e.target.value })}
                   />
                 </div>
-
-                {/* API Key (if not Ollama) */}
-                {currentProfile.provider !== 'ollama' && (
-                  <div className="ai-form-group">
-                    <div className="ai-form-label-row">
-                      <label className="ai-form-label">API Key / Token</label>
-                      {currentProfile.provider === 'gemini' && googleAuth.isLoggedIn && (
-                        <span className="ai-live-model-badge">Đang dùng Google Browser Auth</span>
-                      )}
-                    </div>
-                    <div className="ai-form-key-input-box">
-                      <Key size={13} className="ai-form-key-icon" />
-                      <input
-                        type={showKey ? 'text' : 'password'}
-                        className="ai-form-input with-icon"
-                        placeholder={
-                          currentProfile.provider === 'gemini' && googleAuth.isLoggedIn
-                            ? 'Đã kết nối qua Google Browser Auth (Không bắt buộc nhập)'
-                            : 'sk-... hoặc AIzaSy...'
-                        }
-                        value={currentProfile.apiKey || ''}
-                        onChange={(e) => handleUpdateProfile({ apiKey: e.target.value })}
-                      />
-                      <button
-                        type="button"
-                        className="ai-form-key-toggle-btn"
-                        onClick={() => setShowKey((prev) => !prev)}
-                        title={showKey ? 'Ẩn Key' : 'Hiện Key'}
-                      >
-                        {showKey ? <EyeOff size={13} /> : <Eye size={13} />}
-                      </button>
-                    </div>
-                  </div>
-                )}
 
                 {/* Base URL (for Ollama, DeepSeek, or Custom) */}
                 {(currentProfile.provider === 'ollama' ||

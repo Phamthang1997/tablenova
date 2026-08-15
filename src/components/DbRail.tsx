@@ -1,94 +1,162 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { Database } from 'lucide-react';
-import { dbHelper } from '../utils/dbHelper';
+import { PostgresIcon, MySqlIcon, SqliteIcon } from './DbIcons';
+import { dbHelper, type OpenConnection } from '../utils/dbHelper';
+
+/**
+ * Brand mark per dialect, the same ones the Connection Manager uses.
+ *
+ * A generic cylinder for all three made two connections to *different engines* look identical, and
+ * the engine is often the fastest way to tell them apart when the database names are similar
+ * (`sakila` on MySQL vs a Postgres restore of it).
+ */
+const DIALECT: Record<string, { label: string; Icon: React.FC<{ size?: number }> }> = {
+  sqlite: { label: 'SQLite', Icon: SqliteIcon },
+  postgres: { label: 'PostgreSQL', Icon: PostgresIcon },
+  mysql: { label: 'MySQL', Icon: MySqlIcon },
+};
 
 interface DbRailProps {
-  /** The database currently open — its cell is highlighted. */
-  dbName: string;
-  /** How many connections are open. The rail shows from 2 up — see the note below. */
-  connectionCount: number;
-  onDatabaseChanged: (name: string, schema?: string | null) => void;
+  /** Connection whose workspace is on screen — its cell is highlighted. */
+  activeConnId: string;
+  /** Point the app at another open connection. */
+  onSelect: (conn: OpenConnection) => void;
+  /** Close one connection. */
+  onClose: (connId: string) => void;
+  /** Close every connection except this one. */
+  onCloseOthers: (connId: string) => void;
+  /** Bumped by the caller when a connect/disconnect happened, to refetch. */
+  reloadKey?: number;
 }
 
 /**
- * The narrow column left of the sidebar: every database on the server, one click to switch.
+ * The narrow column left of the sidebar: **the connections that are open**, one click to switch.
  *
- * The title bar popover (`TitleBar.handleOpenDbPopover`) stays as it was — both call
- * `switch_database`, so there is no state to keep in sync between them.
+ * It used to list every database on the server and call `switch_database`. That was the right shape
+ * while the backend held one connection, and the wrong one now: with `conn_id` identifying a
+ * `(server, database)` pair (§4.3), "every database on the server" would mix databases of server A
+ * with databases of server B in one flat column and give the user no way to tell them apart. Listing
+ * what is *open* makes the rail exactly the set of live `conn_id`s — which is also the only set a
+ * per-connection transaction badge can belong to (§4.2b/§4.2c).
  *
- * `list_databases` returns an **empty array** for SQLite (1 file = 1 database), so the rail
- * hides itself there without the call site having to check `dbType`.
- *
- * **Only shown when 2 or more connections are open** (`connectionCount`). The backend holds
- * exactly ONE connection (`DatabaseManager.connection`), so in practice the rail is always
- * hidden — the condition is here for when multi-connection lands and the rail finally has
- * something to switch between. With a single connection the title bar popover is enough.
+ * A side effect worth having: `list_databases` ran a real query on the active connection every time
+ * this mounted. Reading the registry costs nothing.
  */
-export const DbRail: React.FC<DbRailProps> = ({ dbName, connectionCount, onDatabaseChanged }) => {
+export const DbRail: React.FC<DbRailProps> = ({
+  activeConnId,
+  onSelect,
+  onClose,
+  onCloseOthers,
+  reloadKey = 0,
+}) => {
   const { t } = useTranslation();
-  const [databases, setDatabases] = useState<string[]>([]);
-  const [switching, setSwitching] = useState<string | null>(null);
+  const [connections, setConnections] = useState<OpenConnection[]>([]);
+  const [menu, setMenu] = useState<{ connId: string; top: number; left: number } | null>(null);
 
   const reload = useCallback(async () => {
-    const res = await dbHelper.listDatabases();
-    setDatabases(res.databases || []);
+    try {
+      setConnections(await dbHelper.listConnections());
+    } catch {
+      /* not connected yet -> nothing to draw */
+    }
   }, []);
 
-  // Reload on `dbName` change too: restoring a dump, or creating/dropping a database
-  // elsewhere, leaves this list stale. `database-restored` is the existing event that
-  // Sidebar and DataGrid also listen to (see App.tsx).
+  // `database-restored` is the existing event Sidebar and DataGrid already listen to; a restore can
+  // rename or drop the database a connection points at, which is what this column displays.
   useEffect(() => {
-    // Don't ask the backend while the rail is hidden: `list_databases` runs a real query on
-    // the active connection, and spending that on a column nobody sees is waste.
-    if (connectionCount < 2) {
-      setDatabases([]);
-      return;
-    }
-    reload();
-    const onRestored = () => { reload(); };
+    void reload();
+    const onRestored = () => void reload();
     window.addEventListener('database-restored', onRestored);
     return () => window.removeEventListener('database-restored', onRestored);
-  }, [reload, dbName, connectionCount]);
+  }, [reload, reloadKey, activeConnId]);
 
-  const handleSwitch = async (name: string) => {
-    if (name === dbName || switching) return;
-    setSwitching(name);
-    try {
-      const res = await dbHelper.switchDatabase(name);
-      // switch_database refuses while a transaction is open — report exactly what the
-      // backend said (already translated at the dbHelper boundary) instead of swallowing
-      // the error and leaving the rail pointing at the wrong database.
-      if (res.success) onDatabaseChanged(res.database || name, res.schema);
-      else alert(t('sidebar.errSwitchDb', { message: res.error || '' }));
-    } finally {
-      setSwitching(null);
-    }
-  };
+  // Below two there is nothing to switch between, and the rail would only take 64px. Adding a
+  // connection lives on the title bar (New connection, and the database picker, which now *opens*
+  // a database as another connection instead of switching onto it) — the rail only shows, switches
+  // and closes.
+  if (connections.length < 2) return null;
 
-  // One connection, SQLite (empty array), or the first load not back yet: take no space.
-  if (connectionCount < 2 || databases.length === 0) return null;
+  const closeMenu = () => setMenu(null);
 
   return (
-    <div className="db-rail" role="listbox" aria-label={t('sidebar.databases')}>
-      {databases.map((name) => {
-        const isActive = name === dbName;
-        return (
-          <button
-            key={name}
-            type="button"
-            role="option"
-            aria-selected={isActive}
-            className={`db-rail-item${isActive ? ' is-on' : ''}`}
-            title={isActive ? name : t('sidebar.switchDbHint', { name })}
-            onClick={() => handleSwitch(name)}
-          >
-            <Database size={20} strokeWidth={1.6} />
-            <span className="db-rail-name">{name}</span>
-          </button>
-        );
-      })}
-      {switching && <div className="db-rail-status">{t('sidebar.switchingDatabase')}</div>}
-    </div>
+    <>
+      <div className="db-rail" role="listbox" aria-label={t('sidebar.databases')}>
+        {connections.map((c, i) => {
+          const isActive = c.connId === activeConnId;
+          const meta = DIALECT[c.dialect];
+          const Icon = meta?.Icon;
+          // A hairline where the server changes. Two databases of one server are one group, and
+          // without this the column is a flat list where `(server A, sakila)` and
+          // `(server B, sakila)` look like the same thing — the exact confusion §4.3 is about.
+          const newServer = i > 0 && connections[i - 1].serverId !== c.serverId;
+          return (
+            <button
+              key={c.connId}
+              type="button"
+              role="option"
+              aria-selected={isActive}
+              className={`db-rail-item${isActive ? ' is-on' : ''}${newServer ? ' db-rail-sep' : ''}`}
+              title={[
+                c.db,
+                meta?.label ?? c.dialect,
+                c.pending > 0 ? t('tx.clickToReview', { n: c.pending }) : '',
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+              onClick={() => !isActive && onSelect(c)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setMenu({ connId: c.connId, top: e.clientY, left: e.clientX });
+              }}
+            >
+              <span className="db-rail-icon">
+                {Icon ? <Icon size={18} /> : <Database size={18} strokeWidth={1.6} />}
+              </span>
+              <span className="db-rail-name">{c.db}</span>
+              {/* The badge is why the rail exists as more than a switcher: with one control on the
+                  title bar the other connections' uncommitted work is invisible, and the user can be
+                  holding three open transactions while seeing one. */}
+              {c.pending > 0 && (
+                <span className="db-rail-badge" aria-hidden>
+                  {c.pending > 99 ? '99+' : c.pending}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Through a portal, like every other menu here: the rail sits inside panels that use
+          `backdrop-filter`, and that property makes a new containing block — a `position: fixed`
+          menu rendered inside would be clipped to the rail's 64px column. */}
+      {menu &&
+        createPortal(
+          <>
+            <div className="db-rail-menu-backdrop" onClick={closeMenu} onContextMenu={(e) => { e.preventDefault(); closeMenu(); }} />
+            <div className="db-rail-menu" style={{ top: menu.top, left: menu.left }} role="menu">
+              <button
+                type="button"
+                className="context-menu-item"
+                role="menuitem"
+                onClick={() => { closeMenu(); onClose(menu.connId); }}
+              >
+                {t('sidebar.closeConnection')}
+              </button>
+              <button
+                type="button"
+                className="context-menu-item"
+                role="menuitem"
+                disabled={connections.length < 2}
+                onClick={() => { closeMenu(); onCloseOthers(menu.connId); }}
+              >
+                {t('sidebar.closeOtherConnections')}
+              </button>
+            </div>
+          </>,
+          document.body,
+        )}
+    </>
   );
 };
