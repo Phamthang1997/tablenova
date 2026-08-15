@@ -863,7 +863,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
         if (!renameRes.success) {
           throw new Error(renameRes.error || t('structure.errRename', { message: '' }));
         }
-        window.dispatchEvent(new CustomEvent('table-renamed', { detail: { oldName: tableName, newName: newTableName } }));
+        window.dispatchEvent(new CustomEvent('table-renamed', { detail: { connId, oldName: tableName, newName: newTableName } }));
       }
 
       setSuccessMsg(t('structure.alterSuccess'));

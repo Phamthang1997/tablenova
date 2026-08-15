@@ -167,7 +167,7 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected, connId 
     setError(null);
     try {
       setStatus(await fn());
-      if (refetch) window.dispatchEvent(new CustomEvent('database-restored'));
+      if (refetch) window.dispatchEvent(new CustomEvent('database-restored', { detail: { connId } }));
       if (closeAfter) setOpen(false);
     } catch (err) {
       // Message đã được dịch ở biên dbHelper (backendErrors.ts).

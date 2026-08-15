@@ -879,6 +879,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // sau khi đổi kết nối, một handler cũ sẽ nạp bảng của kết nối trước. Nó lại là hàm thường (identity
   // đổi mỗi render) nên đưa thẳng vào deps là vòng lặp vô tận — đọc qua ref là khuôn `CLAUDE.md` đã
   // ghi cho đúng tình huống này.
+  const connIdRef = useRef(connId);
+  connIdRef.current = connId;
   const fetchTablesRef = useRef(fetchTables);
   fetchTablesRef.current = fetchTables;
 
@@ -945,17 +947,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
   }, [connId, dbName, schema]);
 
   useEffect(() => {
-    const handleGlobalRename = () => {
+    // Only reload for changes on the connection this sidebar is showing. A restore on another
+    // connection used to make every sidebar refetch its whole object list for nothing. An event
+    // without an id is treated as ours, which is how every dispatch looked before they carried one.
+    //
+    // `connIdRef`, not `connId`: putting the id in the deps would tear the listeners down and
+    // re-register them on every connection switch, for a value the handler can simply read.
+    const onChanged = (e: Event) => {
+      const from = (e as CustomEvent<{ connId?: string }>).detail?.connId;
+      if (from && from !== connIdRef.current) return;
       fetchTablesRef.current();
     };
-    const handleGlobalRestore = () => {
-      fetchTablesRef.current();
-    };
-    window.addEventListener('table-renamed', handleGlobalRename);
-    window.addEventListener('database-restored', handleGlobalRestore);
+    window.addEventListener('table-renamed', onChanged);
+    window.addEventListener('database-restored', onChanged);
     return () => {
-      window.removeEventListener('table-renamed', handleGlobalRename);
-      window.removeEventListener('database-restored', handleGlobalRestore);
+      window.removeEventListener('table-renamed', onChanged);
+      window.removeEventListener('database-restored', onChanged);
     };
   }, []);
 
@@ -1156,7 +1163,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         if (!res.success) failed.push(`${name}: ${res.error || ''}`);
       }
 
-      window.dispatchEvent(new CustomEvent('database-restored'));
+      window.dispatchEvent(new CustomEvent('database-restored', { detail: { connId } }));
       fetchTables();
 
       if (failed.length === 0) {

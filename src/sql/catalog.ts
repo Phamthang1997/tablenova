@@ -105,8 +105,17 @@ export function invalidateCatalog(connId?: string): void {
 }
 
 // Làm mới khi cấu trúc thay đổi (đổi tên bảng / khôi phục / đổi database).
+//
+// Sự kiện mang `detail.connId` của kết nối vừa đổi, nên chỉ cache của kết nối ĐÓ bị vứt. Trước đây
+// không mang gì và phải vứt sạch mọi kết nối: restore ở A bắt B nạp lại toàn bộ catalog dù B không
+// hề đổi. Sự kiện không mang id (bản cũ) vẫn vứt sạch — an toàn hơn là đoán.
+function onSchemaChanged(e: Event): void {
+  const connId = (e as CustomEvent<{ connId?: string }>).detail?.connId;
+  invalidateCatalog(connId);
+}
+
 if (typeof window !== 'undefined' && !(window as any).__catalogListener) {
   (window as any).__catalogListener = true;
-  window.addEventListener('table-renamed', () => invalidateCatalog());
-  window.addEventListener('database-restored', () => invalidateCatalog());
+  window.addEventListener('table-renamed', onSchemaChanged);
+  window.addEventListener('database-restored', onSchemaChanged);
 }

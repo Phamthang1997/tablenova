@@ -796,16 +796,43 @@ các kết nối **đang mở**).
 
 **Đã làm: §0** — lỗi `db_compare` bị pin làm phiên transaction. Đứng ngoài mọi phase, đã ship.
 
-**Không còn quyết định nào bị chặn.** Việc tiếp theo: chạy 5 nhóm ca thử tay ở trên, rồi Phase 3.
+**Phase 3 đã xong** (3b, 3c, 3d), đã thử tay và chạy mượt.
 
-Phase 3 còn lại: tab tự mang scope + đảo mô hình lưu tab (§4.5) — đây cũng là bước **xoá shim
-`currentConnId`** ở `dbHelper`, vì chỉ từ lúc tab cùng tồn tại thì một id ambient mới thành nói dối;
-cây Sidebar 2 cấp; key `catalog.ts`/`dbIndexRegistry.ts` theo `(connId, db, schema)`; conn id trong 4
-CustomEvent; dỡ either/or ở `App.tsx`.
+- **3b** — `connId` tới được đường per-tab: 29 method `dbHelper` nhận nó làm tham số đầu; `catalog.ts`
+  khoá theo kết nối; `src/sql/editorScope.ts` cho tầng Monaco; `dumpReaderFor()` cho `DumpReader`;
+  xoá `StructureViewer.catalogRef` (bản sao thứ hai của `catalog.ts`). 26 tệp.
+- **3c** — `TabInfo.connId`; `tabs` giữ tab của mọi kết nối, thanh tab render `visibleTabs`; lưu vẫn
+  một khoá mỗi scope, chỉ ghi tab của kết nối đang chọn.
+- **3d** — 4 CustomEvent mang `detail.connId`, mọi chỗ nghe lọc theo nó.
 
-**`open_database` đã làm ở Phase 2** (xem trên), nên phần "nhiều database mỗi server" của Phase 3 coi
-như xong. `ServerHandle::last_config` vẫn còn `Mutex` vì `switch_database` và reconnect `USE` của
-restore còn ghi vào nó; bỏ được khi hai đường đó cũng chuyển sang *mở thêm*.
+**Hai mục của 3d đã bị chính rail thay thế, cố ý không làm:** cây Sidebar 2 cấp (rail đã là "kết nối
+nào", sidebar là "đối tượng của kết nối đó" — cây 2 cấp là vẽ lại rail) và dỡ either/or ở `App.tsx`
+(vấn đề thật của nó là "không thêm được kết nối khi đang kết nối", mà Modal `addingConn` ở Phase 2 đã
+giải; phần còn lại là màn hình đầu khi chưa có kết nối, và thế là đúng).
+
+**Shim `currentConnId` vẫn sống, và đó là lựa chọn.** Thanh tab lọc theo kết nối đang chọn nên tab của
+kết nối khác **không mount** → không có đường chạy nền nào dùng sai id. Nó chỉ phải chết nếu sau này
+chuyển sang hiện mọi tab trên một thanh.
+
+**`open_database` đã làm ở Phase 2**, nên phần "nhiều database mỗi server" coi như xong.
+`ServerHandle::last_config` vẫn còn `Mutex` vì `switch_database` và reconnect `USE` của restore còn
+ghi vào nó; bỏ được khi hai đường đó cũng chuyển sang *mở thêm*.
+
+### Hai lỗi của Phase 3 đáng ghi lại
+
+**Dựng cơ chế rồi quên nối dây.** `editorScope.ts` được tạo và đọc ở 6 chỗ, nhưng **không ai gọi**
+`setEditorConnId` — nên nó luôn rỗng và mọi reader hỏi backend về kết nối `""`. Triệu chứng lộ ra là
+inspection báo *mọi* bảng không tồn tại; completion, hover, AI context và schema snapshot cũng hỏng
+theo mà chưa ai để ý. `tsc`, 534 test và oxlint đều **xanh** với một mechanism không ai gọi — compiler
+kiểm được kiểu, không kiểm được "đã nối dây chưa". Cách bắt sớm: thêm setter cấp module thì grep ngay
+xem nó có caller không.
+
+**Memo hoá bị phá bởi chính lời gọi thêm vào.** `buildIndex()` có cờ `isPrimed` nhưng **không đọc**,
+nên mỗi lời gọi là một `get_full_catalog` đầy đủ — và nó được gọi bởi *mỗi* `SqlEditor` đang mount,
+bởi `inspection.ts` cho từng model, và bởi hai window listener. Effect vừa thêm còn gọi `invalidate()`
+trước, phá nốt cơ hội tái dùng: ba tab query mở sẵn = ba lần nạp catalog liên tiếp mỗi lần chuyển kết
+nối. Sửa bằng cách cho registry nhớ `builtFor`; đổi kết nối vẫn rebuild vì id không khớp, nên caller
+không cần `invalidate()`.
 
 Ngoài Phase 3, một việc riêng người dùng đã nêu: **"Move Tab to New Window"**. Đó là tính năng đa cửa
 sổ, không phải một mục menu — app đã có tiền lệ cửa sổ terminal độc lập (`?term=`) nên khả thi, nhưng

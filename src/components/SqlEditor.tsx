@@ -70,6 +70,8 @@ if (typeof document !== 'undefined' && (document as any).fonts?.ready) {
 
 // Pack monaco directly into the loader config
 loader.config({ monaco });
+import { setEditorConnId } from '../sql/editorScope';
+import { dbIndexRegistry } from '../sql/dbIndexRegistry';
 import { dbHelper, type GridChange } from '../utils/dbHelper';
 
 const LoadingSpinner: React.FC<{ size?: number; style?: React.CSSProperties }> = ({ size = 16, style }) => (
@@ -365,6 +367,21 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   const [showRowNumbers, setShowRowNumbers] = useState<boolean>(true);
   const [autoFitColsPane1, setAutoFitColsPane1] = useState<boolean>(false);
   const [autoFitColsPane2, setAutoFitColsPane2] = useState<boolean>(false);
+  // Mount and focus alone are not enough: switching connection changes `connId` while this editor
+  // is already mounted and focused, and no focus event fires for that.
+  useEffect(() => {
+    setEditorConnId(connId);
+    // Nothing told the symbol index about a CONNECTION change — it rebuilt only on table-renamed
+    // and database-restored — so it kept the previous connection's tables and the inspection marked
+    // every table of the new one as non-existent.
+    //
+    // No `invalidate()` here on purpose: `buildIndex` compares against the connection it already
+    // holds, so it rebuilds when this one differs and returns immediately when it does not. Every
+    // mounted editor runs this effect, and forcing a discard first turned each of them into another
+    // full catalog fetch.
+    void dbIndexRegistry.buildIndex();
+  }, [connId]);
+
   const [cursorPos1, setCursorPos1] = useState<{ line: number; column: number }>({ line: 1, column: 1 });
   const [cursorPos2, setCursorPos2] = useState<{ line: number; column: number }>({ line: 1, column: 1 });
 
@@ -742,6 +759,19 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     } else {
       editorRef2.current = editor;
     }
+
+    // Tell the Monaco layer which connection this editor belongs to.
+    //
+    // Completion, hover, F12 and the inspection index are registered ONCE for the whole app and are
+    // called BY Monaco, so they cannot take a `connId` argument — they read `editorConnId()` instead
+    // (see src/sql/editorScope.ts). Setting it on focus is what makes that honest: the provider that
+    // is about to run belongs to the editor the user is typing in.
+    //
+    // Without this the scope stays empty and every one of those readers asks the backend for
+    // connection "", which fails — the visible symptom being the inspection marking every table as
+    // non-existent while the sidebar lists them.
+    setEditorConnId(connId);
+    editor.onDidFocusEditorText(() => setEditorConnId(connId));
 
     const syncCursor = () => {
       const pos = editor.getPosition();

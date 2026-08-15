@@ -191,6 +191,10 @@ export const App: React.FC = () => {
    * lại màn hình quản lý. Giờ backend giữ được nhiều kết nối nên thêm là thêm, không phải thay.
    */
   const [addingConn, setAddingConn] = useState(false);
+  // Read by the window-level listeners below, which register once: putting the id in their deps
+  // would tear them down and re-register on every connection switch.
+  const activeConnIdRef = React.useRef(activeConnIdState);
+  activeConnIdRef.current = activeConnIdState;
   /**
    * Mọi kết nối đang mở, kèm config đã dùng để mở nó.
    *
@@ -526,7 +530,7 @@ export const App: React.FC = () => {
         const res = await dbHelper.executeQueryMulti(activeConnIdState, filteredSql);
         if (res.success) {
           alert(t('app.importSqlSuccess'));
-          window.dispatchEvent(new CustomEvent('database-restored'));
+          window.dispatchEvent(new CustomEvent('database-restored', { detail: { connId: activeConnIdState } }));
         } else {
           alert(t('app.errImportSql', { message: res.error }));
         }
@@ -558,13 +562,13 @@ export const App: React.FC = () => {
         } else {
           alert(t('app.importedRows', { n: done, table }));
         }
-        window.dispatchEvent(new CustomEvent('database-restored'));
+        window.dispatchEvent(new CustomEvent('database-restored', { detail: { connId: activeConnIdState } }));
       } else {
         // Bảng mới: backend tạo bảng + chèn trong một lần gọi -> tiến độ vô định.
         const resData = await dbHelper.importNewTable(globalImportTableName, globalImportPendingRows);
         if (resData.success) {
           alert(t('app.createdAndImported', { table: globalImportTableName }));
-          window.dispatchEvent(new CustomEvent('database-restored'));
+          window.dispatchEvent(new CustomEvent('database-restored', { detail: { connId: activeConnIdState } }));
         } else {
           alert(t('app.errImport', { message: resData.error }));
         }
@@ -635,7 +639,7 @@ export const App: React.FC = () => {
           setConnection(prev => prev ? { ...prev, dbName: activeDb } : null);
         }
         invalidateCatalog();
-        window.dispatchEvent(new CustomEvent('database-restored'));
+        window.dispatchEvent(new CustomEvent('database-restored', { detail: { connId: activeConnIdState } }));
         return true;
       }
       alert(t('app.errImport', { message: addExistsHint(resData.error || '', false) }));
@@ -646,13 +650,20 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleTableRenamed = (oldName: string, newName: string) => {
+  /**
+   * A table was renamed on `connId` — retitle only THAT connection's tabs for it.
+   *
+   * `tabs` now holds every open connection's tabs, and table names repeat across connections
+   * (`sakila` and `sakila2` both have `film`). Without the id check, renaming `film` on one
+   * connection silently relabels the other connection's `film` tab to a table it does not have.
+   */
+  const handleTableRenamed = (connId: string, oldName: string, newName: string) => {
     setTabs((prev) =>
-      prev.map((t) => {
-        if (t.type === 'table' && t.name === oldName) {
-          return { ...t, name: newName, label: newName };
+      prev.map((tb) => {
+        if (tb.type === 'table' && tb.name === oldName && (tb.connId ?? connId) === connId) {
+          return { ...tb, name: newName, label: newName };
         }
-        return t;
+        return tb;
       })
     );
   };
@@ -676,15 +687,20 @@ export const App: React.FC = () => {
 
   React.useEffect(() => {
     const handleGlobalRename = (e: any) => {
-      const { oldName, newName } = e.detail;
-      handleTableRenamed(oldName, newName);
+      const { connId, oldName, newName } = e.detail || {};
+      handleTableRenamed(connId ?? activeConnIdRef.current, oldName, newName);
     };
     window.addEventListener('table-renamed', handleGlobalRename);
     return () => window.removeEventListener('table-renamed', handleGlobalRename);
   }, []);
 
   React.useEffect(() => {
-    const handleGlobalReload = () => {
+    // `dbReloadKey` is one counter for the whole workspace, and only the active connection's
+    // components are mounted — so bumping it for a change on another connection would make the
+    // panels on screen refetch for something that did not touch them.
+    const handleGlobalReload = (e: Event) => {
+      const from = (e as CustomEvent<{ connId?: string }>).detail?.connId;
+      if (from && from !== activeConnIdRef.current) return;
       setDbReloadKey((prev) => prev + 1);
     };
     window.addEventListener('database-restored', handleGlobalReload);
@@ -1613,7 +1629,7 @@ export const App: React.FC = () => {
                   setDataGenTable(tableName ?? null);
                   setShowDataGen(true);
                 }}
-                onTableRenamed={handleTableRenamed}
+                onTableRenamed={(oldName, newName) => handleTableRenamed(activeConnIdState, oldName, newName)}
                 onTableDropped={handleTableDropped}
                 onDatabaseChanged={handleDatabaseChanged}
                 schema={connection.schema}
@@ -2107,7 +2123,7 @@ export const App: React.FC = () => {
             setDataGenTable(null);
             // Số dòng của các bảng đã đổi -> Sidebar/DataGrid nạp lại. Dùng lại event sẵn có
             // thay vì thêm event mới (schema không đổi nên KHÔNG cần invalidateCatalog).
-            window.dispatchEvent(new CustomEvent('database-restored'));
+            window.dispatchEvent(new CustomEvent('database-restored', { detail: { connId: activeConnIdState } }));
           }}
         />
       )}
