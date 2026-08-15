@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import type { SchemaInfo, ColumnInfo, TriggerInfo, PartitionInfo, CheckConstraintInfo } from '../utils/dbHelper';
+import * as catalog from '../sql/catalog';
 import { dbHelper } from '../utils/dbHelper';
 import { Save, Plus, Trash2, RotateCcw, AlertTriangle, CheckCircle2, Key, Search, X, Table2, ArrowRight, Copy } from 'lucide-react';
 import { Modal, ModalBody, ModalFooter } from './Modal';
@@ -15,6 +16,8 @@ type StructureSection = 'columns' | 'indexes' | 'fks' | 'check_constraints' | 't
 const CUSTOM_TYPE = '__custom_type__';
 
 interface StructureViewerProps {
+  /** Kết nối mà component này thao tác lên. Truyền tường minh, không đọc id ambient (§4.1). */
+  connId: string;
   tableName: string;
   schema: SchemaInfo;
   dbType: 'sqlite' | 'postgres' | 'mysql';
@@ -98,6 +101,7 @@ const HighlightSqlView: React.FC<{ sql: string; loading?: boolean; emptyText?: s
 };
 
 export const StructureViewer: React.FC<StructureViewerProps> = ({
+  connId,
   tableName,
   schema,
   dbType,
@@ -204,10 +208,16 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
   }
   const [fkModalData, setFkModalData] = useState<FkModalState | null>(null);
 
+  // `getColumnsOf` is defined far below and is a plain function, so its identity changes on every
+  // render. The effect reads it through a ref: putting it in the deps would loop forever, while
+  // leaving it out means that after a connection switch the effect still calls the old closure and
+  // reads columns from the previous connection.
+  const getColumnsOfRef = useRef<((table: string) => Promise<string[]>) | null>(null);
+
   // Automatically fetch referenced table columns whenever fkModalData refTable changes or modal opens
   useEffect(() => {
     if (fkModalData?.refTable) {
-      void getColumnsOf(fkModalData.refTable).then(cols => {
+      void getColumnsOfRef.current?.(fkModalData.refTable).then(cols => {
         setRefColumns(cols);
       });
     } else {
@@ -230,14 +240,14 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
   useEffect(() => {
     const fetchAllTables = async () => {
       try {
-        const list = await dbHelper.getTables();
+        const list = await dbHelper.getTables(connId);
         setAllTables(list.map(t => t.name));
       } catch (err) {
         console.error("Lỗi lấy danh sách bảng:", err);
       }
     };
     fetchAllTables();
-  }, []);
+  }, [connId]);
 
   // Database specific type lists. Base types WITHOUT a sample length — the length is
   // its own cell now, so an option like `VARCHAR(255)` would fight with it.
@@ -308,11 +318,11 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
     setAlterPreview(null);
 
     if (tableName) {
-      dbHelper.getTableTriggers(tableName).then(setTriggers);
-      dbHelper.getTablePartitions(tableName).then(setPartitions);
-      dbHelper.getCheckConstraints(tableName).then(setConstraints);
+      dbHelper.getTableTriggers(connId, tableName).then(setTriggers);
+      dbHelper.getTablePartitions(connId, tableName).then(setPartitions);
+      dbHelper.getCheckConstraints(connId, tableName).then(setConstraints);
     }
-  }, [schema, tableName]);
+  }, [connId, schema, tableName]);
 
   // Track pending changes
   const hasChanges = () => {
@@ -560,39 +570,34 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
   // đây chỉ cần tên cột. Với DB ở xa thì mỗi lần mở dropdown phải chờ.
   // Nay dùng getFullCatalog(): lấy cột của TẤT CẢ bảng trong ít truy vấn rồi cache
   // lại, nên chỉ chậm đúng một lần đầu, sau đó mọi bảng đều tức thì.
-  const catalogRef = useRef<Record<string, string[]> | null>(null);
   const [loadingRefCols, setLoadingRefCols] = useState(false);
 
+  /**
+   * Columns of a referenced table, for the foreign-key editor.
+   *
+   * Reads the shared catalog instead of keeping a private one. This component used to hold its own
+   * `catalogRef` — a second copy of exactly what `src/sql/catalog.ts` already caches (same
+   * `getFullCatalog` call, same per-table `getTableSchema` fallback) — and that copy went stale in
+   * two ways the shared one does not:
+   *
+   * - it survived a connection switch, so the editor offered columns of the previous database;
+   * - it ignored `table-renamed` / `database-restored`, which the shared cache listens to, so it
+   *   also offered columns of a table that had just been renamed out from under it.
+   *
+   * Neither showed an error — only wrong column names. Deleting the duplicate removes both, rather
+   * than patching one of them.
+   */
   const getColumnsOf = async (table: string): Promise<string[]> => {
     if (!table) return [];
-    const cached = catalogRef.current?.[table];
-    if (cached && cached.length) return cached;
-
     setLoadingRefCols(true);
     try {
-      if (!catalogRef.current) {
-        const cat = await dbHelper.getFullCatalog();
-        const map: Record<string, string[]> = {};
-        for (const [tbl, cols] of Object.entries(cat.columns || {})) {
-          map[tbl] = (cols as any[]).map(c => c?.name).filter(Boolean);
-        }
-        catalogRef.current = map;
-      }
-      let cols = catalogRef.current[table] || [];
-      // Catalog lỗi hoặc không có bảng này (view, schema khác...) -> lùi về cách cũ
-      // cho đúng một bảng, rồi cache lại để lần sau không phải gọi nữa.
-      if (cols.length === 0) {
-        const schemaInfo = await dbHelper.getTableSchema(table);
-        cols = schemaInfo.columns.map(c => c.name);
-        catalogRef.current[table] = cols;
-      }
-      return cols;
-    } catch {
-      return [];
+      const info = await catalog.getSchema(connId, table);
+      return (info?.columns || []).map(c => c.name);
     } finally {
       setLoadingRefCols(false);
     }
   };
+  getColumnsOfRef.current = getColumnsOf;
 
   const startEditFk = async (rowIndex: number, field: 'column' | 'refTable' | 'refColumn', val: any) => {
     // See startEditCol: a click inside the open editor must not restart it.
@@ -807,7 +812,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
 
     if (hasSchemaChanges) {
       try {
-        const res = await dbHelper.previewAlterTableSchema(tableName, payload);
+        const res = await dbHelper.previewAlterTableSchema(connId, tableName, payload);
         if (res.success && res.sqls) {
           let sqls = [...res.sqls];
           if (isRename) {
@@ -847,14 +852,14 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
 
     try {
       if (hasSchemaChanges) {
-        const res = await dbHelper.alterTableSchema(tableName, payload);
+        const res = await dbHelper.alterTableSchema(connId, tableName, payload);
         if (!res.success) {
           throw new Error(res.error || t('structure.errUnknown'));
         }
       }
 
       if (isRename) {
-        const renameRes = await dbHelper.renameTable(tableName, newTableName);
+        const renameRes = await dbHelper.renameTable(connId, tableName, newTableName);
         if (!renameRes.success) {
           throw new Error(renameRes.error || t('structure.errRename', { message: '' }));
         }
@@ -884,13 +889,13 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
       try {
         if (hasChanges()) {
           const { payload } = buildPayload();
-          const res = await dbHelper.previewAlterTableSchema(tableName, payload);
+          const res = await dbHelper.previewAlterTableSchema(connId, tableName, payload);
           if (!cancelled) setAlterPreview(res.success && res.sqls ? res.sqls : []);
         } else {
           if (cancelled) return;
           setAlterPreview(null);
           if (definitionSql === null) {
-            const res = await dbHelper.getTableDefinition(tableName);
+            const res = await dbHelper.getTableDefinition(connId, tableName);
             if (cancelled) return;
             if (res.success && res.sql) setDefinitionSql(res.sql);
             else setErrorMsg(res.error || t('structure.errNoDefinition'));
@@ -938,12 +943,12 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
     if (!newCheck.expression.trim()) return;
     const name = newCheck.name.trim() || `chk_${tableName}_${Date.now()}`;
     const sql = `ALTER TABLE ${tableName} ADD CONSTRAINT ${name} CHECK (${newCheck.expression.trim()});`;
-    const res = await dbHelper.executeQuery(sql);
+    const res = await dbHelper.executeQuery(connId, sql);
     if (res.success) {
       setSuccessMsg('Đã thêm Check Constraint thành công');
       setShowAddCheckModal(false);
       setNewCheck({ name: '', expression: '' });
-      dbHelper.getCheckConstraints(tableName).then(setConstraints);
+      dbHelper.getCheckConstraints(connId, tableName).then(setConstraints);
       setTimeout(() => setSuccessMsg(null), 3000);
     } else {
       setErrorMsg(res.error || 'Lỗi khi thêm Check Constraint');
@@ -954,10 +959,10 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
     const sql = dbType === 'mysql'
       ? `ALTER TABLE ${tableName} DROP CHECK \`${name}\`;`
       : `ALTER TABLE ${tableName} DROP CONSTRAINT "${name}";`;
-    const res = await dbHelper.executeQuery(sql);
+    const res = await dbHelper.executeQuery(connId, sql);
     if (res.success) {
       setSuccessMsg(`Đã xóa Check constraint ${name}`);
-      dbHelper.getCheckConstraints(tableName).then(setConstraints);
+      dbHelper.getCheckConstraints(connId, tableName).then(setConstraints);
       setTimeout(() => setSuccessMsg(null), 3000);
     } else {
       setErrorMsg(res.error || 'Lỗi khi xóa Check constraint');
@@ -974,12 +979,12 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
       ? `CREATE TRIGGER \`${newTrigger.name.trim()}\` ${newTrigger.timing} ${newTrigger.event} ON \`${tableName}\` FOR EACH ROW ${newTrigger.body.trim()}`
       : `CREATE TRIGGER "${newTrigger.name.trim()}" ${newTrigger.timing} ${newTrigger.event} ON "${tableName}" FOR EACH ROW ${newTrigger.body.trim()};`;
     
-    const res = await dbHelper.saveTrigger(triggerSql);
+    const res = await dbHelper.saveTrigger(connId, triggerSql);
     if (res.success) {
       setSuccessMsg('Đã thêm Trigger thành công');
       setShowAddTriggerModal(false);
       setNewTrigger({ name: '', timing: 'BEFORE', event: 'INSERT', body: '' });
-      dbHelper.getTableTriggers(tableName).then(setTriggers);
+      dbHelper.getTableTriggers(connId, tableName).then(setTriggers);
       setTimeout(() => setSuccessMsg(null), 3000);
     } else {
       setErrorMsg(res.error || 'Lỗi khi tạo Trigger');
@@ -987,10 +992,10 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
   };
 
   const doDropTrigger = async (triggerName: string) => {
-    const res = await dbHelper.dropTrigger(triggerName);
+    const res = await dbHelper.dropTrigger(connId, triggerName);
     if (res.success) {
       setSuccessMsg(`Đã xóa Trigger ${triggerName}`);
-      dbHelper.getTableTriggers(tableName).then(setTriggers);
+      dbHelper.getTableTriggers(connId, tableName).then(setTriggers);
       setTimeout(() => setSuccessMsg(null), 3000);
     } else {
       setErrorMsg(res.error || 'Lỗi khi xóa Trigger');
@@ -1004,12 +1009,12 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
   const handleSavePartition = async () => {
     if (!newPartition.name.trim()) return;
     const sql = `ALTER TABLE ${tableName} ADD PARTITION (PARTITION ${newPartition.name.trim()} VALUES ${newPartition.valClause.trim() || 'LESS THAN MAXVALUE'});`;
-    const res = await dbHelper.executeQuery(sql);
+    const res = await dbHelper.executeQuery(connId, sql);
     if (res.success) {
       setSuccessMsg('Đã thêm Partition thành công');
       setShowAddPartitionModal(false);
       setNewPartition({ name: '', valClause: '' });
-      dbHelper.getTablePartitions(tableName).then(setPartitions);
+      dbHelper.getTablePartitions(connId, tableName).then(setPartitions);
       setTimeout(() => setSuccessMsg(null), 3000);
     } else {
       setErrorMsg(res.error || 'Lỗi khi thêm Partition');
@@ -1018,10 +1023,10 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
 
   const doDropPartition = async (partitionName: string) => {
     const sql = `ALTER TABLE ${tableName} DROP PARTITION ${partitionName};`;
-    const res = await dbHelper.executeQuery(sql);
+    const res = await dbHelper.executeQuery(connId, sql);
     if (res.success) {
       setSuccessMsg(`Đã xóa Partition ${partitionName}`);
-      dbHelper.getTablePartitions(tableName).then(setPartitions);
+      dbHelper.getTablePartitions(connId, tableName).then(setPartitions);
       setTimeout(() => setSuccessMsg(null), 3000);
     } else {
       setErrorMsg(res.error || 'Lỗi khi xóa Partition');

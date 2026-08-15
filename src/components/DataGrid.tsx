@@ -94,6 +94,8 @@ const formatForPicker = (val: string): string => {
 };
 
 interface DataGridProps {
+  /** Kết nối mà component này thao tác lên. Truyền tường minh, không đọc id ambient (§4.1). */
+  connId: string;
   tableName: string;
   dbType: 'sqlite' | 'postgres' | 'mysql';
   initialViewMode?: 'data' | 'structure';
@@ -166,7 +168,7 @@ function parseCSV(text: string): string[][] {
   return result;
 }
 
-export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialViewMode = 'data', initialFilter, readOnly = false, onDirtyChange }) => {
+export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, initialViewMode = 'data', initialFilter, readOnly = false, onDirtyChange }) => {
   const { t, i18n } = useTranslation();
   // Thousands separators follow the active UI language instead of a hardcoded locale.
   const fmtNum = (n: number) => n.toLocaleString(i18n.language);
@@ -433,7 +435,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
     try {
       if (importFileType === 'sql') {
         // Xem ghi chú ở App.tsx: tệp .sql có nhiều câu lệnh nên phải qua executeQueryMulti.
-        const res = await dbHelper.executeQueryMulti(importSqlContent);
+        const res = await dbHelper.executeQueryMulti(connId, importSqlContent);
         setImportProgress(null);
         setLoading(false);
         if (res.success) {
@@ -448,7 +450,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
         let done = 0;
         for (let i = 0; i < total; i += IMPORT_BATCH_SIZE) {
           const batch = importPendingRows.slice(i, i + IMPORT_BATCH_SIZE);
-          const resData = await dbHelper.importTableData(tableName, batch);
+          const resData = await dbHelper.importTableData(connId, tableName, batch);
           if (!resData.success) {
             setImportProgress(null);
             setLoading(false);
@@ -496,7 +498,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
   // Fetch Table Schema (Metadata)
   const fetchSchema = useCallback(async () => {
     try {
-      const s = await dbHelper.getTableSchema(tableName);
+      const s = await dbHelper.getTableSchema(connId, tableName);
       if (s && Array.isArray(s.columns)) {
         setSchema(s);
         setColumns(s.columns);
@@ -521,7 +523,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
       setVisibleColumns([]);
       setPendingVisibleColumns([]);
     }
-  }, [tableName]);
+  }, [connId, tableName]);
 
   // Sync columns with filter builder
   useEffect(() => {
@@ -650,12 +652,12 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
   // Fetch Data Row
   const fetchData = useCallback(async () => {
     setLoading(true);
-    const data = await dbHelper.getTableData(tableName, page, pageSize, sortBy, sortDir, activeFilter);
+    const data = await dbHelper.getTableData(connId, tableName, page, pageSize, sortBy, sortDir, activeFilter);
     setRows(data.rows);
     setTotalCount(data.totalCount);
     if (data.primaryKey) setPrimaryKey(data.primaryKey);
     setLoading(false);
-  }, [tableName, page, pageSize, sortBy, sortDir, activeFilter]);
+  }, [connId, tableName, page, pageSize, sortBy, sortDir, activeFilter]);
 
   useEffect(() => {
     // Tôn trọng chế độ xem ban đầu (Data/Structure) khi mở tab, thay vì luôn ép về 'data'
@@ -945,7 +947,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
 
     // Lấy trước danh sách SQL sẽ chạy để người dùng xem trước (transaction preview)
     setLoading(true);
-    const preview = await dbHelper.commitChanges(tableName, changesList, primaryKey, true);
+    const preview = await dbHelper.commitChanges(connId, tableName, changesList, primaryKey, true);
     setLoading(false);
 
     if (!preview.success) {
@@ -960,7 +962,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
   const handleConfirmCommit = async () => {
     setCommitPreview(null);
     setLoading(true);
-    const res = await dbHelper.commitChanges(tableName, pendingChanges, primaryKey);
+    const res = await dbHelper.commitChanges(connId, tableName, pendingChanges, primaryKey);
     setLoading(false);
     setPendingChanges([]);
 
@@ -1283,6 +1285,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
 
       {viewMode === 'structure' && schema ? (
         <StructureViewer
+          connId={connId}
           tableName={tableName}
           schema={schema}
           dbType={dbType}
@@ -1902,6 +1905,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
 
       {/* Xuất bảng: popup tuỳ chọn + xem trước, dùng chung với menu chuột phải ở Sidebar */}
       <ExportTableDialog
+        connId={connId}
         open={showExportDialog}
         tableName={tableName}
         dbType={dbType}

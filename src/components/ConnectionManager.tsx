@@ -17,7 +17,7 @@ import {
   commentOnlyFromBody,
 } from '../utils/dumpPreview';
 import { splitStatements } from '../sql/statements';
-import { buildDump } from '../utils/dumpBuilder';
+import { buildDump, dumpReaderFor } from '../utils/dumpBuilder';
 import { gzipText, getLastExportDir, saveExportFile, pickOpenFile, pickSqliteDatabaseFile } from '../utils/fileSave';
 import { ProgressBar, type ProgressState } from './ProgressBar';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -130,6 +130,8 @@ export interface SavedProfile {
 }
 
 interface ConnectionManagerProps {
+  /** Kết nối mà component này thao tác lên. Truyền tường minh, không đọc id ambient (§4.1). */
+  connId: string;
   // `profile` là profile đã chọn để kết nối (nếu có). App giữ id + tên để popover
   // chi tiết kết nối sửa tên/màu rồi ghi thẳng ngược vào tf_connection_profiles.
   onConnect: (
@@ -162,7 +164,7 @@ const TYPE_META: Record<string, { label: string; color: string; Icon: React.FC<{
   redis: { label: 'Redis', color: '#DC382D', Icon: RedisIcon },
 };
 
-export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect }) => {
+export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, onConnect }) => {
   const { t } = useTranslation();
 
   // A switch rather than t(`...${mode}`): a key built at runtime is not checked
@@ -1368,13 +1370,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
         // Dump dựng bằng đúng code của popup "Xuất Cơ sở dữ liệu" (buildDump): trước đây chỗ
         // này gọi lệnh Rust `export_multi_tables`, vốn coi view là bảng (sinh DROP TABLE và
         // INSERT INTO cho view), ghi một INSERT cho mỗi dòng, và không hề có routine/trigger.
-        const list = await dbHelper.getTables();
+        const list = await dbHelper.getTables(connId);
         const tables = list.map(item => item.name);
         if (tables.length === 0) {
           throw new Error(t('connection.errNoTablesToBackup'));
         }
         const [dbObjs, triggers] = await Promise.all([
-          dbHelper.getDatabaseObjects(),
+          dbHelper.getDatabaseObjects(connId),
           dbHelper.getAllTriggers(),
         ]);
 
@@ -1397,7 +1399,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
           // Không có ô chọn schema ở màn hình này, nên đây luôn là schema đầu search_path.
           schema: connRes.schema,
           onProgress: setBrProgress,
-        }, dbHelper);
+        }, dumpReaderFor(dbHelper, connId));
 
         const base = (brFilename.trim() || 'database_backup').replace(/\.(sql|sql\.gz|gz)$/i, '');
         const fileName = base + (brCompressGzip ? '.sql.gz' : '.sql');
@@ -2663,7 +2665,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
             </div>
 
             <div className="cm-search">
-              <Search size={13} style={{ color: 'var(--win-text-disabled)', flexShrink: 0 }} />
+              <Search size={14} className="cm-search-icon" />
               <input
                 type="text"
                 value={profileSearch}
@@ -3014,6 +3016,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
       {/* Terminal overlay (SSH nếu profile có SSH, ngược lại shell cục bộ) */}
       {terminalProfile && (
         <TerminalPanel
+          connId={connId}
           config={terminalProfile.config as DbConnectionConfig}
           profileName={terminalProfile.name}
           floating

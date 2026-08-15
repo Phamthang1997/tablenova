@@ -163,7 +163,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
     setShowDbPopover(true);
     setDbLoading(true);
     try {
-      const res = await dbHelper.listDatabases();
+      const res = await dbHelper.listDatabases(connId || '');
       setDbList(res.databases || []);
     } catch (err) {
       console.error(err);
@@ -226,7 +226,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
 
   const handleCreateDbSubmit = async () => {
     if (!newDbName.trim()) return;
-    const res = await dbHelper.createDatabase({ name: newDbName.trim() });
+    const res = await dbHelper.createDatabase(connId || '', { name: newDbName.trim() });
     if (res.success) {
       setShowCreateDbModal(false);
       setNewDbName('');

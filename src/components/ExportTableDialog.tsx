@@ -19,6 +19,8 @@ export interface ExportGridContext {
 }
 
 interface ExportTableDialogProps {
+  /** Kết nối mà component này thao tác lên. Truyền tường minh, không đọc id ambient (§4.1). */
+  connId: string;
   open: boolean;
   tableName: string;
   dbType: string;
@@ -50,6 +52,7 @@ const labelStyle: React.CSSProperties = {
  * trong menu chuột phải ở Sidebar, để hai đường đi cho ra cùng một popup.
  */
 export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
+  connId,
   open,
   tableName,
   dbType,
@@ -91,11 +94,11 @@ export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
     if (!open || grid) return;
     let cancelled = false;
     (async () => {
-      const s = await dbHelper.getTableSchema(tableName);
+      const s = await dbHelper.getTableSchema(connId, tableName);
       if (!cancelled) setSchemaCols((s.columns || []).map((c) => c.name));
     })();
     return () => { cancelled = true; };
-  }, [open, grid, tableName]);
+  }, [connId, open, grid, tableName]);
 
   const colNames = React.useMemo(() => {
     const all = grid ? grid.columns : schemaCols;
@@ -111,7 +114,7 @@ export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
     setLoading(true);
     (async () => {
       const useView = !!grid && applyView;
-      const data = await dbHelper.getTableData(
+      const data = await dbHelper.getTableData(connId, 
         tableName,
         1,
         PREVIEW_ROWS,
@@ -125,7 +128,7 @@ export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
       setLoading(false);
     })();
     return () => { cancelled = true; };
-  }, [open, step, tableName, grid, applyView]);
+  }, [connId, open, step, tableName, grid, applyView]);
 
   /** Tải TOÀN BỘ dòng theo trang, báo tiến độ thật theo số dòng đã lấy. */
   const fetchAllRows = async (): Promise<any[]> => {
@@ -142,7 +145,7 @@ export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
           ? t('exportDialog.rowsOfTotal', { rows: fmtNum(all.length), total: fmtNum(total) })
           : t('exportDialog.rows', { rows: fmtNum(all.length) }),
       });
-      const data = await dbHelper.getTableData(
+      const data = await dbHelper.getTableData(connId, 
         tableName,
         page,
         FETCH_PAGE_SIZE,

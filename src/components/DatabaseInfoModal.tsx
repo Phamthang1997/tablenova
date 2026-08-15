@@ -9,6 +9,8 @@ type InfoTab = 'current' | 'all';
 type ObjKind = 'table' | 'view' | 'function' | 'procedure';
 
 interface DatabaseInfoModalProps {
+  /** Kết nối mà component này thao tác lên. Truyền tường minh, không đọc id ambient (§4.1). */
+  connId: string;
   isOpen: boolean;
   onClose: () => void;
   onSelectTable: (tableName: string) => void;
@@ -19,6 +21,7 @@ interface DatabaseInfoModalProps {
 }
 
 export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
+  connId,
   isOpen,
   onClose,
   onSelectTable,
@@ -54,7 +57,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
   const fetchStats = async () => {
     setLoading(true);
     setError(null);
-    const [res, objs] = await Promise.all([dbHelper.getDatabaseStats(), dbHelper.getDatabaseObjects()]);
+    const [res, objs] = await Promise.all([dbHelper.getDatabaseStats(), dbHelper.getDatabaseObjects(connId)]);
     setLoading(false);
     setObjects({ views: objs.views, functions: objs.functions, procedures: objs.procedures });
     if (res.success && res.stats) {
@@ -74,7 +77,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
     setExpandedObj(key);
     if (objDefs[key] !== undefined) return;
     setLoadingDef(key);
-    const res = await dbHelper.getObjectDefinition(name, kind);
+    const res = await dbHelper.getObjectDefinition(connId, name, kind);
     setLoadingDef(null);
     setObjDefs((prev) => ({
       ...prev,
@@ -128,7 +131,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
   const handleSwitchDatabase = async (name: string) => {
     if (allStats && name === allStats.current_db) return;
     setSwitchingDb(name);
-    const res = await dbHelper.switchDatabase(name);
+    const res = await dbHelper.switchDatabase(connId, name);
     setSwitchingDb(null);
     if (res.success) {
       onDatabaseChanged?.(res.database || name);

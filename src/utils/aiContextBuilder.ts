@@ -1,4 +1,5 @@
 import * as catalog from '../sql/catalog';
+import { editorConnId } from '../sql/editorScope';
 
 export interface DatabaseContextOptions {
   activeTable?: string | null;
@@ -21,7 +22,7 @@ export async function buildSchemaContext(options: DatabaseContextOptions): Promi
   // If no specific table, fetch all available tables in database
   if (tablesToInclude.length === 0) {
     try {
-      const allTables = await catalog.getTables();
+      const allTables = await catalog.getTables(editorConnId());
       tablesToInclude = allTables.slice(0, 10).map((t) => t.name);
     } catch {
       // Fallback
@@ -32,7 +33,7 @@ export async function buildSchemaContext(options: DatabaseContextOptions): Promi
 
   for (const tableName of tablesToInclude) {
     try {
-      const schema = await catalog.getSchema(tableName);
+      const schema = await catalog.getSchema(editorConnId(), tableName);
       if (schema && schema.columns && schema.columns.length > 0) {
         const cols = schema.columns.map((c) => {
           let desc = `${c.name} (${c.type}`;

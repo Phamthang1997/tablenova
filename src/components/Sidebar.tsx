@@ -270,7 +270,7 @@ const GroupNode: React.FC<GroupNodeProps> = ({ open, icon, label, count, onToggl
  * table was expanded. Checks and Triggers are two SEPARATE backend commands, so they only
  * run when the user opens that group — expanding a table still costs exactly one call.
  */
-const TableDetailTree: React.FC<{ tableName: string; schema: SchemaInfo }> = ({ tableName, schema }) => {
+const TableDetailTree: React.FC<{ connId: string; tableName: string; schema: SchemaInfo }> = ({ connId, tableName, schema }) => {
   const { t } = useTranslation();
   const [open, setOpen] = useState<Record<DetailGroup, boolean>>({
     fields: true, indexes: false, fks: false, checks: false, triggers: false,
@@ -286,13 +286,13 @@ const TableDetailTree: React.FC<{ tableName: string; schema: SchemaInfo }> = ({ 
     if (!willOpen) return;
     if (g === 'checks' && checks === null && !loadingExtra.checks) {
       setLoadingExtra((p) => ({ ...p, checks: true }));
-      dbHelper.getCheckConstraints(tableName)
+      dbHelper.getCheckConstraints(connId, tableName)
         .then(setChecks)
         .finally(() => setLoadingExtra((p) => ({ ...p, checks: false })));
     }
     if (g === 'triggers' && triggers === null && !loadingExtra.triggers) {
       setLoadingExtra((p) => ({ ...p, triggers: true }));
-      dbHelper.getTableTriggers(tableName)
+      dbHelper.getTableTriggers(connId, tableName)
         .then(setTriggers)
         .finally(() => setLoadingExtra((p) => ({ ...p, triggers: false })));
     }
@@ -442,6 +442,8 @@ const TableDetailTree: React.FC<{ tableName: string; schema: SchemaInfo }> = ({ 
 type ObjectSection = 'tables' | 'views';
 
 interface ObjectItemProps {
+  /** Kết nối mà dòng này thuộc về — `TableDetailTree` cần để đọc check/trigger. */
+  connId: string;
   item: TableItem;
   /** Block, and position within it: Shift+click needs both to take the range from the anchor. */
   section: ObjectSection;
@@ -470,6 +472,7 @@ interface ObjectItemProps {
  * nguyên identity — xem các useCallback trong Sidebar.
  */
 const ObjectItem = memo(function ObjectItem({
+  connId,
   item,
   section,
   index,
@@ -537,7 +540,7 @@ const ObjectItem = memo(function ObjectItem({
           ) : !schema ? (
             <div style={COLS_HINT_STYLE}>{t('sidebar.noColumns')}</div>
           ) : (
-            <TableDetailTree tableName={item.name} schema={schema} />
+            <TableDetailTree connId={connId} tableName={item.name} schema={schema} />
           )}
         </div>
       )}
@@ -546,6 +549,8 @@ const ObjectItem = memo(function ObjectItem({
 });
 
 interface SidebarProps {
+  /** Kết nối mà component này thao tác lên. Truyền tường minh, không đọc id ambient (§4.1). */
+  connId: string;
   dbName: string;
   dbType: 'sqlite' | 'postgres' | 'mysql';
   /** Chế độ chỉ đọc: chặn mọi lệnh ghi phát sinh từ sidebar (drop/truncate/rename/create). */
@@ -581,6 +586,7 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
+  connId,
   dbName,
   dbType,
   readOnly = false,
@@ -700,7 +706,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     if (willExpand && !columnsMapRef.current[tableName] && !loadingColumnsRef.current[tableName]) {
       setLoadingColumns(prev => ({ ...prev, [tableName]: true }));
       try {
-        const schema = await dbHelper.getTableSchema(tableName);
+        const schema = await dbHelper.getTableSchema(connId, tableName);
         setTableSchemaMap(prev => ({ ...prev, [tableName]: schema }));
       } catch (err) {
         console.error(`Failed to fetch schema for ${tableName}:`, err);
@@ -708,7 +714,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         setLoadingColumns(prev => ({ ...prev, [tableName]: false }));
       }
     }
-  }, []);
+  }, [connId]);
 
   // Kéo viền phải để đổi độ rộng thanh bên.
   const rootRef = useRef<HTMLDivElement>(null);
@@ -828,10 +834,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const { oldName, value } = renameDbState;
     const newName = value.trim();
     if (!newName || newName === oldName) { setRenameDbState(null); return; }
-    const res = await dbHelper.renameDatabase(oldName, newName);
+    const res = await dbHelper.renameDatabase(connId, oldName, newName);
     setRenameDbState(null);
     if (res.success) {
-      const list = await dbHelper.listDatabases();
+      const list = await dbHelper.listDatabases(connId);
       setDbList(list.databases || []);
     } else {
       alert(t('sidebar.errRenameDb', { message: res.error }));
@@ -842,7 +848,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     if (blockedByReadOnly()) return;
     const name = newDb.name.trim();
     if (!name) { alert(t('sidebar.promptDbName')); return; }
-    const res = await dbHelper.createDatabase({
+    const res = await dbHelper.createDatabase(connId, {
       name,
       encoding: newDb.encoding.trim() || undefined,
       collation: newDb.collation.trim() || undefined,
@@ -860,14 +866,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const fetchTables = async () => {
     setRefreshing(true);
-    const list = await dbHelper.getTables();
+    const list = await dbHelper.getTables(connId);
     setTables(list);
     // Nạp thêm hàm & thủ tục (đối tượng CSDL)
-    const objs = await dbHelper.getDatabaseObjects();
+    const objs = await dbHelper.getDatabaseObjects(connId);
     setFunctions(objs.functions || []);
     setProcedures(objs.procedures || []);
     setRefreshing(false);
   };
+
+  // `fetchTables` giờ BẮT `connId`, nên hai effect dưới không được giữ closure của lần render cũ:
+  // sau khi đổi kết nối, một handler cũ sẽ nạp bảng của kết nối trước. Nó lại là hàm thường (identity
+  // đổi mỗi render) nên đưa thẳng vào deps là vòng lặp vô tận — đọc qua ref là khuôn `CLAUDE.md` đã
+  // ghi cho đúng tình huống này.
+  const fetchTablesRef = useRef(fetchTables);
+  fetchTablesRef.current = fetchTables;
 
   // Danh sách schema cho ô chọn. Rỗng với MySQL/SQLite (backend trả mảng rỗng), nên chỉ cần
   // kiểm tra độ dài là biết có hiện ô chọn hay không.
@@ -881,13 +894,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       return;
     }
     let alive = true;
-    dbHelper.listSchemas().then((res) => {
+    dbHelper.listSchemas(connId).then((res) => {
       if (alive) setSchemas(res.schemas || []);
     });
     return () => {
       alive = false;
     };
-  }, [dbType, dbName]);
+  }, [connId, dbType, dbName]);
 
   const handleSchemaChange = async (name: string) => {
     if (!name || name === schema || switchingSchema) return;
@@ -895,7 +908,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     try {
       // set_current_schema từ chối schema không tồn tại — báo đúng lời backend thay vì để ô chọn
       // hiển thị một schema mà mọi truy vấn sau đó không dùng.
-      const res = await dbHelper.setSchema(name);
+      const res = await dbHelper.setSchema(connId, name);
       if (res.success) onSchemaChanged?.(res.schema || name);
       else alert(t('sidebar.errSwitchSchema', { message: res.error || '' }));
     } finally {
@@ -912,7 +925,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       onOpenRoutineTab(name, kind);
       return;
     }
-    const res = await dbHelper.getObjectDefinition(name, kind);
+    const res = await dbHelper.getObjectDefinition(connId, name, kind);
     if (res.success && res.sql) {
       setObjDef({ name, kind, sql: res.sql });
     } else {
@@ -922,19 +935,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   // `schema` cũng nằm trong deps: đổi schema là đổi hẳn tập bảng, y như đổi database.
   useEffect(() => {
-    fetchTables();
+    fetchTablesRef.current();
     // After a database switch the old selection points at names that no longer exist —
     // clear it, and drop the Shift anchor so no range is taken against the previous list.
     setSelection({ section: 'tables', names: [] });
     anchorRef.current = -1;
-  }, [dbName, schema]);
+    // `connId` nằm trong deps: hai kết nối có thể trỏ CÙNG tên database (cùng `sakila` trên hai
+    // server), lúc đó `dbName` không đổi và sidebar sẽ hiện bảng của kết nối cũ.
+  }, [connId, dbName, schema]);
 
   useEffect(() => {
     const handleGlobalRename = () => {
-      fetchTables();
+      fetchTablesRef.current();
     };
     const handleGlobalRestore = () => {
-      fetchTables();
+      fetchTablesRef.current();
     };
     window.addEventListener('table-renamed', handleGlobalRename);
     window.addEventListener('database-restored', handleGlobalRestore);
@@ -1071,7 +1086,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
 
     try {
-      const res = await dbHelper.renameTable(tableName, newName);
+      const res = await dbHelper.renameTable(connId, tableName, newName);
       if (res.success) {
         alert(t('sidebar.renameTableSuccess'));
         if (onTableRenamed) onTableRenamed(tableName, newName);
@@ -1105,7 +1120,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
     setCreatingView(true);
     setCreateViewError(null);
-    const res = await dbHelper.executeQuery(`CREATE VIEW ${quoted} AS ${body}`);
+    const res = await dbHelper.executeQuery(connId, `CREATE VIEW ${quoted} AS ${body}`);
     setCreatingView(false);
 
     if (res.success) {
@@ -1133,7 +1148,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       // this one's. A failure on one table does not stop the rest — reported in full below.
       const failed: string[] = [];
       for (const name of names) {
-        const res = await dbHelper.truncateTable(name, {
+        const res = await dbHelper.truncateTable(connId, name, {
           restartIdentity,
           disableFk: disableFkCheck,
           cascade,
@@ -1173,7 +1188,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       // the rest. onTableDropped fires per dropped object so App closes exactly those tabs.
       const failed: string[] = [];
       for (const name of names) {
-        const res = await dbHelper.dropTable(name, { isView, cascade, ignoreFk: ignoreFkCheck });
+        const res = await dbHelper.dropTable(connId, name, { isView, cascade, ignoreFk: ignoreFkCheck });
         if (res.success) onTableDropped?.(name);
         else failed.push(`${name}: ${res.error || ''}`);
       }
@@ -1277,6 +1292,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const isExpanded = !!expandedTables[item.name];
     return (
       <ObjectItem
+        connId={connId}
         key={item.name}
         item={item}
         section={section}
@@ -2506,6 +2522,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {objDef && objDef.kind === 'view' && (
         <ViewEditorModal
+          connId={connId}
           name={objDef.name}
           initialSql={objDef.sql}
           onClose={() => setObjDef(null)}
@@ -2515,6 +2532,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {objDef && (objDef.kind === 'procedure' || objDef.kind === 'function') && (
         <RoutineEditorModal
+          connId={connId}
           name={objDef.name}
           kind={objDef.kind}
           initialSql={objDef.sql}
@@ -2524,6 +2542,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       )}
       {showCreateRoutine && (
         <CreateRoutineModal
+          connId={connId}
           dbType={dbType}
           onClose={() => setShowCreateRoutine(false)}
           onCreated={() => fetchTables()}
@@ -2706,7 +2725,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           const name = switchToNewDb;
           setSwitchToNewDb(null);
           if (!name) return;
-          await dbHelper.switchDatabase(name);
+          await dbHelper.switchDatabase(connId, name);
           onDatabaseChanged?.(name);
         }}
         onCancel={() => setSwitchToNewDb(null)}

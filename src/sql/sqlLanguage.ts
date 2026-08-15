@@ -8,6 +8,7 @@ import 'monaco-sql-languages/esm/languages/mysql/mysql.contribution';
 import 'monaco-sql-languages/esm/languages/pgsql/pgsql.contribution';
 import 'monaco-sql-languages/esm/languages/generic/generic.contribution';
 import * as catalog from './catalog';
+import { editorConnId } from './editorScope';
 import { buildJoinConditions } from './joinConditions';
 import { collectTableRefs, statementAt } from './statements';
 import { bumpUsage, rankSort } from './usageStats';
@@ -145,7 +146,11 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
   const inOnClause = /\bON\s+[\w.`"]*$/i.test(textBefore);
   let joinConds: string[] = [];
   if (inOnClause) {
-    joinConds = await buildJoinConditions(scopeTables, aliasByTable, catalog.getSchema);
+    // `buildJoinConditions` nhận `getSchema` đã tiêm để test được (xem joinConditions.test.ts), nên
+    // bọc lại thay vì truyền thẳng — nó không biết và không cần biết về kết nối.
+    joinConds = await buildJoinConditions(scopeTables, aliasByTable, (tbl) =>
+      catalog.getSchema(editorConnId(), tbl),
+    );
     joinConds.forEach((c, i) => items.push({
       label: c,
       kind: monaco.languages.CompletionItemKind.Snippet,
@@ -191,7 +196,7 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
       preselect: true,
     });
     for (const tbl of Array.from(new Set(scopeTables))) {
-      const schema = await catalog.getSchema(tbl);
+      const schema = await catalog.getSchema(editorConnId(), tbl);
       const cols = schema?.columns || [];
       if (!cols.length) continue;
       const pfx = aliasByTable.get(tbl) || tbl;
@@ -227,7 +232,7 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
     const taken = new Set<string>();
     aliasByTable.forEach(a => taken.add(a.toLowerCase()));
 
-    const tables = await catalog.getTables();
+    const tables = await catalog.getTables(editorConnId());
     for (const tb of tables) {
       let insertText = tb.name;
       let alias: string | null = null;
@@ -262,7 +267,7 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
     } else if (scopeTables.length) {
       targetTables = Array.from(new Set(scopeTables));
     } else {
-      targetTables = (await catalog.getTables()).map(t => t.name);
+      targetTables = (await catalog.getTables(editorConnId())).map(t => t.name);
       cacheOnly = true;
     }
     const multi = targetTables.length > 1;
@@ -274,7 +279,7 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
     let columnCount = 0;
     for (const tb of targetTables) {
       if (columnCount >= MAX_COLUMN_ITEMS) break;
-      const schema = cacheOnly ? catalog.getCachedSchema(tb) : await catalog.getSchema(tb);
+      const schema = cacheOnly ? catalog.getCachedSchema(editorConnId(), tb) : await catalog.getSchema(editorConnId(), tb);
       const prefix = aliasByTable.get(tb) || tb;
       for (const col of schema?.columns || []) {
         if (columnCount >= MAX_COLUMN_ITEMS) break;

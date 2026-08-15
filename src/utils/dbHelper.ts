@@ -510,9 +510,9 @@ export const dbHelper = {
     }
   },
 
-  async getTables(): Promise<TableItem[]> {
+  async getTables(connId: string, ): Promise<TableItem[]> {
     try {
-      const res: any = await invoke('get_tables');
+      const res: any = await invoke('get_tables', { connId });
       return res.tables || [];
     } catch {
       return [];
@@ -520,16 +520,16 @@ export const dbHelper = {
   },
 
   // Lấy toàn bộ catalog (cột+kiểu+PK, FK theo bảng) trong ít truy vấn để warm cache completion.
-  async getFullCatalog(): Promise<{ columns: Record<string, any[]>; foreignKeys: Record<string, any[]> }> {
+  async getFullCatalog(connId: string, ): Promise<{ columns: Record<string, any[]>; foreignKeys: Record<string, any[]> }> {
     try {
-      const res: any = await invoke('get_full_catalog');
+      const res: any = await invoke('get_full_catalog', { connId });
       return { columns: res.columns || {}, foreignKeys: res.foreignKeys || {} };
     } catch {
       return { columns: {}, foreignKeys: {} };
     }
   },
 
-  async getTableData(
+  async getTableData(connId: string, 
     tableName: string,
     page: number = 1,
     pageSize: number = 100,
@@ -539,6 +539,7 @@ export const dbHelper = {
   ): Promise<{ rows: any[]; totalCount: number; primaryKey?: string }> {
     try {
       const res: any = await invoke('get_table_data', {
+        connId,
         name: tableName,
         page,
         limit: pageSize,
@@ -557,7 +558,7 @@ export const dbHelper = {
     }
   },
 
-  async getDatabaseObjects(): Promise<{
+  async getDatabaseObjects(connId: string, ): Promise<{
     tables: string[];
     views: string[];
     functions: string[];
@@ -566,7 +567,7 @@ export const dbHelper = {
     events: string[];
   }> {
     try {
-      const res: any = await invoke('get_database_objects');
+      const res: any = await invoke('get_database_objects', { connId });
       return {
         tables: res.tables || [],
         views: res.views || [],
@@ -584,18 +585,18 @@ export const dbHelper = {
 
 
 
-  async getObjectDefinition(name: string, kind: 'view' | 'function' | 'procedure' | 'table' | 'event'): Promise<{ success: boolean; sql?: string; error?: string }> {
+  async getObjectDefinition(connId: string, name: string, kind: 'view' | 'function' | 'procedure' | 'table' | 'event'): Promise<{ success: boolean; sql?: string; error?: string }> {
     try {
-      const res: any = await invoke('get_object_definition', { name, kind });
+      const res: any = await invoke('get_object_definition', { connId, name, kind });
       return { success: !!res.success, sql: res.sql, error: res.message };
     } catch (err: any) {
       return { success: false, error: err.toString() };
     }
   },
 
-  async getTableTriggers(tableName: string): Promise<TriggerInfo[]> {
+  async getTableTriggers(connId: string, tableName: string): Promise<TriggerInfo[]> {
     try {
-      const res: any = await invoke('get_table_triggers', { tableName });
+      const res: any = await invoke('get_table_triggers', { connId, tableName });
       return res.triggers || [];
     } catch {
       return [];
@@ -647,27 +648,27 @@ export const dbHelper = {
     }
   },
 
-  async saveTrigger(statementSql: string): Promise<{ success: boolean; error?: string }> {
+  async saveTrigger(connId: string, statementSql: string): Promise<{ success: boolean; error?: string }> {
     try {
-      const res: any = await invoke('save_trigger', { statementSql });
+      const res: any = await invoke('save_trigger', { connId, statementSql });
       return { success: !!res.success, error: res.message };
     } catch (err: any) {
       return { success: false, error: err.toString() };
     }
   },
 
-  async dropTrigger(triggerName: string): Promise<{ success: boolean; error?: string }> {
+  async dropTrigger(connId: string, triggerName: string): Promise<{ success: boolean; error?: string }> {
     try {
-      const res: any = await invoke('drop_trigger', { triggerName });
+      const res: any = await invoke('drop_trigger', { connId, triggerName });
       return { success: !!res.success, error: res.message };
     } catch (err: any) {
       return { success: false, error: err.toString() };
     }
   },
 
-  async saveRoutineDefinition(routineSql: string): Promise<{ success: boolean; error?: string }> {
+  async saveRoutineDefinition(connId: string, routineSql: string): Promise<{ success: boolean; error?: string }> {
     try {
-      const res: any = await invoke('save_routine_definition', { routineSql });
+      const res: any = await invoke('save_routine_definition', { connId, routineSql });
       return { success: !!res.success, error: res.message };
     } catch (err: any) {
       return { success: false, error: err.toString() };
@@ -701,18 +702,18 @@ export const dbHelper = {
     }
   },
 
-  async getTablePartitions(tableName: string): Promise<PartitionInfo[]> {
+  async getTablePartitions(connId: string, tableName: string): Promise<PartitionInfo[]> {
     try {
-      const res: any = await invoke('get_table_partitions', { tableName });
+      const res: any = await invoke('get_table_partitions', { connId, tableName });
       return res.partitions || [];
     } catch {
       return [];
     }
   },
 
-  async getCheckConstraints(tableName: string): Promise<CheckConstraintInfo[]> {
+  async getCheckConstraints(connId: string, tableName: string): Promise<CheckConstraintInfo[]> {
     try {
-      const res: any = await invoke('get_check_constraints', { tableName });
+      const res: any = await invoke('get_check_constraints', { connId, tableName });
       return res.constraints || [];
     } catch {
       return [];
@@ -728,9 +729,9 @@ export const dbHelper = {
     }
   },
 
-  async getTableSchema(tableName: string): Promise<SchemaInfo> {
+  async getTableSchema(connId: string, tableName: string): Promise<SchemaInfo> {
     try {
-      const res: any = await invoke('get_table_schema', { name: tableName });
+      const res: any = await invoke('get_table_schema', { connId, name: tableName });
       return {
         columns: res.columns || [],
         indexes: res.indexes || [],
@@ -741,9 +742,9 @@ export const dbHelper = {
     }
   },
 
-  async executeQuery(sql: string, params?: any[]): Promise<{ success: boolean; data?: any[]; columns?: string[]; affectedRows?: number; executionTime?: number; error?: string; results?: any[] }> {
+  async executeQuery(connId: string, sql: string, params?: any[]): Promise<{ success: boolean; data?: any[]; columns?: string[]; affectedRows?: number; executionTime?: number; error?: string; results?: any[] }> {
     try {
-      const res: any = await invoke('execute_query', { sql, params: params ?? null });
+      const res: any = await invoke('execute_query', { connId, sql, params: params ?? null });
       if (res.success && res.results && res.results.length > 0) {
         return {
           success: true,
@@ -757,9 +758,9 @@ export const dbHelper = {
     }
   },
 
-  async executeQueryMulti(sql: string): Promise<{ success: boolean; results: { query: string; columns: string[]; data: any[] }[]; error?: string }> {
+  async executeQueryMulti(connId: string, sql: string): Promise<{ success: boolean; results: { query: string; columns: string[]; data: any[] }[]; error?: string }> {
     try {
-      const res: any = await invoke('execute_multi_query', { sql });
+      const res: any = await invoke('execute_multi_query', { connId, sql });
       return {
         success: !!res.success,
         results: (res.results || []).map((r: any) => ({
@@ -777,7 +778,7 @@ export const dbHelper = {
   // Chạy SQL và nhận kết quả theo từng batch qua Channel (streaming) thay vì đợi toàn bộ.
   // Promise resolve khi backend chạy xong (đã gửi message 'done' hoặc 'error').
   // queryId dùng để hủy giữa chừng qua cancelQuery.
-  async executeQueryStream(
+  async executeQueryStream(connId: string, 
     sql: string,
     queryId: string,
     onMessage: (msg: QueryStreamMessage) => void,
@@ -787,7 +788,7 @@ export const dbHelper = {
     channel.onmessage = onMessage;
     // params: mảng giá trị đã ép kiểu (number/bool/null/string) để backend bind ở tầng driver
     // (parameterized query, chống SQL injection). Bỏ qua nếu không dùng Tham số Truy vấn.
-    await invoke('execute_query_stream', { sql, queryId, channel, params: params ?? null });
+    await invoke('execute_query_stream', { connId, sql, queryId, channel, params: params ?? null });
   },
 
   // ---- Transaction thủ công ----
@@ -967,7 +968,7 @@ export const dbHelper = {
   // mọi thất bại (mất kết nối, thiếu quyền, driver không hỗ trợ) đều hiện ra y như
   // "không có file log" — không thể biết vì sao tính năng không chạy.
   // Mỗi dialect chỉ dùng MỘT câu lệnh, không dựa vào multi-statement của driver.
-  async detectLogPaths(
+  async detectLogPaths(connId: string, 
     dbType: 'sqlite' | 'postgres' | 'mysql' | 'redis'
   ): Promise<{ paths: { label: string; path: string }[]; error?: string }> {
     const isAbs = (s: string) => /^([/~]|[A-Za-z]:[\\/])/.test(s);
@@ -978,6 +979,7 @@ export const dbHelper = {
     try {
       if (dbType === 'mysql') {
         const res = await this.executeQuery(
+          connId,
           "SHOW VARIABLES WHERE Variable_name IN ('log_error','slow_query_log_file','general_log_file','datadir')"
         );
         if (!res.success) return { paths, error: res.error || i18n.t('db.errShowVariables') };
@@ -991,6 +993,7 @@ export const dbHelper = {
         }
       } else if (dbType === 'postgres') {
         const res = await this.executeQuery(
+          connId,
           `SELECT 'current_logfile' AS name, pg_current_logfile() AS setting
            UNION ALL
            SELECT name, setting FROM pg_settings
@@ -1018,7 +1021,7 @@ export const dbHelper = {
   // Bật ghi log ở phía DB server (chạy trên kết nối hiện tại). Cần quyền cao (SUPER/superuser).
   // kind: mysql 'general'|'slow'; postgres 'statements'|'collector'.
   // needsRestart = true nghĩa là phải khởi động lại server thủ công thì mới có tác dụng.
-  async enableLogging(
+  async enableLogging(connId: string, 
     dbType: 'sqlite' | 'postgres' | 'mysql' | 'redis',
     kind: string
   ): Promise<{ success: boolean; message: string; needsRestart: boolean }> {
@@ -1033,11 +1036,11 @@ export const dbHelper = {
     } else {
       return { success: false, message: i18n.t('db.errSqliteNoServerLog'), needsRestart: false };
     }
-    const res = await this.executeQueryMulti(sql);
+    const res = await this.executeQueryMulti(connId, sql);
     return { success: res.success, message: res.error || '', needsRestart };
   },
 
-  async disableLogging(dbType: 'sqlite' | 'postgres' | 'mysql' | 'redis', kind: string): Promise<{ success: boolean; message: string }> {
+  async disableLogging(connId: string, dbType: 'sqlite' | 'postgres' | 'mysql' | 'redis', kind: string): Promise<{ success: boolean; message: string }> {
     let sql = '';
     if (dbType === 'mysql') {
       sql = kind === 'general' ? "SET GLOBAL general_log='OFF';" : "SET GLOBAL slow_query_log='OFF';";
@@ -1048,25 +1051,25 @@ export const dbHelper = {
     } else {
       return { success: false, message: i18n.t('db.errNotForSqlite') };
     }
-    const res = await this.executeQueryMulti(sql);
+    const res = await this.executeQueryMulti(connId, sql);
     return { success: res.success, message: res.error || '' };
   },
 
-  async commitChanges(
+  async commitChanges(connId: string, 
     tableName: string,
     changes: GridChange[],
     primaryKey?: string,
     preview?: boolean
   ): Promise<{ success: boolean; message?: string; sqls?: string[] }> {
     try {
-      const res: any = await invoke('commit_changes', { payload: { tableName, changes, primaryKey, preview: !!preview } });
+      const res: any = await invoke('commit_changes', { connId, payload: { tableName, changes, primaryKey, preview: !!preview } });
       return { success: !!res.success, sqls: res.sqls, message: res.message };
     } catch (err: any) {
       return { success: false, message: i18n.t('db.errCommitChanges', { message: String(err) }) };
     }
   },
 
-  async alterTableSchema(
+  async alterTableSchema(connId: string, 
     tableName: string, 
     changes: { 
       added: any[]; 
@@ -1080,14 +1083,14 @@ export const dbHelper = {
     }
   ): Promise<{ success: boolean; message?: string; error?: string }> {
     try {
-      const res: any = await invoke('alter_table_schema', { name: tableName, payload: changes });
+      const res: any = await invoke('alter_table_schema', { connId, name: tableName, payload: changes });
       return { success: !!res.success };
     } catch (err: any) {
       return { success: false, error: i18n.t('db.errConnection', { message: String(err) }) };
     }
   },
 
-  async previewAlterTableSchema(
+  async previewAlterTableSchema(connId: string, 
     tableName: string, 
     changes: { 
       added: any[]; 
@@ -1101,7 +1104,7 @@ export const dbHelper = {
     }
   ): Promise<{ success: boolean; sqls?: string[]; error?: string }> {
     try {
-      const res: any = await invoke('preview_alter_schema', { name: tableName, payload: changes });
+      const res: any = await invoke('preview_alter_schema', { connId, name: tableName, payload: changes });
       return {
         success: !!res.success,
         sqls: res.sql ? [res.sql] : [],
@@ -1129,9 +1132,9 @@ export const dbHelper = {
     }
   },
 
-  async renameTable(oldName: string, newName: string): Promise<{ success: boolean; error?: string }> {
+  async renameTable(connId: string, oldName: string, newName: string): Promise<{ success: boolean; error?: string }> {
     try {
-      const res: any = await invoke('rename_table', { oldName, newName });
+      const res: any = await invoke('rename_table', { connId, oldName, newName });
       return { success: !!res.success, error: res.message };
     } catch (err: any) {
       return { success: false, error: err.toString() };
@@ -1141,12 +1144,13 @@ export const dbHelper = {
   // isView/cascade/ignoreFk là các tuỳ chọn của dialog Delete. Backend chạy cả cụm (tắt kiểm
   // tra khóa ngoại -> DROP -> bật lại) trên MỘT connection; đừng tự phát lệnh SET ở đây vì mỗi
   // executeQuery lấy một connection khác từ pool.
-  async dropTable(
+  async dropTable(connId: string, 
     name: string,
     opts?: { isView?: boolean; cascade?: boolean; ignoreFk?: boolean }
   ): Promise<{ success: boolean; error?: string }> {
     try {
       const res: any = await invoke('drop_table', {
+        connId,
         name,
         isView: opts?.isView ?? false,
         cascade: opts?.cascade ?? false,
@@ -1158,9 +1162,9 @@ export const dbHelper = {
     }
   },
 
-  async listDatabases(): Promise<{ success: boolean; databases: string[]; error?: string }> {
+  async listDatabases(connId: string, ): Promise<{ success: boolean; databases: string[]; error?: string }> {
     try {
-      const res: any = await invoke('list_databases');
+      const res: any = await invoke('list_databases', { connId });
       return { success: !!res.success, databases: res.databases || [], error: res.message };
     } catch (err: any) {
       return { success: false, databases: [], error: err.toString() };
@@ -1188,11 +1192,11 @@ export const dbHelper = {
     }
   },
 
-  async switchDatabase(
+  async switchDatabase(connId: string, 
     name: string,
   ): Promise<{ success: boolean; database?: string; schema?: string | null; error?: string }> {
     try {
-      const res: any = await invoke('switch_database', { name });
+      const res: any = await invoke('switch_database', { connId, name });
       // `schema` is re-probed by the backend: the new database has its own schemas, so the one
       // selected on the old connection may not exist here.
       return { success: !!res.success, database: res.database, schema: res.schema ?? null, error: res.message };
@@ -1208,9 +1212,9 @@ export const dbHelper = {
    * `current` is what the backend will actually use; read it from here rather than from local
    * picker state, since on a fresh connection the user has not chosen anything yet.
    */
-  async listSchemas(): Promise<{ success: boolean; schemas: string[]; current?: string | null; error?: string }> {
+  async listSchemas(connId: string, ): Promise<{ success: boolean; schemas: string[]; current?: string | null; error?: string }> {
     try {
-      const res: any = await invoke('list_schemas');
+      const res: any = await invoke('list_schemas', { connId });
       return {
         success: !!res.success,
         schemas: res.schemas || [],
@@ -1223,18 +1227,18 @@ export const dbHelper = {
   },
 
   /** Selects the schema every later command reads and writes through (Postgres only). */
-  async setSchema(name: string): Promise<{ success: boolean; schema?: string; error?: string }> {
+  async setSchema(connId: string, name: string): Promise<{ success: boolean; schema?: string; error?: string }> {
     try {
-      const res: any = await invoke('set_current_schema', { name });
+      const res: any = await invoke('set_current_schema', { connId, name });
       return { success: !!res.success, schema: res.schema, error: res.message };
     } catch (err: any) {
       return { success: false, error: err.toString() };
     }
   },
 
-  async createDatabase(payload: { name: string; encoding?: string; collation?: string }): Promise<{ success: boolean; error?: string }> {
+  async createDatabase(connId: string, payload: { name: string; encoding?: string; collation?: string }): Promise<{ success: boolean; error?: string }> {
     try {
-      const res: any = await invoke('create_database', { payload });
+      const res: any = await invoke('create_database', { connId, payload });
       return { success: !!res.success, error: res.message };
     } catch (err: any) {
       return { success: false, error: err.toString() };
@@ -1250,9 +1254,9 @@ export const dbHelper = {
     }
   },
 
-  async renameDatabase(oldName: string, newName: string): Promise<{ success: boolean; error?: string }> {
+  async renameDatabase(connId: string, oldName: string, newName: string): Promise<{ success: boolean; error?: string }> {
     try {
-      const res: any = await invoke('rename_database', { oldName, newName });
+      const res: any = await invoke('rename_database', { connId, oldName, newName });
       return { success: !!res.success, error: res.message };
     } catch (err: any) {
       return { success: false, error: err.toString() };
@@ -1275,12 +1279,13 @@ export const dbHelper = {
   },
 
   // Xem ghi chú ở dropTable: restartIdentity/disableFk được backend xử lý trên một connection.
-  async truncateTable(
+  async truncateTable(connId: string, 
     name: string,
     opts?: { restartIdentity?: boolean; disableFk?: boolean; cascade?: boolean }
   ): Promise<{ success: boolean; error?: string }> {
     try {
       const res: any = await invoke('truncate_table', {
+        connId,
         name,
         restartIdentity: opts?.restartIdentity ?? false,
         disableFk: opts?.disableFk ?? false,
@@ -1292,9 +1297,9 @@ export const dbHelper = {
     }
   },
 
-  async getTableDefinition(name: string): Promise<{ success: boolean; sql?: string; error?: string }> {
+  async getTableDefinition(connId: string, name: string): Promise<{ success: boolean; sql?: string; error?: string }> {
     try {
-      const res: any = await invoke('get_table_definition', { name });
+      const res: any = await invoke('get_table_definition', { connId, name });
       return { success: !!res.success, sql: res.sql, error: res.message };
     } catch (err: any) {
       return { success: false, error: err.toString() };
@@ -1357,9 +1362,9 @@ export const dbHelper = {
     }
   },
 
-  async importTableData(name: string, rows: any[]): Promise<{ success: boolean; error?: string }> {
+  async importTableData(connId: string, name: string, rows: any[]): Promise<{ success: boolean; error?: string }> {
     try {
-      const res: any = await invoke('import_table_data', { name, rows });
+      const res: any = await invoke('import_table_data', { connId, name, rows });
       return { success: !!res.success, error: res.message };
     } catch (err: any) {
       return { success: false, error: err.toString() };

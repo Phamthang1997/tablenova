@@ -7,6 +7,8 @@ import { type RoutineParam, parseRoutineParameters, getDefaultValueForType } fro
 export type { RoutineParam };
 
 interface RoutineEditorModalProps {
+  /** Kết nối mà component này thao tác lên. Truyền tường minh, không đọc id ambient (§4.1). */
+  connId: string;
   name: string;
   kind: 'procedure' | 'function';
   initialSql: string;
@@ -16,6 +18,7 @@ interface RoutineEditorModalProps {
 }
 
 export const RoutineEditorModal: React.FC<RoutineEditorModalProps> = ({
+  connId,
   name,
   kind,
   initialSql,
@@ -54,7 +57,7 @@ export const RoutineEditorModal: React.FC<RoutineEditorModalProps> = ({
     setErrorMsg(null);
     setSuccessMsg(null);
 
-    const res = await dbHelper.saveRoutineDefinition(sql);
+    const res = await dbHelper.saveRoutineDefinition(connId, sql);
     setSaving(false);
     if (res.success) {
       setSuccessMsg(res.error || 'Đã lưu Routine thành công');
@@ -116,7 +119,7 @@ export const RoutineEditorModal: React.FC<RoutineEditorModalProps> = ({
         : `SELECT ${name}(${raw});`;
     }
 
-    const res = await dbHelper.executeQueryMulti(combinedSql);
+    const res = await dbHelper.executeQueryMulti(connId, combinedSql);
     setTesting(false);
     if (res.success && res.results && res.results.length > 0) {
       setTestResults(res.results);

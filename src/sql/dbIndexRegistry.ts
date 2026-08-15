@@ -1,3 +1,4 @@
+import { editorConnId } from './editorScope';
 import { dbHelper } from '../utils/dbHelper';
 
 export interface ColumnIndexMeta {
@@ -29,7 +30,7 @@ export class DbIndexRegistry {
     if (this.isBuilding) return;
     this.isBuilding = true;
     try {
-      const full = await dbHelper.getFullCatalog();
+      const full = await dbHelper.getFullCatalog(editorConnId());
       this.tables.clear();
       this.columns.clear();
       this.foreignKeys.clear();

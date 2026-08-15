@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Table, Plus, X, Search } from 'lucide-react';
 import * as catalog from '../../sql/catalog';
+import { editorConnId } from '../../sql/editorScope';
 
 interface AiContextPickerProps {
   attachedTables: string[];
@@ -22,7 +23,7 @@ export const AiContextPicker: React.FC<AiContextPickerProps> = ({
 
   useEffect(() => {
     let active = true;
-    catalog.getTables().then((tables) => {
+    catalog.getTables(editorConnId()).then((tables) => {
       if (active) {
         setAvailableTables(tables.map((t) => t.name));
       }

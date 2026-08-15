@@ -41,7 +41,7 @@ import { collectColumns, inferColType } from './utils/importPreview';
 import { addExistsHint } from './utils/dumpPreview';
 import { ProgressBar, type ProgressState } from './components/ProgressBar';
 import { buildDatabaseFile } from './utils/exportHelper';
-import { buildDump, readTableRows } from './utils/dumpBuilder';
+import { buildDump, readTableRows, dumpReaderFor } from './utils/dumpBuilder';
 import { gzipText, openInFileManager, saveExportFile } from './utils/fileSave';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { Modal, ModalBody, ModalFooter } from './components/Modal';
@@ -63,6 +63,8 @@ interface QueryTabPanelProps {
   active: boolean;
   dbType?: string;
   connKey: string;
+  /** Kết nối mà tab này chạy trên. Xem §4.1 — không đọc id ambient. */
+  connId: string;
   dbName: string;
   theme: 'dark' | 'light';
   readOnly: boolean;
@@ -92,6 +94,7 @@ const QueryTabPanel = React.memo(function QueryTabPanel(props: QueryTabPanelProp
       }
     >
       <SqlEditor
+        connId={props.connId}
         dbType={props.dbType}
         connKey={props.connKey}
         dbName={props.dbName}
@@ -385,8 +388,8 @@ export const App: React.FC = () => {
         const sheets: XlsxSheet[] = [];
         for (let i = 0; i < opts.tables.length; i++) {
           const table = opts.tables[i];
-          const schema = await dbHelper.getTableSchema(table);
-          const rows = await readTableRows(dbHelper, table, i, totalTables, onProgress);
+          const schema = await dbHelper.getTableSchema(activeConnIdState, table);
+          const rows = await readTableRows(dumpReaderFor(dbHelper, activeConnIdState), table, i, totalTables, onProgress);
           const colNames = (schema.columns || []).map(c => c.name);
           const finalCols = colNames.length ? colNames : (rows[0] ? Object.keys(rows[0]) : []);
           sheets.push({ name: table, colNames: finalCols, rows });
@@ -418,7 +421,7 @@ export const App: React.FC = () => {
         // nhập lại ở máy khác thì mọi thứ chui vào schema đầu search_path của máy đó.
         schema: connection?.schema,
         onProgress,
-      }, dbHelper);
+      }, dumpReaderFor(dbHelper, activeConnIdState));
       const ext = opts.compressGzip ? '.sql.gz' : '.sql';
       const base = opts.filename.replace(/\.(sql|sql\.gz|gz)$/i, '');
       const fileName = base + ext;
@@ -520,7 +523,7 @@ export const App: React.FC = () => {
         // driver như MỘT câu lệnh. Một tệp .sql nhiều câu lệnh sẽ lỗi cú pháp ngay ở câu thứ
         // hai trên MySQL/Postgres, còn SQLite chỉ chạy câu đầu rồi báo thành công (mất dữ liệu
         // im lặng). executeQueryMulti tách câu lệnh bằng split_sql_statements rồi chạy lần lượt.
-        const res = await dbHelper.executeQueryMulti(filteredSql);
+        const res = await dbHelper.executeQueryMulti(activeConnIdState, filteredSql);
         if (res.success) {
           alert(t('app.importSqlSuccess'));
           window.dispatchEvent(new CustomEvent('database-restored'));
@@ -535,7 +538,7 @@ export const App: React.FC = () => {
         let failed: string | null = null;
         for (let i = 0; i < total; i += IMPORT_BATCH_SIZE) {
           const batch = globalImportPendingRows.slice(i, i + IMPORT_BATCH_SIZE);
-          const resData = await dbHelper.importTableData(table, batch);
+          const resData = await dbHelper.importTableData(activeConnIdState, table, batch);
           if (!resData.success) {
             failed = resData.error || t('app.errImportFailed');
             break;
@@ -588,18 +591,18 @@ export const App: React.FC = () => {
       const canManageDb = !!connection && connection.dbType !== 'sqlite';
 
       if (canManageDb && wantDb && wantDb !== connection?.dbName) {
-        const list = await dbHelper.listDatabases();
+        const list = await dbHelper.listDatabases(activeConnIdState);
         const exists = (list.databases || []).some(d => d.toLowerCase() === wantDb.toLowerCase());
 
         if (!exists) {
-          const created = await dbHelper.createDatabase({ name: wantDb });
+          const created = await dbHelper.createDatabase(activeConnIdState, { name: wantDb });
           if (!created.success) {
             alert(t('app.errCreateDatabase', { name: wantDb, message: created.error }));
             return false;
           }
         }
 
-        const switched = await dbHelper.switchDatabase(wantDb);
+        const switched = await dbHelper.switchDatabase(activeConnIdState, wantDb);
         if (!switched.success) {
           alert(t('app.errSwitchDatabase', { name: wantDb, message: switched.error }));
           return false;
@@ -762,8 +765,13 @@ export const App: React.FC = () => {
         connection.dbName,
         connection.schema,
       );
+      // Chỉ ghi tab của kết nối đang chọn, dưới đúng khoá scope của nó. `tabs` giờ chứa tab của
+      // MỌI kết nối đang mở, nên ghi cả mảng vào một khoá là nhét tab của kết nối này sang chỗ của
+      // kết nối khác. Không cần ghi hộ các kết nối kia: nội dung tab chỉ đổi khi kết nối của nó
+      // đang được chọn (tab của kết nối khác không mount), và lần chọn trước đã ghi rồi.
+      //
       // Không lưu tab terminal: phiên PTY không tồn tại sau khi reload
-      const persistTabs = tabs.filter(t => t.type !== 'terminal');
+      const persistTabs = tabs.filter(tb => tb.type !== 'terminal' && tb.connId === activeConnIdState);
       const persistActive = persistTabs.some(t => t.id === activeTabId) ? activeTabId : (persistTabs[0]?.id ?? null);
       const payload = { tabs: persistTabs, activeTabId: persistActive, queryCount, groups: tabGroups };
       try {
@@ -782,7 +790,7 @@ export const App: React.FC = () => {
         }
       }
     }
-  }, [tabs, activeTabId, connection, activeConnConfig, queryCount, tabGroups]);
+  }, [tabs, activeTabId, connection, activeConnConfig, activeConnIdState, queryCount, tabGroups]);
 
   React.useEffect(() => {
     const applyWindowSize = async () => {
@@ -805,7 +813,26 @@ export const App: React.FC = () => {
   // Khôi phục tab (kèm SQL nháp trong tab) của một database. Khoá mới gồm cả
   // host:port nên không lẫn giữa hai máy chủ có database cùng tên; khoá cũ chỉ
   // được ĐỌC, một lần, khi khoá mới còn trống — để không ai mất tab đang mở.
+  /**
+   * A connection with nothing saved gets one empty SQL tab.
+   *
+   * MERGES like `restoreTabs` does, for the same reason: `tabs` now holds every open connection's
+   * tabs, so replacing the array would throw away the other connections' work. The id is per
+   * connection (`query_1` on each), which is exactly why the React keys in the render splice the
+   * scope in — see the note there.
+   */
+  const openInitialTab = (connId: string) => {
+    const initialTabId = 'query_1';
+    setTabs((prev) => [
+      ...prev.filter((tb) => tb.connId !== connId),
+      { id: initialTabId, connId, type: 'query', name: 'SQL Query', label: t('app.queryTabLabel', { n: 1 }) },
+    ]);
+    setActiveTabId(initialTabId);
+    setQueryCount(2);
+  };
+
   const restoreTabs = (
+    connId: string,
     config: DbConnectionConfig | null | undefined,
     dbType: string,
     dbName: string,
@@ -825,10 +852,16 @@ export const App: React.FC = () => {
         groups: savedGroups,
       } = JSON.parse(saved);
       if (Array.isArray(savedTabs) && savedTabs.length > 0) {
-        setTabs(savedTabs);
+        // Stamp the connection onto every restored tab: what was saved is one connection's tabs, and
+        // from here on a tab carries its own connection rather than inheriting the active one.
+        const owned: TabInfo[] = savedTabs.map((tb: TabInfo) => ({ ...tb, connId }));
+        // MERGE, do not replace. Tabs of other connections stay in state so switching back to them
+        // is instant and their unsaved SQL survives — that is the whole point of §4.5. Any tabs
+        // already held for *this* connection are dropped first, so a re-restore cannot duplicate.
+        setTabs((prev) => [...prev.filter((tb) => tb.connId !== connId), ...owned]);
         // Bản lưu trước khi có nhóm không có trường này -> mọi tab thành tab rời.
         setTabGroups(Array.isArray(savedGroups) ? savedGroups : []);
-        setActiveTabId(savedActiveId || savedTabs[0].id);
+        setActiveTabId(savedActiveId || owned[0].id);
         setQueryCount(savedQueryCount || (savedTabs.length + 1));
         return true;
       }
@@ -868,20 +901,10 @@ export const App: React.FC = () => {
     invalidateCatalog();
 
     // Try to restore tabs from localStorage
-    if (restoreTabs(config, dbType, dbName, schema)) return;
+    if (restoreTabs(id, config, dbType, dbName, schema)) return;
 
     // Open an initial SQL Query tab on connect
-    const initialTabId = 'query_1';
-    setTabs([
-      {
-        id: initialTabId,
-        type: 'query',
-        name: 'SQL Query',
-        label: t('app.queryTabLabel', { n: 1 }),
-      },
-    ]);
-    setActiveTabId(initialTabId);
-    setQueryCount(2);
+    openInitialTab(id);
   };
 
   // Hỏi xác nhận nếu bảng đang mở còn thay đổi chưa lưu.
@@ -993,6 +1016,9 @@ export const App: React.FC = () => {
       await dbHelper.disconnect();
       const rest = openConns.filter((c) => c.connId !== gone);
       setOpenConns(rest);
+      // Drop that connection's tabs too — they are invisible once it is gone, but leaving them in
+      // state means a later connection reusing the id would inherit them.
+      setTabs((prev) => prev.filter((tb) => tb.connId !== gone));
       // Disconnecting one of several connections leaves the app connected — fall through to
       // whichever is left instead of dropping the user back to the connection manager.
       const next = rest[rest.length - 1];
@@ -1023,9 +1049,10 @@ export const App: React.FC = () => {
   const closeConnection = (connId: string) => {
     const isActive = connId === activeConnIdState;
     const finish = async () => {
-      await dbHelper.disconnect(connId);
+      await dbHelper.disconnect(activeConnIdState);
       const rest = openConns.filter((c) => c.connId !== connId);
       setOpenConns(rest);
+      setTabs((prev) => prev.filter((tb) => tb.connId !== connId));
       if (!isActive) return;
       const next = rest[rest.length - 1];
       if (next) {
@@ -1087,13 +1114,8 @@ export const App: React.FC = () => {
     setConnection((prev) => (prev ? { ...prev, dbName, schema: schema ?? null } : prev));
     invalidateCatalog();
     setDbReloadKey((k) => k + 1);
-    if (from && restoreTabs({ ...(from.config as DbConnectionConfig), database: dbName }, from.dbType, dbName, schema)) return;
-    const initialTabId = 'query_1';
-    setTabs([
-      { id: initialTabId, type: 'query', name: 'SQL Query', label: t('app.queryTabLabel', { n: 1 }) },
-    ]);
-    setActiveTabId(initialTabId);
-    setQueryCount(2);
+    if (from && restoreTabs(newId, { ...(from.config as DbConnectionConfig), database: dbName }, from.dbType, dbName, schema)) return;
+    openInitialTab(newId);
   };
 
   /**
@@ -1106,30 +1128,30 @@ export const App: React.FC = () => {
   const selectConnection = (connId: string) => {
     const entry = openConns.find((c) => c.connId === connId);
     if (!entry) return;
-    // Switching swaps the tab list, so unsaved grid edits would vanish without a word — the same
-    // guard `handleDisconnect` uses. This matters more here than on a database change: switching
-    // connections is something the user does often once the rail exists.
-    guardDirty(() => {
-      setActiveConnId(connId);
-      setActiveConnIdState(connId);
-      invalidateCatalog();
-      void (async () => {
-        const list = await dbHelper.listConnections().catch(() => []);
-        const info = list.find((c) => c.connId === connId);
-        if (!info) return;
-        setConnection({ dbName: info.db, dbType: entry.dbType, schema: info.schema });
-        setActiveConnConfig(entry.config);
-        setActiveProfile({ id: '', name: entry.profileName, color: entry.color });
-        setDbReloadKey((k) => k + 1);
-        if (restoreTabs(entry.config, entry.dbType, info.db, info.schema)) return;
-        const initialTabId = 'query_1';
-        setTabs([
-          { id: initialTabId, type: 'query', name: 'SQL Query', label: t('app.queryTabLabel', { n: 1 }) },
-        ]);
-        setActiveTabId(initialTabId);
-        setQueryCount(2);
-      })();
-    });
+    // No `guardDirty` any more: switching no longer throws a tab list away. This connection's tabs
+    // stay in `tabs` exactly as they were — unsaved grid edits included — and come back untouched
+    // when the user switches back. Asking "discard changes?" for something nothing discards would be
+    // a prompt that lies.
+    setActiveConnId(connId);
+    setActiveConnIdState(connId);
+    void (async () => {
+      const list = await dbHelper.listConnections().catch(() => []);
+      const info = list.find((c) => c.connId === connId);
+      if (!info) return;
+      setConnection({ dbName: info.db, dbType: entry.dbType, schema: info.schema });
+      setActiveConnConfig(entry.config);
+      setActiveProfile({ id: '', name: entry.profileName, color: entry.color });
+      setDbReloadKey((k) => k + 1);
+      // Only load from storage the FIRST time a connection is shown. After that its tabs are
+      // already in memory, and re-reading would overwrite whatever the user has typed since.
+      if (tabs.some((tb) => tb.connId === connId)) {
+        const own = tabs.filter((tb) => tb.connId === connId);
+        setActiveTabId(own[own.length - 1]?.id ?? null);
+        return;
+      }
+      if (restoreTabs(connId, entry.config, entry.dbType, info.db, info.schema)) return;
+      openInitialTab(connId);
+    })();
   };
 
   // Sau khi đổi schema (chỉ Postgres): backend đã nhận schema mới rồi mới gọi vào đây.
@@ -1143,19 +1165,9 @@ export const App: React.FC = () => {
     invalidateCatalog();
     setDbReloadKey((k) => k + 1);
 
-    if (nextConn && restoreTabs(activeConnConfig, nextConn.dbType, nextConn.dbName, newSchema)) return;
+    if (nextConn && restoreTabs(activeConnIdState, activeConnConfig, nextConn.dbType, nextConn.dbName, newSchema)) return;
 
-    const initialTabId = 'query_1';
-    setTabs([
-      {
-        id: initialTabId,
-        type: 'query',
-        name: 'SQL Query',
-        label: t('app.queryTabLabel', { n: 1 }),
-      },
-    ]);
-    setActiveTabId(initialTabId);
-    setQueryCount(2);
+    openInitialTab(activeConnIdState);
   };
 
   // Sau khi đổi database đang dùng: cập nhật tên DB, đóng các tab (thuộc DB cũ), làm mới
@@ -1170,20 +1182,10 @@ export const App: React.FC = () => {
     setConnection(nextConn);
     setDbReloadKey((k) => k + 1);
 
-    if (nextConn && restoreTabs(activeConnConfig, nextConn.dbType, newName, nextConn.schema)) return;
+    if (nextConn && restoreTabs(activeConnIdState, activeConnConfig, nextConn.dbType, newName, nextConn.schema)) return;
 
     // Fallback
-    const initialTabId = 'query_1';
-    setTabs([
-      {
-        id: initialTabId,
-        type: 'query',
-        name: 'SQL Query',
-        label: t('app.queryTabLabel', { n: 1 }),
-      },
-    ]);
-    setActiveTabId(initialTabId);
-    setQueryCount(2);
+    openInitialTab(activeConnIdState);
   };
 
   // Open a specific table in a new or existing tab
@@ -1205,7 +1207,7 @@ export const App: React.FC = () => {
           initialViewMode,
           initialFilter,
         } as any;
-        setTabs([...tabs, newTab]);
+        setTabs([...tabs, { ...newTab, connId: activeConnIdState }]);
       } else {
         setTabs(tabs.map(tab => tab.id === tabId ? { ...tab, initialViewMode, initialFilter } as any : tab));
       }
@@ -1238,7 +1240,7 @@ export const App: React.FC = () => {
       name: 'SQL Query',
       label: t('app.queryTabLabel', { n: queryCount }),
     };
-    setTabs([...tabs, newTab]);
+    setTabs([...tabs, { ...newTab, connId: activeConnIdState }]);
     setActiveTabId(tabId);
     setQueryCount(queryCount + 1);
   };
@@ -1255,7 +1257,7 @@ export const App: React.FC = () => {
       label: t('app.queryTabLabel', { n: queryCount }),
       sql,
     } as TabInfo;
-    setTabs([...tabs, newTab]);
+    setTabs([...tabs, { ...newTab, connId: activeConnIdState }]);
     setActiveTabId(tabId);
     setQueryCount(queryCount + 1);
   };
@@ -1306,7 +1308,9 @@ export const App: React.FC = () => {
   };
 
   const handleCloseAll = () => {
-    setTabs([]);
+    // Only the tabs the user can actually see. Other connections' tabs are held in the same array
+    // but are not on screen, so wiping them would be closing something the user never asked about.
+    setTabs((prev) => prev.filter((tb) => tb.connId !== activeConnIdState));
     setActiveTabId(null);
   };
 
@@ -1340,7 +1344,7 @@ export const App: React.FC = () => {
       // Pre-populate sql property
       (newTab as any).sql = sql;
 
-      setTabs([...tabs, newTab]);
+      setTabs([...tabs, { ...newTab, connId: activeConnIdState }]);
       setActiveTabId(tabId);
       setQueryCount(queryCount + 1);
     }
@@ -1396,7 +1400,7 @@ export const App: React.FC = () => {
       setActiveTabId(tabId);
       return;
     }
-    const res = await dbHelper.getObjectDefinition(name, kind);
+    const res = await dbHelper.getObjectDefinition(activeConnIdState, name, kind);
     const sql = res.success && res.sql ? res.sql : '';
     const newTab: TabInfo = {
       id: tabId,
@@ -1416,7 +1420,7 @@ export const App: React.FC = () => {
       setActiveTabId(tabId);
       return;
     }
-    const res = await dbHelper.getObjectDefinition(name, 'view');
+    const res = await dbHelper.getObjectDefinition(activeConnIdState, name, 'view');
     const sql = res.success && res.sql ? res.sql : '';
     const newTab: TabInfo = {
       id: tabId,
@@ -1429,8 +1433,27 @@ export const App: React.FC = () => {
     setActiveTabId(tabId);
   };
 
+  /**
+   * Tabs of the connection on screen.
+   *
+   * `tabs` holds every open connection's tabs so switching back to one is instant and its unsaved
+   * SQL survives (§4.5). The strip shows one connection at a time — the rail is what switches — so
+   * everything downstream renders from this, not from `tabs`.
+   *
+   * A tab with no `connId` came from a workspace saved before tabs carried one; treat it as the
+   * active connection's rather than hiding it, or an upgrading user opens the app to an empty strip.
+   */
+  const visibleTabs = tabs.filter((tb) => (tb.connId ?? activeConnIdState) === activeConnIdState);
+
+  /**
+   * The tab whose panel is on screen — looked up in `visibleTabs`, not `tabs`.
+   *
+   * Tab ids are only unique per connection (`query_1` exists on every one), so searching the whole
+   * array could return a tab belonging to a connection that is not on screen. Narrowing first makes
+   * that impossible rather than unlikely.
+   */
   const getActiveTab = () => {
-    return tabs.find((t) => t.id === activeTabId) || null;
+    return visibleTabs.find((tb) => tb.id === activeTabId) || null;
   };
 
   const activeTab = getActiveTab();
@@ -1516,6 +1539,7 @@ export const App: React.FC = () => {
         >
           <ModalBody>
             <ConnectionManager
+              connId={activeConnIdState}
               onConnect={(...args) => {
                 setAddingConn(false);
                 handleConnect(...args);
@@ -1531,7 +1555,7 @@ export const App: React.FC = () => {
         // ngoài thì mép dưới thanh tiêu đề luôn là một đường ranh màu.
         <div className="cm-screen">
           {titleBar}
-          <ConnectionManager onConnect={handleConnect} />
+          <ConnectionManager connId={activeConnIdState} onConnect={handleConnect} />
         </div>
       ) : connection.dbType === 'redis' ? (
         <>
@@ -1566,6 +1590,7 @@ export const App: React.FC = () => {
 
             {showSidebar && (
               <Sidebar
+              connId={activeConnIdState}
                 dbName={connection.dbName}
                 dbType={connection.dbType}
                 readOnly={readOnly}
@@ -1605,7 +1630,7 @@ export const App: React.FC = () => {
               <div style={{ display: 'flex', alignItems: 'center', background: 'var(--win-bg-tab-bar)', borderBottom: '1px solid var(--win-border)', position: 'relative', zIndex: 100 }}>
                 <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
                   <TabManager
-                    tabs={tabs}
+                    tabs={visibleTabs}
                     activeTabId={activeTabId}
                     dirtyTabId={dirtyTabId}
                     onSelectTab={handleSelectTab}
@@ -1647,6 +1672,7 @@ export const App: React.FC = () => {
                   <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
                     {activeTab.type === 'table' ? (
                       <DataGrid
+              connId={activeConnIdState}
                         key={activeTab.id + '_' + ((activeTab as any).initialViewMode || 'data') + '_' + ((activeTab as any).initialFilter ? JSON.stringify((activeTab as any).initialFilter) : '') + '_' + dbReloadKey}
                         tableName={activeTab.name}
                         dbType={connection.dbType}
@@ -1659,6 +1685,7 @@ export const App: React.FC = () => {
                       />
                     ) : activeTab.type === 'routine' ? (
                       <RoutineEditorModal
+              connId={activeConnIdState}
                         key={activeTab.id}
                         name={activeTab.routineInfo?.name || activeTab.name}
                         kind={activeTab.routineInfo?.kind || 'procedure'}
@@ -1668,6 +1695,7 @@ export const App: React.FC = () => {
                       />
                     ) : activeTab.type === 'view' ? (
                       <ViewEditorModal
+              connId={activeConnIdState}
                         key={activeTab.id}
                         name={activeTab.viewInfo?.name || activeTab.name}
                         initialSql={activeTab.viewInfo?.sql || ''}
@@ -1680,7 +1708,7 @@ export const App: React.FC = () => {
 
                 {/* Tab truy vấn: mount thường trực (ẩn/hiện bằng CSS) để kết quả sống khi chuyển tab.
                     Chỉ mount tab đã từng được mở — xem mountedQueryTabs. */}
-                {tabs.filter(qt => qt.type === 'query' && mountedQueryTabs.has(qt.id)).map(qt => (
+                {visibleTabs.filter(qt => qt.type === 'query' && mountedQueryTabs.has(qt.id)).map(qt => (
                   <QueryTabPanel
                     // Gắn cả scope vào key: id tab là `query_<timestamp>` nên hai database khác
                     // nhau vẫn có thể trùng id, và khi đó React sẽ dùng lại instance cũ.
@@ -1688,7 +1716,8 @@ export const App: React.FC = () => {
                     tab={qt}
                     active={activeTabId === qt.id}
                     dbType={connection?.dbType}
-                    connKey={connKey(activeConnConfig)}
+                    connId={qt.connId || activeConnIdState}
+          connKey={connKey(activeConnConfig)}
                     dbName={connection.dbName}
                     theme={theme}
                     readOnly={readOnly}
@@ -1697,15 +1726,16 @@ export const App: React.FC = () => {
                 ))}
 
                 {/* Terminal: mount thường trực (ẩn/hiện bằng CSS) để phiên PTY sống khi chuyển tab */}
-                {tabs.filter(t => t.type === 'terminal').map(t => (
+                {visibleTabs.filter(tb => tb.type === 'terminal').map(tb => (
                   <TerminalPanel
-                    key={t.id}
-                    config={((t as any).config || { type: connection.dbType }) as DbConnectionConfig}
-                    profileName={t.label}
-                    floating={!!(t as any).floating}
-                    active={activeTabId === t.id}
-                    onToggleFloat={() => setTabs(prev => prev.map(x => x.id === t.id ? ({ ...x, floating: !(x as any).floating } as any) : x))}
-                    onClose={() => handleCloseTab(t.id)}
+                    connId={tb.connId || activeConnIdState}
+                    key={tb.id}
+                    config={((tb as any).config || { type: connection.dbType }) as DbConnectionConfig}
+                    profileName={tb.label}
+                    floating={!!(tb as any).floating}
+                    active={activeTabId === tb.id}
+                    onToggleFloat={() => setTabs(prev => prev.map(x => x.id === tb.id ? ({ ...x, floating: !(x as any).floating } as any) : x))}
+                    onClose={() => handleCloseTab(tb.id)}
                     // Terminal ở đây là một tab -> đã có X trên tab, bỏ nút X trùng ở header
                     closable={false}
                   />
@@ -1799,6 +1829,7 @@ export const App: React.FC = () => {
 
       {/* Xuất cả database (Export Database) */}
       <ExportDatabaseDialog
+              connId={activeConnIdState}
         open={showExportDbDialog}
         onClose={() => setShowExportDbDialog(false)}
         onSubmit={handleExportDatabase}
@@ -1818,6 +1849,7 @@ export const App: React.FC = () => {
       {/* Xuất một bảng — mở từ menu chuột phải ở Sidebar, cùng popup với nút Export dưới grid */}
       {exportTableTarget && connection && (
         <ExportTableDialog
+              connId={activeConnIdState}
           open
           tableName={exportTableTarget}
           dbType={connection.dbType}
@@ -2037,6 +2069,7 @@ export const App: React.FC = () => {
 
       {/* Database Info Modal */}
       <DatabaseInfoModal
+              connId={activeConnIdState}
         isOpen={showDbInfoModal}
         onClose={() => setShowDbInfoModal(false)}
         onSelectTable={(tableName) => handleSelectTable(tableName)}
@@ -2056,6 +2089,7 @@ export const App: React.FC = () => {
       {/* So sánh 2 database (cấu trúc + dữ liệu) */}
       {showDbCompare && connection && (
         <DbCompareDialog
+          connId={activeConnIdState}
           dbType={connection.dbType}
           currentDb={connection.dbName}
           onClose={() => setShowDbCompare(false)}

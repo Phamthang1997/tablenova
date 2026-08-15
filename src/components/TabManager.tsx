@@ -6,6 +6,18 @@ import { TAB_GROUP_COLORS, type TabGroup } from '../utils/tabGroups';
 
 export interface TabInfo {
   id: string;
+  /**
+   * Kết nối mà tab này chạy trên.
+   *
+   * Trước đây ràng buộc tab↔kết nối là **ngoại tại**: cả danh sách tab nằm dưới một khoá
+   * localStorage của kết nối đang mở, và đổi kết nối là thay trọn danh sách. Giờ tab của nhiều kết
+   * nối cùng nằm trong state, nên mỗi tab phải tự mang kết nối của nó — thanh tab lọc theo đây, và
+   * mọi component bên trong tab nhận `connId` này chứ không phải "kết nối đang chọn".
+   *
+   * Không bắt buộc: bản lưu trong localStorage từ trước khi có trường này không có nó, và được gán
+   * lúc khôi phục (xem `restoreTabs`).
+   */
+  connId?: string;
   type: 'table' | 'query' | 'terminal' | 'routine' | 'view';
   name: string; // Table name or unique query title
   label: string;

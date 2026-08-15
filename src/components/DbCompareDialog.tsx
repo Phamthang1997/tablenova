@@ -43,6 +43,8 @@ import {
 import { Modal, ModalBody } from './Modal';
 
 interface DbCompareDialogProps {
+  /** Kết nối mà hộp thoại này lấy danh sách database từ đó. */
+  connId: string;
   dbType: string;
   currentDb?: string;
   onClose: () => void;
@@ -206,6 +208,7 @@ const DiffProgressBar: React.FC<{
 };
 
 export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
+  connId,
   dbType,
   currentDb,
   onClose,
@@ -263,13 +266,13 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
   useEffect(() => {
     if (isSqlite) return;
     let alive = true;
-    dbHelper.listDatabases().then((res) => {
+    dbHelper.listDatabases(connId).then((res) => {
       if (alive && res.success) setDatabases(res.databases);
     });
     return () => {
       alive = false;
     };
-  }, [isSqlite]);
+  }, [connId, isSqlite]);
 
   const sideReady = isSqlite
     ? !!source.filePath?.trim() && !!target.filePath?.trim()

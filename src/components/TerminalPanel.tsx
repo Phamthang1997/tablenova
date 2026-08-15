@@ -10,6 +10,8 @@ import { openTerminalWindow } from '../utils/terminalWindow';
 import { ConfirmDialog } from './ConfirmDialog';
 
 interface TerminalPanelProps {
+  /** Kết nối mà component này thao tác lên. Truyền tường minh, không đọc id ambient (§4.1). */
+  connId: string;
   config: DbConnectionConfig;
   profileName?: string;
   onClose: () => void;
@@ -28,6 +30,7 @@ interface TerminalPanelProps {
 //     KHÔNG unmount -> phiên PTY sống khi chuyển tab).
 //   - Nổi (floating): cửa sổ nổi kéo di chuyển được, hiện bất kể tab nào đang active.
 export const TerminalPanel: React.FC<TerminalPanelProps> = ({
+  connId,
   config,
   profileName,
   onClose: _onClose,
@@ -208,7 +211,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     setDetecting(true);
     setLogMenu(true);
     setDetectError(null);
-    const det = await dbHelper.detectLogPaths(config.type);
+    const det = await dbHelper.detectLogPaths(connId, config.type);
     setLogPaths(det.paths);
     setDetectError(det.error || null);
     setDetecting(false);
@@ -316,7 +319,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     freshLine();
     term?.writeln(`\x1b[1;35msql>\x1b[0m ${sql}`);
     try {
-      const res = await dbHelper.executeQueryMulti(sql);
+      const res = await dbHelper.executeQueryMulti(connId, sql);
       if (!res.success) {
         term?.writeln(ansi.err(t('terminal.sqlError', { message: res.error || t('terminal.unknownReason') })));
       } else {
@@ -384,7 +387,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
 
   const doEnableLog = async (kind: string) => {
     note(t('terminal.enablingLog'));
-    const res = await dbHelper.enableLogging(config.type, kind);
+    const res = await dbHelper.enableLogging(connId, config.type, kind);
     if (!res.success) {
       note(t('terminal.errEnableLog', { message: res.message || t('terminal.errEnableLogPerm') }), 'err');
       return;
@@ -394,7 +397,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
       return;
     }
     note(t('terminal.logEnabledDetecting'));
-    const det = await dbHelper.detectLogPaths(config.type);
+    const det = await dbHelper.detectLogPaths(connId, config.type);
     setLogPaths(det.paths);
     setDetectError(det.error || null);
     setLogMenu(true);
@@ -411,7 +414,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
 
   const handleDisableLog = async (kind: string) => {
     setSetupMenu(false);
-    const res = await dbHelper.disableLogging(config.type, kind);
+    const res = await dbHelper.disableLogging(connId, config.type, kind);
     note(
       res.success ? t('terminal.logDisabled') : t('terminal.errDisableLog', { message: res.message }),
       res.success ? 'ok' : 'err'

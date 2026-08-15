@@ -39,6 +39,37 @@ export interface DumpReader {
   }>;
 }
 
+/**
+ * `dbHelper` bound to one connection, in the shape `buildDump` wants.
+ *
+ * `DumpReader` is deliberately an injected interface — that is what keeps `dumpBuilder` free of
+ * `@tauri-apps/api` and unit-testable. Now that every read takes a `conn_id`, `dbHelper` no longer
+ * *is* a `DumpReader`; this adapts it into one for a given connection, in one place, instead of
+ * widening the interface with an id it has no use for.
+ */
+export function dumpReaderFor(
+  db: {
+    getTableDefinition(connId: string, name: string): Promise<{ success: boolean; sql?: string; error?: string }>;
+    getTableSchema(connId: string, tableName: string): Promise<SchemaInfo>;
+    getTableData(connId: string, tableName: string, page?: number, pageSize?: number): Promise<{ rows: any[]; totalCount: number }>;
+    getObjectDefinition(connId: string, name: string, kind: 'view' | 'function' | 'procedure' | 'table' | 'event'): Promise<{ success: boolean; sql?: string; error?: string }>;
+    getAllTriggers(): Promise<{ name: string; table: string; statement: string }[]>;
+    getTableDdlExtras(tableName: string): Promise<{
+      sequences: string[]; indexes: string[]; constraints: string[]; comments: string[]; sequenceValues: string[];
+    }>;
+  },
+  connId: string,
+): DumpReader {
+  return {
+    getTableDefinition: (name) => db.getTableDefinition(connId, name),
+    getTableSchema: (t) => db.getTableSchema(connId, t),
+    getTableData: (t, page, pageSize) => db.getTableData(connId, t, page, pageSize),
+    getObjectDefinition: (name, kind) => db.getObjectDefinition(connId, name, kind),
+    getAllTriggers: () => db.getAllTriggers(),
+    getTableDdlExtras: (t) => db.getTableDdlExtras(t),
+  };
+}
+
 export interface DumpProgress {
   label: string;
   current?: number;

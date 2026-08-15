@@ -36,6 +36,8 @@ export interface DatabaseExportOptions {
 }
 
 interface ExportDatabaseDialogProps {
+  /** Kết nối mà component này thao tác lên. Truyền tường minh, không đọc id ambient (§4.1). */
+  connId: string;
   open: boolean;
   onClose: () => void;
   /** Trả về true nếu xuất xong (popup tự đóng), false để giữ popup lại cho người dùng sửa. */
@@ -130,7 +132,7 @@ const removeAccents = (s: string) =>
  * Popup "Xuất Cơ sở dữ liệu" — layout 2 cột: trái là cấu hình (tên tệp, định dạng,
  * tuỳ chọn SQL), phải là danh sách bảng chiếm hết chiều cao nên không phải cuộn cả popup.
  */
-export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ open, onClose, onSubmit, dbName }) => {
+export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ connId, open, onClose, onSubmit, dbName }) => {
   const { t } = useTranslation();
   // Tên tệp gợi ý theo lựa chọn, nhưng người dùng gõ tay là dừng gợi ý (`filenameTouched`) —
   // không thì mỗi lần tick thêm một bảng lại xoá mất tên họ vừa đặt.
@@ -169,8 +171,8 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ open
       // Ba nguồn: getTables (bảng+view), getDatabaseObjects (routine), getAllTriggers.
       // Routine/trigger không lấy được thì trả mảng rỗng chứ không làm hỏng cả popup.
       const [list, dbObjs, triggers] = await Promise.all([
-        dbHelper.getTables(),
-        dbHelper.getDatabaseObjects(),
+        dbHelper.getTables(connId),
+        dbHelper.getDatabaseObjects(connId),
         dbHelper.getAllTriggers(),
       ]);
       if (cancelled) return;
@@ -193,7 +195,7 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ open
       if (viewNames.length > 0) {
         const defs = await Promise.all(
           viewNames.map(async (name) => {
-            const def = await dbHelper.getTableDefinition(name);
+            const def = await dbHelper.getTableDefinition(connId, name);
             return { name, sql: def.success && def.sql ? def.sql : '' };
           })
         );
@@ -201,7 +203,7 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ open
       }
     })();
     return () => { cancelled = true; };
-  }, [open]);
+  }, [connId, open]);
 
   useEffect(() => {
     if (!open) return;

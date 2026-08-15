@@ -150,6 +150,8 @@ import { ExplainViewer } from './ExplainViewer';
 import { Modal, ModalBody, ModalFooter } from './Modal';
 
 interface SqlEditorProps {
+  /** Kết nối mà component này thao tác lên. Truyền tường minh, không đọc id ambient (§4.1). */
+  connId: string;
   dbType?: string;
   /** Định danh máy chủ đang kết nối (utils/connKey) — dùng để gắn nhãn & lọc lịch sử. */
   connKey?: string;
@@ -223,6 +225,7 @@ function applyLimitToSql(sqlText: string, limitOption: string): string {
 }
 
 export const SqlEditor: React.FC<SqlEditorProps> = ({
+  connId,
   dbType = 'sqlite',
   connKey = '',
   dbName = '',
@@ -958,7 +961,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     refreshStatementHighlight();
 
     registerSqlFormatter(dbType);
-    void catalog.getTables(); // nạp nền catalog cho autocomplete/hover
+    void catalog.getTables(connId); // nạp nền catalog cho autocomplete/hover
     const cleanupInspection = attachEditorInspection(monaco, editor);
     editor.onDidDispose(() => {
       cleanupInspection();
@@ -1091,7 +1094,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     };
 
     try {
-      await dbHelper.executeQueryStream(textToRun, queryId, (msg) => {
+      await dbHelper.executeQueryStream(connId, textToRun, queryId, (msg) => {
         if (msg.type === 'columns') {
           const i = msg.stmtIndex ?? 0;
           acc[i] = { query: msg.query || '', columns: msg.columns || [], data: [] };
@@ -1217,7 +1220,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     }
 
     try {
-      const res = await dbHelper.executeQuery(explainQuery, params);
+      const res = await dbHelper.executeQuery(connId, explainQuery, params);
       const rows = res.data || (res as any).rows || [];
       if (res.success && rows.length > 0) {
         const parsed = parseExplainOutput(rows, dbType);
@@ -2015,7 +2018,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
 
     // 1. Kiểm tra trong catalog foreign keys của bảng hiện tại
     if (pTargetTable) {
-      const schema = catalog.getCachedSchema(pTargetTable) || await catalog.getSchema(pTargetTable);
+      const schema = catalog.getCachedSchema(connId, pTargetTable) || await catalog.getSchema(connId, pTargetTable);
       if (schema && schema.foreignKeys) {
         // Tên trường phải khớp JSON của get_full_catalog: column / refTable / refColumn
         // (xem SchemaInfo trong dbHelper.ts và json! ở database.rs).
@@ -2040,7 +2043,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
 
     // 3. Nếu chưa biết tên cột đích, kiểm tra schema bảng đích để dùng đúng tên cột hoặc PK
     if (targetTable) {
-      const targetSchema = catalog.getCachedSchema(targetTable) || await catalog.getSchema(targetTable);
+      const targetSchema = catalog.getCachedSchema(connId, targetTable) || await catalog.getSchema(connId, targetTable);
       if (targetSchema && targetSchema.columns && targetSchema.columns.length > 0) {
         const hasCol = targetSchema.columns.some((c: any) => c.name.toLowerCase() === colName.toLowerCase());
         if (hasCol) {
@@ -2067,7 +2070,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
 
   /** Editability of the result tab currently shown in a pane. Pure — safe to call in render. */
   const editabilityOf = (query: string, cols: string[]): ResultEditability =>
-    resolveResultEditability(query, cols, catalog.getCachedSchema);
+    resolveResultEditability(query, cols, (tbl: string) => catalog.getCachedSchema(connId, tbl));
 
   /**
    * Same, plus the app-wide Read-only switch. Deliberately a separate wrapper rather than a
@@ -2094,7 +2097,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     }
     if (wanted.size === 0) return;
     let alive = true;
-    Promise.all([...wanted].map(tbl => catalog.getSchema(tbl))).then(() => {
+    Promise.all([...wanted].map(tbl => catalog.getSchema(connId, tbl))).then(() => {
       if (alive) setSchemaTick(x => x + 1);
     });
     return () => { alive = false; };
@@ -2176,7 +2179,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       newData: cols,
     }));
     if (changes.length === 0) return;
-    const preview = await dbHelper.commitChanges(table, changes, primaryKey, true);
+    const preview = await dbHelper.commitChanges(connId, table, changes, primaryKey, true);
     if (!preview.success) {
       showEditMsg(pane, t('sqlEditor.errEditPreview', { message: preview.message }), 'err');
       return;
@@ -2188,7 +2191,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     if (!editCommit) return;
     const { pane, table, primaryKey, changes } = editCommit;
     setEditCommitting(true);
-    const res = await dbHelper.commitChanges(table, changes, primaryKey);
+    const res = await dbHelper.commitChanges(connId, table, changes, primaryKey);
     setEditCommitting(false);
     setEditCommit(null);
     if (!res.success) {
