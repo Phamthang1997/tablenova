@@ -13,6 +13,21 @@ pub struct OAuthCallbackResult {
     pub error: Option<String>,
 }
 
+fn url_encode(input: &str) -> String {
+    let mut encoded = String::with_capacity(input.len() * 2);
+    for byte in input.bytes() {
+        match byte {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(byte as char);
+            }
+            _ => {
+                encoded.push_str(&format!("%{:02X}", byte));
+            }
+        }
+    }
+    encoded
+}
+
 fn simple_url_decode(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
     let mut chars = input.chars();
@@ -56,25 +71,26 @@ pub async fn start_google_oauth_flow(
         .port();
 
     let redirect_uri = format!("http://127.0.0.1:{}/oauth/callback", port);
-    
-    let challenge_param = if let Some(ref ch) = code_challenge {
-        format!("&code_challenge={}&code_challenge_method=S256", ch)
-    } else {
-        String::new()
-    };
+    let encoded_redirect_uri = url_encode(&redirect_uri);
+    let encoded_scope = url_encode("openid email profile https://www.googleapis.com/auth/generative-language");
 
-    let auth_url = format!(
-        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope=openid%20email%20profile%20https://www.googleapis.com/auth/generative-language{}&access_type=offline&prompt=consent",
-        cid,
-        redirect_uri,
-        challenge_param
+    let mut auth_url = format!(
+        "https://accounts.google.com/o/oauth2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=consent",
+        url_encode(&cid),
+        encoded_redirect_uri,
+        encoded_scope
     );
 
-    // Mở URL đăng nhập Google trên trình duyệt mặc định
+    if let Some(ref ch) = code_challenge {
+        auth_url.push_str(&format!("&code_challenge={}&code_challenge_method=S256", url_encode(ch)));
+    }
+
+    // Mở URL đăng nhập Google trên trình duyệt mặc định một cách an toàn
     #[cfg(target_os = "windows")]
     {
-        let _ = std::process::Command::new("cmd")
-            .args(["/C", "start", "", &auth_url])
+        // Sử dụng rundll32 để tránh cmd.exe phân tách ký tự '&' trong URL làm mất tham số dẫn đến lỗi 404
+        let _ = std::process::Command::new("rundll32")
+            .args(["url.dll,FileProtocolHandler", &auth_url])
             .spawn();
     }
     #[cfg(target_os = "macos")]
