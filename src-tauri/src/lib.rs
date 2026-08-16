@@ -88,6 +88,9 @@ pub fn run() {
             // Park one here so it can emit "tx-state-changed" instead of every command's response
             // shape having to carry the state.
             tx_session::set_app_handle(app.handle().clone());
+            // Same trick, different purpose: the SQL funnels read the read-only flag out of the
+            // connection registry, and they have a `&DbConnection` but no `AppState`.
+            state::set_app_handle(app.handle().clone());
 
             Ok(())
         })
@@ -102,6 +105,7 @@ pub fn run() {
             database::connect_db,
             database::disconnect_db,
             database::list_connections,
+            database::set_connection_read_only,
             database::get_connection_status,
             database::get_tables,
             database::get_full_catalog,

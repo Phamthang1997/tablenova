@@ -48,13 +48,24 @@ async function generateCodeChallenge(verifier: string): Promise<string> {
     .replace(/=+$/, '');
 }
 
+export const DELETED_CLIENT_IDS = [
+  'REDACTED_CLIENT_ID.apps.googleusercontent.com',
+  'REDACTED_CLIENT_ID.apps.googleusercontent.com',
+];
+
 export async function startGoogleBrowserOAuth(
   customClientId?: string,
   customClientSecret?: string
 ): Promise<{ success: boolean; email?: string; error?: string; token?: string }> {
   try {
     const settings = getAiSettings();
-    const clientId = (customClientId || settings.googleClientId || DEFAULT_GOOGLE_CLIENT_ID).trim();
+    let clientId = (customClientId || settings.googleClientId || '').trim();
+    if (!clientId || DELETED_CLIENT_IDS.includes(clientId) || !clientId.includes('REDACTED_CLIENT_ID')) {
+      clientId = DEFAULT_GOOGLE_CLIENT_ID;
+      settings.googleClientId = DEFAULT_GOOGLE_CLIENT_ID;
+      settings.googleClientSecret = DEFAULT_GOOGLE_CLIENT_SECRET;
+      saveAiSettings(settings);
+    }
     const clientSecret = (customClientSecret || settings.googleClientSecret || DEFAULT_GOOGLE_CLIENT_SECRET).trim();
 
     const codeVerifier = generateCodeVerifier();

@@ -57,7 +57,9 @@ pub async fn start_google_oauth_flow(
     code_challenge: Option<String>,
 ) -> Result<OAuthCallbackResult, String> {
     let cid = match client_id {
-        Some(ref id) if !id.trim().is_empty() => id.trim().to_string(),
+        Some(ref id) if !id.trim().is_empty() 
+            && !id.contains("REDACTED_OLD_CLIENT_1") 
+            && !id.contains("REDACTED_OLD_CLIENT_2") => id.trim().to_string(),
         _ => DEFAULT_GOOGLE_CLIENT_ID.to_string(),
     };
 
@@ -85,12 +87,20 @@ pub async fn start_google_oauth_flow(
         auth_url.push_str(&format!("&code_challenge={}&code_challenge_method=S256", url_encode(ch)));
     }
 
+    eprintln!("[OAuth] Starting flow with Client ID: {}", cid);
+    eprintln!("[OAuth] Redirect URI: {}", redirect_uri);
+    eprintln!("[OAuth] Opening URL: {}", auth_url);
+
     // Mở URL đăng nhập Google trên trình duyệt mặc định một cách an toàn
     #[cfg(target_os = "windows")]
     {
-        // Sử dụng rundll32 để tránh cmd.exe phân tách ký tự '&' trong URL làm mất tham số dẫn đến lỗi 404
-        let _ = std::process::Command::new("rundll32")
-            .args(["url.dll,FileProtocolHandler", &auth_url])
+        let _ = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                &format!("Start-Process '{}'", auth_url.replace("'", "''")),
+            ])
             .spawn();
     }
     #[cfg(target_os = "macos")]

@@ -275,6 +275,8 @@ const vi: typeof en = {
     errSwitchDb: 'Lỗi đổi database: {{message}}',
     errOpenDb: 'Lỗi mở database: {{message}}',
     closeConnection: 'Đóng kết nối',
+    makeReadOnly: 'Chuyển sang chỉ đọc',
+    allowWrites: 'Cho phép ghi',
     closeOtherConnections: 'Đóng các kết nối khác',
     schema: 'Schema',
     schemaHint: 'Schema PostgreSQL mà mọi truy vấn, xuất dữ liệu và sửa đổi sẽ dùng',
@@ -1038,12 +1040,17 @@ const vi: typeof en = {
     errTableNotFound: 'Không tìm thấy bảng "{{name}}" trong database hiện tại.',
     errReadOnlyRun:
       'Đang ở chế độ Chỉ đọc: chỉ cho phép SELECT/SHOW/EXPLAIN/PRAGMA. Tắt "Chỉ đọc" để chạy câu lệnh ghi.',
+    errConnReadOnlyRun:
+      'Kết nối này đang chỉ đọc: chỉ cho phép SELECT/SHOW/EXPLAIN/PRAGMA. Chuột phải vào ô của nó ở cột kết nối rồi chọn “Cho phép ghi”.',
     errUnknownExec: 'Lỗi không rõ khi thực thi SQL.',
 
     unsafeTitle: 'Câu lệnh này sẽ xoá sạch dữ liệu',
     unsafeIntro: '{{n}} câu lệnh dưới đây tác động lên mọi dòng, hoặc xoá hẳn cả bảng:',
     unsafeKindDeleteNoWhere: 'DELETE không có WHERE — xoá toàn bộ dòng của bảng',
     unsafeKindDropTable: 'DROP TABLE — xoá cả bảng cùng toàn bộ dữ liệu',
+    unsafeKindUpdateNoWhere: 'UPDATE không có WHERE — ghi đè mọi dòng của bảng',
+    unsafeKindTruncate: 'TRUNCATE — làm rỗng bảng, và trên MySQL còn commit ngầm',
+    unsafeNoteProd: 'Kết nối này gắn nhãn PRODUCTION. Gõ tên database để xác nhận — không thể hoàn tác.',
     unsafeNote: 'Không thể hoàn tác. Bật "Chỉ đọc" nếu bạn muốn những câu lệnh như thế này bị chặn hẳn thay vì chỉ cảnh báo.',
     unsafeConfirm: 'Vẫn chạy',
     errQuery: 'Lỗi truy vấn: {{message}}',
@@ -1460,6 +1467,8 @@ const vi: typeof en = {
     errSwitchDb: 'Lỗi đổi database: {{message}}',
     errOpenDb: 'Lỗi mở database: {{message}}',
     closeConnection: 'Đóng kết nối',
+    makeReadOnly: 'Chuyển sang chỉ đọc',
+    allowWrites: 'Cho phép ghi',
     closeOtherConnections: 'Đóng các kết nối khác',
 
     titleAll: 'Thống kê toàn máy chủ: <accent>{{n}} database</accent>',
@@ -2316,8 +2325,15 @@ const vi: typeof en = {
     elapsedSec: '{{n}} giây',
     elapsedMin: '{{n}} phút {{b}} giây',
   },
+  connEnv: {
+    production: 'Production',
+    staging: 'Staging',
+    development: 'Dev',
+  },
+
   backend: {
     notConnected: 'Chưa kết nối CSDL',
+    connReadOnly: 'Kết nối đang ở chế độ chỉ đọc — tắt chế độ này trước khi ghi',
     notConnectedRedis: 'Chưa kết nối Redis',
     noConnConfig: 'Chưa có cấu hình kết nối',
     noConnConfigDeepScan: 'Chưa có cấu hình kết nối để quét sâu',

@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { Database } from 'lucide-react';
+import { Database, Lock } from 'lucide-react';
 import { PostgresIcon, MySqlIcon, SqliteIcon } from './DbIcons';
 import { dbHelper, type OpenConnection } from '../utils/dbHelper';
+import { type ConnEnv } from '../utils/connEnv';
 
 /**
  * Brand mark per dialect, the same ones the Connection Manager uses.
@@ -27,6 +28,10 @@ interface DbRailProps {
   onClose: (connId: string) => void;
   /** Close every connection except this one. */
   onCloseOthers: (connId: string) => void;
+  /** Flip the read-only flag of one connection. */
+  onToggleReadOnly: (connId: string) => void;
+  /** Môi trường của một kết nối, suy từ nhãn màu — xem `utils/connEnv.ts`. */
+  envOf: (connId: string) => ConnEnv;
   /** Bumped by the caller when a connect/disconnect happened, to refetch. */
   reloadKey?: number;
 }
@@ -49,6 +54,8 @@ export const DbRail: React.FC<DbRailProps> = ({
   onSelect,
   onClose,
   onCloseOthers,
+  onToggleReadOnly,
+  envOf,
   reloadKey = 0,
 }) => {
   const { t } = useTranslation();
@@ -72,13 +79,20 @@ export const DbRail: React.FC<DbRailProps> = ({
     return () => window.removeEventListener('database-restored', onRestored);
   }, [reload, reloadKey, activeConnId]);
 
-  // Below two there is nothing to switch between, and the rail would only take 64px. Adding a
-  // connection lives on the title bar (New connection, and the database picker, which now *opens*
-  // a database as another connection instead of switching onto it) — the rail only shows, switches
-  // and closes.
-  if (connections.length < 2) return null;
+  // Hidden with one connection ONLY when that connection carries no warning.
+  //
+  // "Below two there is nothing to switch between" was the right rule while the rail was just a
+  // switcher. It stopped being right once the cell started carrying state the user must see: a
+  // single production connection would hide the very red edge and padlock that say so, and a single
+  // connection holding uncommitted work would hide its badge. Switching is not the only job any
+  // more, so it cannot be the only reason to appear.
+  const worthShowing =
+    connections.length > 1 ||
+    connections.some((c) => c.readOnly || c.pending > 0 || envOf(c.connId) !== 'none');
+  if (!worthShowing) return null;
 
   const closeMenu = () => setMenu(null);
+  const menuConn = menu ? connections.find((c) => c.connId === menu.connId) : null;
 
   return (
     <>
@@ -91,13 +105,19 @@ export const DbRail: React.FC<DbRailProps> = ({
           // without this the column is a flat list where `(server A, sakila)` and
           // `(server B, sakila)` look like the same thing — the exact confusion §4.3 is about.
           const newServer = i > 0 && connections[i - 1].serverId !== c.serverId;
+          // Environment comes from the profile's colour label — see utils/connEnv.ts. Drawn as a
+          // tint on the cell rather than a word, because the rail is 64px and the thing that has to
+          // register in half a second is "this one is production", not which word it is.
+          const env = envOf(c.connId);
           return (
             <button
               key={c.connId}
               type="button"
               role="option"
               aria-selected={isActive}
-              className={`db-rail-item${isActive ? ' is-on' : ''}${newServer ? ' db-rail-sep' : ''}`}
+              className={`db-rail-item${isActive ? ' is-on' : ''}${newServer ? ' db-rail-sep' : ''}${
+                env !== 'none' ? ` db-rail-env-${env}` : ''
+              }`}
               title={[
                 c.db,
                 meta?.label ?? c.dialect,
@@ -123,6 +143,14 @@ export const DbRail: React.FC<DbRailProps> = ({
                   {c.pending > 99 ? '99+' : c.pending}
                 </span>
               )}
+              {/* Read-only has to be visible on the cell, not only inside a menu: the whole point of
+                  the flag is holding production next to dev, and a mode you have to go looking for
+                  is a mode you forget you are in. */}
+              {c.readOnly && (
+                <span className="db-rail-lock" aria-hidden>
+                  <Lock size={11} strokeWidth={2.4} />
+                </span>
+              )}
             </button>
           );
         })}
@@ -143,6 +171,14 @@ export const DbRail: React.FC<DbRailProps> = ({
                 onClick={() => { closeMenu(); onClose(menu.connId); }}
               >
                 {t('sidebar.closeConnection')}
+              </button>
+              <button
+                type="button"
+                className="context-menu-item"
+                role="menuitem"
+                onClick={() => { closeMenu(); void onToggleReadOnly(menu.connId); }}
+              >
+                {menuConn?.readOnly ? t('sidebar.allowWrites') : t('sidebar.makeReadOnly')}
               </button>
               <button
                 type="button"

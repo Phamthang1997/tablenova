@@ -23,7 +23,7 @@
 // question "which connection is this" answered in a single place.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use serde_json::Value;
 
@@ -54,6 +54,45 @@ pub enum ConnId {
     /// session and `BEGIN` ran on it — every later statement of the user then went to the compare
     /// database, and the pool was closed under the session. See §0 of the plan.
     Adhoc,
+}
+
+/// `AppHandle` parked so the three SQL funnels can reach the registry.
+///
+/// They receive a `&DbConnection` and no `AppState` — the same shape that made `tx_session` keep its
+/// state in a module-level static. The difference here is deliberate: this parks a *handle* and
+/// reads the registry through it, so the read-only flag has exactly one home (`ConnEntry`). A second
+/// copy kept in sync would be the duplicate-cache mistake this codebase has paid for twice already.
+static APP: OnceLock<Mutex<Option<tauri::AppHandle>>> = OnceLock::new();
+
+fn app_slot() -> &'static Mutex<Option<tauri::AppHandle>> {
+    APP.get_or_init(|| Mutex::new(None))
+}
+
+/// Called once from `lib.rs` setup.
+pub fn set_app_handle(app: tauri::AppHandle) {
+    if let Ok(mut slot) = app_slot().lock() {
+        *slot = Some(app);
+    }
+}
+
+/// Is this connection refusing writes?
+///
+/// `false` for an ad-hoc pool (it is this process's own, never the user's) and whenever the handle
+/// is not parked yet — failing open here matches every other lookup in this module, and the flag is
+/// only ever true because a user turned it on.
+pub fn conn_is_read_only(id: &ConnId) -> bool {
+    let ConnId::Session(sid) = id else {
+        return false;
+    };
+    let guard = match app_slot().lock() {
+        Ok(g) => g,
+        Err(e) => e.into_inner(),
+    };
+    let Some(app) = guard.as_ref() else {
+        return false;
+    };
+    use tauri::Manager;
+    app.state::<crate::AppState>().connections.is_read_only(sid)
 }
 
 /// A fresh opaque id. UUID rather than a counter so an id is never reused across restarts, and
@@ -117,6 +156,13 @@ impl ServerHandle {
 
 /// One open `(server, database)`.
 pub struct ConnEntry {
+    /// Refuse every write on this connection.
+    ///
+    /// Lives here, in the backend, **not only in the UI** — the same call `redis_db::RedisState`
+    /// already made and for the same reason: the SQL editor sends arbitrary statement text, so a
+    /// gate in the WebView is a gate on the wrong side of the IPC boundary. Per connection, because
+    /// the point is holding production open next to dev.
+    pub read_only: bool,
     pub server: Arc<ServerHandle>,
     /// Database name; the file path for SQLite.
     pub db: String,
@@ -264,6 +310,7 @@ impl ConnRegistry {
                         "schema": e.current_schema,
                         // Badge của rail (§4.2b): số câu GHI đang chờ commit trên kết nối này.
                         "pending": crate::tx_session::pending_count(id),
+                        "readOnly": e.read_only,
                     }),
                 )
             })
@@ -331,6 +378,22 @@ impl ConnRegistry {
     pub fn remove(&self, id: &str) -> Result<Option<ConnEntry>, String> {
         let mut map = self.inner.lock().map_err(|e| e.to_string())?;
         Ok(map.remove(id))
+    }
+
+    pub fn set_read_only(&self, id: &str, on: bool) -> Result<(), String> {
+        let mut map = self.inner.lock().map_err(|e| e.to_string())?;
+        if let Some(entry) = map.get_mut(id) {
+            entry.read_only = on;
+        }
+        Ok(())
+    }
+
+    pub fn is_read_only(&self, id: &str) -> bool {
+        let map = match self.inner.lock() {
+            Ok(m) => m,
+            Err(e) => e.into_inner(),
+        };
+        map.get(id).map(|e| e.read_only).unwrap_or(false)
     }
 
     pub fn set_schema(&self, id: &str, schema: Option<String>) -> Result<(), String> {

@@ -22,6 +22,7 @@ import i18n from '../i18n';
 /** Backend messages with no interpolation — matched whole, after trimming. */
 export const EXACT: Record<string, string> = {
   'Chưa kết nối CSDL': 'backend.notConnected',
+  'Kết nối đang ở chế độ chỉ đọc — tắt chế độ này trước khi ghi': 'backend.connReadOnly',
   // tx_session.rs — transaction thủ công
   'Không có transaction nào đang mở': 'backend.txNotOpen',
   'Transaction đã bị huỷ do lỗi trước đó, chỉ có thể rollback': 'backend.txAborted',

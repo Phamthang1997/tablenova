@@ -2263,6 +2263,9 @@ pub async fn generate_data(
     // an open manual transaction holds. See tx_session::reject_if_manual_or_open.
     crate::tx_session::reject_if_manual_or_open(&conn_id, "sinh dữ liệu")?;
     let (conn, dialect, schema) = active_conn(&state, &conn_id)?;
+    // Its INSERTs go through `Exec`, i.e. past the funnels that carry the read-only gate.
+    // `preview_generated_data` is deliberately not gated — it writes nothing.
+    crate::database::reject_conn_read_only(&conn)?;
     if spec.tables.is_empty() {
         return Err("Chưa chọn bảng nào để sinh dữ liệu".to_string());
     }

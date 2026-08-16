@@ -274,6 +274,8 @@ const ja: typeof en = {
     errSwitchDb: 'データベースの切り替えに失敗しました: {{message}}',
     errOpenDb: 'データベースを開けませんでした: {{message}}',
     closeConnection: '接続を閉じる',
+    makeReadOnly: '読み取り専用にする',
+    allowWrites: '書き込みを許可',
     closeOtherConnections: '他の接続を閉じる',
     schema: 'スキーマ',
     schemaHint: 'クエリ・エクスポート・編集のすべてが対象とする PostgreSQL スキーマ',
@@ -1035,12 +1037,17 @@ const ja: typeof en = {
     errTableNotFound: '現在のデータベースにテーブル "{{name}}" が見つかりません。',
     errReadOnlyRun:
       '読み取り専用モードです: SELECT/SHOW/EXPLAIN/PRAGMA のみ実行できます。書き込みには「読み取り専用」を解除してください。',
+    errConnReadOnlyRun:
+      'この接続は読み取り専用です: SELECT/SHOW/EXPLAIN/PRAGMA のみ許可されます。接続レールのセルを右クリックして「書き込みを許可」を選んでください。',
     errUnknownExec: 'SQL 実行中に不明なエラーが発生しました。',
 
     unsafeTitle: 'データが失われる操作です',
     unsafeIntro: '以下の {{n}} 件の文は全行に影響するか、テーブルそのものを削除します:',
     unsafeKindDeleteNoWhere: 'WHERE のない DELETE — テーブルの全行を削除します',
     unsafeKindDropTable: 'DROP TABLE — テーブルとその全データを削除します',
+    unsafeKindUpdateNoWhere: 'WHERE のない UPDATE — テーブルの全行を上書きします',
+    unsafeKindTruncate: 'TRUNCATE — テーブルを空にし、MySQL では暗黙にコミットします',
+    unsafeNoteProd: 'この接続は PRODUCTION です。データベース名を入力して確認してください — 元に戻せません。',
     unsafeNote: '元に戻せません。警告ではなく完全に禁止したい場合は「読み取り専用」を有効にしてください。',
     unsafeConfirm: 'それでも実行',
     errQuery: 'クエリエラー: {{message}}',
@@ -1456,6 +1463,8 @@ const ja: typeof en = {
     errSwitchDb: 'データベースの切り替えに失敗しました: {{message}}',
     errOpenDb: 'データベースを開けませんでした: {{message}}',
     closeConnection: '接続を閉じる',
+    makeReadOnly: '読み取り専用にする',
+    allowWrites: '書き込みを許可',
     closeOtherConnections: '他の接続を閉じる',
 
     titleAll: 'サーバー全体の統計: <accent>{{n}} データベース</accent>',
@@ -2311,8 +2320,15 @@ const ja: typeof en = {
     elapsedSec: '{{n}} 秒',
     elapsedMin: '{{n}} 分 {{b}} 秒',
   },
+  connEnv: {
+    production: '本番',
+    staging: 'ステージング',
+    development: '開発',
+  },
+
   backend: {
     notConnected: 'データベースに接続していません。',
+    connReadOnly: 'この接続は読み取り専用です。書き込む前に解除してください。',
     notConnectedRedis: 'Redis に接続していません。',
     noConnConfig: '利用できる接続設定がありません。',
     noConnConfigDeepScan: 'ディープスキャン用の接続設定がありません。',

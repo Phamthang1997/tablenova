@@ -52,6 +52,8 @@ export interface OpenConnection {
   schema: string | null;
   /** Số câu GHI đang chờ commit trên kết nối này — badge của rail (§4.2b). */
   pending: number;
+  /** Kết nối đang từ chối mọi câu ghi. */
+  readOnly: boolean;
 }
 
 /**
@@ -800,6 +802,18 @@ export const dbHelper = {
    * connections*, not every database on the server, so this replaces the `list_databases` query it
    * used to run against the active connection.
    */
+  /**
+   * Bật/tắt chế độ chỉ đọc cho MỘT kết nối.
+   *
+   * Gate nằm ở backend, trong ba funnel SQL — không phải ở UI. SQL editor gửi text tuỳ ý, nên một
+   * cái khoá trong WebView là khoá ở sai phía của biên IPC. Đây là đúng kết luận mà
+   * `src-tauri/src/redis_db.rs` đã ghi cho console Redis.
+   */
+  async setConnectionReadOnly(connId: string, enabled: boolean): Promise<boolean> {
+    const res = await invoke<{ readOnly: boolean }>('set_connection_read_only', { connId, enabled });
+    return !!res.readOnly;
+  },
+
   async listConnections(): Promise<OpenConnection[]> {
     const res = await invoke<{ connections: OpenConnection[] }>('list_connections');
     return res.connections || [];

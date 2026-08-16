@@ -1151,6 +1151,52 @@ select.form-input {
   font-variant-numeric: tabular-nums;
 }
 
+/* Environment tint. A left edge, not a fill: the fill is already taken by "this cell is active", and
+   the two must stay tellable apart — a production cell that is not selected still has to read as
+   production. Production also gets a faint wash, because that is the one worth noticing from the
+   corner of the eye. */
+.db-rail-env-production,
+.db-rail-env-staging,
+.db-rail-env-development {
+  box-shadow: inset 3px 0 0 var(--db-rail-env);
+}
+
+.db-rail-env-production {
+  --db-rail-env: #ef4444;
+  background: rgba(239, 68, 68, 0.10);
+}
+
+.db-rail-env-staging {
+  --db-rail-env: #f59e0b;
+}
+
+.db-rail-env-development {
+  --db-rail-env: #22c55e;
+}
+
+/* Active wins the fill, but keeps its environment edge. */
+.db-rail-item.is-on.db-rail-env-production {
+  background: var(--win-accent-glow);
+}
+
+/* Read-only marker. Bottom-left so it never collides with the pending badge top-right — a connection
+   can be both read-only and holding uncommitted work from before it was locked. Slate rather than a
+   warning colour: this is a state the user chose, not something that went wrong. */
+.db-rail-lock {
+  position: absolute;
+  bottom: 3px;
+  left: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 999px;
+  background: var(--win-text-secondary);
+  box-shadow: 0 0 0 2px var(--win-bg-sidebar);
+  color: var(--win-bg-sidebar);
+}
+
 /* Right-click menu of a rail cell. Colours and shadow come from the shared popover family above;
    only geometry and placement live here. */
 .db-rail-menu {

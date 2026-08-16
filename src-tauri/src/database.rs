@@ -447,6 +447,21 @@ fn spawn_iam_refresh(
     });
 }
 
+/// Refuse writes on one connection, or allow them again.
+///
+/// Per connection, because the point is holding production open next to dev: one rail cell refuses,
+/// the one beside it does not. Enforced in the SQL funnels (`reject_if_read_only`), so it holds for
+/// statements the user types as well as for everything the UI issues.
+#[tauri::command]
+pub async fn set_connection_read_only(
+    state: tauri::State<'_, crate::AppState>,
+    conn_id: String,
+    enabled: bool,
+) -> Result<Value, String> {
+    state.connections.set_read_only(&conn_id, enabled)?;
+    Ok(json!({ "success": true, "readOnly": enabled }))
+}
+
 /// Every connection currently open, for the left rail (§4.2c).
 ///
 /// Deliberately takes no `conn_id`: it is a question about the whole app, not about one connection —
@@ -538,6 +553,8 @@ pub async fn connect_db(app: tauri::AppHandle, state: tauri::State<'_, crate::Ap
         state.connections.insert(
             conn_id.clone(),
             crate::state::ConnEntry {
+                // A new connection starts writable; the UI turns this on for a production label.
+                read_only: false,
                 server,
                 db: db_name,
                 conn,
@@ -2032,6 +2049,7 @@ async fn stream_one_statement(
     channel: &Channel<Value>,
     cancel: &Arc<AtomicBool>,
 ) -> Result<(), String> {
+    reject_if_read_only(conn, sql)?;
     // Manual transaction mode: this is the SQL editor's path, so it is the one where the user
     // actually types BEGIN/COMMIT. See tx_session.rs.
     if crate::tx_session::should_route(conn, sql) {
@@ -2454,6 +2472,10 @@ pub async fn commit_changes(state: tauri::State<'_, crate::AppState>, conn_id: S
         return Ok(json!({ "success": true, "preview": true, "sqls": sqls }));
     }
 
+    // After the preview return, deliberately: showing someone the SQL their edits would produce is
+    // not a write, and refusing it would make read-only mean "you may not look either".
+    reject_conn_read_only(&conn_type)?;
+
     // Manual-commit mode: join the user's transaction instead of opening a nested one. They own the
     // commit point, so a failure here leaves the earlier statements pending for them to roll back —
     // which is the whole reason they turned auto-commit off.
@@ -2536,6 +2558,8 @@ pub async fn restore_backup(
         let ctx = state.connections.acquire(&conn_id)?;
         ctx.conn().clone()
     };
+    // Restore replays a whole dump on its own connection, so none of the funnels sees it.
+    reject_conn_read_only(&conn_type)?;
 
     let mut statements_count = 0;
     let mut last_use_db: Option<String> = None;
@@ -3054,6 +3078,9 @@ async fn run_fk_wrapped(
     sql: String,
     optional: Option<String>,
 ) -> Result<(), String> {
+    // Before the FK-disable statement, not after: refusing halfway would leave the session with
+    // foreign-key checks off on a connection we just declared untouchable.
+    reject_conn_read_only(conn)?;
     if crate::tx_session::use_session(conn) {
         // execute_raw_sql_generic routes to the pinned session, so all of these share one
         // connection exactly like the `Exec` branch below.
@@ -3430,7 +3457,43 @@ fn is_mysql_unprepared_error(err_text: &str) -> bool {
     err_text.contains("1295") || err_text.contains("not supported in the prepared statement protocol")
 }
 
+/// Refuse **anything** on a connection the user marked read-only, without looking at statement text.
+///
+/// For the paths that do not send one statement: the grid's Save, DROP/TRUNCATE, restore and the
+/// Data Generator all know they are writes before they build any SQL, so classifying text there
+/// would only be a way to get it wrong.
+pub(crate) fn reject_conn_read_only(conn: &DbConnection) -> Result<(), String> {
+    if crate::state::conn_is_read_only(&conn.id) {
+        return Err("Kết nối đang ở chế độ chỉ đọc — tắt chế độ này trước khi ghi".to_string());
+    }
+    Ok(())
+}
+
+/// Refuse a write on a connection the user marked read-only.
+///
+/// Checked in the three funnels rather than in each write command, and that is the whole design: the
+/// SQL editor sends arbitrary statement text, so guarding ~20 commands would leave the one path that
+/// matters most guarded by whichever `if` someone remembered.
+///
+/// The funnels are **not** quite everywhere, though, and the four exceptions are exactly the ones
+/// that hold their own connection: `commit_changes`, `run_fk_wrapped` (DROP/TRUNCATE),
+/// `restore_backup` and `generate_data` go through `Exec`/an acquired pool connection because they
+/// need one session for a batch — the same reason they must also ask `use_session()` rather than
+/// `is_open()`. Each calls `reject_conn_read_only` at its entry. **A new path that takes its own
+/// connection has to do the same**, and it fails loudly nowhere if it forgets: the write simply
+/// succeeds on the connection labelled production.
+///
+/// `is_write_stmt` is deliberately conservative — `WITH` counts as a write, because a CTE can end in
+/// INSERT/UPDATE/DELETE. Over-refusing costs a toggle; under-refusing costs the row.
+pub(crate) fn reject_if_read_only(conn: &DbConnection, sql: &str) -> Result<(), String> {
+    if !crate::tx_session::is_write_stmt(strip_leading_comments(sql)) {
+        return Ok(());
+    }
+    reject_conn_read_only(conn)
+}
+
 pub(crate) async fn execute_raw_sql_generic(conn: &DbConnection, sql: String) -> Result<Vec<Value>, String> {
+    reject_if_read_only(conn, &sql)?;
     // Manual transaction mode: the statement must run on the connection the transaction was opened
     // on, otherwise it neither sees nor joins the uncommitted work. See tx_session.rs.
     if crate::tx_session::should_route(conn, &sql) {
@@ -3640,6 +3703,7 @@ impl Exec {
 // Chỉ dùng cho MỘT câu lệnh (vd EXPLAIN <query có :param>) — không tách nhiều câu lệnh.
 // SQL truyền vào phải đã dùng placeholder native (`?` cho SQLite/MySQL, `$1..$n` cho Postgres).
 async fn run_bound_query(conn: &DbConnection, sql: String, params: &[Value]) -> Result<Vec<Value>, String> {
+    reject_if_read_only(conn, &sql)?;
     if crate::tx_session::should_route(conn, &sql) {
         return crate::tx_session::run_bound(conn, sql, params).await;
     }
@@ -3874,12 +3938,13 @@ pub async fn open_database(
     conn_id: String,
     name: String,
 ) -> Result<Value, String> {
-    let (server, db_type, tunnel_port) = {
+    let (server, db_type, tunnel_port, inherit_read_only) = {
         let ctx = state.connections.acquire(&conn_id)?;
         (
             ctx.server_arc(),
             ctx.server().db_type.clone(),
             ctx.server().ssh_tunnel.as_ref().map(|t| t.local_port),
+            state.connections.is_read_only(&conn_id),
         )
     };
 
@@ -3922,7 +3987,15 @@ pub async fn open_database(
     let schema = probe_pg_schema(&conn).await;
     state.connections.insert(
         new_id.clone(),
-        crate::state::ConnEntry { server, db: name.clone(), conn, current_schema: schema.clone() },
+        // Inherits the read-only flag of the connection it was opened FROM: those two are the same
+        // server, and someone who marked production read-only means every database on it.
+        crate::state::ConnEntry {
+            read_only: inherit_read_only,
+            server,
+            db: name.clone(),
+            conn,
+            current_schema: schema.clone(),
+        },
     )?;
     Ok(json!({ "success": true, "database": name, "schema": schema, "connId": &*new_id }))
 }

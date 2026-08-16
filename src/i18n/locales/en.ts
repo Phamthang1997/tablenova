@@ -283,6 +283,8 @@ const en = {
     errSwitchDb: 'Failed to switch database: {{message}}',
     errOpenDb: 'Failed to open database: {{message}}',
     closeConnection: 'Close connection',
+    makeReadOnly: 'Make read-only',
+    allowWrites: 'Allow writes',
     closeOtherConnections: 'Close other connections',
     schema: 'Schema',
     schemaHint: 'PostgreSQL schema every query, export and edit works in',
@@ -1047,12 +1049,17 @@ const en = {
     errTableNotFound: 'Table "{{name}}" was not found in the current database.',
     errReadOnlyRun:
       'Read-only mode: only SELECT/SHOW/EXPLAIN/PRAGMA are allowed. Turn off "Read-only" to run a write statement.',
+    errConnReadOnlyRun:
+      'This connection is read-only: only SELECT/SHOW/EXPLAIN/PRAGMA are allowed. Right-click its cell in the connection rail and choose “Allow writes”.',
     errUnknownExec: 'Unknown error while running the SQL.',
 
     unsafeTitle: 'This will wipe data',
     unsafeIntro: '{{n}} statement(s) below affect every row, or drop a table outright:',
     unsafeKindDeleteNoWhere: 'DELETE without WHERE — deletes every row of the table',
     unsafeKindDropTable: 'DROP TABLE — drops the table together with all its data',
+    unsafeKindUpdateNoWhere: 'UPDATE without WHERE — overwrites every row of the table',
+    unsafeKindTruncate: 'TRUNCATE — empties the table, and on MySQL commits implicitly',
+    unsafeNoteProd: 'This connection is labelled PRODUCTION. Type the database name to confirm — this cannot be undone.',
     unsafeNote: 'This cannot be undone. Turn on "Read-only" if you want statements like these blocked instead of just flagged.',
     unsafeConfirm: 'Run anyway',
     errQuery: 'Query error: {{message}}',
@@ -1469,6 +1476,8 @@ const en = {
     errSwitchDb: 'Failed to switch database: {{message}}',
     errOpenDb: 'Failed to open database: {{message}}',
     closeConnection: 'Close connection',
+    makeReadOnly: 'Make read-only',
+    allowWrites: 'Allow writes',
     closeOtherConnections: 'Close other connections',
 
     titleAll: 'Server-wide statistics: <accent>{{n}} databases</accent>',
@@ -2334,8 +2343,15 @@ const en = {
     elapsedSec: '{{n}}s',
     elapsedMin: '{{n}}m {{b}}s',
   },
+  connEnv: {
+    production: 'Production',
+    staging: 'Staging',
+    development: 'Development',
+  },
+
   backend: {
     notConnected: 'No database connection.',
+    connReadOnly: 'This connection is read-only — turn that off before writing.',
     notConnectedRedis: 'Not connected to Redis.',
     noConnConfig: 'No connection configuration available.',
     noConnConfigDeepScan: 'No connection configuration available for a deep scan.',

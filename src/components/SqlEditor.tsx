@@ -154,6 +154,16 @@ import { Modal, ModalBody, ModalFooter } from './Modal';
 interface SqlEditorProps {
   /** Kết nối mà component này thao tác lên. Truyền tường minh, không đọc id ambient (§4.1). */
   connId: string;
+  /** Kết nối gắn nhãn production -> cảnh báo câu lệnh nguy hiểm đòi gõ tên database. */
+  isProdConn?: boolean;
+  /**
+   * Kết nối NÀY đang ở chế độ chỉ đọc (cờ ở backend, khác công tắc toàn cục `readOnly`).
+   *
+   * Cần cả hai: backend mới là chỗ thực sự từ chối, nhưng nếu UI không biết thì nó sẽ mời người
+   * dùng gõ tên database để xác nhận một câu lệnh chắc chắn bị chặn — một hộp thoại hứa điều
+   * không xảy ra.
+   */
+  connReadOnly?: boolean;
   dbType?: string;
   /** Định danh máy chủ đang kết nối (utils/connKey) — dùng để gắn nhãn & lọc lịch sử. */
   connKey?: string;
@@ -228,6 +238,8 @@ function applyLimitToSql(sqlText: string, limitOption: string): string {
 
 export const SqlEditor: React.FC<SqlEditorProps> = ({
   connId,
+  isProdConn = false,
+  connReadOnly = false,
   dbType = 'sqlite',
   connKey = '',
   dbName = '',
@@ -478,6 +490,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     switch (kind) {
       case 'deleteNoWhere': return t('sqlEditor.unsafeKindDeleteNoWhere');
       case 'dropTable': return t('sqlEditor.unsafeKindDropTable');
+      case 'updateNoWhere': return t('sqlEditor.unsafeKindUpdateNoWhere');
+      case 'truncate': return t('sqlEditor.unsafeKindTruncate');
     }
   };
 
@@ -1022,8 +1036,10 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     if (!textToRun.trim()) return;
 
     // Chế độ Chỉ đọc: chỉ cho phép câu lệnh đọc (SELECT/SHOW/...)
-    if (readOnly && !isReadOnlySql(textToRun)) {
-      const msg = t('sqlEditor.errReadOnlyRun');
+    if ((readOnly || connReadOnly) && !isReadOnlySql(textToRun)) {
+      // Two different switches block writes and they live in different places. Naming the wrong one
+      // leaves the user toggling something that changes nothing.
+      const msg = connReadOnly && !readOnly ? t('sqlEditor.errConnReadOnlyRun') : t('sqlEditor.errReadOnlyRun');
       if (pane === 1) setErrorMsg(msg);
       else setErrorMsg2(msg);
       return;
@@ -1211,8 +1227,10 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     // `EXPLAIN ANALYZE`) — `EXPLAIN ANALYZE DELETE FROM t` xoá dữ liệu thật. Nên nó phải đi qua
     // đúng hai chốt của nút Run. Các variant còn lại chỉ lấy kế hoạch nên không cần.
     if (variant === 'analyze') {
-      if (readOnly && !isReadOnlySql(textToRun)) {
-        const msg = t('sqlEditor.errReadOnlyRun');
+      if ((readOnly || connReadOnly) && !isReadOnlySql(textToRun)) {
+        // Two different switches block writes and they live in different places. Naming the wrong one
+      // leaves the user toggling something that changes nothing.
+      const msg = connReadOnly && !readOnly ? t('sqlEditor.errConnReadOnlyRun') : t('sqlEditor.errReadOnlyRun');
         if (paneId === 1) setErrorMsg(msg);
         else setErrorMsg2(msg);
         return;
@@ -3303,7 +3321,11 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
               </div>
             </div>
           }
-          note={t('sqlEditor.unsafeNote')}
+          note={isProdConn ? t('sqlEditor.unsafeNoteProd') : t('sqlEditor.unsafeNote')}
+          // On a connection labelled production, an OK button is one reflex away from a wiped
+          // table. Typing the database name forces the user to look at WHICH database this is —
+          // which is the mistake being guarded against, not the SQL itself.
+          requireText={isProdConn ? dbName : undefined}
           confirmLabel={t('sqlEditor.unsafeConfirm')}
           onConfirm={() => {
             const p = unsafePrompt;

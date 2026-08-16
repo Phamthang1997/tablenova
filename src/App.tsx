@@ -30,6 +30,7 @@ import { X } from 'lucide-react';
 import { getVersion } from '@tauri-apps/api/app';
 import { PostgresIcon, MySqlIcon, RedisIcon, SqliteIcon } from './components/DbIcons';
 import { dbHelper, activeConnId, setActiveConnId } from './utils/dbHelper';
+import { isProduction, envOfColor } from './utils/connEnv';
 import type { DbConnectionConfig } from './utils/dbHelper';
 import { invalidateCatalog } from './sql/catalog';
 import { splitStatements } from './sql/statements';
@@ -65,6 +66,10 @@ interface QueryTabPanelProps {
   connKey: string;
   /** Kết nối mà tab này chạy trên. Xem §4.1 — không đọc id ambient. */
   connId: string;
+  /** Kết nối gắn nhãn production. */
+  isProdConn?: boolean;
+  /** Kết nối này đang chỉ đọc (cờ backend), khác `readOnly` là công tắc toàn cục. */
+  connReadOnly?: boolean;
   dbName: string;
   theme: 'dark' | 'light';
   readOnly: boolean;
@@ -95,6 +100,8 @@ const QueryTabPanel = React.memo(function QueryTabPanel(props: QueryTabPanelProp
     >
       <SqlEditor
         connId={props.connId}
+        isProdConn={props.isProdConn}
+        connReadOnly={props.connReadOnly}
         dbType={props.dbType}
         connKey={props.connKey}
         dbName={props.dbName}
@@ -191,6 +198,9 @@ export const App: React.FC = () => {
    * lại màn hình quản lý. Giờ backend giữ được nhiều kết nối nên thêm là thêm, không phải thay.
    */
   const [addingConn, setAddingConn] = useState(false);
+  // Bumped whenever the rail must refetch `list_connections`. A counter, not `openConns.length`:
+  // toggling read-only changes what the rail draws without changing how many connections there are.
+  const [railReloadKey, setRailReloadKey] = useState(0);
   // Read by the window-level listeners below, which register once: putting the id in their deps
   // would tear them down and re-register on every connection switch.
   const activeConnIdRef = React.useRef(activeConnIdState);
@@ -204,7 +214,7 @@ export const App: React.FC = () => {
    * (`list_connections`).
    */
   const [openConns, setOpenConns] = useState<
-    { connId: string; config: DbConnectionConfig | null; dbType: 'sqlite' | 'postgres' | 'mysql' | 'redis'; profileName: string; color: string }[]
+    { connId: string; config: DbConnectionConfig | null; dbType: 'sqlite' | 'postgres' | 'mysql' | 'redis'; profileName: string; color: string; readOnly?: boolean }[]
   >([]);
 
   const [tabs, setTabs] = useState<TabInfo[]>([]);
@@ -743,6 +753,23 @@ export const App: React.FC = () => {
       color: patch.color ?? prev.color,
     }));
     updateProfileDisplay(activeProfile.id, patch);
+
+    // The colour IS the environment label (utils/connEnv.ts), and it is set here — from the title
+    // bar popover, after connecting — not in the Connection Manager, which has no colour picker at
+    // all. So `handleConnect` only ever sees a colour on a profile that was already labelled; a
+    // connection labelled production *now* has to take effect *now*, or the guard silently applies
+    // from the next session onwards.
+    if (patch.color === undefined || !activeConnIdState) return;
+    setOpenConns((prev) =>
+      prev.map((c) => (c.connId === activeConnIdState ? { ...c, color: patch.color as string } : c)),
+    );
+    if (isProduction(patch.color)) {
+      void dbHelper.setConnectionReadOnly(activeConnIdState, true);
+      setOpenConns((prev) =>
+        prev.map((c) => (c.connId === activeConnIdState ? { ...c, readOnly: true } : c)),
+      );
+    }
+    setRailReloadKey((k) => k + 1);
   };
 
   // Mở lại phiên bằng đúng cấu hình đang dùng: hữu ích khi server đóng kết nối
@@ -906,10 +933,16 @@ export const App: React.FC = () => {
     // just minted, which `dbHelper` captured from `connect()`.
     const id = activeConnId();
     setActiveConnIdState(id);
+    // A production label turns read-only on by itself. Someone who marks a connection red has
+    // already said what they mean; making them also find a menu item is how the mode ends up off
+    // on exactly the connection it mattered for.
+    if (id && isProduction(color)) {
+      void dbHelper.setConnectionReadOnly(id, true);
+    }
     if (id) {
       setOpenConns((prev) => [
         ...prev.filter((c) => c.connId !== id),
-        { connId: id, config: config || null, dbType, profileName: profile?.name || dbName, color: color || '' },
+        { connId: id, config: config || null, dbType, profileName: profile?.name || dbName, color: color || '', readOnly: isProduction(color) },
       ]);
     }
 
@@ -1086,6 +1119,30 @@ export const App: React.FC = () => {
     // Only guard when the tabs about to be swapped are the ones with unsaved edits in them.
     if (isActive) guardDirty(finish);
     else void finish();
+  };
+
+  /**
+   * Flip one connection's read-only flag.
+   *
+   * The flag is enforced in the backend's SQL funnels, but it is **also** read on the frontend —
+   * `QueryTabPanel`'s `connReadOnly` comes from `openConns`, so the editor can refuse a write
+   * without a round trip. That mirror exists, so this has to write it: flipping only the backend
+   * left the editor refusing every write while the rail already showed the padlock off, and the
+   * one instruction the error gave the user did nothing.
+   *
+   * The value written is the one the **backend returns**, not `!cur.readOnly` — that keeps the
+   * mirror a copy of the authority rather than a second opinion about it.
+   */
+  const toggleConnectionReadOnly = (connId: string) => {
+    void (async () => {
+      const list = await dbHelper.listConnections().catch(() => []);
+      const cur = list.find((c) => c.connId === connId);
+      if (!cur) return;
+      const now = await dbHelper.setConnectionReadOnly(connId, !cur.readOnly);
+      setOpenConns((prev) => prev.map((c) => (c.connId === connId ? { ...c, readOnly: now } : c)));
+      // The rail redraws from `list_connections`; bumping this is what makes it refetch.
+      setRailReloadKey((k) => k + 1);
+    })();
   };
 
   const closeOtherConnections = (keepId: string) => {
@@ -1600,7 +1657,9 @@ export const App: React.FC = () => {
                 onSelect={(c) => selectConnection(c.connId)}
                 onClose={closeConnection}
                 onCloseOthers={closeOtherConnections}
-                reloadKey={openConns.length}
+                onToggleReadOnly={toggleConnectionReadOnly}
+                envOf={(id) => envOfColor(openConns.find((c) => c.connId === id)?.color)}
+                reloadKey={openConns.length + railReloadKey}
               />
             )}
 
@@ -1733,6 +1792,8 @@ export const App: React.FC = () => {
                     active={activeTabId === qt.id}
                     dbType={connection?.dbType}
                     connId={qt.connId || activeConnIdState}
+          isProdConn={isProduction(openConns.find((c) => c.connId === (qt.connId || activeConnIdState))?.color)}
+          connReadOnly={!!openConns.find((c) => c.connId === (qt.connId || activeConnIdState))?.readOnly}
           connKey={connKey(activeConnConfig)}
                     dbName={connection.dbName}
                     theme={theme}
