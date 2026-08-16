@@ -1111,13 +1111,20 @@ select.form-input {
 /* The engine's own mark, not a generic cylinder: with similar database names the engine is the
    fastest thing to tell two connections apart by. Muted until the cell is active or hovered, so the
    column reads as one surface rather than a row of logos. */
+.db-rail-icon-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .db-rail-icon {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 20px;
-  opacity: 0.62;
-  filter: grayscale(0.35);
+  height: 22px;
+  opacity: 0.75;
+  filter: grayscale(0.2);
   transition: opacity 0.12s ease, filter 0.12s ease;
 }
 
@@ -1127,12 +1134,7 @@ select.form-input {
   filter: none;
 }
 
-/* Uncommitted writes on THIS connection. It sits on the rail rather than only on the title bar
-   because the title bar shows one connection at a time — without this, a user can be holding three
-   open transactions and see one. Absolute so a two-digit count never widens the cell. */
-/* Uncommitted writes on THIS connection. Amber rather than the accent: it is a "you still owe the
-   database something" mark, and using the same blue as the active cell would make the two read as
-   one state. Ringed in the sidebar colour so it stays legible sitting on top of the icon. */
+/* Uncommitted writes on THIS connection. Amber badge at top-right corner. */
 .db-rail-badge {
   position: absolute;
   top: 3px;
@@ -1151,50 +1153,114 @@ select.form-input {
   font-variant-numeric: tabular-nums;
 }
 
-/* Environment tint. A left edge, not a fill: the fill is already taken by "this cell is active", and
-   the two must stay tellable apart — a production cell that is not selected still has to read as
-   production. Production also gets a faint wash, because that is the one worth noticing from the
-   corner of the eye. */
-.db-rail-env-production,
-.db-rail-env-staging,
-.db-rail-env-development {
-  box-shadow: inset 3px 0 0 var(--db-rail-env);
+/* Tag Color tint matching the color picker palette directly.
+   No left border stripe: the cell is beautifully and evenly tinted with soft pastel tone and border. */
+.db-rail-item.db-rail-color-red {
+  background: rgba(252, 165, 165, 0.18);
+  border-color: rgba(252, 165, 165, 0.55);
+}
+.db-rail-item.db-rail-color-red:hover {
+  background: rgba(252, 165, 165, 0.28);
+  border-color: rgba(252, 165, 165, 0.85);
+}
+.db-rail-item.is-on.db-rail-color-red {
+  background: rgba(252, 165, 165, 0.35);
+  border-color: #f87171;
 }
 
-.db-rail-env-production {
-  --db-rail-env: #ef4444;
-  background: rgba(239, 68, 68, 0.10);
+.db-rail-item.db-rail-color-green {
+  background: rgba(134, 239, 172, 0.18);
+  border-color: rgba(134, 239, 172, 0.55);
+}
+.db-rail-item.db-rail-color-green:hover {
+  background: rgba(134, 239, 172, 0.28);
+  border-color: rgba(134, 239, 172, 0.85);
+}
+.db-rail-item.is-on.db-rail-color-green {
+  background: rgba(134, 239, 172, 0.35);
+  border-color: #4ade80;
 }
 
-.db-rail-env-staging {
-  --db-rail-env: #f59e0b;
+.db-rail-item.db-rail-color-blue {
+  background: rgba(165, 180, 252, 0.18);
+  border-color: rgba(165, 180, 252, 0.55);
+}
+.db-rail-item.db-rail-color-blue:hover {
+  background: rgba(165, 180, 252, 0.28);
+  border-color: rgba(165, 180, 252, 0.85);
+}
+.db-rail-item.is-on.db-rail-color-blue {
+  background: rgba(165, 180, 252, 0.35);
+  border-color: #818cf8;
 }
 
-.db-rail-env-development {
-  --db-rail-env: #22c55e;
+.db-rail-item.db-rail-color-yellow {
+  background: rgba(253, 230, 138, 0.22);
+  border-color: rgba(253, 230, 138, 0.65);
+}
+.db-rail-item.db-rail-color-yellow:hover {
+  background: rgba(253, 230, 138, 0.32);
+  border-color: rgba(253, 230, 138, 0.9);
+}
+.db-rail-item.is-on.db-rail-color-yellow {
+  background: rgba(253, 230, 138, 0.42);
+  border-color: #facc15;
 }
 
-/* Active wins the fill, but keeps its environment edge. */
-.db-rail-item.is-on.db-rail-env-production {
-  background: var(--win-accent-glow);
+/* Dark mode adjustments */
+[data-theme='dark'] .db-rail-item.db-rail-color-red {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(248, 113, 113, 0.35);
+}
+[data-theme='dark'] .db-rail-item.is-on.db-rail-color-red {
+  background: rgba(239, 68, 68, 0.28);
+  border-color: rgba(248, 113, 113, 0.7);
 }
 
-/* Read-only marker. Bottom-left so it never collides with the pending badge top-right — a connection
-   can be both read-only and holding uncommitted work from before it was locked. Slate rather than a
-   warning colour: this is a state the user chose, not something that went wrong. */
+[data-theme='dark'] .db-rail-item.db-rail-color-green {
+  background: rgba(34, 197, 94, 0.15);
+  border-color: rgba(74, 222, 128, 0.35);
+}
+[data-theme='dark'] .db-rail-item.is-on.db-rail-color-green {
+  background: rgba(34, 197, 94, 0.28);
+  border-color: rgba(74, 222, 128, 0.7);
+}
+
+[data-theme='dark'] .db-rail-item.db-rail-color-blue {
+  background: rgba(99, 102, 241, 0.15);
+  border-color: rgba(129, 140, 248, 0.35);
+}
+[data-theme='dark'] .db-rail-item.is-on.db-rail-color-blue {
+  background: rgba(99, 102, 241, 0.28);
+  border-color: rgba(129, 140, 248, 0.7);
+}
+
+[data-theme='dark'] .db-rail-item.db-rail-color-yellow {
+  background: rgba(234, 179, 8, 0.15);
+  border-color: rgba(250, 204, 21, 0.35);
+}
+[data-theme='dark'] .db-rail-item.is-on.db-rail-color-yellow {
+  background: rgba(234, 179, 8, 0.28);
+  border-color: rgba(250, 204, 21, 0.7);
+}
+
+/* Read-only lock icon: top-left corner, clean & minimal */
 .db-rail-lock {
   position: absolute;
-  bottom: 3px;
+  top: 4px;
   left: 5px;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 15px;
-  height: 15px;
-  border-radius: 999px;
-  background: var(--win-text-secondary);
-  box-shadow: 0 0 0 2px var(--win-bg-sidebar);
-  color: var(--win-bg-sidebar);
+  width: 14px;
+  height: 14px;
+  color: var(--win-text-secondary);
+  opacity: 0.85;
+}
+
+.db-rail-item.is-on .db-rail-lock {
+  color: var(--win-text-primary);
+  opacity: 1;
 }
 
 /* Right-click menu of a rail cell. Colours and shadow come from the shared popover family above;
@@ -1239,13 +1305,33 @@ select.form-input {
 /* One line, clipped: two databases whose names differ only at the end are still
    told apart by the tooltip, and the rail never grows to fit a long name. */
 .db-rail-name {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3.5px;
   max-width: 100%;
+  padding: 0 2px;
   font-size: 10.5px;
   line-height: 1.2;
   overflow: hidden;
+  letter-spacing: -0.01em;
+}
+
+.db-rail-name-text {
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  letter-spacing: -0.01em;
+}
+
+.db-rail-name-lock {
+  flex-shrink: 0;
+  opacity: 0.75;
+  color: var(--win-text-secondary);
+}
+
+.db-rail-item.is-on .db-rail-name-lock {
+  opacity: 1;
+  color: var(--win-text-primary);
 }
 
 .db-rail-status {
@@ -11663,4 +11749,82 @@ input.rename-input {
 
 .doc-empty-detail {
   height: 100%;
+}
+
+/* ==========================================================================
+   Monaco Editor Context Menu (Right-Click Popup in SQL Editor)
+   ========================================================================== */
+.monaco-menu-container,
+.context-view .monaco-menu {
+  background: var(--win-bg-popup, #ffffff) !important;
+  color: var(--win-text-primary, #0f172a) !important;
+  border: 1px solid var(--win-border-strong, rgba(0, 0, 0, 0.12)) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.1) !important;
+  padding: 4px !important;
+}
+
+.monaco-menu .monaco-action-bar .action-item {
+  border-radius: 5px !important;
+  padding: 3px 8px !important;
+}
+
+.monaco-menu .monaco-action-bar .action-label {
+  color: var(--win-text-primary, #0f172a) !important;
+  font-size: 12.5px !important;
+  font-weight: 500 !important;
+}
+
+.monaco-menu .monaco-action-bar .keybinding {
+  color: var(--win-text-secondary, #64748b) !important;
+  font-size: 11.5px !important;
+  font-family: var(--win-font-mono, monospace) !important;
+}
+
+.monaco-menu .monaco-action-bar .action-item.focused,
+.monaco-menu .monaco-action-bar .action-item:hover {
+  background: var(--win-bg-hover, rgba(37, 99, 235, 0.08)) !important;
+}
+
+.monaco-menu .monaco-action-bar .action-item.focused .action-label,
+.monaco-menu .monaco-action-bar .action-item:hover .action-label {
+  color: var(--win-accent, #2563eb) !important;
+}
+
+.monaco-menu .monaco-action-bar .action-item.focused .keybinding,
+.monaco-menu .monaco-action-bar .action-item:hover .keybinding {
+  color: var(--win-accent, #2563eb) !important;
+}
+
+.monaco-menu .monaco-action-bar .action-item.separator {
+  border-bottom: 1px solid var(--win-border, rgba(0, 0, 0, 0.08)) !important;
+  margin: 4px 0 !important;
+  padding: 0 !important;
+}
+
+/* Dark Mode Monaco Context Menu */
+[data-theme='dark'] .monaco-menu-container,
+[data-theme='dark'] .context-view .monaco-menu {
+  background: #1c202a !important;
+  color: #f1f5f9 !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.5) !important;
+}
+
+[data-theme='dark'] .monaco-menu .monaco-action-bar .action-label {
+  color: #e2e8f0 !important;
+}
+
+[data-theme='dark'] .monaco-menu .monaco-action-bar .keybinding {
+  color: #94a3b8 !important;
+}
+
+[data-theme='dark'] .monaco-menu .monaco-action-bar .action-item.focused,
+[data-theme='dark'] .monaco-menu .monaco-action-bar .action-item:hover {
+  background: rgba(56, 189, 248, 0.15) !important;
+}
+
+[data-theme='dark'] .monaco-menu .monaco-action-bar .action-item.focused .action-label,
+[data-theme='dark'] .monaco-menu .monaco-action-bar .action-item:hover .action-label {
+  color: #38bdf8 !important;
 }

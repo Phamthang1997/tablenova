@@ -3,7 +3,18 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
-pub const DEFAULT_GOOGLE_CLIENT_ID: &str = "REDACTED_CLIENT_ID.apps.googleusercontent.com";
+/// Fallback Google OAuth client id, baked in at **compile time** from `GOOGLE_CLIENT_ID`.
+///
+/// It used to be a literal here, so the repo carried a live client id. The frontend passes its own
+/// (`VITE_GOOGLE_CLIENT_ID`, see `.env.example`) and that is the normal path; this only covers a
+/// caller that sends none. Empty is fine — the flow refuses below rather than opening a browser to
+/// Google's `invalid_client` page.
+///
+/// `match` rather than `unwrap_or`, which is not a const fn.
+pub const DEFAULT_GOOGLE_CLIENT_ID: &str = match option_env!("GOOGLE_CLIENT_ID") {
+    Some(v) => v,
+    None => "",
+};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct OAuthCallbackResult {
@@ -56,12 +67,16 @@ pub async fn start_google_oauth_flow(
     client_id: Option<String>,
     code_challenge: Option<String>,
 ) -> Result<OAuthCallbackResult, String> {
+    // The two revoked client ids that used to be excluded here are gone with the literals: an id
+    // Google has deleted now fails the same way any wrong id does, and the caller no longer has a
+    // baked-in one to be silently redirected onto.
     let cid = match client_id {
-        Some(ref id) if !id.trim().is_empty() 
-            && !id.contains("REDACTED_OLD_CLIENT_1") 
-            && !id.contains("REDACTED_OLD_CLIENT_2") => id.trim().to_string(),
+        Some(ref id) if !id.trim().is_empty() => id.trim().to_string(),
         _ => DEFAULT_GOOGLE_CLIENT_ID.to_string(),
     };
+    if cid.is_empty() {
+        return Err("Chưa cấu hình Google OAuth client id cho bản dựng này".to_string());
+    }
 
     let listener = TcpListener::bind("127.0.0.1:0")
         .await

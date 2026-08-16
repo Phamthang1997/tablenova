@@ -272,7 +272,6 @@ const vi: typeof en = {
     objDefFunction: 'Hàm',
     objDefView: 'Khung nhìn',
 
-    errSwitchDb: 'Lỗi đổi database: {{message}}',
     errOpenDb: 'Lỗi mở database: {{message}}',
     closeConnection: 'Đóng kết nối',
     makeReadOnly: 'Chuyển sang chỉ đọc',
@@ -893,6 +892,8 @@ const vi: typeof en = {
   },
 
   ai: {
+    errGoogleClientMissing:
+      'Bản dựng này chưa cấu hình đăng nhập Google. Thêm VITE_GOOGLE_CLIENT_ID và VITE_GOOGLE_CLIENT_SECRET vào tệp .env (xem .env.example) rồi dựng lại.',
     title: 'Trợ lý AI',
     you: 'Bạn',
     justNow: 'Vừa xong',
@@ -1228,7 +1229,6 @@ const vi: typeof en = {
     createdAndImported: 'Đã tạo bảng "{{table}}" và nhập thành công bản ghi!',
     errImport: 'Import thất bại: {{message}}',
     errCreateDatabase: 'Không tạo được database "{{name}}": {{message}}',
-    errSwitchDatabase: 'Không chuyển được sang database "{{name}}": {{message}}',
     importDbSuccess: 'Nhập cơ sở dữ liệu thành công! Đã chạy {{n}} câu lệnh SQL.',
     importDbPartial: 'Nhập xong nhưng có lệnh bị bỏ qua: chạy được {{n}} câu, {{failed}} câu lỗi. Cơ sở dữ liệu chưa đầy đủ.',
 
@@ -1464,7 +1464,6 @@ const vi: typeof en = {
     errStats: 'Không thể lấy thông tin database',
     errDefinition: 'Không lấy được định nghĩa',
     errAllStats: 'Không thể lấy thống kê toàn bộ database',
-    errSwitchDb: 'Lỗi đổi database: {{message}}',
     errOpenDb: 'Lỗi mở database: {{message}}',
     closeConnection: 'Đóng kết nối',
     makeReadOnly: 'Chuyển sang chỉ đọc',
@@ -2329,11 +2328,15 @@ const vi: typeof en = {
     production: 'Production',
     staging: 'Staging',
     development: 'Dev',
+    none: 'Chưa đặt',
+    label: 'Môi trường',
+    hint: 'Production sẽ mở kết nối ở chế độ chỉ đọc và bắt gõ tên database trước câu lệnh nguy hiểm.',
   },
 
   backend: {
     notConnected: 'Chưa kết nối CSDL',
     connReadOnly: 'Kết nối đang ở chế độ chỉ đọc — tắt chế độ này trước khi ghi',
+    oauthClientMissing: 'Chưa cấu hình Google OAuth client id cho bản dựng này',
     notConnectedRedis: 'Chưa kết nối Redis',
     noConnConfig: 'Chưa có cấu hình kết nối',
     noConnConfigDeepScan: 'Chưa có cấu hình kết nối để quét sâu',

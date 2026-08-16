@@ -30,7 +30,7 @@ import { X } from 'lucide-react';
 import { getVersion } from '@tauri-apps/api/app';
 import { PostgresIcon, MySqlIcon, RedisIcon, SqliteIcon } from './components/DbIcons';
 import { dbHelper, activeConnId, setActiveConnId } from './utils/dbHelper';
-import { isProduction, envOfColor } from './utils/connEnv';
+import { isProduction, normalizeEnv, type ConnEnv } from './utils/connEnv';
 import type { DbConnectionConfig } from './utils/dbHelper';
 import { invalidateCatalog } from './sql/catalog';
 import { splitStatements } from './sql/statements';
@@ -180,6 +180,17 @@ export const App: React.FC = () => {
   const fmtNum = (n: number) => n.toLocaleString(locale);
 
   const [connection, setConnection] = useState<{
+    /**
+     * Which connection this describes.
+     *
+     * Carried inside the object rather than only in `activeConnIdState` because the two are set from
+     * different places and, on one path, at different times: `selectConnection` sets the id first and
+     * the name only after an `await`. The tab-saving effect keys the storage slot off `dbName` but
+     * picks the tabs off `activeConnIdState`, so that gap made it write connection A's tabs into
+     * connection B's slot — reopening B then restored A's tabs. Pairing them in one value is what
+     * lets the effect notice and skip that render. Never write one without the other.
+     */
+    connId: string;
     dbName: string;
     dbType: 'sqlite' | 'postgres' | 'mysql' | 'redis';
     // Postgres only: the schema every command reads and writes through. Comes from the backend
@@ -214,11 +225,41 @@ export const App: React.FC = () => {
    * (`list_connections`).
    */
   const [openConns, setOpenConns] = useState<
-    { connId: string; config: DbConnectionConfig | null; dbType: 'sqlite' | 'postgres' | 'mysql' | 'redis'; profileName: string; color: string; readOnly?: boolean }[]
+    {
+      connId: string;
+      config: DbConnectionConfig | null;
+      dbType: 'sqlite' | 'postgres' | 'mysql' | 'redis';
+      profileName: string;
+      /** Nhãn màu, thuần trang trí. */
+      color: string;
+      /** Môi trường, trường riêng của profile — không suy từ `color` (xem `utils/connEnv.ts`). */
+      env: ConnEnv;
+      readOnly?: boolean;
+    }[]
   >([]);
 
   const [tabs, setTabs] = useState<TabInfo[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
+
+  /**
+   * Tabs of the connection on screen.
+   *
+   * `tabs` holds every open connection's tabs so switching back to one is instant and its unsaved
+   * SQL survives (§4.5). The strip shows one connection at a time — the rail is what switches — so
+   * everything downstream renders from this, not from `tabs`. **Every "is this tab already open?"
+   * lookup must use this too**: tab ids are unique per connection only (`table_users` exists on all
+   * of them), so a match in `tabs` can name a tab belonging to a connection that is not on screen,
+   * and selecting it leaves the pane empty instead of opening anything.
+   *
+   * Declared here, above every handler that reads it, rather than next to the render: it closes over
+   * nothing but state declared above, and a `const` used before its line is a runtime TDZ error that
+   * `tsc` does not catch.
+   *
+   * A tab with no `connId` came from a workspace saved before tabs carried one; treat it as the
+   * active connection's rather than hiding it, or an upgrading user opens the app to an empty strip.
+   */
+  const visibleTabs = tabs.filter((tb) => (tb.connId ?? activeConnIdState) === activeConnIdState);
+
   const [queryCount, setQueryCount] = useState(1);
   const [showAi, setShowAi] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
@@ -604,6 +645,12 @@ export const App: React.FC = () => {
       const wantDb = targetDb.trim();
       const canManageDb = !!connection && connection.dbType !== 'sqlite';
 
+      // The connection the restore actually runs on. `restoreBackup` carries no id — it goes through
+      // `dbHelper`'s ambient one — so this has to be a local, not `activeConnIdState`: that is React
+      // state and still holds the OLD id inside this closure, which would also mis-address the
+      // `database-restored` event at the end.
+      let targetConnId = activeConnIdState;
+
       if (canManageDb && wantDb && wantDb !== connection?.dbName) {
         const list = await dbHelper.listDatabases(activeConnIdState);
         const exists = (list.databases || []).some(d => d.toLowerCase() === wantDb.toLowerCase());
@@ -616,14 +663,20 @@ export const App: React.FC = () => {
           }
         }
 
-        const switched = await dbHelper.switchDatabase(activeConnIdState, wantDb);
-        if (!switched.success) {
-          alert(t('app.errSwitchDatabase', { name: wantDb, message: switched.error }));
+        // OPEN the target rather than switching this connection onto it. Switching replaced the pool,
+        // so importing into another database refused outright whenever the current one had
+        // uncommitted work — and when it succeeded it left every open tab pointing at tables of a
+        // database the connection no longer served. Opening leaves the old one intact and gives the
+        // import its own connection.
+        const opened = await dbHelper.openDatabase(activeConnIdState, wantDb);
+        if (!opened.success || !opened.connId) {
+          alert(t('sidebar.errOpenDb', { message: opened.error || '' }));
           return false;
         }
-        setConnection(prev =>
-          prev ? { ...prev, dbName: switched.database || wantDb, schema: switched.schema ?? null } : null
-        );
+        targetConnId = opened.connId;
+        // Points the app — and `dbHelper`'s ambient id, which the restore reads — at the new
+        // connection, and gives it its own tab list.
+        handleDatabaseOpened(opened.connId, opened.database || wantDb, opened.schema);
         invalidateCatalog();
       }
 
@@ -649,7 +702,7 @@ export const App: React.FC = () => {
           setConnection(prev => prev ? { ...prev, dbName: activeDb } : null);
         }
         invalidateCatalog();
-        window.dispatchEvent(new CustomEvent('database-restored', { detail: { connId: activeConnIdState } }));
+        window.dispatchEvent(new CustomEvent('database-restored', { detail: { connId: targetConnId } }));
         return true;
       }
       alert(t('app.errImport', { message: addExistsHint(resData.error || '', false) }));
@@ -679,12 +732,21 @@ export const App: React.FC = () => {
   };
 
   const handleTableDropped = (tableName: string) => {
+    const connId = activeConnIdState;
     setTabs((prev) => {
-      const remaining = prev.filter((t) => !(t.type === 'table' && t.name === tableName));
-      if (remaining.length === 0) {
+      // Scoped both ways. Dropping `users` on one connection used to close a tab named `users` on
+      // every other one, and when the array happened to empty out it was REPLACED by a single new
+      // tab — throwing away every other connection's tabs, unsaved SQL included.
+      const remaining = prev.filter(
+        (tb) => !(tb.type === 'table' && tb.name === tableName && (tb.connId ?? connId) === connId),
+      );
+      const mine = remaining.filter((tb) => (tb.connId ?? connId) === connId);
+      if (mine.length === 0) {
         return [
+          ...remaining,
           {
             id: 'query_1',
+            connId,
             type: 'query',
             name: 'SQL Query',
             label: t('app.queryTabLabel', { n: 1 }),
@@ -744,9 +806,9 @@ export const App: React.FC = () => {
 
   const toggleTheme = () => applyTheme(theme === 'dark' ? 'light' : 'dark');
 
-  // Đổi tên/màu kết nối từ popover chi tiết. Phần hiển thị luôn đổi ngay; việc
+  // Đổi tên/màu/môi trường kết nối từ popover chi tiết. Phần hiển thị luôn đổi ngay; việc
   // ghi xuống profile chỉ xảy ra khi kết nối này thực sự đến từ một profile đã lưu.
-  const handleProfileChange = (patch: { name?: string; color?: string }) => {
+  const handleProfileChange = (patch: { name?: string; color?: string; env?: ConnEnv }) => {
     setActiveProfile((prev) => ({
       ...prev,
       name: patch.name ?? prev.name,
@@ -754,16 +816,17 @@ export const App: React.FC = () => {
     }));
     updateProfileDisplay(activeProfile.id, patch);
 
-    // The colour IS the environment label (utils/connEnv.ts), and it is set here — from the title
-    // bar popover, after connecting — not in the Connection Manager, which has no colour picker at
-    // all. So `handleConnect` only ever sees a colour on a profile that was already labelled; a
-    // connection labelled production *now* has to take effect *now*, or the guard silently applies
-    // from the next session onwards.
-    if (patch.color === undefined || !activeConnIdState) return;
+    if (!activeConnIdState) return;
     setOpenConns((prev) =>
-      prev.map((c) => (c.connId === activeConnIdState ? { ...c, color: patch.color as string } : c)),
+      prev.map((c) =>
+        c.connId === activeConnIdState
+          ? { ...c, color: patch.color ?? c.color, env: patch.env ?? c.env }
+          : c,
+      ),
     );
-    if (isProduction(patch.color)) {
+    // Đánh dấu production *bây giờ* thì phải có hiệu lực *bây giờ*. Nếu chờ tới lần kết nối sau,
+    // lớp bảo vệ đã bật nhưng không bảo vệ gì trong suốt phiên đang mở.
+    if (isProduction(patch.env)) {
       void dbHelper.setConnectionReadOnly(activeConnIdState, true);
       setOpenConns((prev) =>
         prev.map((c) => (c.connId === activeConnIdState ? { ...c, readOnly: true } : c)),
@@ -789,6 +852,13 @@ export const App: React.FC = () => {
     setOpenConns((prev) =>
       prev.map((c) => (c.connId === oldId ? { ...c, connId: newId } : c)),
     );
+    // The tabs have to move to the new id as well. Remapping only `openConns` left every tab
+    // stamped with the dead one, so `visibleTabs` matched none of them: the strip emptied on
+    // reconnect and the save effect — which writes the tabs of the active connection — then
+    // persisted that empty list over the workspace.
+    setTabs((prev) =>
+      prev.map((tb) => ((tb.connId ?? oldId) === oldId ? { ...tb, connId: newId } : tb)),
+    );
     invalidateCatalog();
     setDbReloadKey((prev) => prev + 1);
     return { success: true };
@@ -801,7 +871,9 @@ export const App: React.FC = () => {
   };
 
   React.useEffect(() => {
-    if (connection) {
+    // Skip the renders where the two disagree — see `connection.connId`. Writing then would put the
+    // tabs of the connection named by `activeConnIdState` into the slot named by `dbName`.
+    if (connection && connection.connId === activeConnIdState) {
       const storageKey = tabsStorageKey(
         activeConnConfig,
         connection.dbType,
@@ -920,29 +992,28 @@ export const App: React.FC = () => {
     dbType: 'sqlite' | 'postgres' | 'mysql' | 'redis',
     color?: string,
     config?: DbConnectionConfig,
-    profile?: { id: string; name: string },
+    profile?: { id: string; name: string; env?: ConnEnv },
     schema?: string | null,
   ) => {
-    setConnection({ dbName, dbType, schema: schema ?? null });
-    setActiveProfile({ id: profile?.id || '', name: profile?.name || dbName, color: color || '' });
-    setActiveConnConfig(config || null);
-
     // Remember which config produced which `conn_id`. The backend deliberately does not hand the
     // config back — it carries credentials — but switching between open connections needs it, both
     // to key that connection's tabs (`tabsStorageKey`) and to label it. Keyed by the id the backend
     // just minted, which `dbHelper` captured from `connect()`.
     const id = activeConnId();
+    const env = normalizeEnv(profile?.env);
+    setConnection({ connId: id, dbName, dbType, schema: schema ?? null });
+    setActiveProfile({ id: profile?.id || '', name: profile?.name || dbName, color: color || '' });
+    setActiveConnConfig(config || null);
     setActiveConnIdState(id);
-    // A production label turns read-only on by itself. Someone who marks a connection red has
-    // already said what they mean; making them also find a menu item is how the mode ends up off
-    // on exactly the connection it mattered for.
-    if (id && isProduction(color)) {
+    // Marking a connection production is already the whole statement of intent; making the user also
+    // find a menu item is how read-only ends up off on exactly the connection it mattered for.
+    if (id && isProduction(env)) {
       void dbHelper.setConnectionReadOnly(id, true);
     }
     if (id) {
       setOpenConns((prev) => [
         ...prev.filter((c) => c.connId !== id),
-        { connId: id, config: config || null, dbType, profileName: profile?.name || dbName, color: color || '', readOnly: isProduction(color) },
+        { connId: id, config: config || null, dbType, profileName: profile?.name || dbName, color: color || '', env, readOnly: isProduction(env) },
       ]);
     }
 
@@ -1098,7 +1169,10 @@ export const App: React.FC = () => {
   const closeConnection = (connId: string) => {
     const isActive = connId === activeConnIdState;
     const finish = async () => {
-      await dbHelper.disconnect(activeConnIdState);
+      // `connId`, not `activeConnIdState`: "Close connection" on a cell that is not the one on
+      // screen used to close the one on screen instead — the backend dropped the wrong entry while
+      // the cell the user clicked stayed in the rail, looking unclosable.
+      await dbHelper.disconnect(connId);
       const rest = openConns.filter((c) => c.connId !== connId);
       setOpenConns(rest);
       setTabs((prev) => prev.filter((tb) => tb.connId !== connId));
@@ -1166,6 +1240,11 @@ export const App: React.FC = () => {
    * It inherits that connection's `config` because it is the same server; only the database differs,
    * and `tabsStorageKey` already keys on `(config, database, schema)` — so the two get separate tab
    * lists without any extra bookkeeping.
+   *
+   * It also inherits `env` and `readOnly`, and those two must travel together: the backend copies
+   * the read-only flag onto the new entry, so leaving `env` behind would draw a padlock with no
+   * environment edge — two signals about the same connection disagreeing on screen. Another database
+   * on the production server is still the production server.
    */
   const handleDatabaseOpened = (newId: string, dbName: string, schema?: string | null) => {
     const from = openConns.find((c) => c.connId === activeConnIdState);
@@ -1177,6 +1256,8 @@ export const App: React.FC = () => {
         dbType: from?.dbType ?? 'mysql',
         profileName: dbName,
         color: from?.color ?? '',
+        env: from?.env ?? 'none',
+        readOnly: from?.readOnly,
       },
     ]);
     // `selectConnection` reads `openConns`, which this render has not committed yet — point the
@@ -1184,7 +1265,7 @@ export const App: React.FC = () => {
     setActiveConnId(newId);
     setActiveConnIdState(newId);
     setActiveConnConfig(from?.config ? { ...from.config, database: dbName } : null);
-    setConnection((prev) => (prev ? { ...prev, dbName, schema: schema ?? null } : prev));
+    setConnection((prev) => (prev ? { ...prev, connId: newId, dbName, schema: schema ?? null } : prev));
     invalidateCatalog();
     setDbReloadKey((k) => k + 1);
     if (from && restoreTabs(newId, { ...(from.config as DbConnectionConfig), database: dbName }, from.dbType, dbName, schema)) return;
@@ -1211,7 +1292,7 @@ export const App: React.FC = () => {
       const list = await dbHelper.listConnections().catch(() => []);
       const info = list.find((c) => c.connId === connId);
       if (!info) return;
-      setConnection({ dbName: info.db, dbType: entry.dbType, schema: info.schema });
+      setConnection({ connId, dbName: info.db, dbType: entry.dbType, schema: info.schema });
       setActiveConnConfig(entry.config);
       setActiveProfile({ id: '', name: entry.profileName, color: entry.color });
       setDbReloadKey((k) => k + 1);
@@ -1243,23 +1324,10 @@ export const App: React.FC = () => {
     openInitialTab(activeConnIdState);
   };
 
-  // Sau khi đổi database đang dùng: cập nhật tên DB, đóng các tab (thuộc DB cũ), làm mới
-  //
-  // `newSchema` đến từ phản hồi của switch_database: database mới có tập schema riêng, schema
-  // đang chọn chưa chắc tồn tại ở đó nên backend tự dò lại. Giữ giá trị cũ ở đây thì mọi truy vấn
-  // trỏ vào một schema không có thật — đúng triệu chứng "sidebar trống" mà lần này khó đoán hơn.
-  const handleDatabaseChanged = (newName: string, newSchema?: string | null) => {
-    const nextConn = connection
-      ? { ...connection, dbName: newName, schema: newSchema ?? null }
-      : null;
-    setConnection(nextConn);
-    setDbReloadKey((k) => k + 1);
-
-    if (nextConn && restoreTabs(activeConnIdState, activeConnConfig, nextConn.dbType, newName, nextConn.schema)) return;
-
-    // Fallback
-    openInitialTab(activeConnIdState);
-  };
+  // `handleDatabaseChanged` từng ở đây: nó là bên nhận của `switch_database`, tức của mô hình "thay
+  // pool tại chỗ, giữ nguyên conn_id". Không còn đường nào đổi database kiểu đó nữa — cả ba (bộ
+  // chọn trên thanh tiêu đề, Sidebar, popup thống kê) đều mở thêm kết nối — nên nó cùng biến mất
+  // với `switch_database`. `handleDatabaseOpened` là bên nhận duy nhất.
 
   // Open a specific table in a new or existing tab
   const handleSelectTable = (
@@ -1269,7 +1337,10 @@ export const App: React.FC = () => {
   ) => {
     const tabId = `table_${tableName}`;
     const open = () => {
-      const exists = tabs.find((tab) => tab.id === tabId);
+      // `visibleTabs`: a table of the same name open on another connection is a different tab. The
+      // global lookup found it, skipped creating this connection's, and selected an id this
+      // connection has none of — the empty pane, not an error.
+      const exists = visibleTabs.find((tab) => tab.id === tabId);
 
       if (!exists) {
         const newTab: TabInfo = {
@@ -1456,6 +1527,7 @@ export const App: React.FC = () => {
     const id = `terminal_${Date.now()}`;
     const newTab: TabInfo = {
       id,
+      connId: activeConnIdState,
       type: 'terminal',
       name: 'Terminal',
       label: 'Terminal',
@@ -1468,7 +1540,10 @@ export const App: React.FC = () => {
 
   const handleOpenRoutineTab = async (name: string, kind: 'procedure' | 'function') => {
     const tabId = `routine_${kind}_${name}`;
-    const existing = tabs.find((t) => t.id === tabId);
+    // `visibleTabs`, not `tabs`: ids are unique per connection only, so a procedure of the same name
+    // on another connection matched here and the function returned having done nothing but select an
+    // id that this connection has no tab for — which renders as an empty pane, not as an error.
+    const existing = visibleTabs.find((tb) => tb.id === tabId);
     if (existing) {
       setActiveTabId(tabId);
       return;
@@ -1477,6 +1552,7 @@ export const App: React.FC = () => {
     const sql = res.success && res.sql ? res.sql : '';
     const newTab: TabInfo = {
       id: tabId,
+      connId: activeConnIdState,
       type: 'routine',
       name: name,
       label: `${kind === 'procedure' ? 'Proc' : 'Func'}: ${name}`,
@@ -1488,7 +1564,7 @@ export const App: React.FC = () => {
 
   const handleOpenViewTab = async (name: string) => {
     const tabId = `view_${name}`;
-    const existing = tabs.find((t) => t.id === tabId);
+    const existing = visibleTabs.find((tb) => tb.id === tabId);
     if (existing) {
       setActiveTabId(tabId);
       return;
@@ -1497,6 +1573,7 @@ export const App: React.FC = () => {
     const sql = res.success && res.sql ? res.sql : '';
     const newTab: TabInfo = {
       id: tabId,
+      connId: activeConnIdState,
       type: 'view',
       name: name,
       label: `View: ${name}`,
@@ -1505,18 +1582,6 @@ export const App: React.FC = () => {
     setTabs((prev) => [...prev, newTab]);
     setActiveTabId(tabId);
   };
-
-  /**
-   * Tabs of the connection on screen.
-   *
-   * `tabs` holds every open connection's tabs so switching back to one is instant and its unsaved
-   * SQL survives (§4.5). The strip shows one connection at a time — the rail is what switches — so
-   * everything downstream renders from this, not from `tabs`.
-   *
-   * A tab with no `connId` came from a workspace saved before tabs carried one; treat it as the
-   * active connection's rather than hiding it, or an upgrading user opens the app to an empty strip.
-   */
-  const visibleTabs = tabs.filter((tb) => (tb.connId ?? activeConnIdState) === activeConnIdState);
 
   /**
    * The tab whose panel is on screen — looked up in `visibleTabs`, not `tabs`.
@@ -1574,6 +1639,10 @@ export const App: React.FC = () => {
       }}
       activeProfileName={activeProfile.name}
       activeProfileColor={activeProfile.color}
+      // Read straight from the open connection rather than mirroring into `activeProfile`: the rail,
+      // the SQL editor's confirmation and the read-only default all read it from there, and a fourth
+      // copy is a fourth thing that can disagree.
+      activeProfileEnv={openConns.find((c) => c.connId === activeConnIdState)?.env ?? 'none'}
       onProfileChange={handleProfileChange}
       theme={theme}
       onThemeChange={applyTheme}
@@ -1658,7 +1727,8 @@ export const App: React.FC = () => {
                 onClose={closeConnection}
                 onCloseOthers={closeOtherConnections}
                 onToggleReadOnly={toggleConnectionReadOnly}
-                envOf={(id) => envOfColor(openConns.find((c) => c.connId === id)?.color)}
+                envOf={(id) => openConns.find((c) => c.connId === id)?.env ?? 'none'}
+                colorOf={(id) => openConns.find((c) => c.connId === id)?.color ?? ''}
                 reloadKey={openConns.length + railReloadKey}
               />
             )}
@@ -1690,7 +1760,7 @@ export const App: React.FC = () => {
                 }}
                 onTableRenamed={(oldName, newName) => handleTableRenamed(activeConnIdState, oldName, newName)}
                 onTableDropped={handleTableDropped}
-                onDatabaseChanged={handleDatabaseChanged}
+                onDatabaseOpened={handleDatabaseOpened}
                 schema={connection.schema}
                 onSchemaChanged={handleSchemaChanged}
                 onOpenQueryWithSql={openQueryTabWithSql}
@@ -1792,7 +1862,7 @@ export const App: React.FC = () => {
                     active={activeTabId === qt.id}
                     dbType={connection?.dbType}
                     connId={qt.connId || activeConnIdState}
-          isProdConn={isProduction(openConns.find((c) => c.connId === (qt.connId || activeConnIdState))?.color)}
+          isProdConn={isProduction(openConns.find((c) => c.connId === (qt.connId || activeConnIdState))?.env)}
           connReadOnly={!!openConns.find((c) => c.connId === (qt.connId || activeConnIdState))?.readOnly}
           connKey={connKey(activeConnConfig)}
                     dbName={connection.dbName}
@@ -2151,7 +2221,7 @@ export const App: React.FC = () => {
         onClose={() => setShowDbInfoModal(false)}
         onSelectTable={(tableName) => handleSelectTable(tableName)}
         initialTab={dbInfoTab}
-        onDatabaseChanged={handleDatabaseChanged}
+        onDatabaseOpened={handleDatabaseOpened}
       />
 
       {/* Diff Schema & Migration Modal */}

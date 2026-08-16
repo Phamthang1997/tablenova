@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import type { ConnectionStatus } from '../utils/dbHelper';
+import { CONN_ENVS, envLabelKey, normalizeEnv, type ConnEnv } from '../utils/connEnv';
 
 /**
  * Bảng chi tiết kết nối, mở khi bấm vào cụm trạng thái giữa thanh tiêu đề.
@@ -19,8 +20,10 @@ interface ConnectionInfoPopoverProps {
   /** Tên + màu của profile đang kết nối (rỗng khi kết nối không đến từ profile nào). */
   profileName: string;
   profileColor: string;
-  /** Đổi tên/màu -> ghi thẳng vào profile trong localStorage (App.tsx làm việc đó). */
-  onProfileChange: (patch: { name?: string; color?: string }) => void;
+  /** Môi trường của profile đang kết nối. Trường riêng, không suy từ màu. */
+  profileEnv: ConnEnv;
+  /** Đổi tên/màu/môi trường -> ghi thẳng vào profile trong localStorage (App.tsx làm việc đó). */
+  onProfileChange: (patch: { name?: string; color?: string; env?: ConnEnv }) => void;
   onDisconnect: () => void;
   onReconnect: () => Promise<{ success: boolean; message?: string }>;
   onEdit: () => void;
@@ -86,6 +89,7 @@ export const ConnectionInfoPopover: React.FC<ConnectionInfoPopoverProps> = ({
   status,
   profileName,
   profileColor,
+  profileEnv,
   onProfileChange,
   onDisconnect,
   onReconnect,
@@ -193,6 +197,24 @@ export const ConnectionInfoPopover: React.FC<ConnectionInfoPopoverProps> = ({
               />
             ))}
           </div>
+        </div>
+
+        {/* Môi trường. Ngay dưới tên + màu vì đó là bộ ba "kết nối này là cái gì", nhưng là ô riêng:
+            màu bên trên thuần trang trí, còn ô này bật chỉ-đọc và xác nhận hai bước. */}
+        <div style={{ ...cardStyle, display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ fontSize: '11px', color: 'var(--win-text-secondary)', flexShrink: 0 }}>
+            {t('connEnv.label')}
+          </span>
+          <select
+            className="form-input"
+            value={profileEnv}
+            onChange={(e) => onProfileChange({ env: normalizeEnv(e.target.value) })}
+            style={{ flex: 1, minWidth: 0, height: '28px', fontSize: '12px', padding: '0 6px', borderRadius: '6px' }}
+          >
+            {CONN_ENVS.map((env) => (
+              <option key={env} value={env}>{t(envLabelKey(env))}</option>
+            ))}
+          </select>
         </div>
 
         {/* Máy chủ */}

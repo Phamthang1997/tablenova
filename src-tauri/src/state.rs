@@ -119,10 +119,12 @@ pub struct ServerHandle {
     /// refresh). Carries credentials, so it never leaves the backend.
     ///
     /// Behind a `Mutex` because it genuinely changes on a live server: a MySQL `USE` inside a
-    /// restore and `switch_database` both rewrite its `database` field, and `ServerHandle` is shared
-    /// through an `Arc`. Phase 3 should be able to drop the `Mutex` again — once the database comes
-    /// from `ConnEntry::db` and the pool builder overrides it, this becomes purely server-level
-    /// (host/port/credentials) and stops changing. Read it with `config()`, not by locking directly.
+    /// restore rewrites its `database` field, and `ServerHandle` is shared through an `Arc`.
+    ///
+    /// `switch_database` was the other writer and is gone, but the `Mutex` **stays**: the restore
+    /// path still rewrites this, and that one cannot be removed the same way — a `USE` arrives from
+    /// inside the dump the user is replaying, not from a command with a `conn_id` to mint a new one
+    /// for. Read it with `config()`, not by locking directly.
     last_config: Mutex<Value>,
     pub ssh_tunnel: Option<SshTunnel>,
 }
@@ -230,8 +232,8 @@ impl ConnCtx {
         self.raw_schema.as_deref()
     }
 
-    /// Kept so `ConnEntry::db` has a reader: `set_db` writes it today (a MySQL `USE`, a
-    /// `switch_database`) and Phase 3's left rail is what will display it (§4.2c).
+    /// Kept so `ConnEntry::db` has a reader: `set_db` still writes it on a MySQL `USE` inside a
+    /// restore, and the left rail displays it (§4.2c).
     #[allow(dead_code)]
     pub fn db(&self) -> &str {
         &self.db
@@ -404,9 +406,9 @@ impl ConnRegistry {
         Ok(())
     }
 
-    /// The database an entry points at, after a MySQL `USE` inside a restore or a `switch_database`.
-    /// Phase 3 replaces both of those with minting a new `conn_id` instead of moving an existing
-    /// one, at which point this goes away (§4.3).
+    /// The database an entry points at, after a MySQL `USE` inside a restore — the last writer left
+    /// now that `switch_database` is gone. It cannot go the same way: a `USE` comes from inside the
+    /// dump being replayed, so there is no command call to mint a new `conn_id` from (§4.3).
     pub fn set_db(&self, id: &str, db: String) -> Result<(), String> {
         let mut map = self.inner.lock().map_err(|e| e.to_string())?;
         if let Some(entry) = map.get_mut(id) {

@@ -14,6 +14,7 @@ import { TxControl } from './TxControl';
 import { ConnectionInfoPopover } from './ConnectionInfoPopover';
 import { dbHelper } from '../utils/dbHelper';
 import type { ConnectionStatus } from '../utils/dbHelper';
+import type { ConnEnv } from '../utils/connEnv';
 import { Modal, ModalBody, ModalFooter } from './Modal';
 import { ConfirmDialog } from './ConfirmDialog';
 
@@ -33,7 +34,9 @@ interface TitleBarProps {
   /** Tên + màu của profile đang kết nối, hiển thị & sửa được trong popover kết nối. */
   activeProfileName?: string;
   activeProfileColor?: string;
-  onProfileChange?: (patch: { name?: string; color?: string }) => void;
+  /** Môi trường của kết nối đang xem. Trường riêng của profile, không suy từ màu. */
+  activeProfileEnv?: ConnEnv;
+  onProfileChange?: (patch: { name?: string; color?: string; env?: ConnEnv }) => void;
   theme?: 'dark' | 'light';
   onThemeChange?: (theme: 'dark' | 'light') => void;
   onReconnect?: () => Promise<{ success: boolean; message?: string }>;
@@ -67,6 +70,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
   activeConnectionInfo,
   activeProfileName = '',
   activeProfileColor = '',
+  activeProfileEnv = 'none',
   onProfileChange,
   theme: _theme = 'dark',
   onThemeChange: _onThemeChange,
@@ -685,6 +689,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
           status={connStatus}
           profileName={activeProfileName}
           profileColor={activeProfileColor}
+          profileEnv={activeProfileEnv}
           onProfileChange={(patch) => onProfileChange?.(patch)}
           onDisconnect={() => {
             setShowConnPopover(false);

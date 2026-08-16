@@ -1,8 +1,23 @@
 import { getAiSettings, saveAiSettings } from './aiConfig';
 import { invoke } from '@tauri-apps/api/core';
+// Plain module, no hook available — the shared instance, like every other helper under utils/.
+import i18n from '../i18n';
 
-export const DEFAULT_GOOGLE_CLIENT_ID = 'REDACTED_CLIENT_ID.apps.googleusercontent.com';
-export const DEFAULT_GOOGLE_CLIENT_SECRET = 'REDACTED_CLIENT_SECRET';
+/**
+ * The Google OAuth client, supplied at **build time** — see `.env.example`.
+ *
+ * These were literals in this file, which meant a working client id and secret sat in every clone of
+ * the repo and in every commit that touched it. For an "installed app" Google does not treat the
+ * secret as confidential — PKCE is what protects the flow, and `startGoogleBrowserOAuth` below
+ * implements it in full — so this is not about hiding the value from whoever runs the binary, which
+ * is impossible. It is about not handing a stranger the project's API quota and the right to put its
+ * name on a consent screen.
+ *
+ * Empty is a supported state: the login refuses with a message naming the missing configuration,
+ * instead of sending the user to Google to be told `invalid_client`.
+ */
+export const DEFAULT_GOOGLE_CLIENT_ID = (import.meta.env.VITE_GOOGLE_CLIENT_ID ?? '').trim();
+export const DEFAULT_GOOGLE_CLIENT_SECRET = (import.meta.env.VITE_GOOGLE_CLIENT_SECRET ?? '').trim();
 
 export interface GoogleAuthState {
   isLoggedIn: boolean;
@@ -48,25 +63,20 @@ async function generateCodeChallenge(verifier: string): Promise<string> {
     .replace(/=+$/, '');
 }
 
-export const DELETED_CLIENT_IDS = [
-  'REDACTED_CLIENT_ID.apps.googleusercontent.com',
-  'REDACTED_CLIENT_ID.apps.googleusercontent.com',
-];
-
 export async function startGoogleBrowserOAuth(
   customClientId?: string,
   customClientSecret?: string
 ): Promise<{ success: boolean; email?: string; error?: string; token?: string }> {
   try {
+    // Explicit argument, then whatever the user saved, then the build-time default. The old code
+    // also *wrote* the default back into settings on every mismatch, which made a stored value
+    // impossible to keep — reading it is enough.
     const settings = getAiSettings();
-    let clientId = (customClientId || settings.googleClientId || '').trim();
-    if (!clientId || DELETED_CLIENT_IDS.includes(clientId) || !clientId.includes('REDACTED_CLIENT_ID')) {
-      clientId = DEFAULT_GOOGLE_CLIENT_ID;
-      settings.googleClientId = DEFAULT_GOOGLE_CLIENT_ID;
-      settings.googleClientSecret = DEFAULT_GOOGLE_CLIENT_SECRET;
-      saveAiSettings(settings);
-    }
+    const clientId = (customClientId || settings.googleClientId || DEFAULT_GOOGLE_CLIENT_ID).trim();
     const clientSecret = (customClientSecret || settings.googleClientSecret || DEFAULT_GOOGLE_CLIENT_SECRET).trim();
+    if (!clientId) {
+      return { success: false, error: i18n.t('ai.errGoogleClientMissing') };
+    }
 
     const codeVerifier = generateCodeVerifier();
     const codeChallenge = await generateCodeChallenge(codeVerifier);

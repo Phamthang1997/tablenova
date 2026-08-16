@@ -579,32 +579,9 @@ pub fn reject_if_manual_or_open(conn_id: &str, action: &str) -> Result<(), Strin
     Ok(())
 }
 
-/// For operations that only break when a transaction is actually *open* (switching database drops
-/// the pool underneath it). Manual mode with nothing open is harmless here.
-/// Guard for operations that replace the connection underneath the session (switching database).
-///
-/// Keys on `has_pending()`, **not** `is_open()`, and that distinction is the whole point. In manual
-/// mode `should_route` sends every statement through the session and `run_raw` calls `ensure_begin`
-/// on the first one *whatever it is* — a plain `SELECT` from a grid refresh opens a transaction. So
-/// `is_open()` is true almost all the time once manual mode is on, and guarding on it made switching
-/// database impossible: right after a Discard the next grid read reopened the transaction and the
-/// refusal came back, with nothing pending to commit or roll back.
-///
-/// `has_pending()` is `open && statements > 0`, and `statements` counts *writes* only. So an open
-/// transaction with nothing pending has done nothing but read, and rolling it back to swap the pool
-/// loses nothing — which is why the caller may do that itself instead of asking the user.
-///
-/// Reuses the wording of the old `reject_if_open` verbatim: with pending writes it is exactly as
-/// true as before, and keeping the literal identical costs `src/utils/backendErrors.ts` nothing.
-pub fn reject_if_pending(conn_id: &str, action: &str) -> Result<(), String> {
-    if has_pending(conn_id) {
-        return Err(format!(
-            "Transaction đang mở — hãy commit hoặc rollback trước khi {}",
-            action
-        ));
-    }
-    Ok(())
-}
+// `reject_if_pending` đã bị xoá cùng `switch_database` — nó tồn tại chỉ để bảo vệ cho việc thay pool
+// dưới chân một phiên đang sống. Không còn thao tác nào làm việc đó nữa: `open_database` thêm pool
+// mới nên không đụng gì tới phiên hiện có, và vì thế không có gì để từ chối.
 
 /// Should this statement run on the pinned session instead of a pooled connection?
 ///

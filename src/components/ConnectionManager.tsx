@@ -6,6 +6,7 @@ import type { DbConnectionConfig } from '../utils/dbHelper';
 import { Database, Server, CheckCircle2, AlertTriangle, Plus, Trash2, Save, Copy, Download, Upload, Lock, Key, TerminalSquare, Hash, FolderOpen, User, Link, Star, Eye, EyeOff, ShieldAlert, Search, X, ChevronDown, ChevronRight, RefreshCw, ShieldCheck, Network, ArrowLeft, Check, Cloud, HardDriveDownload, LogIn } from 'lucide-react';
 import { PostgresIcon, MySqlIcon, RedisIcon, SqliteIcon } from './DbIcons';
 import { encryptConnectionExport, decryptConnectionExport } from '../utils/cryptoHelper';
+import { CONN_ENVS, envLabelKey, legacyEnvOfColor, normalizeEnv, type ConnEnv } from '../utils/connEnv';
 import {
   parseDumpObjects,
   parseDumpTableNames,
@@ -124,9 +125,26 @@ export interface SavedProfile {
   name: string;
   type: 'sqlite' | 'postgres' | 'mysql' | 'redis';
   config: any;
+  /** Nhãn màu, thuần trang trí. Môi trường nằm ở `env` — xem `utils/connEnv.ts`. */
   color?: string;
+  /**
+   * Môi trường. Vắng mặt ở profile lưu trước khi có trường này; được điền một lần lúc nạp, suy từ
+   * `color` theo cách hiểu cũ (xem `migrateProfileEnvs`).
+   */
+  env?: ConnEnv;
   group?: string;
   isDefault?: boolean;
+}
+
+/**
+ * Điền `env` cho những profile chưa có, theo đúng ý nghĩa mà màu từng mang.
+ *
+ * Trả về `null` khi không có gì phải đổi, để chỗ gọi khỏi ghi lại localStorage vô ích. Bỏ bước này
+ * thì mọi kết nối đang được đánh dấu production mất dấu ngay ở lần nâng cấp, không một lời báo.
+ */
+function migrateProfileEnvs(list: SavedProfile[]): SavedProfile[] | null {
+  if (list.every((p) => p.env !== undefined)) return null;
+  return list.map((p) => (p.env === undefined ? { ...p, env: legacyEnvOfColor(p.color) } : p));
 }
 
 interface ConnectionManagerProps {
@@ -139,7 +157,9 @@ interface ConnectionManagerProps {
     dbType: 'sqlite' | 'postgres' | 'mysql' | 'redis',
     color?: string,
     config?: DbConnectionConfig,
-    profile?: { id: string; name: string },
+    // `env` sống ở đây chứ không thành tham số vị trí thứ bảy: nó là thuộc tính của profile, đúng
+    // như `name`, và một kết nối không đến từ profile nào thì không có môi trường.
+    profile?: { id: string; name: string; env?: ConnEnv },
     // Schema the backend actually landed in (Postgres `current_schema()`), null elsewhere.
     // Passed on rather than re-queried: it is part of the tab storage key, so App needs it
     // before it restores anything.
@@ -495,6 +515,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, on
   const [selectedBrProfileId, setSelectedBrProfileId] = useState<string | null>(null);
   const [profileNameInput, setProfileNameInput] = useState('');
   const [profileColor, setProfileColor] = useState('');
+  const [profileEnv, setProfileEnv] = useState<ConnEnv>('none');
   const [profileGroup, setProfileGroup] = useState('');
   const [secretError, setSecretError] = useState<string | null>(null); // lỗi khi thao tác với kho bí mật HĐH
 
@@ -833,10 +854,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, on
     const savedDefaultId = localStorage.getItem('tf_default_profile_id');
     if (saved) {
       try {
-        const parsed: SavedProfile[] = JSON.parse(saved);
+        const raw: SavedProfile[] = JSON.parse(saved);
+        // Di trú bản cũ #2: môi trường từng được suy từ màu. Điền `env` một lần rồi ghi xuống, để
+        // từ đây màu chỉ còn là màu.
+        const migrated = migrateProfileEnvs(raw);
+        const parsed = migrated ?? raw;
         // Di trú bản cũ: profile lưu trước đây còn mật khẩu nằm thẳng trong localStorage.
         // Đẩy chúng sang kho bảo mật của HĐH rồi ghi đè lại bản đã bóc sạch.
-        if (parsed.some(p => hasInlineSecrets(p.config))) {
+        if (migrated || parsed.some(p => hasInlineSecrets(p.config))) {
           persistProfiles(parsed);
         } else {
           setProfiles(parsed);
@@ -868,6 +893,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, on
     setSuccessMsg(null);
     setProfileNameInput(profile.name);
     setProfileColor(profile.color || '');
+    // `normalizeEnv` chứ không phải `profile.env ?? 'none'`: profile có thể đến từ tệp export của
+    // bản khác, và một chuỗi lạ lọt vào đây sẽ làm ô chọn không khớp lựa chọn nào.
+    setProfileEnv(normalizeEnv(profile.env));
     setProfileGroup(profile.group || '');
 
     const config = await configWithSecrets(profile);
@@ -1050,7 +1078,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, on
 
     const updatedProfiles = profiles.map(p => {
       if (p.id === activeProfileId) {
-        return { ...p, name: targetName, type: activeType as any, config, color: profileColor, group: profileGroup };
+        return { ...p, name: targetName, type: activeType as any, config, color: profileColor, env: profileEnv, group: profileGroup };
       }
       return p;
     });
@@ -1209,13 +1237,25 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, on
       setIsSuccessConnecting(true);
       setConnectingDbName(res.database || (config.type === 'sqlite' ? config.sqlitePath : config.database) || 'Database');
       const activeProfile = profiles.find(p => p.id === activeProfileId);
+      // Môi trường lấy từ STATE CỦA FORM, không từ profile đã lưu.
+      //
+      // `config` ngay bên trên cũng dựng từ form: host, port, user, SSL... đều đi thẳng vào lần kết
+      // nối này dù người dùng chưa bấm Lưu. Riêng `env` mà đọc từ bản đã lưu thì ô chọn hiện
+      // "Production" nhưng kết nối lại mở theo giá trị cũ — chỗ hụt tệ nhất có thể có cho một cờ an
+      // toàn, vì thứ đang hiển thị và thứ đang có hiệu lực không còn là một. Lưu vẫn là việc riêng:
+      // nó quyết định lần sau có nhớ hay không, chứ không quyết định lần này.
+      const env = profileEnv;
       setTimeout(() => {
         onConnect(
           res.database || 'Database',
           config.type,
           activeProfile?.color,
           config,
-          activeProfile ? { id: activeProfile.id, name: activeProfile.name } : undefined,
+          // Kết nối dựng tay (chưa lưu thành profile) vẫn phải nhận được môi trường vừa chọn: không
+          // có chỗ để nhớ nó không có nghĩa là phiên này được phép bỏ qua nó.
+          activeProfile || env !== 'none'
+            ? { id: activeProfile?.id ?? '', name: activeProfile?.name ?? '', env }
+            : undefined,
           res.schema,
         );
       }, 480);
@@ -1689,6 +1729,21 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, on
               </>
             )}
           </div>
+        </div>
+        {/* Môi trường. Trường riêng, KHÔNG suy từ nhãn màu: màu là thứ đổi vì thẩm mỹ, còn ô này
+            quyết định kết nối có mở ở chế độ chỉ đọc và có bắt xác nhận hai bước hay không. */}
+        <div className="form-group">
+          <label>{t('connEnv.label')}</label>
+          <select
+            className="form-input"
+            value={profileEnv}
+            onChange={(e) => setProfileEnv(normalizeEnv(e.target.value))}
+          >
+            {CONN_ENVS.map((env) => (
+              <option key={env} value={env}>{t(envLabelKey(env))}</option>
+            ))}
+          </select>
+          <small className="cm-hint">{t('connEnv.hint')}</small>
         </div>
       </div>
     </div>

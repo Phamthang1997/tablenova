@@ -271,7 +271,6 @@ const ja: typeof en = {
     objDefFunction: '関数',
     objDefView: 'ビュー',
 
-    errSwitchDb: 'データベースの切り替えに失敗しました: {{message}}',
     errOpenDb: 'データベースを開けませんでした: {{message}}',
     closeConnection: '接続を閉じる',
     makeReadOnly: '読み取り専用にする',
@@ -890,6 +889,8 @@ const ja: typeof en = {
   },
 
   ai: {
+    errGoogleClientMissing:
+      'このビルドでは Google ログインが未設定です。.env ファイルに VITE_GOOGLE_CLIENT_ID と VITE_GOOGLE_CLIENT_SECRET を追加し (.env.example 参照)、再ビルドしてください。',
     title: 'AI アシスタント',
     you: 'あなた',
     justNow: 'たった今',
@@ -1225,7 +1226,6 @@ const ja: typeof en = {
     createdAndImported: 'テーブル "{{table}}" を作成し、レコードをインポートしました。',
     errImport: 'インポートに失敗しました: {{message}}',
     errCreateDatabase: 'データベース "{{name}}" を作成できませんでした: {{message}}',
-    errSwitchDatabase: 'データベース "{{name}}" へ切り替えられませんでした: {{message}}',
     importDbSuccess: 'データベースをインポートしました。{{n}} 件の SQL を実行しました。',
     importDbPartial: 'スキップされた文があります: {{n}} 件を実行、{{failed}} 件が失敗しました。データベースは不完全です。',
 
@@ -1460,7 +1460,6 @@ const ja: typeof en = {
     errStats: 'データベース情報を取得できませんでした',
     errDefinition: '定義を取得できませんでした',
     errAllStats: '全データベースの統計を取得できませんでした',
-    errSwitchDb: 'データベースの切り替えに失敗しました: {{message}}',
     errOpenDb: 'データベースを開けませんでした: {{message}}',
     closeConnection: '接続を閉じる',
     makeReadOnly: '読み取り専用にする',
@@ -2324,11 +2323,15 @@ const ja: typeof en = {
     production: '本番',
     staging: 'ステージング',
     development: '開発',
+    none: '未設定',
+    label: '環境',
+    hint: 'Production は接続を読み取り専用で開始し、破壊的な文の前にデータベース名の入力を求めます。',
   },
 
   backend: {
     notConnected: 'データベースに接続していません。',
     connReadOnly: 'この接続は読み取り専用です。書き込む前に解除してください。',
+    oauthClientMissing: 'このビルドには Google OAuth クライアント ID が設定されていません。',
     notConnectedRedis: 'Redis に接続していません。',
     noConnConfig: '利用できる接続設定がありません。',
     noConnConfigDeepScan: 'ディープスキャン用の接続設定がありません。',

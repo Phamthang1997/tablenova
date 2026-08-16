@@ -17,7 +17,8 @@ interface DatabaseInfoModalProps {
   /** Tab mở sẵn khi bật modal (vào từ menu "Thống kê tất cả database" thì là 'all'). */
   initialTab?: InfoTab;
   /** Gọi sau khi đổi database thành công, để App nạp lại cây bảng + tab. */
-  onDatabaseChanged?: (name: string) => void;
+  /** Xem ghi chú cùng tên ở `Sidebar.tsx`: mở thêm kết nối, không thay pool tại chỗ. */
+  onDatabaseOpened?: (connId: string, name: string, schema?: string | null) => void;
 }
 
 export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
@@ -26,7 +27,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
   onClose,
   onSelectTable,
   initialTab = 'current',
-  onDatabaseChanged,
+  onDatabaseOpened,
 }) => {
   const { t } = useTranslation();
   const [tab, setTab] = useState<InfoTab>(initialTab);
@@ -131,13 +132,13 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
   const handleSwitchDatabase = async (name: string) => {
     if (allStats && name === allStats.current_db) return;
     setSwitchingDb(name);
-    const res = await dbHelper.switchDatabase(connId, name);
+    const res = await dbHelper.openDatabase(connId, name);
     setSwitchingDb(null);
-    if (res.success) {
-      onDatabaseChanged?.(res.database || name);
+    if (res.success && res.connId) {
+      onDatabaseOpened?.(res.connId, res.database || name, res.schema);
       onClose();
     } else {
-      setAllError(t('dbInfo.errSwitchDb', { message: res.error || '' }));
+      setAllError(t('dbInfo.errOpenDb', { message: res.error || '' }));
     }
   };
 

@@ -147,7 +147,6 @@ pub fn run() {
             database::import_table_data,
             database::get_databases_list,
             database::list_databases,
-            database::switch_database,
             database::open_database,
             database::list_schemas,
             database::set_current_schema,

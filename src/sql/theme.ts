@@ -119,6 +119,12 @@ const darkColors: monaco.editor.IColors = {
   'scrollbarSlider.hoverBackground': '#ffffff33',
   'scrollbarSlider.activeBackground': '#ffffff47',
   'editorOverviewRuler.border': '#00000000',
+  'menu.background': '#1c202a',
+  'menu.foreground': '#e6edf7',
+  'menu.selectionBackground': '#2c4270',
+  'menu.selectionForeground': '#ffffff',
+  'menu.separatorBackground': '#ffffff29',
+  'menu.border': '#ffffff29',
 };
 
 const lightColors: monaco.editor.IColors = {
@@ -162,6 +168,12 @@ const lightColors: monaco.editor.IColors = {
   'scrollbarSlider.hoverBackground': '#0f172a2e',
   'scrollbarSlider.activeBackground': '#0f172a40',
   'editorOverviewRuler.border': '#00000000',
+  'menu.background': '#ffffff',
+  'menu.foreground': '#0f172a',
+  'menu.selectionBackground': '#2563eb14',
+  'menu.selectionForeground': '#2563eb',
+  'menu.separatorBackground': '#0f172a14',
+  'menu.border': '#0f172a26',
 };
 
 /** Đăng ký 2 theme (defineTheme ghi đè theo tên nên gọi lại khi HMR là an toàn). */

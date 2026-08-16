@@ -1,25 +1,46 @@
 /**
- * Ý nghĩa MÔI TRƯỜNG của nhãn màu kết nối.
+ * MÔI TRƯỜNG của một kết nối — một trường riêng trên profile, không suy ra từ màu.
  *
- * Màu đã có sẵn từ trước (`SavedProfile.color`, bảng màu ở `ConnectionInfoPopover`) nhưng chỉ là
- * trang trí. Gắn ngữ nghĩa cho nó ở đây, một chỗ, để rail và hộp xác nhận không tự diễn giải mỗi
- * nơi một kiểu — hai nơi hiểu "đỏ" khác nhau thì cảnh báo sẽ hiện ở chỗ này mà không hiện ở chỗ kia.
+ * Trước đây nó được suy từ nhãn màu (đỏ = production). Cách đó sai ở chỗ căn bản: màu là thứ người
+ * dùng đổi vì thẩm mỹ hoặc để phân loại việc khác, còn đây là thứ quyết định có bật chỉ-đọc và có
+ * bắt gõ tên database trước câu lệnh nguy hiểm hay không. Buộc hai thứ vào nhau nghĩa là đổi màu
+ * cho dễ nhìn có thể vô hiệu hoá lớp bảo vệ production mà không nói một lời — và ngược lại, muốn
+ * đánh dấu production thì buộc phải chấp nhận một màu cụ thể.
  *
- * Chỉ ba màu mang ý nghĩa. Xanh dương và "không màu" cố ý **không** map thành môi trường nào: người
- * dùng có thể đã dùng chúng để phân loại việc khác từ trước, và tự ý coi chúng là production sẽ chặn
- * những kết nối họ không hề đánh dấu.
+ * Màu giờ thuần trang trí. `legacyEnvOfColor` chỉ còn dùng đúng một lần, lúc di trú các profile cũ.
  */
 export type ConnEnv = 'production' | 'staging' | 'development' | 'none';
 
-const BY_COLOR: Record<string, ConnEnv> = {
+/** Thứ tự hiển thị trong ô chọn: từ vô hại đến cần cẩn thận nhất. */
+export const CONN_ENVS: readonly ConnEnv[] = ['none', 'development', 'staging', 'production'];
+
+/**
+ * Bảng màu → môi trường của bản cũ. **Chỉ dùng để di trú**, không dùng lúc chạy.
+ *
+ * Xanh dương và "không màu" cố ý không map: người dùng có thể đã dùng chúng để phân loại việc khác,
+ * và tự ý coi chúng là production sẽ khoá những kết nối họ không hề đánh dấu.
+ */
+const LEGACY_BY_COLOR: Record<string, ConnEnv> = {
   '#fca5a5': 'production',
   '#fde68a': 'staging',
   '#86efac': 'development',
 };
 
-export function envOfColor(color?: string | null): ConnEnv {
+/**
+ * Môi trường mà một profile cũ (chỉ có màu) từng ngụ ý.
+ *
+ * Gọi một lần khi nạp profile chưa có trường `env`, rồi ghi kết quả xuống. Không có bước này thì
+ * mọi kết nối đang được đánh dấu production sẽ âm thầm mất dấu ngay ở lần nâng cấp — đúng loại thay
+ * đổi im lặng mà lớp bảo vệ này tồn tại để chống.
+ */
+export function legacyEnvOfColor(color?: string | null): ConnEnv {
   if (!color) return 'none';
-  return BY_COLOR[color.toLowerCase()] ?? 'none';
+  return LEGACY_BY_COLOR[color.toLowerCase()] ?? 'none';
+}
+
+/** Đọc một giá trị từ localStorage/JSON về đúng kiểu, mọi thứ lạ thành `none`. */
+export function normalizeEnv(value: unknown): ConnEnv {
+  return CONN_ENVS.includes(value as ConnEnv) ? (value as ConnEnv) : 'none';
 }
 
 /**
@@ -29,12 +50,14 @@ export function envOfColor(color?: string | null): ConnEnv {
  * hiểm. Cả hai đều là "chặn nhầm thì phiền, không chặn thì mất dữ liệu", nên vị từ giữ đúng một
  * nghĩa và không nới ra.
  */
-export function isProduction(color?: string | null): boolean {
-  return envOfColor(color) === 'production';
+export function isProduction(env?: ConnEnv | null): boolean {
+  return env === 'production';
 }
 
-/** Khoá i18n của nhãn môi trường, để hiển thị. `none` không có nhãn. */
-export function envLabelKey(env: ConnEnv): 'connEnv.production' | 'connEnv.staging' | 'connEnv.development' | null {
+/** Khoá i18n của nhãn môi trường. Có cả `none` vì ô chọn phải hiện được lựa chọn đó. */
+export function envLabelKey(
+  env: ConnEnv,
+): 'connEnv.production' | 'connEnv.staging' | 'connEnv.development' | 'connEnv.none' {
   switch (env) {
     case 'production':
       return 'connEnv.production';
@@ -43,6 +66,6 @@ export function envLabelKey(env: ConnEnv): 'connEnv.production' | 'connEnv.stagi
     case 'development':
       return 'connEnv.development';
     default:
-      return null;
+      return 'connEnv.none';
   }
 }

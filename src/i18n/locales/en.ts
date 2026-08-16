@@ -280,7 +280,6 @@ const en = {
     objDefFunction: 'Function',
     objDefView: 'View',
 
-    errSwitchDb: 'Failed to switch database: {{message}}',
     errOpenDb: 'Failed to open database: {{message}}',
     closeConnection: 'Close connection',
     makeReadOnly: 'Make read-only',
@@ -902,6 +901,8 @@ const en = {
   },
 
   ai: {
+    errGoogleClientMissing:
+      'Sign-in with Google is not configured for this build. Add VITE_GOOGLE_CLIENT_ID and VITE_GOOGLE_CLIENT_SECRET to a .env file (see .env.example) and rebuild.',
     title: 'AI Assistant',
     you: 'You',
     justNow: 'Just Now',
@@ -1237,7 +1238,6 @@ const en = {
     createdAndImported: 'Table "{{table}}" was created and the records imported.',
     errImport: 'Import failed: {{message}}',
     errCreateDatabase: 'Could not create the database "{{name}}": {{message}}',
-    errSwitchDatabase: 'Could not switch to the database "{{name}}": {{message}}',
     importDbSuccess: 'Database imported. {{n}} SQL statements executed.',
     importDbPartial: 'Imported with skipped statements: {{n}} ran, {{failed}} failed and were skipped. The database is incomplete.',
 
@@ -1473,7 +1473,6 @@ const en = {
     errStats: 'Could not read the database information',
     errDefinition: 'Could not load the definition',
     errAllStats: 'Could not read the statistics of every database',
-    errSwitchDb: 'Failed to switch database: {{message}}',
     errOpenDb: 'Failed to open database: {{message}}',
     closeConnection: 'Close connection',
     makeReadOnly: 'Make read-only',
@@ -2347,11 +2346,15 @@ const en = {
     production: 'Production',
     staging: 'Staging',
     development: 'Development',
+    none: 'Not set',
+    label: 'Environment',
+    hint: 'Production starts the connection read-only and asks you to type the database name before a destructive statement.',
   },
 
   backend: {
     notConnected: 'No database connection.',
     connReadOnly: 'This connection is read-only — turn that off before writing.',
+    oauthClientMissing: 'This build has no Google OAuth client id configured.',
     notConnectedRedis: 'Not connected to Redis.',
     noConnConfig: 'No connection configuration available.',
     noConnConfigDeepScan: 'No connection configuration available for a deep scan.',

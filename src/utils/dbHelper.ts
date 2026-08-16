@@ -1206,19 +1206,6 @@ export const dbHelper = {
     }
   },
 
-  async switchDatabase(connId: string, 
-    name: string,
-  ): Promise<{ success: boolean; database?: string; schema?: string | null; error?: string }> {
-    try {
-      const res: any = await invoke('switch_database', { connId, name });
-      // `schema` is re-probed by the backend: the new database has its own schemas, so the one
-      // selected on the old connection may not exist here.
-      return { success: !!res.success, database: res.database, schema: res.schema ?? null, error: res.message };
-    } catch (err: any) {
-      return { success: false, error: err.toString() };
-    }
-  },
-
   /**
    * Schemas of the current Postgres connection. Empty on MySQL/SQLite — which is how the caller
    * decides whether to show a schema picker at all.

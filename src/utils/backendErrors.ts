@@ -23,6 +23,8 @@ import i18n from '../i18n';
 export const EXACT: Record<string, string> = {
   'Chưa kết nối CSDL': 'backend.notConnected',
   'Kết nối đang ở chế độ chỉ đọc — tắt chế độ này trước khi ghi': 'backend.connReadOnly',
+  // oauth.rs — client id được nạp lúc biên dịch, có thể rỗng
+  'Chưa cấu hình Google OAuth client id cho bản dựng này': 'backend.oauthClientMissing',
   // tx_session.rs — transaction thủ công
   'Không có transaction nào đang mở': 'backend.txNotOpen',
   'Transaction đã bị huỷ do lỗi trước đó, chỉ có thể rollback': 'backend.txAborted',

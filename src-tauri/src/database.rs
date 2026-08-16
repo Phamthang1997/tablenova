@@ -549,7 +549,7 @@ pub async fn connect_db(app: tauri::AppHandle, state: tauri::State<'_, crate::Ap
         // one before it. That is the whole of Phase 2 in one line — and it is also why nothing
         // resets a transaction session here. Each connection owns its own session now, so an open
         // transaction on connection A is none of connection B's business; A's session ends when A
-        // is disconnected (`disconnect_db`) or replaced under it (`switch_database`).
+        // is disconnected (`disconnect_db`).
         state.connections.insert(
             conn_id.clone(),
             crate::state::ConnEntry {
@@ -3919,11 +3919,12 @@ pub async fn list_databases(state: tauri::State<'_, crate::AppState>, conn_id: S
 
 /// Open another database on the SAME server as a **new connection** (§4.3).
 ///
-/// This is what the database picker calls, and it is a different thing from `switch_database`:
-/// switching *replaces* the pool, so uncommitted work on it has to be refused first and the
-/// transaction session is reset. Opening *adds* a pool, so it touches nothing that already exists —
-/// there is nothing to refuse, and a transaction open on the current database keeps running while
-/// the user works in another one.
+/// The only way to reach another database now. It replaced `switch_database`, which *replaced* the
+/// pool under a live `conn_id`: that had to refuse whenever the connection held uncommitted work,
+/// and when it succeeded it left every open tab pointing at tables of a database the connection no
+/// longer served. Opening *adds* a pool, so it touches nothing that already exists — there is
+/// nothing to refuse, and a transaction open on the current database keeps running while the user
+/// works in another one.
 ///
 /// The `Arc<ServerHandle>` is shared, which is the point: the SSH tunnel, the credentials and the
 /// IAM token are the server's, not this database's. No re-auth, and the tunnel stays up as long as
@@ -4000,79 +4001,15 @@ pub async fn open_database(
     Ok(json!({ "success": true, "database": name, "schema": schema, "connId": &*new_id }))
 }
 
-// Đổi database đang dùng: kết nối lại bằng last_config với database mới (đi qua SSH tunnel nếu đang bật).
+// `switch_database` đã bị xoá.
 //
-// Giữ lại cho các đường THẬT SỰ muốn thay pool tại chỗ: bước "đổi sang database đích" của luồng
-// nhập/phục hồi, và popup thống kê. Bộ chọn database trên thanh tiêu đề đã chuyển sang
-// `open_database` — mở thêm thay vì thay, nên không phải từ chối khi còn thay đổi chưa commit.
-#[tauri::command]
-pub async fn switch_database(state: tauri::State<'_, crate::AppState>, conn_id: String, name: String) -> Result<Value, String> {
-    // Switching database replaces the pool, so uncommitted work would die without a word. Refuse
-    // only when there IS uncommitted work — see `reject_if_pending`. An open-but-read-only session
-    // is rolled back below instead of being turned into a refusal the user cannot clear.
-    crate::tx_session::reject_if_pending(&conn_id, "đổi database")?;
-    let (last_conf_opt, db_type, tunnel_port) = {
-        // Server-level, xem ghi chú cùng loại ở `restore_backup`.
-        let ctx = state.connections.acquire(&conn_id)?;
-        (Some(ctx.server().config()), ctx.server().db_type.clone(),
-         ctx.server().ssh_tunnel.as_ref().map(|t| t.local_port))
-    };
-
-    if db_type == "sqlite" {
-        return Err("SQLite không hỗ trợ nhiều database trên một kết nối".to_string());
-    }
-    let mut stored_conf = last_conf_opt.ok_or("Chưa có cấu hình kết nối")?;
-    if let Some(obj) = stored_conf.as_object_mut() {
-        obj.insert("database".to_string(), json!(name));
-    }
-
-    // Config để dựng URL: nếu có tunnel thì trỏ qua 127.0.0.1:<local_port>
-    let mut url_conf = stored_conf.clone();
-    if let Some(port) = tunnel_port {
-        if let Some(obj) = url_conf.as_object_mut() {
-            obj.insert("host".to_string(), json!("127.0.0.1"));
-            obj.insert("port".to_string(), json!(port));
-        }
-    }
-
-    let kind = match db_type.as_str() {
-        "postgres" => {
-            let url = build_pg_url(&url_conf, Some(name.as_str()));
-            let pool = PgPool::connect(&url).await.map_err(|e| e.to_string())?;
-            DbKind::Postgres(pool)
-        }
-        "mysql" => {
-            let url = build_mysql_url(&url_conf, Some(name.as_str()));
-            let pool = MySqlPool::connect(&url).await.map_err(|e| e.to_string())?;
-            DbKind::Mysql(pool)
-        }
-        _ => return Err("Hệ quản trị CSDL không được hỗ trợ".to_string()),
-    };
-
-    // Cùng dạng với `USE` ở `restore_backup`: Phase 3 thay bằng `open_database` mint conn_id mới, còn
-    // ở đây pool mới nhận đúng id của entry đang có.
-    let ctx = state.connections.acquire(&conn_id)?;
-    let id = ctx.id().clone();
-
-    // The session may be open with nothing pending (a read in manual mode opens one — see
-    // `reject_if_pending`). Roll it back and drop the pinned connection while the OLD pool is still
-    // alive: after the swap that connection belongs to a pool nobody holds, and the server would keep
-    // its locks until the socket died. Done after the new pool built successfully, so a failed switch
-    // leaves the session untouched.
-    crate::tx_session::reset(Some(ctx.conn())).await;
-
-    let new_conn = DbConnection::session(id.clone(), kind);
-
-    // The new database has its own schemas: the one selected on the old pool may not exist here,
-    // and keeping it would point every query at a schema that is not there — the same empty
-    // sidebar this whole feature exists to fix, only harder to explain. Re-probe instead.
-    let schema = probe_pg_schema(&new_conn).await;
-    ctx.server().set_config(stored_conf);
-    state.connections.replace_conn(&id, new_conn)?;
-    state.connections.set_db(&id, name.clone())?;
-    state.connections.set_schema(&id, schema.clone())?;
-    Ok(json!({ "success": true, "database": name, "schema": schema }))
-}
+// Nó thay pool tại chỗ dưới chân một `conn_id` đang sống. Vì thế nó phải từ chối khi kết nối còn
+// thay đổi chưa commit, và khi nó thành công thì mọi tab đang mở vẫn trỏ vào bảng của database cũ mà
+// không ai báo. `open_database` không có cả hai vấn đề đó: nó thêm một pool trên cùng
+// `Arc<ServerHandle>` (cùng tunnel, cùng thông tin đăng nhập, không xác thực lại) và mint conn_id
+// mới, nên database cũ giữ nguyên tab lẫn transaction của nó. Cả ba đường gọi cũ — bộ chọn trên
+// thanh tiêu đề, Sidebar, popup thống kê — và bước "đổi sang database đích" của luồng nhập đều đã
+// chuyển sang nó.
 
 /// Schemas available on the current Postgres connection, for the Sidebar picker.
 ///

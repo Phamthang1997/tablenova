@@ -575,7 +575,16 @@ interface SidebarProps {
   onGenerateData?: (tableName?: string) => void;
   onTableRenamed?: (oldName: string, newName: string) => void;
   onTableDropped?: (tableName: string) => void;
-  onDatabaseChanged?: (name: string) => void;
+  /**
+   * A database was **opened as another connection** (`open_database`), not switched to.
+   *
+   * Switching replaced this connection's pool, so it had to refuse whenever the current database
+   * held uncommitted work — a refusal the user could not clear without losing that work, and it
+   * silently detached every open tab from the database they were opened against. Opening adds a
+   * pool on the same `ServerHandle` (same tunnel, same credentials, no re-auth), so there is nothing
+   * to refuse and the old database keeps its tabs and its transaction.
+   */
+  onDatabaseOpened?: (connId: string, name: string, schema?: string | null) => void;
   /** Schema đang chọn (chỉ Postgres). Nguồn sự thật là backend — xem App.tsx. */
   schema?: string | null;
   /** Đổi schema xong: App cập nhật state + khoá localStorage, Sidebar tự nạp lại danh sách. */
@@ -608,7 +617,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onGenerateData,
   onTableRenamed,
   onTableDropped,
-  onDatabaseChanged,
+  onDatabaseOpened,
   schema,
   onSchemaChanged,
   onOpenQueryWithSql,
@@ -2732,8 +2741,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
           const name = switchToNewDb;
           setSwitchToNewDb(null);
           if (!name) return;
-          await dbHelper.switchDatabase(connId, name);
-          onDatabaseChanged?.(name);
+          const res = await dbHelper.openDatabase(connId, name);
+          if (res.success && res.connId) onDatabaseOpened?.(res.connId, res.database || name, res.schema);
+          else alert(t('sidebar.errOpenDb', { message: res.error || '' }));
         }}
         onCancel={() => setSwitchToNewDb(null)}
       />
