@@ -15,6 +15,7 @@ import { registerSqlRenameProvider } from '../sql/refactor';
 import { registerSqlQuickFix } from '../sql/quickFix';
 import { registerSqlSignatureHelp } from '../sql/signatureHelp';
 import { registerSqlPeekDefinition } from '../sql/peekDefinition';
+import { registerSqlOutline } from '../sql/outline';
 import {
   statementAt, analyzeStatements, splitStatements, isSchemaChangingSql,
   findUnsafeStatements, type UnsafeStatement, type UnsafeStatementKind,
@@ -32,6 +33,7 @@ registerSqlRenameProvider(monaco);
 registerSqlQuickFix(monaco);
 registerSqlSignatureHelp(monaco);
 registerSqlPeekDefinition(monaco);
+registerSqlOutline(monaco);
 import { setEditorConnId } from '../sql/editorScope';
 import { dbIndexRegistry } from '../sql/dbIndexRegistry';
 import { dbHelper, type GridChange } from '../utils/dbHelper';

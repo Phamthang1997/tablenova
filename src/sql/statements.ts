@@ -318,6 +318,122 @@ export function collectSelectListRefs(statement: string): BareColumnRef[] {
   return out;
 }
 
+/** Loại câu lệnh, đủ để chọn biểu tượng trong outline. Không dùng cho quyết định nào khác. */
+export type StatementKind = 'select' | 'write' | 'ddl' | 'other';
+
+export interface StatementOutline {
+  kind: StatementKind;
+  /** Nhãn hiển thị: động từ + đối tượng chính, ví dụ `SELECT users`, `CREATE TABLE orders`. */
+  label: string;
+}
+
+// Động từ mở đầu một câu lệnh. `with` nằm trong danh sách để vòng quét nhận ra rồi **đi tiếp**:
+// `WITH x AS (…) SELECT …` phải được gọi tên theo `SELECT`, chứ nhãn "WITH" thì mọi truy vấn
+// dùng CTE đều trông giống hệt nhau trong outline.
+const STATEMENT_VERBS = new Set([
+  'with', 'select', 'insert', 'update', 'delete', 'merge', 'replace',
+  'create', 'alter', 'drop', 'truncate', 'rename', 'comment',
+  'grant', 'revoke', 'set', 'use', 'begin', 'start', 'commit', 'rollback', 'savepoint',
+  'explain', 'analyze', 'show', 'describe', 'desc', 'call', 'do', 'vacuum', 'pragma',
+]);
+
+/** Loại đối tượng đứng sau CREATE/ALTER/DROP, để nhãn đọc là `CREATE TABLE x` chứ không chỉ `CREATE x`. */
+const DDL_OBJECTS = new Set([
+  'table', 'view', 'index', 'trigger', 'function', 'procedure', 'schema', 'database',
+  'sequence', 'type', 'event', 'user', 'role', 'extension', 'materialized',
+]);
+
+/** Từ đệm giữa động từ DDL và loại đối tượng — bỏ qua khi tìm loại đối tượng. */
+const DDL_FILLERS = new Set([
+  'or', 'replace', 'temporary', 'temp', 'unique', 'if', 'not', 'exists', 'global', 'local',
+  'fulltext', 'spatial', 'clustered', 'nonclustered', 'concurrently', 'recursive', 'unlogged',
+]);
+
+/**
+ * Tên gọi ngắn của một câu lệnh, cho outline và breadcrumb.
+ *
+ * Tìm động từ đầu tiên nằm ở **tầng ngoặc 0** trên bản đã mask, nên `SELECT (SELECT …)` vẫn là
+ * một câu SELECT và động từ nằm trong chuỗi hay comment không tính. Rồi lấy đối tượng chính:
+ * bảng của FROM/INTO/UPDATE với DML, và `<loại> <tên>` với DDL.
+ *
+ * Không nhận ra được thì trả về đoạn đầu của chính câu lệnh — một nhãn xấu vẫn định vị được
+ * dòng cần tìm, còn một mục trống thì không.
+ */
+export function describeStatement(statement: string): StatementOutline {
+  const masked = maskForSplit(statement);
+
+  // Động từ đầu tiên ở tầng 0. `with` không kết thúc vòng lặp: nó chỉ mở đầu danh sách CTE.
+  let depth = 0;
+  let verb = '';
+  let verbEnd = 0;
+  for (let i = 0; i < masked.length; i++) {
+    const c = masked[i];
+    if (c === '(') { depth++; continue; }
+    if (c === ')') { depth--; continue; }
+    if (depth !== 0 || !/[A-Za-z_]/.test(c)) continue;
+    let j = i;
+    while (j < masked.length && /\w/.test(masked[j])) j++;
+    const word = masked.slice(i, j).toLowerCase();
+    i = j - 1;
+    if (!STATEMENT_VERBS.has(word)) continue;
+    if (word === 'with') continue;
+    verb = word;
+    verbEnd = j;
+    break;
+  }
+
+  const firstWords = statement.trim().replace(/\s+/g, ' ').slice(0, 60);
+  if (!verb) return { kind: 'other', label: firstWords || 'SQL' };
+
+  const rest = statement.slice(verbEnd);
+  const upper = verb.toUpperCase();
+
+  if (verb === 'select' || verb === 'delete') {
+    const table = collectTableRefs(statement)[0]?.table;
+    return {
+      kind: verb === 'select' ? 'select' : 'write',
+      label: table ? `${upper} ${table}` : upper,
+    };
+  }
+  if (verb === 'insert' || verb === 'replace' || verb === 'merge') {
+    const m = /\b(?:into)\s+([`"[\]\w.]+)/i.exec(rest) || /^\s*([`"[\]\w.]+)/.exec(rest);
+    return { kind: 'write', label: m ? `${upper} ${clean(m[1])}` : upper };
+  }
+  if (verb === 'update' || verb === 'truncate' || verb === 'call') {
+    const m = /^\s*(?:table\s+)?([`"[\]\w.]+)/i.exec(rest);
+    return { kind: 'write', label: m ? `${upper} ${clean(m[1])}` : upper };
+  }
+  if (verb === 'create' || verb === 'alter' || verb === 'drop' || verb === 'comment') {
+    // Bỏ qua các từ đệm (`OR REPLACE`, `IF NOT EXISTS`…) để tới loại đối tượng rồi tới tên.
+    const words = rest.trim().split(/\s+/);
+    let object = '';
+    let name = '';
+    for (const w of words) {
+      const bare = clean(w).toLowerCase();
+      if (!bare) continue;
+      if (!object) {
+        if (DDL_FILLERS.has(bare)) continue;
+        if (DDL_OBJECTS.has(bare)) { object = bare.toUpperCase(); continue; }
+        name = clean(w);
+        break;
+      }
+      if (DDL_FILLERS.has(bare)) continue;
+      if (DDL_OBJECTS.has(bare)) { object += ` ${bare.toUpperCase()}`; continue; }
+      name = clean(w);
+      break;
+    }
+    const label = [upper, object, name].filter(Boolean).join(' ');
+    return { kind: 'ddl', label: label || upper };
+  }
+
+  return { kind: 'other', label: firstWords };
+}
+
+/** Bỏ dấu trích dẫn định danh và dấu chấm phẩy bám đuôi. */
+function clean(raw: string): string {
+  return raw.replace(/[`"[\]();]/g, '').trim();
+}
+
 /** Lời gọi hàm đang bao quanh con trỏ. */
 export interface EnclosingCall {
   /** Tên hàm, đúng như đã gõ. */

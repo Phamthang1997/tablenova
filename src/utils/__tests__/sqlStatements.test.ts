@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { splitStatements, statementAt, analyzeStatements, resolveAliases, collectTableRefs, collectCteNames, enclosingCall, isSchemaChangingSql, findUnsafeStatements } from '../../sql/statements';
+import { splitStatements, statementAt, analyzeStatements, resolveAliases, collectTableRefs, collectCteNames, describeStatement, enclosingCall, isSchemaChangingSql, findUnsafeStatements } from '../../sql/statements';
 import { formatSql, minifySql } from '../../sql/format';
 
 describe('splitStatements', () => {
@@ -508,6 +508,49 @@ describe('findUnsafeStatements', () => {
   it('văn bản rỗng / chỉ có comment -> không có gì', () => {
     expect(kinds('')).toEqual([]);
     expect(kinds('-- DELETE FROM t')).toEqual([]);
+  });
+});
+
+describe('describeStatement', () => {
+  const label = (sql: string) => describeStatement(sql).label;
+
+  it('DML lấy tên bảng chính', () => {
+    expect(label('SELECT id, name FROM users WHERE id = 1')).toBe('SELECT users');
+    expect(label('INSERT INTO orders (a) VALUES (1)')).toBe('INSERT orders');
+    expect(label('UPDATE users SET name = 1')).toBe('UPDATE users');
+    expect(label('DELETE FROM sessions WHERE id = 2')).toBe('DELETE sessions');
+  });
+
+  it('DDL lấy cả loại đối tượng lẫn tên, bỏ qua từ đệm', () => {
+    expect(label('CREATE TABLE users (id INT)')).toBe('CREATE TABLE users');
+    expect(label('CREATE TABLE IF NOT EXISTS users (id INT)')).toBe('CREATE TABLE users');
+    expect(label('CREATE OR REPLACE VIEW v AS SELECT 1')).toBe('CREATE VIEW v');
+    expect(label('CREATE UNIQUE INDEX idx_a ON t (a)')).toBe('CREATE INDEX idx_a');
+    expect(label('DROP TABLE `orders`')).toBe('DROP TABLE orders');
+    expect(label('ALTER TABLE users ADD COLUMN x INT')).toBe('ALTER TABLE users');
+  });
+
+  it('CTE được gọi tên theo câu lệnh thật, không phải theo WITH', () => {
+    expect(label('WITH recent AS (SELECT * FROM orders) SELECT * FROM recent'))
+      .toBe('SELECT orders');
+  });
+
+  it('động từ trong chuỗi, comment hay truy vấn con không cướp nhãn', () => {
+    expect(label("SELECT 'DROP TABLE x' FROM users")).toBe('SELECT users');
+    expect(label('-- DROP TABLE x\nSELECT * FROM users')).toBe('SELECT users');
+    expect(label('SELECT (SELECT 1) FROM users')).toBe('SELECT users');
+  });
+
+  it('loại câu lệnh dùng để chọn biểu tượng', () => {
+    expect(describeStatement('SELECT 1 FROM t').kind).toBe('select');
+    expect(describeStatement('UPDATE t SET a = 1').kind).toBe('write');
+    expect(describeStatement('CREATE TABLE t (a INT)').kind).toBe('ddl');
+    expect(describeStatement('SET foreign_key_checks = 0').kind).toBe('other');
+  });
+
+  it('không nhận ra thì vẫn cho một nhãn định vị được, không bỏ trống', () => {
+    expect(label('???')).toBe('???');
+    expect(label('   ')).toBe('SQL');
   });
 });
 
