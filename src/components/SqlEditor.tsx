@@ -5,10 +5,6 @@ import Editor, { loader } from '@monaco-editor/react';
 
 // Import workers directly using Vite's ?worker loader query
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
-import jsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker';
-import cssWorker from 'monaco-editor/esm/vs/language/css/css.worker?worker';
-import htmlWorker from 'monaco-editor/esm/vs/language/html/html.worker?worker';
-import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker';
 // Worker cho monaco-sql-languages (parser + ngữ cảnh caret) theo dialect
 import MySQLWorker from 'monaco-sql-languages/esm/languages/mysql/mysql.worker?worker';
 import PgSQLWorker from 'monaco-sql-languages/esm/languages/pgsql/pgsql.worker?worker';
@@ -29,21 +25,18 @@ import { willPromptForSql } from '../utils/safeMode';
 import { resolveResultEditability, type ResultEditability, type NotEditableReason } from '../sql/editableResult';
 import { SqlSnippetPanel } from './SqlSnippetPanel';
 
-// Configure Monaco Environment for Vite native web workers
+// Configure Monaco Environment for Vite native web workers.
+//
+// Only the languages this app actually opens a model for are listed: the three SQL dialects,
+// plus the generic editor worker every model needs. Monaco's json/css/html/typescript workers
+// are deliberately NOT imported — nothing here ever creates a model in those languages, and
+// each `?worker` import emits its own chunk whether it runs or not (ts.worker alone was 5.9MB,
+// the largest file in the build, against 4.2MB for Monaco itself). Their language *clients*
+// still ship inside `monaco-editor`, but a client only spawns its worker once a model of that
+// language exists, so none of them is ever reached. Should one somehow be, the fallback below
+// hands back a plain editor worker rather than throwing.
 (window as any).MonacoEnvironment = {
   getWorker(_: any, label: string) {
-    if (label === 'json') {
-      return new jsonWorker();
-    }
-    if (label === 'css' || label === 'scss' || label === 'less') {
-      return new cssWorker();
-    }
-    if (label === 'html' || label === 'handlebars' || label === 'razor') {
-      return new htmlWorker();
-    }
-    if (label === 'typescript' || label === 'javascript') {
-      return new tsWorker();
-    }
     if (label === 'mysql') {
       return new MySQLWorker();
     }
