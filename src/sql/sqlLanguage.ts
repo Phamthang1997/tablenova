@@ -10,9 +10,10 @@ import 'monaco-sql-languages/esm/languages/generic/generic.contribution';
 import * as catalog from './catalog';
 import { editorConnId } from './editorScope';
 import { buildJoinConditions } from './joinConditions';
-import { collectTableRefs, statementAt } from './statements';
+import { collectTableRefs, statementAt, valuePosition } from './statements';
 import { bumpUsage, rankSort } from './usageStats';
 import { getDoc, formatDocMarkdown } from '../utils/docsService';
+import { enumValues, typeFamily } from '../utils/columnType';
 import i18n from '../i18n';
 
 const BUMP_CMD = 'tablenova.bumpUsage';
@@ -188,6 +189,52 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
         ` aliasByTable={${[...aliasByTable].map(([tbl, a]) => `${tbl}:${a}`).join(' ')}}` +
         ` joinConds=[${joinConds.join(' | ')}]`
     );
+  }
+
+  // 2b) Chỗ điền giá trị (`WHERE status = `, `IN (`, `LIKE `) -> gợi ý chính các giá trị hợp lệ.
+  //
+  // **Không hỏi database câu nào.** Nguồn duy nhất là chuỗi kiểu đã có sẵn trong catalog: MySQL
+  // trả `COLUMN_TYPE` nên `enum('active','banned')` mang theo luôn danh sách giá trị, và cột
+  // BOOLEAN thì chỉ có hai. Đó cũng là lý do `WHERE id = ` không gợi ý gì — `int` không có tập
+  // giá trị nào để liệt kê, nên nó tự rơi ra ngoài mà không cần luật riêng.
+  //
+  // Cố ý dừng ở đây, không mở rộng sang `SELECT DISTINCT col FROM t`: câu đó là một lần quét
+  // toàn bảng do một phím gõ kích hoạt, và trên một kết nối production thì đó không phải gợi ý
+  // nữa mà là sự cố.
+  const valueAt = valuePosition(textBefore);
+  if (valueAt) {
+    const dot = valueAt.column.lastIndexOf('.');
+    const colName = dot >= 0 ? valueAt.column.slice(dot + 1) : valueAt.column;
+    const prefix = dot >= 0 ? valueAt.column.slice(0, dot).toLowerCase() : null;
+    // Có tiền tố thì chỉ tra đúng bảng của tiền tố đó; không thì tra mọi bảng trong scope.
+    const owners = prefix
+      ? scopeTables.filter(tb => tb.toLowerCase() === prefix || aliasByTable.get(tb)?.toLowerCase() === prefix)
+      : Array.from(new Set(scopeTables));
+
+    for (const tbl of owners) {
+      const schema = await catalog.getSchema(editorConnId(), tbl);
+      const col = (schema?.columns || []).find(c => c.name.toLowerCase() === colName.toLowerCase());
+      if (!col) continue;
+
+      const family = typeFamily(col.type);
+      const values = family === 'bool' ? ['TRUE', 'FALSE'] : enumValues(col.type);
+      if (!values.length) continue;
+
+      values.forEach((v, i) => {
+        // Giá trị boolean là từ khoá, không phải chuỗi -> không bọc nháy.
+        const literal = family === 'bool' ? v : `'${v.replace(/'/g, "''")}'`;
+        items.push({
+          label: v,
+          kind: monaco.languages.CompletionItemKind.Value,
+          detail: i18n.t('sqlEditor.cmplColumnValue', { table: tbl }),
+          // Đã gõ nháy mở thì chèn phần ruột thôi, nếu không sẽ thành `''active''`.
+          insertText: valueAt.quoted && family !== 'bool' ? `${v.replace(/'/g, "''")}'` : literal,
+          filterText: v,
+          sortText: '00_value_' + String(i).padStart(3, '0'),
+        });
+      });
+      break; // cột đầu tiên khớp là đủ; hai bảng cùng tên cột thì đã là chuyện của kiểm tra mơ hồ
+    }
   }
 
   // 2c) Ngay sau SELECT (chưa gõ gì) -> '*' là gợi ý ưu tiên số 1, rồi mới tới cột/bảng.

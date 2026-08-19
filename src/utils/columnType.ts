@@ -42,6 +42,40 @@ export function typeBase(raw: string | null | undefined): string {
   return tail ? `${head} ${tail}` : head;
 }
 
+/**
+ * Các giá trị của một kiểu `enum(...)` / `set(...)`, đã bỏ dấu nháy.
+ *
+ * Đây là toàn bộ nền của gợi ý giá trị: MySQL trả `COLUMN_TYPE` nên chuỗi kiểu **đã mang sẵn**
+ * danh sách giá trị, không phải hỏi database thêm câu nào. Trả mảng rỗng cho mọi kiểu khác, nên
+ * cột `int`/`varchar` tự khắc không gợi ý gì mà không cần luật riêng.
+ *
+ * Tự tách chứ không `split(',')`: giá trị có thể chứa dấu phẩy (`enum('a,b','c')`) và dấu nháy
+ * đơn được nhân đôi để thoát (`'it''s'`).
+ */
+export function enumValues(raw: string | null | undefined): string[] {
+  const { head, args } = splitType(raw);
+  const kind = head.trim().toLowerCase();
+  if (kind !== 'enum' && kind !== 'set') return [];
+
+  const out: string[] = [];
+  let i = 0;
+  while (i < args.length) {
+    if (args[i] !== "'") { i++; continue; }
+    i++;
+    let value = '';
+    while (i < args.length) {
+      if (args[i] === "'") {
+        if (args[i + 1] === "'") { value += "'"; i += 2; continue; } // nháy đôi = một nháy
+        i++;
+        break;
+      }
+      value += args[i++];
+    }
+    out.push(value);
+  }
+  return out;
+}
+
 /** Nhóm kiểu, đủ thô để so sánh được giữa ba dialect. */
 export type TypeFamily = 'number' | 'string' | 'date' | 'bool' | 'binary' | 'json' | 'other';
 

@@ -1236,6 +1236,7 @@ const en = {
     cmplAllColumns: 'All columns',
     cmplListColumns: 'list {{n}} columns',
     cmplAllColumnsOf: 'All columns of {{table}}',
+    cmplColumnValue: 'Allowed value · {{table}}',
     quickFixReplaceWith: "Change to '{{n}}'",
     renameRejected: 'Cannot rename this element.',
     actionQuickFix: 'Quick Fix',

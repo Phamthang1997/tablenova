@@ -1219,6 +1219,7 @@ const ja: typeof en = {
     cmplAllColumns: 'すべての列',
     cmplListColumns: '{{n}} 列を展開',
     cmplAllColumnsOf: '{{table}} のすべての列',
+    cmplColumnValue: '有効な値 · {{table}}',
     quickFixReplaceWith: "'{{n}}' に変更",
     renameRejected: 'この要素の名前は変更できません。',
     actionQuickFix: 'クイックフィックス',

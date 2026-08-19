@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { splitStatements, statementAt, analyzeStatements, resolveAliases, collectTableRefs, collectCteNames, describeStatement, enclosingCall, isSchemaChangingSql, findUnsafeStatements } from '../../sql/statements';
+import { splitStatements, statementAt, analyzeStatements, resolveAliases, collectTableRefs, collectCteNames, describeStatement, enclosingCall, valuePosition, isSchemaChangingSql, findUnsafeStatements } from '../../sql/statements';
 import { formatSql, minifySql } from '../../sql/format';
 
 describe('splitStatements', () => {
@@ -508,6 +508,36 @@ describe('findUnsafeStatements', () => {
   it('văn bản rỗng / chỉ có comment -> không có gì', () => {
     expect(kinds('')).toEqual([]);
     expect(kinds('-- DELETE FROM t')).toEqual([]);
+  });
+});
+
+describe('valuePosition', () => {
+  it('nhận ra chỗ điền giá trị sau toán tử so sánh', () => {
+    expect(valuePosition('SELECT * FROM t WHERE status = '))
+      .toEqual({ column: 'status', quoted: false });
+    expect(valuePosition("SELECT * FROM t WHERE status = '"))
+      .toEqual({ column: 'status', quoted: true });
+    expect(valuePosition('SELECT * FROM t WHERE u.status <> '))
+      .toEqual({ column: 'u.status', quoted: false });
+    expect(valuePosition('SELECT * FROM t WHERE `status` = '))
+      .toEqual({ column: 'status', quoted: false });
+  });
+
+  it('nhận ra IN (...) kể cả khi đã có giá trị liệt kê trước', () => {
+    expect(valuePosition('WHERE status IN (')).toEqual({ column: 'status', quoted: false });
+    expect(valuePosition("WHERE status IN ('a', ")).toEqual({ column: 'status', quoted: false });
+    expect(valuePosition("WHERE status NOT IN ('a', '")).toEqual({ column: 'status', quoted: true });
+  });
+
+  it('nhận ra LIKE', () => {
+    expect(valuePosition('WHERE name LIKE ')).toEqual({ column: 'name', quoted: false });
+  });
+
+  it('không nhận khi chưa tới chỗ điền giá trị', () => {
+    expect(valuePosition('SELECT * FROM t WHERE status')).toBeNull();
+    expect(valuePosition('SELECT * FROM t WHERE ')).toBeNull();
+    expect(valuePosition("SELECT * FROM t WHERE status = 'a'")).toBeNull();
+    expect(valuePosition('SELECT * FROM t WHERE 1 = ')).toBeNull(); // số không phải tên cột
   });
 });
 

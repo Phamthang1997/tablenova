@@ -516,6 +516,42 @@ function clean(raw: string): string {
   return raw.replace(/[`"[\]();]/g, '').trim();
 }
 
+/** Con trỏ đang ở chỗ điền **giá trị** cho một cột. */
+export interface ValuePosition {
+  /** Cột ở vế trái, giữ nguyên tiền tố nếu có (`u.status`). */
+  column: string;
+  /** Người dùng đã gõ dấu nháy mở hay chưa — quyết định gợi ý có tự thêm nháy không. */
+  quoted: boolean;
+}
+
+// Ba dạng đưa con trỏ tới chỗ điền giá trị. Tách thành ba mẫu thay vì một mẫu khổng lồ vì
+// `IN (…)` còn phải nhảy qua các giá trị đã liệt kê trước đó.
+const VALUE_AFTER_OP = /([`"[\]\w.]+)\s*(?:=|<>|!=|>=|<=|<|>)\s*(')?$/;
+const VALUE_AFTER_LIKE = /([`"[\]\w.]+)\s+(?:not\s+)?like\s*(')?$/i;
+const VALUE_IN_LIST = /([`"[\]\w.]+)\s+(?:not\s+)?in\s*\(\s*(?:'(?:[^']|'')*'\s*,\s*)*(')?$/i;
+
+/**
+ * Con trỏ có đang ở vị trí điền giá trị cho một cột không, và cột nào.
+ *
+ * Nhận `WHERE status = `, `WHERE status = '`, `WHERE status IN (`, `IN ('a', ` và `LIKE `.
+ * Chỉ nhìn phần văn bản **trước** con trỏ, nên gọi được trong lúc gõ dở.
+ *
+ * Cắt bớt phần đuôi trước khi khớp: các mẫu này có thể quét ngược khá xa trên một câu lệnh dài,
+ * mà thứ cần biết luôn nằm trong vài chục ký tự cuối.
+ */
+export function valuePosition(textBefore: string): ValuePosition | null {
+  const tail = textBefore.slice(-200);
+  for (const re of [VALUE_AFTER_OP, VALUE_AFTER_LIKE, VALUE_IN_LIST]) {
+    const m = re.exec(tail);
+    if (!m) continue;
+    const column = m[1].replace(/[`"[\]]/g, '');
+    // Số thuần không phải tên cột (`WHERE 1 = `), và đuôi rỗng thì không có gì để tra.
+    if (!column || /^\d+$/.test(column)) return null;
+    return { column, quoted: m[2] === "'" };
+  }
+  return null;
+}
+
 /** Lời gọi hàm đang bao quanh con trỏ. */
 export interface EnclosingCall {
   /** Tên hàm, đúng như đã gõ. */
