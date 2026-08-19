@@ -61,10 +61,16 @@ export default defineConfig({
         // the first frame.
         codeSplitting: {
           groups: [
+            // MUST stay first. `__vitePreload` exists only because SqlEditor/Console are lazy,
+            // and rolldown otherwise parks that ~1kB helper inside whichever big group chunk it
+            // feels like. The entry calls it, so the entry then statically imports that chunk —
+            // which pulled all 4MB of Monaco back into startup and silently undid the lazy split.
+            // Giving it its own chunk is what keeps the heavy groups reachable only on demand.
+            { name: 'vite-helpers', test: /vite[/\\]preload-helper/ },
+            { name: 'react-vendor', test: /node_modules[/](react|react-dom|scheduler|i18next|react-i18next)[/]/ },
             { name: 'monaco', test: /node_modules[/](monaco-editor|@monaco-editor)[/]/ },
             { name: 'sql-vendor', test: /node_modules[/](monaco-sql-languages|dt-sql-parser|sql-formatter)[/]/ },
             { name: 'xterm-vendor', test: /node_modules[/]@xterm[/]/ },
-            { name: 'react-vendor', test: /node_modules[/](react|react-dom|scheduler|i18next|react-i18next)[/]/ },
           ],
         },
       },

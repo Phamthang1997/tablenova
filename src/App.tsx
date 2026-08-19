@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { Suspense, useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { TitleBar } from './components/TitleBar';
@@ -11,7 +11,15 @@ import { TabManager } from './components/TabManager';
 import type { TabInfo } from './components/TabManager';
 import { TAB_GROUP_COLORS, moveGroup, moveTabIntoGroup, reorderTabs, type TabGroup } from './utils/tabGroups';
 import { DataGrid } from './components/DataGrid';
-import { SqlEditor } from './components/SqlEditor';
+// Lazy: `SqlEditor` is the app's only static edge to `monaco-editor`, and pulling it into the
+// entry chunk made the webview parse ~4.5MB (Monaco + the SQL vendor bundle) and run the
+// completion/hover/theme registrations before the first frame — even for a session that never
+// opens a query tab. Fetched on the first query tab instead; later mounts resolve synchronously.
+// The Redis console is lazied the same way in `RedisToolTab`; both edges have to stay lazy or
+// Monaco is back in the entry chunk and neither one buys anything.
+const SqlEditor = React.lazy(() =>
+  import('./components/SqlEditor').then((m) => ({ default: m.SqlEditor })));
+import { LazyEditorFallback } from './components/LazyEditorFallback';
 import { AiAssistant } from './components/AiAssistant';
 import { TerminalPanel } from './components/TerminalPanel';
 import { RoutineEditorModal } from './components/RoutineEditorModal';
@@ -113,24 +121,26 @@ const QueryTabPanel = React.memo(function QueryTabPanel(props: QueryTabPanelProp
           }
       }
     >
-      <SqlEditor
-        connId={props.connId}
-        isProdConn={props.isProdConn}
-        connReadOnly={props.connReadOnly}
-        dbType={props.dbType}
-        connKey={props.connKey}
-        dbName={props.dbName}
-        initialSql={(tab as any).sql || ''}
-        initialSql2={(tab as any).sql2 || ''}
-        initialSplitMode={(tab as any).splitMode || 'none'}
-        initialEditorHeight={(tab as any).customEditorHeight}
-        theme={props.theme}
-        readOnly={props.readOnly}
-        onSqlChange={(val) => onPatch(tab.id, { sql: val } as any)}
-        onSql2Change={(val) => onPatch(tab.id, { sql2: val } as any)}
-        onSplitModeChange={(val) => onPatch(tab.id, { splitMode: val } as any)}
-        onEditorHeightChange={(val) => onPatch(tab.id, { customEditorHeight: val } as any)}
-      />
+      <Suspense fallback={<LazyEditorFallback />}>
+        <SqlEditor
+          connId={props.connId}
+          isProdConn={props.isProdConn}
+          connReadOnly={props.connReadOnly}
+          dbType={props.dbType}
+          connKey={props.connKey}
+          dbName={props.dbName}
+          initialSql={(tab as any).sql || ''}
+          initialSql2={(tab as any).sql2 || ''}
+          initialSplitMode={(tab as any).splitMode || 'none'}
+          initialEditorHeight={(tab as any).customEditorHeight}
+          theme={props.theme}
+          readOnly={props.readOnly}
+          onSqlChange={(val) => onPatch(tab.id, { sql: val } as any)}
+          onSql2Change={(val) => onPatch(tab.id, { sql2: val } as any)}
+          onSplitModeChange={(val) => onPatch(tab.id, { splitMode: val } as any)}
+          onEditorHeightChange={(val) => onPatch(tab.id, { customEditorHeight: val } as any)}
+        />
+      </Suspense>
     </div>
   );
 });

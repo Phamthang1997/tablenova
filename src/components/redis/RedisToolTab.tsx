@@ -6,7 +6,11 @@
 
 import React from 'react';
 import { Analysis } from './Analysis';
-import { Console } from './Console';
+// Lazy for the same reason as `SqlEditor` in `App.tsx`: the console is the Redis side's only
+// edge to `monaco-editor`, and a static import here would put Monaco back into the entry chunk
+// even for a Redis session that never opens the console tab.
+const Console = React.lazy(() => import('./Console').then((m) => ({ default: m.Console })));
+import { LazyEditorFallback } from '../LazyEditorFallback';
 import { Dashboard } from './Dashboard';
 import { Profiler } from './Profiler';
 import { PubSub } from './PubSub';
@@ -42,7 +46,9 @@ export const RedisToolTab: React.FC<RedisToolTabProps> = ({
       {toast}
       <div className="redis-tab-body">
         {type === 'redis-console' && (
-          <Console storageScope={storageScope} theme={theme} onError={onError} onSelectedDb={onSwitchDb} />
+          <React.Suspense fallback={<LazyEditorFallback />}>
+            <Console storageScope={storageScope} theme={theme} onError={onError} onSelectedDb={onSwitchDb} />
+          </React.Suspense>
         )}
         {type === 'redis-dashboard' && <Dashboard dbIndex={dbIndex} onError={onError} />}
         {type === 'redis-slowlog' && (
