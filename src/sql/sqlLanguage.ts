@@ -13,8 +13,13 @@ import { buildJoinConditions } from './joinConditions';
 import { collectTableRefs, statementAt } from './statements';
 import { bumpUsage, rankSort } from './usageStats';
 import { getDoc, formatDocMarkdown } from '../utils/docsService';
+import i18n from '../i18n';
 
 const BUMP_CMD = 'tablenova.bumpUsage';
+
+/** Nhãn loại đối tượng trong popup gợi ý — dùng chung khoá với hover để hai nơi không lệch chữ. */
+const tableKind = (type: string) =>
+  i18n.t(type === 'view' ? 'sqlEditor.hoverKindView' : 'sqlEditor.hoverKindTable');
 
 // Từ khoá dùng thường xuyên nhất -> ưu tiên hiển thị trước các từ khoá lạ.
 const COMMON_KEYWORDS = new Set([
@@ -74,7 +79,9 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
     items.push({
       label: kw,
       kind: docEntry ? monaco.languages.CompletionItemKind.Function : monaco.languages.CompletionItemKind.Keyword,
-      detail: docEntry ? `Hàm SQL (${docEntry.engine})` : 'Từ khoá',
+      detail: docEntry
+        ? i18n.t('sqlEditor.cmplSqlFunction', { engine: docEntry.engine })
+        : i18n.t('sqlEditor.cmplKeyword'),
       documentation: docEntry ? { value: formatDocMarkdown(docEntry) } : undefined,
       insertText: kw,
       sortText: rankSort(COMMON_KEYWORDS.has(kw.toUpperCase()) ? '4' : '5', kw),
@@ -92,7 +99,7 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
     items.push({
       label: sn.prefix,
       kind: monaco.languages.CompletionItemKind.Snippet,
-      detail: 'Mẫu câu',
+      detail: i18n.t('sqlEditor.cmplSnippet'),
       documentation: { value: ['```sql', body.replace(/\$\{\d+:?([^}]*)\}/g, '$1').replace(/\$\d+/g, ''), '```'].join('\n') },
       insertText: sn.insertText || body,
       insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
@@ -154,7 +161,7 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
     joinConds.forEach((c, i) => items.push({
       label: c,
       kind: monaco.languages.CompletionItemKind.Snippet,
-      detail: 'Điều kiện JOIN (FK)',
+      detail: i18n.t('sqlEditor.cmplJoinCondition'),
       insertText: c,
       sortText: '0_' + i, // ưu tiên cao nhất
     }));
@@ -189,7 +196,7 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
     items.push({
       label: '*',
       kind: monaco.languages.CompletionItemKind.Field,
-      detail: 'Tất cả các cột',
+      detail: i18n.t('sqlEditor.cmplAllColumns'),
       insertText: '*',
       filterText: '*',
       sortText: '00_star', // trên cả điều kiện JOIN ('0_...')
@@ -203,9 +210,9 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
       const multi = new Set(scopeTables).size > 1;
       const list = cols.map(c => (multi ? `${pfx}.${c.name}` : c.name)).join(', ');
       items.push({
-        label: multi ? `${pfx}.* → liệt kê ${cols.length} cột` : `* → liệt kê ${cols.length} cột`,
+        label: `${multi ? `${pfx}.` : ''}* → ${i18n.t('sqlEditor.cmplListColumns', { n: cols.length })}`,
         kind: monaco.languages.CompletionItemKind.Snippet,
-        detail: `Tất cả cột của ${tbl}`,
+        detail: i18n.t('sqlEditor.cmplAllColumnsOf', { table: tbl }),
         documentation: { value: ['```sql', list, '```'].join('\n') },
         insertText: list,
         filterText: '*',
@@ -247,7 +254,7 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
         kind: tb.type === 'view'
           ? monaco.languages.CompletionItemKind.Interface
           : monaco.languages.CompletionItemKind.Class,
-        detail: alias ? `${tb.type === 'view' ? 'View' : 'Bảng'} · alias ${alias}` : (tb.type === 'view' ? 'View' : 'Bảng'),
+        detail: tableKind(tb.type) + (alias ? ` · alias ${alias}` : ''),
         insertText,
         sortText: rankSort('2', tb.name),
         command: bumpCommand(tb.name),
@@ -303,7 +310,7 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
         items.push({
           label: p,
           kind: monaco.languages.CompletionItemKind.Class,
-          detail: `Bảng${aliasByTable.get(tb) ? ` (${tb})` : ''}`,
+          detail: i18n.t('sqlEditor.hoverKindTable') + (aliasByTable.get(tb) ? ` (${tb})` : ''),
           insertText: p,
           sortText: rankSort('3', p),
           command: bumpCommand(tb),

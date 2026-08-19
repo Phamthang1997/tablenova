@@ -1207,6 +1207,28 @@ const en = {
     errEditReadOnly: 'Read-only mode: this operation writes to the database. Turn off "Read-only" first.',
     errEditPreview: 'Could not build the SQL preview: {{message}}',
     errEditCommit: 'Save failed: {{message}}',
+    // translation so each language owns how it joins onto the sentence before it.
+    // Hover popup built in src/sql/intellisense.ts.
+    hoverKindTable: 'Table',
+    hoverKindView: 'View',
+    hoverKindColumn: 'Column',
+    hoverColHeader: 'Column',
+    hoverTypeHeader: 'Type',
+    hoverMoreColumns: '… {{n}} more column(s)',
+    hoverForeignKeys: 'Foreign keys:',
+    hoverMoreForeignKeys: '… {{n}} more foreign key(s)',
+    hoverOpenTable: 'Ctrl+Click or F12 to open the table',
+    hoverMoreTables: '… {{n}} other table(s) have this column',
+    // Grey "detail" line of each completion item (src/sql/sqlLanguage.ts). The object kind
+    // reuses hoverKindTable/hoverKindView so the popup and the hover cannot drift apart.
+    cmplKeyword: 'Keyword',
+    cmplSqlFunction: 'SQL function ({{engine}})',
+    cmplSnippet: 'Snippet',
+    cmplJoinCondition: 'JOIN condition (FK)',
+    cmplAllColumns: 'All columns',
+    cmplListColumns: 'list {{n}} columns',
+    cmplAllColumnsOf: 'All columns of {{table}}',
+    renameRejected: 'Cannot rename this element.',
   },
 
   app: {

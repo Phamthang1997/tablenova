@@ -1,5 +1,6 @@
 import type * as monaco from 'monaco-editor';
 import { maskForSplit } from './statements';
+import i18n from '../i18n';
 
 /**
  * Replaces occurrences of a table or symbol name in an SQL script, respecting word boundaries and skipping comments/strings.
@@ -87,7 +88,7 @@ export function registerSqlRenameProvider(monacoInstance: typeof monaco): void {
             endColumn: position.column,
           },
           text: '',
-          rejectReason: 'Cannot rename this element.',
+          rejectReason: i18n.t('sqlEditor.renameRejected'),
         };
       }
 
