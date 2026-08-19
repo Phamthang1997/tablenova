@@ -41,7 +41,14 @@ interface DataGeneratorDialogProps {
 }
 
 /** Seed used on open. Random only in the sense of "pick one" — generation itself stays exact. */
-const rollSeed = () => Math.floor(Math.random() * 2_000_000_000);
+const rollSeed = () => {
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    const buf = new Uint32Array(1);
+    crypto.getRandomValues(buf);
+    return buf[0] % 2_000_000_000;
+  }
+  return Date.now() % 2_000_000_000;
+};
 
 const Badge: React.FC<{ children: React.ReactNode; title?: string }> = ({ children, title }) => (
   <span className="dgen-badge" title={title}>

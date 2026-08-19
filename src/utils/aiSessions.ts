@@ -66,8 +66,12 @@ export function setActiveSessionId(sessionId: string): void {
 }
 
 export function createDefaultSession(title = 'Chat 1'): AiChatSession {
+  const id =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? `session-${crypto.randomUUID()}`
+      : `session-${Date.now()}`;
   return {
-    id: `session-${Date.now()}`,
+    id,
     title,
     messages: [],
     attachedTables: [],
@@ -80,8 +84,12 @@ export function createNewSession(title?: string): AiChatSession {
   const sessions = getAiSessions();
   const index = sessions.length + 1;
   const sessionName = title || `Chat ${index}`;
+  const id =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? `session-${crypto.randomUUID()}`
+      : `session-${Date.now()}`;
   const newSession: AiChatSession = {
-    id: `session-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    id,
     title: sessionName,
     messages: [],
     attachedTables: [],
