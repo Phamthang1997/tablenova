@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { splitStatements, statementAt, analyzeStatements, resolveAliases, collectTableRefs, isSchemaChangingSql, findUnsafeStatements } from '../../sql/statements';
+import { splitStatements, statementAt, analyzeStatements, resolveAliases, collectTableRefs, collectCteNames, isSchemaChangingSql, findUnsafeStatements } from '../../sql/statements';
 import { formatSql, minifySql } from '../../sql/format';
 
 describe('splitStatements', () => {
@@ -508,5 +508,48 @@ describe('findUnsafeStatements', () => {
   it('văn bản rỗng / chỉ có comment -> không có gì', () => {
     expect(kinds('')).toEqual([]);
     expect(kinds('-- DELETE FROM t')).toEqual([]);
+  });
+});
+
+describe('collectCteNames', () => {
+  const names = (sql: string) => [...collectCteNames(sql)].sort();
+
+  it('lấy tên CTE đơn', () => {
+    expect(names('WITH recent AS (SELECT * FROM orders) SELECT * FROM recent')).toEqual(['recent']);
+  });
+
+  it('lấy đủ danh sách CTE ngăn bằng dấu phẩy', () => {
+    expect(names('WITH a AS (SELECT 1), b AS (SELECT 2) SELECT * FROM a JOIN b ON 1=1'))
+      .toEqual(['a', 'b']);
+  });
+
+  it('bỏ qua thân CTE có ngoặc lồng nhau', () => {
+    const sql = 'WITH x AS (SELECT (SELECT 1) AS a FROM (SELECT 2) t), y AS (SELECT 3) SELECT * FROM y';
+    expect(names(sql)).toEqual(['x', 'y']);
+  });
+
+  it('hiểu RECURSIVE, danh sách cột và MATERIALIZED', () => {
+    expect(names('WITH RECURSIVE tree (id, parent) AS (SELECT 1, NULL) SELECT * FROM tree'))
+      .toEqual(['tree']);
+    expect(names('WITH t AS NOT MATERIALIZED (SELECT 1) SELECT * FROM t')).toEqual(['t']);
+  });
+
+  it('thấy cả CTE lồng trong thân một CTE khác', () => {
+    expect(names('WITH outer_q AS (WITH inner_q AS (SELECT 1) SELECT * FROM inner_q) SELECT * FROM outer_q'))
+      .toEqual(['inner_q', 'outer_q']);
+  });
+
+  it('WITH trong chuỗi hoặc comment không tính', () => {
+    expect(names("SELECT 'WITH fake AS (SELECT 1)' FROM t")).toEqual([]);
+    expect(names('-- WITH fake AS (SELECT 1)\nSELECT * FROM t')).toEqual([]);
+  });
+
+  it('không đoán bừa khi WITH không mở đầu một CTE', () => {
+    expect(names('SELECT * FROM t WITH (NOLOCK)')).toEqual([]);
+    expect(names('WITH')).toEqual([]);
+  });
+
+  it('tên được hạ về chữ thường để so khớp không phân biệt hoa thường', () => {
+    expect(names('WITH Recent AS (SELECT 1) SELECT * FROM RECENT')).toEqual(['recent']);
   });
 });

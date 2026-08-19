@@ -12,6 +12,7 @@ import { SQL_EDITOR_OPTIONS } from '../sql/editorOptions';
 import { formatSql, minifySql } from '../sql/format';
 import { attachEditorInspection } from '../sql/inspection';
 import { registerSqlRenameProvider } from '../sql/refactor';
+import { registerSqlQuickFix } from '../sql/quickFix';
 import {
   statementAt, analyzeStatements, splitStatements, isSchemaChangingSql,
   findUnsafeStatements, type UnsafeStatement, type UnsafeStatementKind,
@@ -26,6 +27,7 @@ setupSqlCompletion();
 setupSqlHover();
 defineSqlThemes();
 registerSqlRenameProvider(monaco);
+registerSqlQuickFix(monaco);
 import { setEditorConnId } from '../sql/editorScope';
 import { dbIndexRegistry } from '../sql/dbIndexRegistry';
 import { dbHelper, type GridChange } from '../utils/dbHelper';
@@ -878,6 +880,23 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       contextMenuOrder: 1.0,
       run: (ed: any) => {
         ed.trigger('keyboard', 'editor.action.rename', {});
+      },
+    });
+
+    // Alt+Enter / context menu: Quick Fix cho chỗ đang bị gạch chân (xem sql/quickFix.ts).
+    // Ctrl+. mặc định của Monaco không dùng được trên máy người dùng (chưa rõ vì bàn phím hay vì
+    // bộ gõ) nên gắn phím riêng: Alt+Enter là phím "intention actions" của JetBrains/DataGrip và
+    // không đụng Ctrl+Enter / Ctrl+Shift+Enter vốn đã dành cho việc chạy câu lệnh. Mục trong menu
+    // chuột phải mới là đường dễ tìm nhất — một phím tắt không nhìn thấy được coi như không có,
+    // và nó cũng là cách nhanh nhất để phân biệt "phím không tới" với "provider không trả gì".
+    editor.addAction({
+      id: 'trigger-sql-quick-fix',
+      label: tRef.current('sqlEditor.actionQuickFix'),
+      keybindings: [monaco.KeyMod.Alt | monaco.KeyCode.Enter],
+      contextMenuGroupId: '1_modification',
+      contextMenuOrder: 0.9,
+      run: (ed: any) => {
+        ed.trigger('keyboard', 'editor.action.quickFix', {});
       },
     });
 

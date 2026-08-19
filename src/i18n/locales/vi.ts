@@ -1198,6 +1198,10 @@ const vi: typeof en = {
     errEditReadOnly: 'Chế độ chỉ đọc: thao tác này ghi vào cơ sở dữ liệu. Hãy tắt "Chỉ đọc" trước.',
     errEditPreview: 'Không dựng được bản xem trước SQL: {{message}}',
     errEditCommit: 'Lưu thất bại: {{message}}',
+    inspectTableNotExist: "Bảng '{{table}}' không tồn tại trong CSDL",
+    inspectColumnNotExist: "Cột '{{column}}' không tồn tại trong bảng '{{table}}'",
+    inspectDidYouMean: ' (Gợi ý: {{n}})',
+    inspectColumnNotInScope: "Cột '{{column}}' không có trong bảng nào của truy vấn này",
     hoverKindTable: 'Bảng',
     hoverKindView: 'Khung nhìn (View)',
     hoverKindColumn: 'Cột',
@@ -1215,7 +1219,9 @@ const vi: typeof en = {
     cmplAllColumns: 'Tất cả các cột',
     cmplListColumns: 'liệt kê {{n}} cột',
     cmplAllColumnsOf: 'Tất cả cột của {{table}}',
+    quickFixReplaceWith: "Đổi thành '{{n}}'",
     renameRejected: 'Không đổi tên được phần tử này.',
+    actionQuickFix: 'Sửa nhanh',
   },
 
   app: {

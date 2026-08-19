@@ -1,7 +1,27 @@
 import type * as monaco from 'monaco-editor';
 import { dbIndexRegistry } from './dbIndexRegistry';
-import { collectTableRefs, resolveAliases, maskForSplit } from './statements';
-import { currentLanguage } from '../i18n';
+import {
+  collectCteNames, collectSelectListRefs, collectTableRefs, resolveAliases, maskForSplit,
+  splitStatements,
+} from './statements';
+import i18n from '../i18n';
+
+/**
+ * Dữ liệu để dựng Quick Fix, tính sẵn ở đây thay vì để code action tự suy ra.
+ *
+ * Lý do tách hẳn ra: `message` đã đi qua i18n, nên đọc ngược tên định danh từ câu chữ là bám vào
+ * bản dịch — đúng cái mà quy ước "không rẽ nhánh theo văn bản hiển thị" cấm. Chỗ duy nhất biết
+ * chắc cần thay gì và thay bằng gì là chỗ phát hiện ra lỗi.
+ */
+export interface QuickFixData {
+  /** Vùng sẽ thay. Có thể HẸP HƠN vùng gạch chân: `u.nmae` gạch cả cụm nhưng chỉ thay `nmae`. */
+  startLine: number;
+  startColumn: number;
+  endLine: number;
+  endColumn: number;
+  /** Tên thay thế, đã xếp theo độ gần. */
+  candidates: string[];
+}
 
 export interface DiagnosticIssue {
   severity: 'error' | 'warning' | 'info';
@@ -10,6 +30,7 @@ export interface DiagnosticIssue {
   startColumn: number;
   endLine: number;
   endColumn: number;
+  fix?: QuickFixData;
 }
 
 const DUMMY_TABLES = new Set(['dual', 'generate_series', 'unnest', 'json_each', 'json_tree', 'information_schema', 'pg_catalog']);
@@ -37,7 +58,9 @@ export function inspectSqlText(text: string): DiagnosticIssue[] {
   };
 
   const maskedText = maskForSplit(text);
-  const lang = currentLanguage();
+  // Tên CTE trông y hệt tên bảng ở `FROM`/`JOIN` nhưng không có trong catalog. Gom trước để
+  // vòng dưới bỏ qua, nếu không mọi câu `WITH … SELECT * FROM <cte>` đều bị báo đỏ oan.
+  const cteNames = collectCteNames(text);
 
   // 1. Table Reference Validation
   const tableRefs = collectTableRefs(text);
@@ -45,7 +68,8 @@ export function inspectSqlText(text: string): DiagnosticIssue[] {
 
   for (const ref of tableRefs) {
     const cleanTbl = ref.table.replace(/[`"[\]]/g, '');
-    if (!cleanTbl || DUMMY_TABLES.has(cleanTbl.toLowerCase())) continue;
+    const lower = cleanTbl.toLowerCase();
+    if (!cleanTbl || DUMMY_TABLES.has(lower) || cteNames.has(lower)) continue;
 
     if (!dbIndexRegistry.hasTable(cleanTbl)) {
       // Find position of table in text
@@ -56,16 +80,19 @@ export function inspectSqlText(text: string): DiagnosticIssue[] {
         const startPos = getPosition(match.index);
         const endPos = getPosition(match.index + cleanTbl.length);
 
-        const msg =
-          lang === 'vi'
-            ? `Bảng '${cleanTbl}' không tồn tại trong CSDL`
-            : lang === 'ja'
-            ? `テーブル '${cleanTbl}' は存在しません`
-            : `Table '${cleanTbl}' does not exist in schema`;
-
+        const similar = dbIndexRegistry.findSimilarTables(cleanTbl);
         issues.push({
           severity: 'error',
-          message: msg,
+          message: i18n.t('sqlEditor.inspectTableNotExist', { table: cleanTbl }),
+          fix: similar.length
+            ? {
+              startLine: startPos.line,
+              startColumn: startPos.col,
+              endLine: endPos.line,
+              endColumn: endPos.col,
+              candidates: similar,
+            }
+            : undefined,
           startLine: startPos.line,
           startColumn: startPos.col,
           endLine: endPos.line,
@@ -92,25 +119,90 @@ export function inspectSqlText(text: string): DiagnosticIssue[] {
         const endPos = getPosition(matchOffset + fullMatch.length);
 
         const realTbl = dbIndexRegistry.getRealTableName(targetTbl) || targetTbl;
+        // `findSimilarColumns` đã tính sẵn gợi ý; trước đây chuỗi nối nó vào chỉ có ở nhánh
+        // tiếng Việt, nên người dùng EN/JA thấy lỗi mà không thấy tên cột đúng.
         const suggestions = dbIndexRegistry.findSimilarColumns(colName, targetTbl);
-        const hint = suggestions.length > 0 ? ` (Gợi ý: ${suggestions.join(', ')})` : '';
+        const hint =
+          suggestions.length > 0
+            ? i18n.t('sqlEditor.inspectDidYouMean', { n: suggestions.join(', ') })
+            : '';
 
-        const msg =
-          lang === 'vi'
-            ? `Cột '${colName}' không tồn tại trong bảng '${realTbl}'${hint}`
-            : lang === 'ja'
-            ? `列 '${colName}' はテーブル '${realTbl}' に存在しません`
-            : `Column '${colName}' does not exist in table '${realTbl}'`;
-
+        // Gạch chân cả `alias.cột` cho dễ thấy, nhưng Quick Fix chỉ được đụng vào phần tên cột —
+        // regex khớp không cho phép khoảng trắng nên vị trí dấu chấm là xác định.
+        const colStart = getPosition(matchOffset + aliasOrTbl.length + 1);
         issues.push({
           severity: 'warning',
-          message: msg,
+          message:
+            i18n.t('sqlEditor.inspectColumnNotExist', { column: colName, table: realTbl }) + hint,
+          fix: suggestions.length
+            ? {
+              startLine: colStart.line,
+              startColumn: colStart.col,
+              endLine: colStart.line,
+              endColumn: colStart.col + colName.length,
+              candidates: suggestions,
+            }
+            : undefined,
           startLine: startPos.line,
           startColumn: startPos.col,
           endLine: endPos.line,
           endColumn: endPos.col,
         });
       }
+    }
+  }
+
+  // 3. Cột KHÔNG có tiền tố trong danh sách SELECT — `SELECT ids FROM test`.
+  //
+  // Chạy theo TỪNG câu lệnh chứ không trên cả buffer: phạm vi bảng của câu này không nói gì về
+  // câu kế bên. Và chỉ chạy khi biết chắc toàn bộ phạm vi — thiếu một mảnh nào thì im lặng, vì
+  // một cảnh báo sai ở đây dạy người dùng bỏ qua mọi đường gạch chân, kể cả đường đúng.
+  for (const stmt of splitStatements(text)) {
+    const refs = collectTableRefs(stmt.text);
+    if (!refs.length) continue;                              // không có FROM -> không có phạm vi
+    if (collectCteNames(stmt.text).size) continue;           // cột của CTE không nằm trong catalog
+    // Truy vấn con trong FROM/JOIN: `collectTableRefs` chui vào trong ngoặc và báo về bảng của
+    // truy vấn con, nên "phạm vi" thu được là của tầng khác — `SELECT x FROM (SELECT id FROM
+    // users) t` trông như thể `x` phải là cột của `users`. Không đủ hiểu thì không nói gì.
+    if (/\b(?:from|join)\s*\(/i.test(maskForSplit(stmt.text))) continue;
+
+    const scope = Array.from(new Set(refs.map((r) => r.table.replace(/[`"[\]]/g, ''))));
+    if (!scope.every((tbl) => dbIndexRegistry.hasTable(tbl))) continue; // một bảng lạ -> bó tay
+
+    const known = new Set<string>();
+    for (const tbl of scope) {
+      for (const col of dbIndexRegistry.getTableColumns(tbl)) known.add(col.name.toLowerCase());
+    }
+    // Alias của bảng cũng hợp lệ ở vị trí này (`SELECT t FROM test t` hiếm nhưng đúng cú pháp).
+    const aliasNames = new Set(resolveAliases(stmt.text).keys());
+
+    for (const ref of collectSelectListRefs(stmt.text)) {
+      const lower = ref.name.toLowerCase();
+      if (known.has(lower) || aliasNames.has(lower)) continue;
+
+      const startPos = getPosition(stmt.start + ref.offset);
+      const endPos = getPosition(stmt.start + ref.offset + ref.name.length);
+      const similar = Array.from(
+        new Set(scope.flatMap((tbl) => dbIndexRegistry.findSimilarColumns(ref.name, tbl))),
+      ).slice(0, 3);
+
+      issues.push({
+        severity: 'warning',
+        message: i18n.t('sqlEditor.inspectColumnNotInScope', { column: ref.name }),
+        fix: similar.length
+          ? {
+            startLine: startPos.line,
+            startColumn: startPos.col,
+            endLine: endPos.line,
+            endColumn: endPos.col,
+            candidates: similar,
+          }
+          : undefined,
+        startLine: startPos.line,
+        startColumn: startPos.col,
+        endLine: endPos.line,
+        endColumn: endPos.col,
+      });
     }
   }
 

@@ -1195,6 +1195,10 @@ const ja: typeof en = {
     errEditReadOnly: '読み取り専用モード: この操作はデータベースに書き込みます。先に「読み取り専用」を解除してください。',
     errEditPreview: 'SQL プレビューを作成できませんでした: {{message}}',
     errEditCommit: '保存に失敗しました: {{message}}',
+    inspectTableNotExist: "テーブル '{{table}}' は存在しません",
+    inspectColumnNotExist: "列 '{{column}}' はテーブル '{{table}}' に存在しません",
+    inspectDidYouMean: '（もしかして: {{n}}）',
+    inspectColumnNotInScope: "列 '{{column}}' はこのクエリのどのテーブルにもありません",
     hoverKindTable: 'テーブル',
     hoverKindView: 'ビュー',
     hoverKindColumn: '列',
@@ -1212,7 +1216,9 @@ const ja: typeof en = {
     cmplAllColumns: 'すべての列',
     cmplListColumns: '{{n}} 列を展開',
     cmplAllColumnsOf: '{{table}} のすべての列',
+    quickFixReplaceWith: "'{{n}}' に変更",
     renameRejected: 'この要素の名前は変更できません。',
+    actionQuickFix: 'クイックフィックス',
   },
 
   app: {

@@ -48,6 +48,43 @@ describe('DbIndexRegistry & SQL Inspection Tests', () => {
     expect(suggestions).toContain('email');
   });
 
+  it('should catch a transposed-letter typo, not just substrings', () => {
+    // `nmae` chứa `name` cũng không, `name` chứa `nmae` cũng không — bản so chuỗi con bỏ lọt.
+    expect(dbIndexRegistry.findSimilarColumns('nmae', 'users')).toContain('name');
+    expect(dbIndexRegistry.findSimilarColumns('emial', 'users')).toContain('email');
+  });
+
+  it('should not suggest anything for a wholly unrelated name', () => {
+    expect(dbIndexRegistry.findSimilarColumns('zzzzzzzz', 'users')).toEqual([]);
+  });
+
+  it('should find similar table names', () => {
+    expect(dbIndexRegistry.findSimilarTables('user')).toContain('users');
+    expect(dbIndexRegistry.findSimilarTables('odrers')).toContain('orders');
+    expect(dbIndexRegistry.findSimilarTables('zzzzzzzz')).toEqual([]);
+  });
+
+  it('should attach quick-fix data pointing at the column only, not the whole alias.column', () => {
+    const sql = 'SELECT u.nmae FROM users u;';
+    const issue = inspectSqlText(sql).find((i) => i.fix);
+    expect(issue?.fix?.candidates).toContain('name');
+    // Vùng gạch chân phủ `u.nmae`, vùng sửa chỉ phủ `nmae`.
+    expect(sql.slice(issue!.startColumn - 1, issue!.endColumn - 1)).toBe('u.nmae');
+    expect(sql.slice(issue!.fix!.startColumn - 1, issue!.fix!.endColumn - 1)).toBe('nmae');
+  });
+
+  it('should attach quick-fix data for a mistyped table name', () => {
+    const issue = inspectSqlText('SELECT * FROM odrers;').find((i) => i.fix);
+    expect(issue?.severity).toBe('error');
+    expect(issue?.fix?.candidates).toContain('orders');
+  });
+
+  it('should leave fix undefined when nothing is close enough', () => {
+    const issues = inspectSqlText('SELECT * FROM zzzzzzzz;');
+    expect(issues.length).toBeGreaterThan(0);
+    expect(issues[0].fix).toBeUndefined();
+  });
+
   it('should inspect valid SQL text with zero issues', () => {
     const sql = 'SELECT u.id, u.name, u.email FROM users u WHERE u.id = 1;';
     const issues = inspectSqlText(sql);
@@ -68,6 +105,76 @@ describe('DbIndexRegistry & SQL Inspection Tests', () => {
     expect(issues.length).toBeGreaterThan(0);
     expect(issues[0].severity).toBe('warning');
     expect(issues[0].message).toContain('non_existent_column');
+  });
+
+  it('should not flag a CTE name as a missing table', () => {
+    const sql = 'WITH recent AS (SELECT * FROM orders WHERE total > 10) SELECT * FROM recent;';
+    expect(inspectSqlText(sql)).toEqual([]);
+  });
+
+  it('should not flag any name in a comma-separated CTE list', () => {
+    const sql =
+      'WITH a AS (SELECT id FROM users), b AS (SELECT id FROM orders) SELECT * FROM a JOIN b ON a.id = b.id;';
+    expect(inspectSqlText(sql)).toEqual([]);
+  });
+
+  it('should still flag a real unknown table used alongside a CTE', () => {
+    const sql = 'WITH recent AS (SELECT * FROM orders) SELECT * FROM recent JOIN ghost_table g ON 1=1;';
+    const issues = inspectSqlText(sql);
+    expect(issues.length).toBeGreaterThan(0);
+    expect(issues.every((i) => i.message.includes('ghost_table'))).toBe(true);
+  });
+
+  describe('unqualified columns in the select list', () => {
+    const messages = (sql: string) => inspectSqlText(sql).map((i) => i.message);
+
+    it('flags a mistyped bare column and offers the fix', () => {
+      const issue = inspectSqlText('SELECT nmae FROM users u;')[0];
+      expect(issue.severity).toBe('warning');
+      expect(issue.message).toContain('nmae');
+      expect(issue.fix?.candidates).toContain('name');
+    });
+
+    it('accepts every real column, qualified or not', () => {
+      expect(messages('SELECT id, name, u.email FROM users u;')).toEqual([]);
+      expect(messages('SELECT DISTINCT name FROM users;')).toEqual([]);
+      expect(messages('SELECT * FROM users;')).toEqual([]);
+      expect(messages('SELECT u.* FROM users u;')).toEqual([]);
+    });
+
+    it('accepts columns coming from any joined table', () => {
+      expect(messages('SELECT name, total FROM users JOIN orders ON users.id = orders.user_id;'))
+        .toEqual([]);
+    });
+
+    // Mỗi ca dưới đây từng là một kiểu báo nhầm khác nhau nếu thiếu một bộ lọc.
+    it('does not mistake a function call, a keyword or a literal for a column', () => {
+      expect(messages('SELECT COUNT(id) FROM users;')).toEqual([]);
+      expect(messages('SELECT NULL, TRUE, 42 FROM users;')).toEqual([]);
+      expect(messages('SELECT CASE WHEN id > 1 THEN name ELSE email END FROM users;')).toEqual([]);
+    });
+
+    it('does not flag an alias being defined', () => {
+      expect(messages('SELECT name AS full_name FROM users;')).toEqual([]);
+      expect(messages('SELECT COUNT(*) total FROM orders;')).toEqual([]);
+      expect(messages('SELECT id, name AS n, email AS e FROM users;')).toEqual([]);
+    });
+
+    it('stays silent when the scope is not fully known', () => {
+      // Bảng lạ: đã có lỗi riêng cho nó, và cột thì không thể kết luận.
+      expect(messages('SELECT whatever FROM ghost_table;')).toHaveLength(1);
+      // CTE: cột của nó không nằm trong catalog.
+      expect(messages('WITH c AS (SELECT 1 AS x) SELECT x FROM c;')).toEqual([]);
+      // Truy vấn con trong FROM.
+      expect(messages('SELECT anything FROM (SELECT id FROM users) t;')).toEqual([]);
+    });
+
+    it('scopes each statement separately', () => {
+      // `total` là cột của orders, không phải của users -> chỉ câu thứ hai hợp lệ.
+      const msgs = messages('SELECT total FROM users;\nSELECT total FROM orders;');
+      expect(msgs).toHaveLength(1);
+      expect(msgs[0]).toContain('total');
+    });
   });
 
   it('should propagate table rename across SQL script while skipping strings and comments', () => {

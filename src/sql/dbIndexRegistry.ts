@@ -13,6 +13,73 @@ export interface TableIndexMeta {
   columnCount: number;
 }
 
+/** Tối đa số gợi ý trả về — thông báo lỗi và menu Quick Fix đều phải đọc được trong một liếc. */
+const MAX_SUGGESTIONS = 3;
+
+/**
+ * Khoảng cách Damerau–Levenshtein, dừng sớm khi đã chắc chắn vượt `max`.
+ *
+ * Cần *Damerau* (có phép hoán vị hai ký tự liền nhau) chứ không phải Levenshtein thuần: lỗi gõ
+ * phổ biến nhất là đảo hai phím — `nmae` ↔ `name` cách nhau **1** phép hoán vị nhưng **2** phép
+ * sửa thường, nên với ngưỡng chặt thì Levenshtein thuần bỏ lọt đúng trường hợp hay gặp nhất.
+ */
+function editDistance(a: string, b: string, max: number): number {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  const prev2: number[] = [];
+  let prev: number[] = [];
+  let cur: number[] = [];
+  for (let j = 0; j <= b.length; j++) prev[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    cur = [i];
+    let rowMin = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      let v = Math.min(cur[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
+      // Hoán vị: "ab" -> "ba" tính là một phép.
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        v = Math.min(v, prev2[j - 2] + 1);
+      }
+      cur[j] = v;
+      if (v < rowMin) rowMin = v;
+    }
+    if (rowMin > max) return max + 1; // cả hàng đã vượt ngưỡng -> không thể tốt hơn
+    prev2.length = 0;
+    prev2.push(...prev);
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+/**
+ * Xếp hạng tên gần giống `search` trong `pool`.
+ *
+ * Bản trước chỉ so **chuỗi con**, nên nó bắt được `emai` → `email` nhưng bỏ qua `nmae` → `name`,
+ * tức đúng loại lỗi mà một gợi ý "ý bạn là…" sinh ra để phục vụ. Giữ lại chuỗi con (gõ dở là
+ * trạng thái rất thường gặp trong editor) và xếp nó **trên** khoảng cách sửa, rồi mới tới các tên
+ * cách vài phép gõ.
+ *
+ * Ngưỡng nới theo độ dài: với tên 3 ký tự thì cho phép 2 phép sửa là gần như khớp mọi thứ.
+ */
+function rankSimilar(search: string, pool: string[]): string[] {
+  if (!search) return [];
+  const max = search.length <= 3 ? 1 : 2;
+  const scored: { name: string; rank: number; dist: number }[] = [];
+
+  for (const name of pool) {
+    const lower = name.toLowerCase();
+    if (lower === search) continue; // trùng khít thì đã không có lỗi để gợi ý
+    if (lower.includes(search) || search.includes(lower)) {
+      scored.push({ name, rank: 0, dist: Math.abs(lower.length - search.length) });
+      continue;
+    }
+    const dist = editDistance(search, lower, max);
+    if (dist <= max) scored.push({ name, rank: 1, dist });
+  }
+
+  scored.sort((a, b) => a.rank - b.rank || a.dist - b.dist || a.name.localeCompare(b.name));
+  return scored.slice(0, MAX_SUGGESTIONS).map((s) => s.name);
+}
+
 /**
  * In-Memory DB Index Registry for instant O(1) symbol resolution & static inspection.
  */
@@ -122,28 +189,24 @@ export class DbIndexRegistry {
 
   findSimilarColumns(columnName: string, tableName?: string): string[] {
     const search = columnName.replace(/[`"[\]]/g, '').toLowerCase();
-    const suggestions: string[] = [];
+    const pool: string[] = [];
 
     if (tableName) {
       const cleanTbl = tableName.replace(/[`"[\]]/g, '').toLowerCase();
       const colMap = this.columns.get(cleanTbl);
-      if (colMap) {
-        for (const col of colMap.values()) {
-          if (col.name.toLowerCase().includes(search) || search.includes(col.name.toLowerCase())) {
-            suggestions.push(col.name);
-          }
-        }
-      }
+      if (colMap) for (const col of colMap.values()) pool.push(col.name);
     } else {
       for (const colMap of this.columns.values()) {
-        for (const col of colMap.values()) {
-          if (col.name.toLowerCase().includes(search)) {
-            if (!suggestions.includes(col.name)) suggestions.push(col.name);
-          }
-        }
+        for (const col of colMap.values()) if (!pool.includes(col.name)) pool.push(col.name);
       }
     }
-    return suggestions.slice(0, 5);
+    return rankSimilar(search, pool);
+  }
+
+  /** Bảng có tên gần giống — nguồn của Quick Fix trên lỗi "bảng không tồn tại". */
+  findSimilarTables(tableName: string): string[] {
+    const search = tableName.replace(/[`"[\]]/g, '').toLowerCase();
+    return rankSimilar(search, Array.from(this.tables.values()).map((tbl) => tbl.name));
   }
 
   invalidate(): void {

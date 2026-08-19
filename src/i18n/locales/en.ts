@@ -1207,7 +1207,12 @@ const en = {
     errEditReadOnly: 'Read-only mode: this operation writes to the database. Turn off "Read-only" first.',
     errEditPreview: 'Could not build the SQL preview: {{message}}',
     errEditCommit: 'Save failed: {{message}}',
+    // Squiggles drawn by src/sql/inspection.ts. The leading space of the hint belongs to the
     // translation so each language owns how it joins onto the sentence before it.
+    inspectTableNotExist: "Table '{{table}}' does not exist in schema",
+    inspectColumnNotExist: "Column '{{column}}' does not exist in table '{{table}}'",
+    inspectDidYouMean: ' (Did you mean: {{n}})',
+    inspectColumnNotInScope: "Column '{{column}}' is not in any table of this query",
     // Hover popup built in src/sql/intellisense.ts.
     hoverKindTable: 'Table',
     hoverKindView: 'View',
@@ -1228,7 +1233,9 @@ const en = {
     cmplAllColumns: 'All columns',
     cmplListColumns: 'list {{n}} columns',
     cmplAllColumnsOf: 'All columns of {{table}}',
+    quickFixReplaceWith: "Change to '{{n}}'",
     renameRejected: 'Cannot rename this element.',
+    actionQuickFix: 'Quick Fix',
   },
 
   app: {

@@ -114,6 +114,210 @@ export function collectTableRefs(statement: string): TableRef[] {
   return out;
 }
 
+// `WITH` mở đầu một danh sách CTE; các mảnh dưới đây đọc lần lượt từng phần của
+// `name [(cols)] AS [[NOT] MATERIALIZED] ( body )`. Dùng cờ dính (`y`) để so khớp tại
+// đúng một vị trí thay vì cắt chuỗi con ở mỗi bước — văn bản ở đây là cả buffer editor.
+const CTE_RECURSIVE = /recursive\b/iy;
+const CTE_NAME = /[`"[]?([A-Za-z_]\w*)[`"\]]?/y;
+const CTE_AS = /as\b/iy;
+const CTE_MATERIALIZED = /(?:not\s+)?materialized\b/iy;
+
+/**
+ * Tên của các CTE khai báo trong `WITH … AS ( … )`, đã hạ về chữ thường.
+ *
+ * Vì sao cần: `collectTableRefs()` nhìn `FROM recent` và báo về một bảng tên `recent`, nhưng CTE
+ * là cái tên chỉ sống trong câu lệnh chứ không có trong CSDL — nên `inspection.ts` tra catalog
+ * không thấy rồi gạch đỏ "bảng không tồn tại" trên một câu lệnh hoàn toàn hợp lệ. Văn bản là nơi
+ * duy nhất biết được những cái tên này.
+ *
+ * Quét trên bản đã mask nên `WITH` nằm trong chuỗi hay comment không tính, và thân CTE được nhảy
+ * qua bằng đếm ngoặc (dấu ngoặc trong literal đã bị mask nên không làm lệch bộ đếm). Mọi `WITH`
+ * tìm được đều xử lý, kể cả `WITH` lồng trong thân một CTE khác: con trỏ của vòng ngoài chỉ nhảy
+ * qua đúng từ khoá vừa khớp, không nhảy qua phần thân mà vòng trong vừa đọc.
+ *
+ * Dừng ngay khi gặp thứ không khớp khuôn thay vì đoán tiếp — `SELECT * FROM t WITH (NOLOCK)` phải
+ * ra tập rỗng, chứ đoán bừa ở đây nghĩa là im lặng bỏ qua một bảng sai tên thật.
+ */
+export function collectCteNames(sql: string): Set<string> {
+  const out = new Set<string>();
+  if (!sql) return out;
+  const masked = maskForSplit(sql);
+
+  const skipWs = (from: number) => {
+    let i = from;
+    while (i < masked.length && /\s/.test(masked[i])) i++;
+    return i;
+  };
+  /** Vị trí của ')' đóng cho '(' tại `open`, hoặc -1 nếu câu lệnh còn dở. */
+  const closeParen = (open: number) => {
+    let depth = 0;
+    for (let i = open; i < masked.length; i++) {
+      if (masked[i] === '(') depth++;
+      else if (masked[i] === ')' && --depth === 0) return i;
+    }
+    return -1;
+  };
+  /** Khớp `re` tại đúng vị trí `i`; trả về chỉ số ngay sau phần khớp, hoặc -1. */
+  const eat = (re: RegExp, i: number) => {
+    re.lastIndex = i;
+    const m = re.exec(masked);
+    return m ? re.lastIndex : -1;
+  };
+
+  const withRe = /\bwith\b/gi;
+  let w: RegExpExecArray | null;
+  while ((w = withRe.exec(masked)) !== null) {
+    let i = skipWs(w.index + w[0].length);
+    const afterRecursive = eat(CTE_RECURSIVE, i);
+    if (afterRecursive >= 0) i = skipWs(afterRecursive);
+
+    // Danh sách CTE ngăn bằng dấu phẩy.
+    for (;;) {
+      CTE_NAME.lastIndex = i;
+      const name = CTE_NAME.exec(masked);
+      if (!name) break;
+      i = skipWs(CTE_NAME.lastIndex);
+
+      // Danh sách cột tuỳ chọn: `WITH t (a, b) AS (…)`.
+      if (masked[i] === '(') {
+        const cols = closeParen(i);
+        if (cols < 0) break;
+        i = skipWs(cols + 1);
+      }
+
+      const afterAs = eat(CTE_AS, i);
+      if (afterAs < 0) break;
+      i = skipWs(afterAs);
+
+      const afterMat = eat(CTE_MATERIALIZED, i);
+      if (afterMat >= 0) i = skipWs(afterMat);
+
+      if (masked[i] !== '(') break;
+      const body = closeParen(i);
+      if (body < 0) break;
+
+      out.add(name[1].toLowerCase());
+      i = skipWs(body + 1);
+      if (masked[i] !== ',') break;
+      i = skipWs(i + 1);
+    }
+  }
+  return out;
+}
+
+/**
+ * Từ có thể đứng ở vị trí của một cột trong danh sách SELECT nhưng KHÔNG phải tên cột.
+ *
+ * Danh sách này là thứ giữ cho kiểm tra "cột trần" khỏi báo bừa. Nó cố tình thừa hơn là thiếu:
+ * bỏ sót một cột sai tên chỉ là mất một cảnh báo, còn gạch đỏ một câu SQL đúng thì người dùng
+ * mất niềm tin vào toàn bộ phần gạch chân.
+ */
+const NON_COLUMN_WORDS = new Set([
+  'distinct', 'all', 'as', 'case', 'when', 'then', 'else', 'end', 'null', 'true', 'false',
+  'not', 'and', 'or', 'is', 'in', 'between', 'like', 'ilike', 'rlike', 'regexp', 'interval',
+  'cast', 'collate', 'asc', 'desc', 'exists', 'any', 'some', 'array', 'row', 'over',
+  'partition', 'by', 'order', 'filter', 'within', 'group', 'separator', 'escape', 'using',
+  'current_date', 'current_time', 'current_timestamp', 'localtime', 'localtimestamp',
+  'default', 'unknown', 'div', 'mod', 'binary', 'from',
+  // Từ khoá mệnh đề: chúng xuất hiện khi một mục của danh sách SELECT chứa truy vấn con
+  // (`SELECT (SELECT count(*) FROM orders) AS n FROM users`), lúc đó bộ dò định danh nhìn thấy
+  // cả `select`/`where`/`join`… bên trong ngoặc. Tên cột trùng những từ này gần như không có,
+  // nên bỏ qua chúng an toàn hơn nhiều so với việc gạch đỏ một truy vấn con hợp lệ.
+  'select', 'where', 'having', 'limit', 'offset', 'fetch', 'join', 'on', 'inner', 'left',
+  'right', 'outer', 'cross', 'natural', 'union', 'except', 'intersect', 'lateral', 'returning',
+]);
+
+/** Một định danh trong danh sách SELECT, kèm vị trí ký tự trong câu lệnh đã cho. */
+export interface BareColumnRef {
+  name: string;
+  offset: number;
+}
+
+/**
+ * Các định danh **không có tiền tố** trong danh sách SELECT, tức những thứ đang được đọc như một
+ * cột: `SELECT ids FROM test` -> `ids`.
+ *
+ * Vì sao chỉ danh sách SELECT chứ không phải cả câu: đây là vùng dễ khoanh nhất và cũng là nơi
+ * lỗi gõ tên cột hay xảy ra nhất. Mở rộng sang `WHERE`/`ORDER BY` cần hiểu thêm về hàm, toán tử
+ * và giá trị, mà mỗi thứ hiểu sai là một lần gạch đỏ oan.
+ *
+ * Bốn thứ bị loại, mỗi thứ là một nguồn báo nhầm thật:
+ *  - có dấu chấm hai bên (`t.id`, `db.t`) — đã có kiểm tra riêng cho dạng đủ tiêu chuẩn;
+ *  - đứng ngay trước `(` — là lời gọi hàm, không phải cột;
+ *  - từ khoá / hằng (`NULL`, `CASE`, `DISTINCT`…) — xem `NON_COLUMN_WORDS`;
+ *  - **bí danh đang được đặt**: cả `expr AS x` lẫn `expr x` viết tắt. Bí danh là tên mới do câu
+ *    lệnh sinh ra nên không thể có trong catalog; không loại nó thì mọi `SELECT count(*) total`
+ *    đều bị báo sai.
+ *
+ * Trả về mảng rỗng khi không khoanh được vùng — không có `SELECT`, hoặc không có `FROM` ở cấp
+ * ngoài cùng. Im lặng ở đây là đúng: người gọi chỉ muốn biết những cái nó chắc chắn.
+ */
+export function collectSelectListRefs(statement: string): BareColumnRef[] {
+  const masked = maskForSplit(statement);
+  const head = /^\s*select\s+(?:distinct\s+|all\s+)?/i.exec(masked);
+  if (!head) return [];
+
+  // `FROM` ở độ sâu ngoặc 0 — `FROM` trong một truy vấn con không kết thúc danh sách SELECT.
+  let depth = 0;
+  let fromAt = -1;
+  const scan = /[()]|\bfrom\b/gi;
+  scan.lastIndex = head[0].length;
+  let s: RegExpExecArray | null;
+  while ((s = scan.exec(masked)) !== null) {
+    if (s[0] === '(') depth++;
+    else if (s[0] === ')') depth--;
+    else if (depth === 0) { fromAt = s.index; break; }
+  }
+  if (fromAt < 0) return [];
+
+  const out: BareColumnRef[] = [];
+  const list = masked.slice(head[0].length, fromAt);
+  const base = head[0].length;
+
+  // Xử lý từng mục của danh sách để việc loại bí danh không lan sang mục kế bên.
+  let itemStart = 0;
+  depth = 0;
+  const bounds: [number, number][] = [];
+  for (let i = 0; i < list.length; i++) {
+    if (list[i] === '(') depth++;
+    else if (list[i] === ')') depth--;
+    else if (list[i] === ',' && depth === 0) { bounds.push([itemStart, i]); itemStart = i + 1; }
+  }
+  bounds.push([itemStart, list.length]);
+
+  const ident = /[A-Za-z_]\w*/g;
+  for (const [from, to] of bounds) {
+    const item = list.slice(from, to);
+    const toks: { name: string; at: number }[] = [];
+    ident.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = ident.exec(item)) !== null) {
+      const at = m.index;
+      const before = item.slice(0, at).trimEnd();
+      const after = item.slice(at + m[0].length);
+      if (before.endsWith('.')) continue;              // `t.id` -> phần đủ tiêu chuẩn
+      if (/^\s*\./.test(after)) continue;              // `t` trong `t.id`
+      if (/^\s*\(/.test(after)) continue;              // lời gọi hàm
+      toks.push({ name: m[0], at });
+    }
+    if (!toks.length) continue;
+
+    // Bí danh: token cuối cùng của mục, nếu nó đứng sau `AS` hoặc sau một biểu thức đã kết thúc.
+    const last = toks[toks.length - 1];
+    const between = item.slice(0, last.at).trimEnd();
+    const isAlias =
+      /\bas$/i.test(between) ||
+      (toks.length > 1 && /[\w`"\])]$/.test(between));
+    const usable = isAlias ? toks.slice(0, -1) : toks;
+
+    for (const tk of usable) {
+      if (NON_COLUMN_WORDS.has(tk.name.toLowerCase())) continue;
+      out.push({ name: tk.name, offset: base + from + tk.at });
+    }
+  }
+  return out;
+}
+
 /**
  * Bản đồ alias -> tên bảng trong một câu lệnh. Cùng một bộ dò với `collectTableRefs`
  * để hover và completion không bao giờ hiểu alias khác nhau.
