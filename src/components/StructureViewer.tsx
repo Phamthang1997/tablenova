@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import type { SchemaInfo, ColumnInfo, TriggerInfo, PartitionInfo, CheckConstraintInfo } from '../utils/dbHelper';
 import * as catalog from '../sql/catalog';
 import { dbHelper } from '../utils/dbHelper';
-import { Save, Plus, Trash2, RotateCcw, AlertTriangle, CheckCircle2, Key, Search, X, Table2, ArrowRight, Copy } from 'lucide-react';
+import { Save, Plus, Trash2, RotateCcw, AlertTriangle, CheckCircle2, Key, Search, X, Table2, ArrowRight, Copy, Pencil } from 'lucide-react';
 import { Modal, ModalBody, ModalFooter } from './Modal';
 import { ConfirmDialog } from './ConfirmDialog';
 import { splitType, joinType, typeBase } from '../utils/columnType';
@@ -123,25 +123,24 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
   const [deletedIdxNames, setDeletedIdxNames] = useState<string[]>([]);
   const [editingIdxCell, setEditingIdxCell] = useState<{ rowIndex: number; field: 'name' | 'columns' | 'unique' } | null>(null);
   const [editIdxValue, setEditIdxValue] = useState<string>('');
+  const [idxModalData, setIdxModalData] = useState<{ index: number; name: string; origName?: string; columns: string[]; type: string; isNew: boolean } | null>(null);
 
   // Foreign Keys state
   const [fks, setFks] = useState<{ name: string; column: string; refTable: string; refColumn: string }[]>([]);
   const [deletedFkNames, setDeletedFkNames] = useState<string[]>([]);
-  const [editingFkCell, setEditingFkCell] = useState<{ rowIndex: number; field: 'column' | 'refTable' | 'refColumn' } | null>(null);
+  const [editingFkCell, setEditingFkCell] = useState<{ rowIndex: number; field: 'name' | 'column' | 'refTable' | 'refColumn' | 'onUpdate' | 'onDelete' } | null>(null);
   const [editFkValue, setEditFkValue] = useState<string>('');
 
   // Triggers, Partitions, Check Constraints state
   const [triggers, setTriggers] = useState<TriggerInfo[]>([]);
-  const [showAddTriggerModal, setShowAddTriggerModal] = useState<boolean>(false);
-  const [newTrigger, setNewTrigger] = useState<{ name: string; timing: string; event: string; body: string }>({ name: '', timing: 'BEFORE', event: 'INSERT', body: '' });
+  const [triggerModalData, setTriggerModalData] = useState<{ isNew: boolean; origName?: string; name: string; timing: string; event: string; body: string } | null>(null);
 
   const [partitions, setPartitions] = useState<PartitionInfo[]>([]);
   const [showAddPartitionModal, setShowAddPartitionModal] = useState<boolean>(false);
   const [newPartition, setNewPartition] = useState<{ name: string; valClause: string }>({ name: '', valClause: '' });
 
   const [constraints, setConstraints] = useState<CheckConstraintInfo[]>([]);
-  const [showAddCheckModal, setShowAddCheckModal] = useState<boolean>(false);
-  const [newCheck, setNewCheck] = useState<{ name: string; expression: string }>({ name: '', expression: '' });
+  const [checkModalData, setCheckModalData] = useState<{ isNew: boolean; origName?: string; name: string; expression: string } | null>(null);
 
   /**
    * Object waiting for a drop confirmation — one state for all three kinds, since the
@@ -599,11 +598,11 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
   };
   getColumnsOfRef.current = getColumnsOf;
 
-  const startEditFk = async (rowIndex: number, field: 'column' | 'refTable' | 'refColumn', val: any) => {
+  const startEditFk = async (rowIndex: number, field: 'name' | 'column' | 'refTable' | 'refColumn' | 'onUpdate' | 'onDelete', val: any) => {
     // See startEditCol: a click inside the open editor must not restart it.
     if (editingFkCell?.rowIndex === rowIndex && editingFkCell?.field === field) return;
     setEditingFkCell({ rowIndex, field });
-    setEditFkValue(String(val));
+    setEditFkValue(String(val || ''));
 
     if (field === 'refColumn') {
       const fkRow = fks[rowIndex];
@@ -611,7 +610,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
     }
   };
 
-  const saveEditFk = async (rowIndex: number, field: 'column' | 'refTable' | 'refColumn', specificVal?: string) => {
+  const saveEditFk = async (rowIndex: number, field: 'name' | 'column' | 'refTable' | 'refColumn' | 'onUpdate' | 'onDelete', specificVal?: string) => {
     if (!editingFkCell) return;
     const finalVal = specificVal !== undefined ? specificVal : editFkValue;
     setFks(prev => prev.map((fk, idxVal) => {
@@ -935,23 +934,83 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
 
   const changed = hasChanges();
 
-  const handleAddCheckConstraint = async () => {
-    setShowAddCheckModal(true);
+  const handleAddCheckConstraint = () => {
+    let baseName = `chk_${tableName}`;
+    let counter = 1;
+    while (constraints.some(c => c.name === `${baseName}_${counter}`)) {
+      counter++;
+    }
+    const defaultCol = cols[0]?.name ? (dbType === 'mysql' ? `\`${cols[0].name}\`` : `"${cols[0].name}"`) : '';
+    setCheckModalData({
+      isNew: true,
+      name: `${baseName}_${counter}`,
+      expression: defaultCol ? `${defaultCol} > 0` : ''
+    });
   };
 
-  const handleSaveCheckConstraint = async () => {
-    if (!newCheck.expression.trim()) return;
-    const name = newCheck.name.trim() || `chk_${tableName}_${Date.now()}`;
-    const sql = `ALTER TABLE ${tableName} ADD CONSTRAINT ${name} CHECK (${newCheck.expression.trim()});`;
-    const res = await dbHelper.executeQuery(connId, sql);
-    if (res.success) {
-      setSuccessMsg('Đã thêm Check Constraint thành công');
-      setShowAddCheckModal(false);
-      setNewCheck({ name: '', expression: '' });
-      dbHelper.getCheckConstraints(connId, tableName).then(setConstraints);
-      setTimeout(() => setSuccessMsg(null), 3000);
+  const handleEditCheckConstraint = (c: CheckConstraintInfo) => {
+    setCheckModalData({
+      isNew: false,
+      origName: c.name,
+      name: c.name,
+      expression: c.expression
+    });
+  };
+
+  const insertIntoCheckExpr = (text: string) => {
+    setCheckModalData(prev => {
+      if (!prev) return null;
+      const current = prev.expression.trim();
+      return {
+        ...prev,
+        expression: current ? `${current} ${text}` : text
+      };
+    });
+  };
+
+  const handleSaveOrUpdateCheck = async () => {
+    if (!checkModalData || !checkModalData.expression.trim()) return;
+    const isNew = checkModalData.isNew;
+    const name = checkModalData.name.trim() || `chk_${tableName}_${Date.now()}`;
+    const expr = checkModalData.expression.trim();
+
+    if (isNew) {
+      const sql = dbType === 'mysql'
+        ? `ALTER TABLE \`${tableName}\` ADD CONSTRAINT \`${name}\` CHECK (${expr});`
+        : `ALTER TABLE "${tableName}" ADD CONSTRAINT "${name}" CHECK (${expr});`;
+      const res = await dbHelper.executeQuery(connId, sql);
+      if (res.success) {
+        setSuccessMsg('Đã thêm Check Constraint thành công');
+        setCheckModalData(null);
+        dbHelper.getCheckConstraints(connId, tableName).then(setConstraints);
+        setTimeout(() => setSuccessMsg(null), 3000);
+      } else {
+        setErrorMsg(res.error || 'Lỗi khi thêm Check Constraint');
+      }
     } else {
-      setErrorMsg(res.error || 'Lỗi khi thêm Check Constraint');
+      const origName = checkModalData.origName || name;
+      const dropSql = dbType === 'mysql'
+        ? `ALTER TABLE \`${tableName}\` DROP CHECK \`${origName}\`;`
+        : `ALTER TABLE "${tableName}" DROP CONSTRAINT "${origName}";`;
+      const addSql = dbType === 'mysql'
+        ? `ALTER TABLE \`${tableName}\` ADD CONSTRAINT \`${name}\` CHECK (${expr});`
+        : `ALTER TABLE "${tableName}" ADD CONSTRAINT "${name}" CHECK (${expr});`;
+
+      const dropRes = await dbHelper.executeQuery(connId, dropSql);
+      if (!dropRes.success) {
+        setErrorMsg(dropRes.error || 'Lỗi khi cập nhật Check Constraint (xóa bản cũ)');
+        return;
+      }
+      const addRes = await dbHelper.executeQuery(connId, addSql);
+      if (addRes.success) {
+        setSuccessMsg(`Đã cập nhật Check Constraint ${name} thành công`);
+        setCheckModalData(null);
+        dbHelper.getCheckConstraints(connId, tableName).then(setConstraints);
+        setTimeout(() => setSuccessMsg(null), 3000);
+      } else {
+        setErrorMsg(addRes.error || 'Lỗi khi tạo lại Check Constraint');
+        dbHelper.getCheckConstraints(connId, tableName).then(setConstraints);
+      }
     }
   };
 
@@ -970,24 +1029,81 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
   };
 
   const handleAddTrigger = () => {
-    setShowAddTriggerModal(true);
+    let baseName = `trg_${tableName}`;
+    let counter = 1;
+    while (triggers.some(t => t.name === `${baseName}_${counter}`)) {
+      counter++;
+    }
+    setTriggerModalData({
+      isNew: true,
+      name: `${baseName}_${counter}`,
+      timing: 'BEFORE',
+      event: 'INSERT',
+      body: 'BEGIN\n  -- trigger logic\nEND;'
+    });
   };
 
-  const handleSaveTrigger = async () => {
-    if (!newTrigger.name.trim() || !newTrigger.body.trim()) return;
+  const handleEditTrigger = (trg: TriggerInfo) => {
+    setTriggerModalData({
+      isNew: false,
+      origName: trg.name,
+      name: trg.name,
+      timing: trg.timing,
+      event: trg.event,
+      body: trg.statement
+    });
+  };
+
+  const insertIntoTriggerBody = (text: string) => {
+    setTriggerModalData(prev => {
+      if (!prev) return null;
+      const current = prev.body.trim();
+      return {
+        ...prev,
+        body: current ? `${current}\n${text}` : text
+      };
+    });
+  };
+
+  const handleSaveOrUpdateTrigger = async () => {
+    if (!triggerModalData || !triggerModalData.name.trim() || !triggerModalData.body.trim()) return;
+    const isNew = triggerModalData.isNew;
+    const name = triggerModalData.name.trim();
+    const timing = triggerModalData.timing;
+    const event = triggerModalData.event;
+    const body = triggerModalData.body.trim();
+
     const triggerSql = dbType === 'mysql'
-      ? `CREATE TRIGGER \`${newTrigger.name.trim()}\` ${newTrigger.timing} ${newTrigger.event} ON \`${tableName}\` FOR EACH ROW ${newTrigger.body.trim()}`
-      : `CREATE TRIGGER "${newTrigger.name.trim()}" ${newTrigger.timing} ${newTrigger.event} ON "${tableName}" FOR EACH ROW ${newTrigger.body.trim()};`;
-    
-    const res = await dbHelper.saveTrigger(connId, triggerSql);
-    if (res.success) {
-      setSuccessMsg('Đã thêm Trigger thành công');
-      setShowAddTriggerModal(false);
-      setNewTrigger({ name: '', timing: 'BEFORE', event: 'INSERT', body: '' });
-      dbHelper.getTableTriggers(connId, tableName).then(setTriggers);
-      setTimeout(() => setSuccessMsg(null), 3000);
+      ? `CREATE TRIGGER \`${name}\` ${timing} ${event} ON \`${tableName}\` FOR EACH ROW ${body}`
+      : `CREATE TRIGGER "${name}" ${timing} ${event} ON "${tableName}" FOR EACH ROW ${body};`;
+
+    if (isNew) {
+      const res = await dbHelper.saveTrigger(connId, triggerSql);
+      if (res.success) {
+        setSuccessMsg('Đã thêm Trigger thành công');
+        setTriggerModalData(null);
+        dbHelper.getTableTriggers(connId, tableName).then(setTriggers);
+        setTimeout(() => setSuccessMsg(null), 3000);
+      } else {
+        setErrorMsg(res.error || 'Lỗi khi tạo Trigger');
+      }
     } else {
-      setErrorMsg(res.error || 'Lỗi khi tạo Trigger');
+      const origName = triggerModalData.origName || name;
+      const dropRes = await dbHelper.dropTrigger(connId, origName);
+      if (!dropRes.success) {
+        setErrorMsg(dropRes.error || 'Lỗi khi cập nhật Trigger (xóa bản cũ)');
+        return;
+      }
+      const saveRes = await dbHelper.saveTrigger(connId, triggerSql);
+      if (saveRes.success) {
+        setSuccessMsg(`Đã cập nhật Trigger ${name} thành công`);
+        setTriggerModalData(null);
+        dbHelper.getTableTriggers(connId, tableName).then(setTriggers);
+        setTimeout(() => setSuccessMsg(null), 3000);
+      } else {
+        setErrorMsg(saveRes.error || 'Lỗi khi lưu Trigger mới');
+        dbHelper.getTableTriggers(connId, tableName).then(setTriggers);
+      }
     }
   };
 
@@ -1498,7 +1614,21 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                   <tr
                     key={idx.name + '_' + index}
                     className={isNew ? 'structure-row-new' : ''}
+                    onDoubleClick={() => {
+                      if (idx.name === 'PRIMARY') return;
+                      const colList = idx.columns ? idx.columns.split(',').map((s: string) => s.trim()).filter(Boolean) : [];
+                      setIdxModalData({
+                        index,
+                        name: idx.name,
+                        origName: idx.name,
+                        columns: colList.length > 0 ? colList : (cols[0]?.name ? [cols[0].name] : []),
+                        type: idxType,
+                        isNew
+                      });
+                    }}
                     onContextMenu={(e) => handleRowContextMenu(e, 'index', index, idx.name)}
+                    style={{ cursor: idx.name === 'PRIMARY' ? 'default' : 'pointer' }}
+                    title={idx.name === 'PRIMARY' ? undefined : "Nhấp đúp hoặc bấm biểu tượng bút để chỉnh sửa Index"}
                   >
                     {/* Index Name */}
                     <td
@@ -1604,14 +1734,35 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
 
                     {/* Actions */}
                     <td style={{ textAlign: 'center' }}>
-                      <button
-                        className="st-row-del"
-                        onClick={() => handleDeleteIndex(idx.name, isNew)}
-                        disabled={idx.name === 'PRIMARY'}
-                        title={idx.name === 'PRIMARY' ? 'Cannot drop primary key index' : t('structure.dropIndex')}
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                        <button
+                          className="st-row-edit"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const colList = idx.columns ? idx.columns.split(',').map((s: string) => s.trim()).filter(Boolean) : [];
+                            setIdxModalData({
+                              index,
+                              name: idx.name,
+                              origName: idx.name,
+                              columns: colList.length > 0 ? colList : (cols[0]?.name ? [cols[0].name] : []),
+                              type: idxType,
+                              isNew
+                            });
+                          }}
+                          disabled={idx.name === 'PRIMARY'}
+                          title={idx.name === 'PRIMARY' ? 'Primary Key không thể sửa dạng index thường' : "Chỉnh sửa Index"}
+                        >
+                          <Pencil size={13} />
+                        </button>
+                        <button
+                          className="st-row-del"
+                          onClick={() => handleDeleteIndex(idx.name, isNew)}
+                          disabled={idx.name === 'PRIMARY'}
+                          title={idx.name === 'PRIMARY' ? 'Cannot drop primary key index' : t('structure.dropIndex')}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -1651,10 +1802,47 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                   <tr
                     key={fk.name + '_' + index}
                     className={isNew ? 'structure-row-new' : ''}
+                    onDoubleClick={() => {
+                      setFkModalData({
+                        name: fk.name,
+                        origName: fk.name,
+                        column: fk.column,
+                        refTable: fk.refTable,
+                        refColumn: fk.refColumn,
+                        onUpdate: (fk as any).onUpdate || 'NO ACTION',
+                        onDelete: (fk as any).onDelete || 'NO ACTION',
+                        isNew: false
+                      });
+                    }}
                     onContextMenu={(e) => handleRowContextMenu(e, 'fk', index, fk.name)}
+                    style={{ cursor: 'pointer' }}
+                    title="Nhấp đúp hoặc bấm biểu tượng bút để mở hộp thoại Foreign Key"
                   >
                     {/* FK Name */}
-                    <td style={{ fontWeight: 600, color: 'var(--win-text-secondary)' }}>{fk.name}</td>
+                    <td
+                      className={`st-edit ${isEditing && editingFkCell?.field === 'name' ? 'is-editing' : ''}`}
+                      onClick={() => startEditFk(index, 'name', fk.name)}
+                      title={t('structure.editHint')}
+                      style={{ fontWeight: 600, color: 'var(--win-text-primary)', position: 'relative' }}
+                    >
+                      {isEditing && editingFkCell?.field === 'name' ? (
+                        <>
+                          <span className="st-cell-ghost">{fk.name}</span>
+                          <input
+                            type="text"
+                            className="form-input st-cell-input st-cell-input-overlay"
+                            value={editFkValue}
+                            onChange={e => setEditFkValue(e.target.value)}
+                            onBlur={() => saveEditFk(index, 'name')}
+                            onKeyDown={e => e.key === 'Enter' && saveEditFk(index, 'name')}
+                            onClick={e => e.stopPropagation()}
+                            autoFocus
+                          />
+                        </>
+                      ) : (
+                        <span>{fk.name}</span>
+                      )}
+                    </td>
 
                     {/* Local Source Column */}
                     <td
@@ -1824,13 +2012,37 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
 
                     {/* Actions */}
                     <td style={{ textAlign: 'center' }}>
-                      <button
-                        className="st-row-del"
-                        onClick={() => handleDeleteFK(fk.name, isNew)}
-                        title={t('structure.dropFk')}
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                        <button
+                          className="st-row-edit"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setFkModalData({
+                              name: fk.name,
+                              origName: fk.name,
+                              column: fk.column,
+                              refTable: fk.refTable,
+                              refColumn: fk.refColumn,
+                              onUpdate: (fk as any).onUpdate || 'NO ACTION',
+                              onDelete: (fk as any).onDelete || 'NO ACTION',
+                              isNew: false
+                            });
+                          }}
+                          title="Chỉnh sửa Khóa ngoại"
+                        >
+                          <Pencil size={13} />
+                        </button>
+                        <button
+                          className="st-row-del"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteFK(fk.name, isNew);
+                          }}
+                          title={t('structure.dropFk')}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -1852,20 +2064,44 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                 <th>Tên Constraint</th>
                 <th>Biểu thức Check</th>
                 <th style={{ width: '100px' }}>Thực thi</th>
-                <th style={{ width: '70px', textAlign: 'center' }}>Thao tác</th>
+                <th style={{ width: '80px', textAlign: 'center' }}>Thao tác</th>
               </tr>
             </thead>
             <tbody>
               {constraints.map((c, idx) => (
-                <tr key={c.name || idx}>
+                <tr
+                  key={c.name || idx}
+                  onDoubleClick={() => handleEditCheckConstraint(c)}
+                  style={{ cursor: 'pointer' }}
+                  title="Nhấp đúp hoặc bấm biểu tượng bút để chỉnh sửa Check Constraint"
+                >
                   <td style={{ textAlign: 'center', color: 'var(--win-text-disabled)' }}>{idx + 1}</td>
                   <td style={{ fontWeight: 600, color: 'var(--win-accent)', fontFamily: 'var(--win-font-mono)' }}>{c.name}</td>
                   <td style={{ fontFamily: 'var(--win-font-mono)', color: 'var(--win-text-primary)' }}>{c.expression}</td>
                   <td><span className={`st-badge ${c.enforced ? 'st-badge-enforced' : 'st-badge-warn'}`}>{c.enforced ? 'ENFORCED' : 'DISABLED'}</span></td>
                   <td style={{ textAlign: 'center' }}>
-                    <button className="st-row-del" onClick={() => handleDropCheckConstraint(c.name)} title="Xóa Check Constraint">
-                      <Trash2 size={14} />
-                    </button>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                      <button
+                        className="st-row-edit"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleEditCheckConstraint(c);
+                        }}
+                        title="Chỉnh sửa Check Constraint"
+                      >
+                        <Pencil size={13} />
+                      </button>
+                      <button
+                        className="st-row-del"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDropCheckConstraint(c.name);
+                        }}
+                        title="Xóa Check Constraint"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -1885,21 +2121,45 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                 <th style={{ width: '100px' }}>Thời điểm</th>
                 <th style={{ width: '100px' }}>Sự kiện</th>
                 <th>Nội dung Trigger Body</th>
-                <th style={{ width: '70px', textAlign: 'center' }}>Thao tác</th>
+                <th style={{ width: '80px', textAlign: 'center' }}>Thao tác</th>
               </tr>
             </thead>
             <tbody>
               {triggers.map((trg, idx) => (
-                <tr key={trg.name || idx}>
+                <tr
+                  key={trg.name || idx}
+                  onDoubleClick={() => handleEditTrigger(trg)}
+                  style={{ cursor: 'pointer' }}
+                  title="Nhấp đúp hoặc bấm biểu tượng bút để chỉnh sửa Trigger"
+                >
                   <td style={{ textAlign: 'center', color: 'var(--win-text-disabled)' }}>{idx + 1}</td>
                   <td style={{ fontWeight: 600, color: 'var(--win-accent)', fontFamily: 'var(--win-font-mono)' }}>{trg.name}</td>
                   <td><span style={{ fontWeight: 600, color: '#60a5fa' }}>{trg.timing}</span></td>
                   <td><span style={{ fontWeight: 600, color: '#f59e0b' }}>{trg.event}</span></td>
                   <td style={{ fontFamily: 'var(--win-font-mono)', fontSize: '11px', whiteSpace: 'pre-wrap', color: 'var(--win-text-primary)' }}>{trg.statement}</td>
                   <td style={{ textAlign: 'center' }}>
-                    <button className="st-row-del" onClick={() => handleDropTrigger(trg.name)} title="Xóa Trigger">
-                      <Trash2 size={14} />
-                    </button>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                      <button
+                        className="st-row-edit"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleEditTrigger(trg);
+                        }}
+                        title="Chỉnh sửa Trigger"
+                      >
+                        <Pencil size={13} />
+                      </button>
+                      <button
+                        className="st-row-del"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDropTrigger(trg.name);
+                        }}
+                        title="Xóa Trigger"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -2095,21 +2355,30 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
           width="500px"
           zIndex={9999}
         >
-          <ModalBody style={{ display: 'flex', flexDirection: 'column', gap: '14px', padding: '16px 20px', fontSize: '12px' }}>
+          <ModalBody style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '16px 20px' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', alignItems: 'center', gap: '12px' }}>
-              <span style={{ fontWeight: 600, color: 'var(--win-text-secondary)', textAlign: 'right' }}>Table</span>
-              <select className="form-input" value={tableName} disabled style={{ width: '100%', padding: '4px 8px', height: '30px' }}>
-                <option value={tableName}>{tableName}</option>
-              </select>
+              <span style={{ fontWeight: 600, color: 'var(--win-text-secondary)', textAlign: 'right' }}>Name</span>
+              <input
+                type="text"
+                className="form-input"
+                value={fkModalData.name || `fk_${tableName}_col_${fkModalData.column}`}
+                onChange={e => setFkModalData({ ...fkModalData, name: e.target.value })}
+                style={{ width: '100%', padding: '4px 8px', height: '30px' }}
+              />
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', alignItems: 'center', gap: '12px' }}>
-              <span style={{ fontWeight: 600, color: 'var(--win-text-secondary)', textAlign: 'right' }}>Columns</span>
-              <div style={{ padding: '4px 8px', border: '1px solid var(--win-border)', borderRadius: '6px', background: 'var(--win-bg-input)', display: 'flex', alignItems: 'center' }}>
-                <span style={{ background: 'rgba(59, 130, 246, 0.15)', color: 'var(--win-accent)', padding: '2px 8px', borderRadius: '4px', fontWeight: 600 }}>
-                  {fkModalData.column}
-                </span>
-              </div>
+              <span style={{ fontWeight: 600, color: 'var(--win-text-secondary)', textAlign: 'right' }}>Column</span>
+              <select
+                className="form-input"
+                value={fkModalData.column}
+                onChange={e => setFkModalData({ ...fkModalData, column: e.target.value })}
+                style={{ width: '100%', padding: '4px 8px', height: '30px' }}
+              >
+                {cols.map(c => (
+                  <option key={c.name} value={c.name}>{c.name}</option>
+                ))}
+              </select>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', alignItems: 'center', gap: '12px' }}>
@@ -2143,10 +2412,6 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                 style={{ width: '100%', padding: '4px 8px', height: '30px' }}
               >
                 <option value="">{loadingRefCols ? t('structure.loadingColumns') : (fkModalData.refTable ? 'Select column...' : 'Select a table first...')}</option>
-                {/* Fallback option for current value if refColumns hasn't loaded yet */}
-                {fkModalData.refColumn && !refColumns.includes(fkModalData.refColumn) && (
-                  <option value={fkModalData.refColumn}>{fkModalData.refColumn}</option>
-                )}
                 {refColumns.map(col => (
                   <option key={col} value={col}>{col}</option>
                 ))}
@@ -2205,13 +2470,11 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
               disabled={!fkModalData.refTable || !fkModalData.refColumn}
               onClick={() => {
                 if (fkModalData.isNew) {
-                  let baseName = `fk_${tableName}_col_${fkModalData.column}`;
-                  let counter = 1;
-                  while (fks.some(f => f.name === `${baseName}_${counter}`)) counter++;
+                  let baseName = fkModalData.name || `fk_${tableName}_col_${fkModalData.column}`;
                   setFks(prev => [
                     ...prev,
                     {
-                      name: `${baseName}_${counter}`,
+                      name: baseName,
                       column: fkModalData.column,
                       refTable: fkModalData.refTable,
                       refColumn: fkModalData.refColumn,
@@ -2224,6 +2487,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
                     if (f.name === fkModalData.origName || f.column === fkModalData.column) {
                       return {
                         ...f,
+                        name: fkModalData.name,
                         refTable: fkModalData.refTable,
                         refColumn: fkModalData.refColumn,
                         onUpdate: fkModalData.onUpdate,
@@ -2241,60 +2505,399 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
           </ModalFooter>
         </Modal>
       )}
-      {/* Add Check Constraint Modal */}
-      {showAddCheckModal && (
-        <Modal title="Thêm Check Constraint" onClose={() => setShowAddCheckModal(false)} width="480px" zIndex={999999}>
-          <ModalBody style={{ gap: '12px' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <label style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>Tên Constraint (tùy chọn):</label>
-              <input type="text" placeholder={`chk_${tableName}_...`} value={newCheck.name} onChange={e => setNewCheck({ ...newCheck, name: e.target.value })} style={{ padding: '6px 10px', fontSize: '12px', borderRadius: '4px', border: '1px solid var(--win-border)', background: 'var(--win-bg-input)', color: 'var(--win-text-primary)' }} />
+
+      {/* Index Window Modal (Chỉnh sửa / Thêm Index trực quan) */}
+      {idxModalData && (
+        <Modal
+          title={idxModalData.isNew ? "Thêm Index Mới" : "Chỉnh sửa Index"}
+          onClose={() => setIdxModalData(null)}
+          width="500px"
+          zIndex={9999}
+        >
+          <ModalBody style={{ display: 'flex', flexDirection: 'column', gap: '14px', padding: '16px 20px' }}>
+            {/* Tên Index */}
+            <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', alignItems: 'center', gap: '12px' }}>
+              <span style={{ fontWeight: 600, color: 'var(--win-text-secondary)', textAlign: 'right' }}>Tên Index</span>
+              <input
+                type="text"
+                className="form-input"
+                value={idxModalData.name}
+                onChange={e => setIdxModalData({ ...idxModalData, name: e.target.value })}
+                placeholder="vd: idx_table_col"
+                style={{ width: '100%', padding: '4px 8px', height: '30px' }}
+              />
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <label style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>Biểu thức Check (Expression):</label>
-              <input type="text" placeholder="vd: amount > 0 AND status <> 'CANCELLED'" value={newCheck.expression} onChange={e => setNewCheck({ ...newCheck, expression: e.target.value })} style={{ padding: '6px 10px', fontSize: '12px', borderRadius: '4px', border: '1px solid var(--win-border)', background: 'var(--win-bg-input)', color: 'var(--win-text-primary)' }} />
+
+            {/* Loại Index */}
+            <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', alignItems: 'center', gap: '12px' }}>
+              <span style={{ fontWeight: 600, color: 'var(--win-text-secondary)', textAlign: 'right' }}>Loại Index</span>
+              <select
+                className="form-input"
+                value={idxModalData.type}
+                onChange={e => setIdxModalData({ ...idxModalData, type: e.target.value })}
+                style={{ width: '100%', padding: '4px 8px', height: '30px' }}
+              >
+                <option value="INDEX">INDEX (Bình thường)</option>
+                <option value="UNIQUE">UNIQUE (Duy nhất)</option>
+                {dbType === 'mysql' && <option value="FULLTEXT">FULLTEXT (Toàn văn)</option>}
+                {dbType === 'mysql' && <option value="SPATIAL">SPATIAL (Không gian)</option>}
+              </select>
+            </div>
+
+            {/* Cột mục tiêu (Multi-column selector) */}
+            <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', alignItems: 'flex-start', gap: '12px' }}>
+              <span style={{ fontWeight: 600, color: 'var(--win-text-secondary)', textAlign: 'right', paddingTop: '4px' }}>Cột chỉ mục</span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <div className="st-chips-row">
+                  {cols.map(c => {
+                    const isSelected = idxModalData.columns.includes(c.name);
+                    return (
+                      <button
+                        key={c.name}
+                        type="button"
+                        className={`st-chip-btn ${isSelected ? 'operator' : ''}`}
+                        onClick={() => {
+                          const exists = idxModalData.columns.includes(c.name);
+                          const nextCols = exists
+                            ? idxModalData.columns.filter(n => n !== c.name)
+                            : [...idxModalData.columns, c.name];
+                          setIdxModalData({
+                            ...idxModalData,
+                            columns: nextCols
+                          });
+                        }}
+                        style={{
+                          background: isSelected ? 'var(--win-accent-glow)' : undefined,
+                          borderColor: isSelected ? 'var(--win-accent)' : undefined,
+                          fontWeight: isSelected ? 600 : 400
+                        }}
+                      >
+                        <span>{isSelected ? '✓' : '+'}</span> {c.name}
+                      </button>
+                    );
+                  })}
+                </div>
+                {idxModalData.columns.length > 0 ? (
+                  <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>
+                    Thứ tự cột: <strong style={{ color: 'var(--win-accent)' }}>{idxModalData.columns.join(', ')}</strong>
+                  </div>
+                ) : (
+                  <div style={{ fontSize: '11px', color: 'var(--st-danger)' }}>
+                    Vui lòng chọn ít nhất 1 cột
+                  </div>
+                )}
+              </div>
             </div>
           </ModalBody>
-          <ModalFooter>
-            <button className="btn btn-secondary" onClick={() => setShowAddCheckModal(false)}>Hủy</button>
-            <button className="btn btn-primary" onClick={handleSaveCheckConstraint} style={{ background: 'var(--win-accent)', color: '#fff', border: 'none' }}>Tạo Constraint</button>
+          <ModalFooter style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', padding: '12px 20px' }}>
+            <button className="btn btn-secondary" onClick={() => setIdxModalData(null)}>Hủy</button>
+            <button
+              className="btn btn-primary"
+              disabled={!idxModalData.name.trim() || idxModalData.columns.length === 0}
+              onClick={() => {
+                const colsStr = idxModalData.columns.join(', ');
+                const isUnique = idxModalData.type === 'UNIQUE';
+                const typeStr = idxModalData.type;
+
+                if (idxModalData.isNew) {
+                  setIdxs(prev => [
+                    ...prev,
+                    {
+                      name: idxModalData.name.trim(),
+                      columns: colsStr,
+                      unique: isUnique,
+                      type: typeStr
+                    } as any
+                  ]);
+                } else {
+                  setIdxs(prev => prev.map((item, i) => {
+                    if (i === idxModalData.index) {
+                      return {
+                        ...item,
+                        name: idxModalData.name.trim(),
+                        columns: colsStr,
+                        unique: isUnique,
+                        type: typeStr
+                      } as any;
+                    }
+                    return item;
+                  }));
+                }
+                setIdxModalData(null);
+              }}
+            >
+              {idxModalData.isNew ? "Tạo Index" : "Lưu thay đổi"}
+            </button>
           </ModalFooter>
         </Modal>
       )}
 
-      {/* Add Trigger Modal */}
-      {showAddTriggerModal && (
-        <Modal title="Thêm Trigger Mới" onClose={() => setShowAddTriggerModal(false)} width="560px" zIndex={999999}>
-          <ModalBody style={{ gap: '12px' }}>
+      {/* Visual Check Constraint Modal (Thêm & Chỉnh sửa trực quan) */}
+      {checkModalData && (
+        <Modal
+          title={checkModalData.isNew ? "Thêm Check Constraint" : "Chỉnh sửa Check Constraint"}
+          onClose={() => setCheckModalData(null)}
+          width="540px"
+          zIndex={999999}
+        >
+          <ModalBody style={{ gap: '14px' }}>
+            {/* Tên Constraint */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <label style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>Tên Trigger:</label>
-              <input type="text" placeholder="vd: trg_update_timestamp" value={newTrigger.name} onChange={e => setNewTrigger({ ...newTrigger, name: e.target.value })} style={{ padding: '6px 10px', fontSize: '12px', borderRadius: '4px', border: '1px solid var(--win-border)', background: 'var(--win-bg-input)', color: 'var(--win-text-primary)' }} />
+              <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)' }}>Tên Constraint:</label>
+              <input
+                type="text"
+                placeholder={`chk_${tableName}_...`}
+                value={checkModalData.name}
+                onChange={e => setCheckModalData({ ...checkModalData, name: e.target.value })}
+                style={{ padding: '7px 10px', fontSize: '12px', borderRadius: '6px', border: '1px solid var(--win-border)', background: 'var(--win-bg-input)', color: 'var(--win-text-primary)' }}
+              />
             </div>
+
+            {/* Quick Columns helper chips */}
+            {cols.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)' }}>Chọn nhanh cột trong bảng:</label>
+                <div className="st-chips-row">
+                  {cols.map(c => (
+                    <button
+                      key={c.name}
+                      type="button"
+                      className="st-chip-btn"
+                      onClick={() => insertIntoCheckExpr(dbType === 'mysql' ? `\`${c.name}\`` : `"${c.name}"`)}
+                      title={`Chèn cột ${c.name}`}
+                    >
+                      <span>+</span> {c.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Quick Operators helper chips */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)' }}>Toán tử nhanh:</label>
+              <div className="st-chips-row">
+                {['>', '<', '>=', '<=', '=', '<>', 'BETWEEN', 'IN', 'IS NOT NULL', 'LIKE', 'AND', 'OR'].map(op => (
+                  <button
+                    key={op}
+                    type="button"
+                    className="st-chip-btn operator"
+                    onClick={() => insertIntoCheckExpr(op)}
+                    title={`Chèn toán tử ${op}`}
+                  >
+                    {op}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Mẫu điều kiện phổ biến */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)' }}>Mẫu kiểm tra phổ biến:</label>
+              <div className="st-chips-row">
+                <button
+                  type="button"
+                  className="st-tpl-btn"
+                  onClick={() => {
+                    const col = cols[0]?.name ? (dbType === 'mysql' ? `\`${cols[0].name}\`` : `"${cols[0].name}"`) : 'col';
+                    setCheckModalData({ ...checkModalData, expression: `${col} > 0` });
+                  }}
+                >
+                  💡 Lớn hơn 0 (col &gt; 0)
+                </button>
+                <button
+                  type="button"
+                  className="st-tpl-btn"
+                  onClick={() => {
+                    const col = cols[0]?.name ? (dbType === 'mysql' ? `\`${cols[0].name}\`` : `"${cols[0].name}"`) : 'col';
+                    setCheckModalData({ ...checkModalData, expression: `${col} >= 0` });
+                  }}
+                >
+                  💡 Không âm (col &ge; 0)
+                </button>
+                <button
+                  type="button"
+                  className="st-tpl-btn"
+                  onClick={() => {
+                    const col = cols[0]?.name ? (dbType === 'mysql' ? `\`${cols[0].name}\`` : `"${cols[0].name}"`) : 'col';
+                    setCheckModalData({ ...checkModalData, expression: `${col} BETWEEN 1 AND 100` });
+                  }}
+                >
+                  💡 Trong khoảng (BETWEEN)
+                </button>
+                <button
+                  type="button"
+                  className="st-tpl-btn"
+                  onClick={() => {
+                    const col = cols[0]?.name ? (dbType === 'mysql' ? `\`${cols[0].name}\`` : `"${cols[0].name}"`) : 'col';
+                    setCheckModalData({ ...checkModalData, expression: `${col} IN ('A', 'B', 'C')` });
+                  }}
+                >
+                  💡 Danh sách (IN)
+                </button>
+              </div>
+            </div>
+
+            {/* Biểu thức Check Expression */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)' }}>Biểu thức Check (Expression):</label>
+              <textarea
+                rows={3}
+                placeholder={dbType === 'mysql' ? "vd: `amount` > 0 AND `status` <> 'CANCELLED'" : 'vd: "amount" > 0 AND "status" <> \'CANCELLED\''}
+                value={checkModalData.expression}
+                onChange={e => setCheckModalData({ ...checkModalData, expression: e.target.value })}
+                style={{ padding: '8px 10px', fontSize: '12px', fontFamily: 'var(--win-font-mono)', borderRadius: '6px', border: '1px solid var(--win-border)', background: 'var(--win-bg-input)', color: 'var(--win-text-primary)' }}
+              />
+            </div>
+          </ModalBody>
+          <ModalFooter>
+            <button className="btn btn-secondary" onClick={() => setCheckModalData(null)}>Hủy</button>
+            <button
+              className="btn btn-primary"
+              disabled={!checkModalData.expression.trim()}
+              onClick={handleSaveOrUpdateCheck}
+              style={{ background: 'var(--win-accent)', color: '#fff', border: 'none' }}
+            >
+              {checkModalData.isNew ? "Tạo Constraint" : "Lưu thay đổi"}
+            </button>
+          </ModalFooter>
+        </Modal>
+      )}
+
+      {/* Visual Trigger Modal (Thêm & Chỉnh sửa trực quan) */}
+      {triggerModalData && (
+        <Modal
+          title={triggerModalData.isNew ? "Thêm Trigger Mới" : "Chỉnh sửa Trigger"}
+          onClose={() => setTriggerModalData(null)}
+          width="580px"
+          zIndex={999999}
+        >
+          <ModalBody style={{ gap: '14px' }}>
+            {/* Tên Trigger */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)' }}>Tên Trigger:</label>
+              <input
+                type="text"
+                placeholder="vd: trg_update_timestamp"
+                value={triggerModalData.name}
+                onChange={e => setTriggerModalData({ ...triggerModalData, name: e.target.value })}
+                style={{ padding: '7px 10px', fontSize: '12px', borderRadius: '6px', border: '1px solid var(--win-border)', background: 'var(--win-bg-input)', color: 'var(--win-text-primary)' }}
+              />
+            </div>
+
+            {/* Timing & Event */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                <label style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>Thời điểm (Timing):</label>
-                <select value={newTrigger.timing} onChange={e => setNewTrigger({ ...newTrigger, timing: e.target.value })} style={{ padding: '6px 10px', fontSize: '12px', borderRadius: '4px', border: '1px solid var(--win-border)', background: 'var(--win-bg-input)', color: 'var(--win-text-primary)' }}>
+                <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)' }}>Thời điểm (Timing):</label>
+                <select
+                  value={triggerModalData.timing}
+                  onChange={e => setTriggerModalData({ ...triggerModalData, timing: e.target.value })}
+                  style={{ padding: '7px 10px', fontSize: '12px', borderRadius: '6px', border: '1px solid var(--win-border)', background: 'var(--win-bg-input)', color: 'var(--win-text-primary)' }}
+                >
                   <option value="BEFORE">BEFORE</option>
                   <option value="AFTER">AFTER</option>
                   <option value="INSTEAD OF">INSTEAD OF</option>
                 </select>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                <label style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>Sự kiện (Event):</label>
-                <select value={newTrigger.event} onChange={e => setNewTrigger({ ...newTrigger, event: e.target.value })} style={{ padding: '6px 10px', fontSize: '12px', borderRadius: '4px', border: '1px solid var(--win-border)', background: 'var(--win-bg-input)', color: 'var(--win-text-primary)' }}>
+                <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)' }}>Sự kiện (Event):</label>
+                <select
+                  value={triggerModalData.event}
+                  onChange={e => setTriggerModalData({ ...triggerModalData, event: e.target.value })}
+                  style={{ padding: '7px 10px', fontSize: '12px', borderRadius: '6px', border: '1px solid var(--win-border)', background: 'var(--win-bg-input)', color: 'var(--win-text-primary)' }}
+                >
                   <option value="INSERT">INSERT</option>
                   <option value="UPDATE">UPDATE</option>
                   <option value="DELETE">DELETE</option>
                 </select>
               </div>
             </div>
+
+            {/* Quick Column Badges */}
+            {cols.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)' }}>Chèn nhanh trường dữ liệu:</label>
+                <div className="st-chips-row">
+                  {cols.slice(0, 10).map(c => (
+                    <React.Fragment key={c.name}>
+                      <button
+                        type="button"
+                        className="st-chip-btn"
+                        onClick={() => insertIntoTriggerBody(`NEW.${c.name}`)}
+                        title={`Chèn NEW.${c.name}`}
+                      >
+                        <span>+</span> NEW.{c.name}
+                      </button>
+                      <button
+                        type="button"
+                        className="st-chip-btn"
+                        onClick={() => insertIntoTriggerBody(`OLD.${c.name}`)}
+                        title={`Chèn OLD.${c.name}`}
+                      >
+                        <span>+</span> OLD.{c.name}
+                      </button>
+                    </React.Fragment>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Mẫu Trigger thường dùng */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)' }}>Mẫu câu lệnh thường dùng:</label>
+              <div className="st-chips-row">
+                <button
+                  type="button"
+                  className="st-tpl-btn"
+                  onClick={() => {
+                    setTriggerModalData({
+                      ...triggerModalData,
+                      timing: 'BEFORE',
+                      event: 'UPDATE',
+                      body: 'BEGIN\n  SET NEW.updated_at = NOW();\nEND;'
+                    });
+                  }}
+                >
+                  💡 Cập nhật timestamp (updated_at)
+                </button>
+                <button
+                  type="button"
+                  className="st-tpl-btn"
+                  onClick={() => {
+                    const col = cols[0]?.name || 'id';
+                    setTriggerModalData({
+                      ...triggerModalData,
+                      body: `BEGIN\n  IF NEW.${col} IS NULL THEN\n    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Giá trị không được để trống';\n  END IF;\nEND;`
+                    });
+                  }}
+                >
+                  💡 Kiểm tra & Chặn dữ liệu (SIGNAL)
+                </button>
+              </div>
+            </div>
+
+            {/* Thân Trigger */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <label style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>Thân Trigger (Action Statement):</label>
-              <textarea rows={5} placeholder="BEGIN SET NEW.updated_at = NOW(); END;" value={newTrigger.body} onChange={e => setNewTrigger({ ...newTrigger, body: e.target.value })} style={{ padding: '8px 10px', fontSize: '12px', fontFamily: 'var(--win-font-mono)', borderRadius: '4px', border: '1px solid var(--win-border)', background: 'var(--win-bg-input)', color: 'var(--win-text-primary)' }} />
+              <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)' }}>Thân Trigger (Action Statement):</label>
+              <textarea
+                rows={6}
+                placeholder="BEGIN\n  -- SQL statements\nEND;"
+                value={triggerModalData.body}
+                onChange={e => setTriggerModalData({ ...triggerModalData, body: e.target.value })}
+                style={{ padding: '8px 10px', fontSize: '12px', fontFamily: 'var(--win-font-mono)', borderRadius: '6px', border: '1px solid var(--win-border)', background: 'var(--win-bg-input)', color: 'var(--win-text-primary)', lineHeight: 1.5 }}
+              />
             </div>
           </ModalBody>
           <ModalFooter>
-            <button className="btn btn-secondary" onClick={() => setShowAddTriggerModal(false)}>Hủy</button>
-            <button className="btn btn-primary" onClick={handleSaveTrigger} style={{ background: 'var(--win-accent)', color: '#fff', border: 'none' }}>Tạo Trigger</button>
+            <button className="btn btn-secondary" onClick={() => setTriggerModalData(null)}>Hủy</button>
+            <button
+              className="btn btn-primary"
+              disabled={!triggerModalData.name.trim() || !triggerModalData.body.trim()}
+              onClick={handleSaveOrUpdateTrigger}
+              style={{ background: 'var(--win-accent)', color: '#fff', border: 'none' }}
+            >
+              {triggerModalData.isNew ? "Tạo Trigger" : "Lưu thay đổi"}
+            </button>
           </ModalFooter>
         </Modal>
       )}

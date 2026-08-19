@@ -4,7 +4,7 @@ import { RefreshCw, Trash2, Save, Timer } from 'lucide-react';
 import i18n from '../../i18n';
 import { dbHelper, type RedisSlowLogEntry } from '../../utils/dbHelper';
 import { ConfirmDialog } from '../ConfirmDialog';
-import { cellStyle, formatMicros } from './shared';
+import { formatMicros } from './shared';
 
 interface SlowLogProps {
   readOnly: boolean;
@@ -72,33 +72,33 @@ export const SlowLog: React.FC<SlowLogProps> = ({ readOnly, onError, onOk, onBlo
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', minHeight: 0 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--win-text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+    <div className="redis-panel tight">
+      <div className="redis-value-bar">
+        <span className="redis-tool-title">
           <Timer size={14} /> {t('redis.slowlogTitle')}
         </span>
-        <span style={{ fontSize: '10px', color: 'var(--win-text-disabled)' }}>{t('redis.slowlogLen', { n: len.toLocaleString() })}</span>
-        <div style={{ flex: 1 }} />
-        <label style={{ fontSize: '10px', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: 'var(--win-text-secondary)' }}>
+        <span className="redis-value-meta">{t('redis.slowlogLen', { n: len.toLocaleString() })}</span>
+        <div className="redis-keylist-spacer" />
+        <label className="redis-tool-check">
           <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} />
           {t('redis.autoRefresh5s')}
         </label>
-        <button className="btn btn-secondary" onClick={load} disabled={loading} style={{ padding: '0 10px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+        <button className="btn btn-secondary redis-value-save" onClick={load} disabled={loading}>
           <RefreshCw size={11} /> {t('redis.refresh')}
         </button>
-        <button className="btn btn-secondary" onClick={() => setConfirmReset(true)} disabled={readOnly} style={{ padding: '0 10px', display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--st-danger)' }}>
+        <button className="btn btn-secondary redis-value-save danger" onClick={() => setConfirmReset(true)} disabled={readOnly}>
           <Trash2 size={11} /> {t('redis.slowlogResetBtn')}
         </button>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', fontSize: '10px', color: 'var(--win-text-secondary)' }}>
+      <div className="redis-value-bar config">
         <span>{t('redis.slowlogThreshold')}</span>
         <input
           type="text"
           value={threshold}
           onChange={(e) => setThreshold(e.target.value)}
           disabled={readOnly}
-          style={{ width: '90px', background: 'var(--win-bg-window)', border: '1px solid var(--win-border)', color: 'var(--win-text-primary)', borderRadius: '4px', fontSize: '11px', fontFamily: 'var(--win-font-mono)', padding: '3px 6px' }}
+          className="redis-tool-input narrow"
         />
         <span>{t('redis.slowlogMaxLen')}</span>
         <input
@@ -106,38 +106,38 @@ export const SlowLog: React.FC<SlowLogProps> = ({ readOnly, onError, onOk, onBlo
           value={maxLen}
           onChange={(e) => setMaxLen(e.target.value)}
           disabled={readOnly}
-          style={{ width: '90px', background: 'var(--win-bg-window)', border: '1px solid var(--win-border)', color: 'var(--win-text-primary)', borderRadius: '4px', fontSize: '11px', fontFamily: 'var(--win-font-mono)', padding: '3px 6px' }}
+          className="redis-tool-input narrow"
         />
         {!readOnly && (
-          <button className="btn btn-secondary" onClick={saveConfig} style={{ padding: '0 8px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <button className="btn btn-secondary redis-keylist-mode" onClick={saveConfig}>
             <Save size={10} /> {t('common.save')}
           </button>
         )}
-        <span style={{ color: 'var(--win-text-disabled)' }}>{t('redis.slowlogConfigNote')}</span>
+        <span className="redis-cell-hint">{t('redis.slowlogConfigNote')}</span>
       </div>
 
-      <div style={{ border: '1px solid var(--win-border)', borderRadius: '4px', overflow: 'auto', background: 'var(--win-bg-window)' }}>
-        <table className="grid-table" style={{ width: '100%' }}>
+      <div className="redis-table-wrap">
+        <table className="grid-table redis-table">
           <thead>
             <tr>
-              <th style={{ width: '60px' }}>ID</th>
-              <th style={{ width: '150px' }}>{t('redis.colTime')}</th>
-              <th style={{ width: '90px' }}>{t('redis.colDuration')}</th>
+              <th className="redis-col-60">ID</th>
+              <th className="redis-col-150">{t('redis.colTime')}</th>
+              <th className="redis-col-90">{t('redis.colDuration')}</th>
               <th>{t('redis.colCommand')}</th>
-              <th style={{ width: '130px' }}>{t('redis.colClient')}</th>
+              <th className="redis-col-130">{t('redis.colClient')}</th>
             </tr>
           </thead>
           <tbody>
             {entries.length === 0 && (
-              <tr><td colSpan={5} style={{ textAlign: 'center', padding: '12px', color: 'var(--win-text-disabled)' }}>{t('redis.slowlogEmpty')}</td></tr>
+              <tr><td colSpan={5} className="redis-table-empty">{t('redis.slowlogEmpty')}</td></tr>
             )}
             {entries.map((e) => (
               <tr key={e.id}>
-                <td style={cellStyle}>{e.id}</td>
-                <td style={cellStyle}>{new Date(e.timestamp * 1000).toLocaleString(i18n.language)}</td>
-                <td style={{ ...cellStyle, color: e.durationUs > 100_000 ? 'var(--st-danger)' : undefined }}>{formatMicros(e.durationUs)}</td>
-                <td style={cellStyle}>{e.args.join(' ')}</td>
-                <td style={cellStyle}>{e.clientName ? `${e.clientAddr} (${e.clientName})` : e.clientAddr}</td>
+                <td className="redis-cell">{e.id}</td>
+                <td className="redis-cell">{new Date(e.timestamp * 1000).toLocaleString(i18n.language)}</td>
+                <td className={`redis-cell${e.durationUs > 100_000 ? ' slow' : ''}`}>{formatMicros(e.durationUs)}</td>
+                <td className="redis-cell">{e.args.join(' ')}</td>
+                <td className="redis-cell">{e.clientName ? `${e.clientAddr} (${e.clientName})` : e.clientAddr}</td>
               </tr>
             ))}
           </tbody>

@@ -3,7 +3,7 @@ import { Trans, useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { dbHelper } from '../utils/dbHelper';
 import type { DbConnectionConfig } from '../utils/dbHelper';
-import { Database, Server, CheckCircle2, AlertTriangle, Plus, Trash2, Save, Copy, Download, Upload, Lock, Key, TerminalSquare, Hash, FolderOpen, User, Link, Star, Eye, EyeOff, ShieldAlert, Search, X, ChevronDown, ChevronRight, RefreshCw, ShieldCheck, Network, ArrowLeft, Check, Cloud, HardDriveDownload, LogIn } from 'lucide-react';
+import { Database, Server, CheckCircle2, AlertTriangle, Plus, Trash2, Save, Copy, Download, Upload, Lock, Key, TerminalSquare, Hash, FolderOpen, User, Link, Star, Eye, EyeOff, ShieldAlert, Search, X, ChevronDown, ChevronRight, RefreshCw, ShieldCheck, Network, ArrowLeft, Check, Cloud, DatabaseBackup, LogIn } from 'lucide-react';
 import { PostgresIcon, MySqlIcon, RedisIcon, SqliteIcon } from './DbIcons';
 import { encryptConnectionExport, decryptConnectionExport } from '../utils/cryptoHelper';
 import { CONN_ENVS, envLabelKey, legacyEnvOfColor, normalizeEnv, type ConnEnv } from '../utils/connEnv';
@@ -150,6 +150,15 @@ function migrateProfileEnvs(list: SavedProfile[]): SavedProfile[] | null {
 interface ConnectionManagerProps {
   /** Kết nối mà component này thao tác lên. Truyền tường minh, không đọc id ambient (§4.1). */
   connId: string;
+  /**
+   * Đang mount trong Modal "Thêm kết nối" (từ thanh tiêu đề), không phải làm màn hình đầu.
+   *
+   * Ẩn phần chrome thuộc *quản lý* kết nối chứ không thuộc việc *mở thêm một* kết nối: nhập/xuất tệp
+   * profile, và Sao lưu & Phục hồi. Cái thứ hai đáng ẩn nhất — nó thao tác trên kết nối **đang mở**,
+   * nên đặt nó trong hộp thoại "thêm kết nối" là mời người dùng backup một database khác với cái họ
+   * đang nhìn.
+   */
+  embedded?: boolean;
   // `profile` là profile đã chọn để kết nối (nếu có). App giữ id + tên để popover
   // chi tiết kết nối sửa tên/màu rồi ghi thẳng ngược vào tf_connection_profiles.
   onConnect: (
@@ -184,7 +193,7 @@ const TYPE_META: Record<string, { label: string; color: string; Icon: React.FC<{
   redis: { label: 'Redis', color: '#DC382D', Icon: RedisIcon },
 };
 
-export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, onConnect }) => {
+export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, embedded = false, onConnect }) => {
   const { t } = useTranslation();
 
   // A switch rather than t(`...${mode}`): a key built at runtime is not checked
@@ -277,7 +286,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, on
   const [awsProfile, setAwsProfile] = useState('');
   const [awsRegion, setAwsRegion] = useState('');
 
-  const [loading, setLoading] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
+  const isBusy = isConnecting || isTesting;
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [isSuccessConnecting, setIsSuccessConnecting] = useState(false);
@@ -1150,7 +1161,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, on
   };
 
   const handleConnect = async (_isDemo = false) => {
-    setLoading(true);
+    setIsConnecting(true);
     setErrorMsg(null);
     setSuccessMsg(null);
 
@@ -1231,7 +1242,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, on
 
     const res = await dbHelper.connect(config);
 
-    setLoading(false);
+    setIsConnecting(false);
     if (res.success) {
       setSuccessMsg(res.message);
       setIsSuccessConnecting(true);
@@ -1265,14 +1276,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, on
   };
 
   const handleTestConnection = async () => {
-    setLoading(true);
+    setIsTesting(true);
     setErrorMsg(null);
     setSuccessMsg(null);
 
     // Redis: test bằng chính redis_connect (PING) qua dbHelper.connect.
     if (activeType === 'redis') {
       const res = await dbHelper.connect(buildRedisConfig());
-      setLoading(false);
+      setIsTesting(false);
       setTestStatus(res.success ? 'ok' : 'fail');
       if (res.success) setSuccessMsg(t('connection.redisTestOk'));
       else setErrorMsg(res.message);
@@ -1347,7 +1358,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, on
     }
 
     const res = await dbHelper.connect(config);
-    setLoading(false);
+    setIsTesting(false);
     setTestStatus(res.success ? 'ok' : 'fail');
     if (res.success) {
       setSuccessMsg(t('connection.testOk'));
@@ -1665,86 +1676,85 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, on
   const renderBasicSection = () => (
     <div className="cm-section">
       <div className="cm-section-title">{t('connection.basicSection')}</div>
-      {/* Tên + nhóm gộp trên một dòng: header phía trên đã hiển thị lại những
-          thông tin này nên không cần mô tả dài dòng ở đây. */}
-      <div className="cm-grid basic" style={{ marginTop: '12px' }}>
-        <div className="form-group">
-          <label>{t('connection.profileName')}</label>
-          <input
-            type="text"
-            className="form-input"
-            value={profileNameInput}
-            onChange={(e) => setProfileNameInput(e.target.value)}
-            placeholder={t('connection.profileNamePlaceholder')}
-          />
-        </div>
-        <div className="form-group">
-          <label>{t('connection.group')}</label>
-          {/* Combobox tự dựng thay cho <datalist>: native datalist hiện thêm một
-              mũi tên riêng và popup không theo được theme của app. */}
-          <div className="cm-combo">
+      <div className="cm-fields">
+        <div className="cm-grid basic">
+          <div className="form-group">
+            <label>{t('connection.profileName')}</label>
             <input
               type="text"
               className="form-input"
-              value={profileGroup}
-              onChange={(e) => setProfileGroup(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Escape') setShowGroupList(false); }}
-              placeholder={existingGroups.length ? t('connection.groupPlaceholderPick') : t('connection.groupPlaceholderNew')}
+              value={profileNameInput}
+              onChange={(e) => setProfileNameInput(e.target.value)}
+              placeholder={t('connection.profileNamePlaceholder')}
             />
-            {existingGroups.length > 0 && (
-              <button
-                type="button"
-                className={`cm-combo-btn ${showGroupList ? 'on' : ''}`}
-                title={t('connection.pickExistingGroup')}
-                onClick={() => setShowGroupList((v) => !v)}
-              >
-                <ChevronDown size={13} />
-              </button>
-            )}
-            {showGroupList && (
-              <>
-                <div className="cm-pop-backdrop" onClick={() => setShowGroupList(false)} />
-                <div className="cm-combo-pop">
-                  {existingGroups.map(g => (
-                    <button
-                      key={g}
-                      type="button"
-                      className={`cm-combo-opt ${g === profileGroup.trim() ? 'on' : ''}`}
-                      onClick={() => { setProfileGroup(g); setShowGroupList(false); }}
-                    >
-                      <span className="cm-ellipsis">{g}</span>
-                      {g === profileGroup.trim() && <Check size={12} style={{ flexShrink: 0 }} />}
-                    </button>
-                  ))}
-                  {profileGroup.trim() && (
-                    <>
-                      <div className="cm-pop-sep" />
-                      <button type="button" className="cm-combo-opt" onClick={() => { setProfileGroup(''); setShowGroupList(false); }}>
-                        <X size={12} style={{ flexShrink: 0 }} />
-                        <span>{t('connection.clearGroup')}</span>
+          </div>
+          <div className="form-group">
+            <label>{t('connection.group')}</label>
+            {/* Combobox tự dựng thay cho <datalist>: native datalist hiện thêm một
+                mũi tên riêng và popup không theo được theme của app. */}
+            <div className="cm-combo">
+              <input
+                type="text"
+                className="form-input"
+                value={profileGroup}
+                onChange={(e) => setProfileGroup(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Escape') setShowGroupList(false); }}
+                placeholder={existingGroups.length ? t('connection.groupPlaceholderPick') : t('connection.groupPlaceholderNew')}
+              />
+              {existingGroups.length > 0 && (
+                <button
+                  type="button"
+                  className={`cm-combo-btn ${showGroupList ? 'on' : ''}`}
+                  title={t('connection.pickExistingGroup')}
+                  onClick={() => setShowGroupList((v) => !v)}
+                >
+                  <ChevronDown size={13} />
+                </button>
+              )}
+              {showGroupList && (
+                <>
+                  <div className="cm-pop-backdrop" onClick={() => setShowGroupList(false)} />
+                  <div className="cm-combo-pop">
+                    {existingGroups.map(g => (
+                      <button
+                        key={g}
+                        type="button"
+                        className={`cm-combo-opt ${g === profileGroup.trim() ? 'on' : ''}`}
+                        onClick={() => { setProfileGroup(g); setShowGroupList(false); }}
+                      >
+                        <span className="cm-ellipsis">{g}</span>
+                        {g === profileGroup.trim() && <Check size={12} style={{ flexShrink: 0 }} />}
                       </button>
-                    </>
-                  )}
-                </div>
-              </>
-            )}
+                    ))}
+                    {profileGroup.trim() && (
+                      <>
+                        <div className="cm-pop-sep" />
+                        <button type="button" className="cm-combo-opt" onClick={() => { setProfileGroup(''); setShowGroupList(false); }}>
+                          <X size={12} style={{ flexShrink: 0 }} />
+                          <span>{t('connection.clearGroup')}</span>
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+          {/* Môi trường */}
+          <div className="form-group">
+            <label>{t('connEnv.label')}</label>
+            <select
+              className="form-input"
+              value={profileEnv}
+              onChange={(e) => setProfileEnv(normalizeEnv(e.target.value))}
+            >
+              {CONN_ENVS.map((env) => (
+                <option key={env} value={env}>{t(envLabelKey(env))}</option>
+              ))}
+            </select>
           </div>
         </div>
-        {/* Môi trường. Trường riêng, KHÔNG suy từ nhãn màu: màu là thứ đổi vì thẩm mỹ, còn ô này
-            quyết định kết nối có mở ở chế độ chỉ đọc và có bắt xác nhận hai bước hay không. */}
-        <div className="form-group">
-          <label>{t('connEnv.label')}</label>
-          <select
-            className="form-input"
-            value={profileEnv}
-            onChange={(e) => setProfileEnv(normalizeEnv(e.target.value))}
-          >
-            {CONN_ENVS.map((env) => (
-              <option key={env} value={env}>{t(envLabelKey(env))}</option>
-            ))}
-          </select>
-          <small className="cm-hint">{t('connEnv.hint')}</small>
-        </div>
+        {profileEnv === 'production' && <small className="cm-hint">{t('connEnv.hint')}</small>}
       </div>
     </div>
   );
@@ -2678,13 +2688,18 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, on
           <aside className="cm-side">
             <div className="cm-side-head">
               <span className="cm-side-title">{t('connection.sideTitle', { n: profiles.length })}</span>
-              <button className="cm-icon-btn" title={t('connection.importFromFile')} onClick={() => document.getElementById('cm-import-file')?.click()}>
-                <Upload size={13} />
-              </button>
-              <input id="cm-import-file" type="file" accept=".tableplusconnection,.tableforgeconnection,.json" onChange={handleFileImportSelect} className="cm-hidden-file" />
-              <button className="cm-icon-btn" title={t('connection.exportAll')} onClick={() => openExportModal('all')}>
-                <Download size={13} />
-              </button>
+              {/* Nhập/xuất tệp profile: quản lý cả bộ profile, không phải mở thêm một kết nối. */}
+              {!embedded && (
+                <>
+                  <button className="cm-icon-btn" title={t('connection.importFromFile')} onClick={() => document.getElementById('cm-import-file')?.click()}>
+                    <Upload size={13} />
+                  </button>
+                  <input id="cm-import-file" type="file" accept=".tableplusconnection,.tableforgeconnection,.json" onChange={handleFileImportSelect} className="cm-hidden-file" />
+                  <button className="cm-icon-btn" title={t('connection.exportAll')} onClick={() => openExportModal('all')}>
+                    <Download size={13} />
+                  </button>
+                </>
+              )}
             </div>
 
             <div className="cm-new-wrap">
@@ -2774,7 +2789,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, on
                       // thay vào đó là đang kết nối/kiểm tra và kết quả kiểm tra.
                       const led: 'busy' | 'ok' | 'fail' | null = !isActive
                         ? null
-                        : loading ? 'busy'
+                        : isBusy ? 'busy'
                           : testStatus === 'ok' ? 'ok'
                             : testStatus === 'fail' ? 'fail'
                               : null;
@@ -2823,15 +2838,20 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, on
               })}
             </div>
 
-            <div className="cm-side-foot">
-              <button
-                className={`cm-ghost-row ${isBrMode ? 'active' : ''}`}
-                onClick={() => setActiveType('backup_restore' as any)}
-              >
-                <HardDriveDownload size={14} />
-                <span>{t('connection.backupRestore')}</span>
-              </button>
-            </div>
+            {/* Sao lưu & Phục hồi thao tác trên kết nối ĐANG MỞ, nên trong hộp thoại "thêm kết nối"
+                nó vừa lệch việc vừa dễ hiểu sai là đang backup cái sắp mở. Ở workspace nó đã có chỗ
+                riêng trên thanh tiêu đề. */}
+            {!embedded && (
+              <div className="cm-side-foot">
+                <button
+                  className={`cm-ghost-row ${isBrMode ? 'active' : ''}`}
+                  onClick={() => setActiveType('backup_restore' as any)}
+                >
+                  <DatabaseBackup size={15} />
+                  <span>{t('connection.backupRestore')}</span>
+                </button>
+              </div>
+            )}
           </aside>
 
           {/* ————— Pane chính ————— */}
@@ -2849,23 +2869,25 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, on
             ) : hasProfile ? (
               <>
                 <header className="cm-main-head">
-                  <div
-                    className={`cm-avatar ${activeType}`}
-                    style={profiles.find(p => p.id === activeProfileId)?.color ? { background: profiles.find(p => p.id === activeProfileId)?.color } : undefined}
-                  >
-                    <activeMeta.Icon size={22} />
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div className="cm-head-name">
-                      <span className="cm-ellipsis">{profileNameInput || t('connection.defaultProfileName')}</span>
+                  <div className="cm-head-info">
+                    <div
+                      className={`cm-avatar ${activeType}`}
+                      style={profiles.find(p => p.id === activeProfileId)?.color ? { background: profiles.find(p => p.id === activeProfileId)?.color } : undefined}
+                    >
+                      <activeMeta.Icon size={22} />
                     </div>
-                    <div className="cm-head-meta">
-                      <span>{activeMeta.label}</span>
-                      {profileGroup && <span className="cm-chip">{profileGroup}</span>}
-                      <span className={`cm-pill ${testStatus === 'ok' ? 'ok' : testStatus === 'fail' ? 'fail' : 'idle'}`}>
-                        <i />
-                        {testStatus === 'ok' ? t('connection.pillTested') : testStatus === 'fail' ? t('connection.pillFailed') : t('connection.pillUntested')}
-                      </span>
+                    <div className="cm-head-text">
+                      <div className="cm-head-name">
+                        <span className="cm-ellipsis">{profileNameInput || t('connection.defaultProfileName')}</span>
+                      </div>
+                      <div className="cm-head-meta">
+                        <span>{activeMeta.label}</span>
+                        {profileGroup && <span className="cm-chip">{profileGroup}</span>}
+                        <span className={`cm-pill ${testStatus === 'ok' ? 'ok' : testStatus === 'fail' ? 'fail' : 'idle'}`}>
+                          <i />
+                          {testStatus === 'ok' ? t('connection.pillTested') : testStatus === 'fail' ? t('connection.pillFailed') : t('connection.pillUntested')}
+                        </span>
+                      </div>
                     </div>
                   </div>
                   <button className="cm-uri" onClick={handleCopyUri} title={t('connection.copyUri')}>
@@ -2979,11 +3001,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, on
                     <Save size={13} /> {t('connection.saveChanges')}
                   </button>
                   <span className="cm-foot-msg" />
-                  <button className="cm-btn" onClick={handleTestConnection} disabled={loading}>
-                    {loading ? <LoadingSpinner size={13} /> : <CheckCircle2 size={13} />} {t('connection.test')}
+                  <button className="cm-btn" onClick={handleTestConnection} disabled={isBusy}>
+                    {isTesting ? <LoadingSpinner size={13} /> : <CheckCircle2 size={13} />} {t('connection.test')}
                   </button>
-                  <button className="cm-btn primary" onClick={() => handleConnect(false)} disabled={loading}>
-                    {loading
+                  <button className="cm-btn primary" onClick={() => handleConnect(false)} disabled={isBusy}>
+                    {isConnecting
                       ? <><LoadingSpinner size={13} /> {t('connection.connecting')}</>
                       : <><LogIn size={14} /> {t('connection.connect')}</>}
                   </button>

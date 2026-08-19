@@ -2,6 +2,7 @@ import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallba
 import { Trans, useTranslation } from 'react-i18next';
 import { clampMenu, type MenuRect } from '../utils/menuPosition';
 import { dbHelper } from '../utils/dbHelper';
+import { isMariaDbVersion } from '../utils/serverFlavor';
 import type { TableItem, SchemaInfo, TriggerInfo, CheckConstraintInfo } from '../utils/dbHelper';
 import { Search, Table, Terminal, TerminalSquare, RefreshCw, Layers, Plus, ChevronDown, ChevronRight, Braces, Cog, Info, Key, Sliders, FileCode, Trash2, CheckCircle2, Copy, AlertTriangle, History, Bookmark, Columns3, ArrowDownAZ, Link2, Zap } from 'lucide-react';
 import { CreateTableModal } from './CreateTableModal';
@@ -637,6 +638,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const [tables, setTables] = useState<TableItem[]>([]);
   const [schemas, setSchemas] = useState<string[]>([]);
+  const [isMariaDb, setIsMariaDb] = useState(false);
   const [switchingSchema, setSwitchingSchema] = useState(false);
   const [functions, setFunctions] = useState<string[]>([]);
   const [procedures, setProcedures] = useState<string[]>([]);
@@ -913,6 +915,30 @@ export const Sidebar: React.FC<SidebarProps> = ({
     };
   }, [connId, dbType, dbName]);
 
+  // MySQL and MariaDB reach us as the same `dbType`, so the only way to know which server this
+  // is is to ask it — see `isMariaDbVersion`. One `SELECT VERSION()` per connection, and only
+  // on MySQL: Postgres never needs it and SQLite has no server to ask.
+  //
+  // `dbName` is deliberately NOT a dep, unlike the schema list above: switching database keeps
+  // the same server, so the version cannot change and re-probing would be a wasted round trip.
+  //
+  // A failed probe leaves this false, i.e. the gated feature stays hidden. That is the right way
+  // round: a MariaDB user briefly missing the Sequences section beats a MySQL user opening one
+  // whose every write fails.
+  useEffect(() => {
+    if (dbType !== 'mysql') {
+      setIsMariaDb(false);
+      return;
+    }
+    let alive = true;
+    dbHelper.executeQuery(connId, 'SELECT VERSION() AS v').then((res) => {
+      if (alive) setIsMariaDb(isMariaDbVersion(res.data?.[0]?.v));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [connId, dbType]);
+
   const handleSchemaChange = async (name: string) => {
     if (!name || name === schema || switchingSchema) return;
     setSwitchingSchema(true);
@@ -975,10 +1001,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
     };
   }, []);
 
-  // Keyboard shortcut to focus search input: Ctrl+P / Cmd+P or Ctrl+K / Cmd+K
+  // Focus ô tìm kiếm: Ctrl+K / Cmd+K.
+  //
+  // `Ctrl+P` đã bị bỏ khỏi đây. Nó là listener trên `window` kèm `preventDefault`, nên nó **giành**
+  // Ctrl+P trước mọi thứ khác — kể cả mục "Ẩn/hiện thanh bên" trong menu thanh tiêu đề, mục đó quảng
+  // cáo `Ctrl+P` nhưng chưa bao giờ chạy. Bộ phím giờ theo VS Code và mỗi phím một nghĩa:
+  // `Ctrl+Shift+P` mở Quick Switcher, `Ctrl+B` ẩn/hiện thanh bên (cả hai ở `TitleBar.tsx`), còn ô
+  // này giữ `Ctrl+K`.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && (e.key.toLowerCase() === 'p' || e.key.toLowerCase() === 'k')) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         inputRef.current?.focus();
         inputRef.current?.select();
@@ -1680,8 +1712,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
             )}
 
-            {/* 5. Sequences Section */}
-            {(dbType === 'postgres' || dbType === 'mysql') && (
+            {/* 5. Sequences Section — Postgres and MariaDB only. MySQL has no `CREATE SEQUENCE`, and
+                both arrive here as `dbType === 'mysql'`, so the distinction comes from the version
+                probe above rather than from `dbType`. */}
+            {(dbType === 'postgres' || isMariaDb) && (
               <div style={{ marginBottom: '6px' }}>
                 <div
                   className="sidebar-section-title"
@@ -2533,7 +2567,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       )}
 
       {showSequencesModal && (
-        <SequenceManagerModal onClose={() => setShowSequencesModal(false)} />
+        <SequenceManagerModal
+          connId={connId}
+          dbType={dbType}
+          onClose={() => setShowSequencesModal(false)}
+        />
       )}
 
       {objDef && objDef.kind === 'view' && (

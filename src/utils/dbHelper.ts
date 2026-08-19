@@ -1,6 +1,12 @@
 import { invoke as rawInvoke, Channel } from '@tauri-apps/api/core';
 import i18n from '../i18n';
 import { translateBackendError, translateResultErrors } from './backendErrors';
+import {
+  approveCommand,
+  forgetConnection,
+  inheritConnection,
+  registerConnection,
+} from './safeMode';
 import type {
   CompareSide,
   DataCompareResult,
@@ -47,7 +53,8 @@ export function setActiveConnId(id: string): void {
 export interface OpenConnection {
   connId: string;
   db: string;
-  dialect: 'sqlite' | 'postgres' | 'mysql';
+  /** `redis` kể từ khi Redis dùng chung registry — rail vẽ cả hai từ một danh sách (§2.3). */
+  dialect: 'sqlite' | 'postgres' | 'mysql' | 'redis';
   serverId: string;
   schema: string | null;
   /** Số câu GHI đang chờ commit trên kết nối này — badge của rail (§4.2b). */
@@ -67,8 +74,14 @@ export interface OpenConnection {
  * declare it simply ignores the extra field — Tauri deserializes by name.
  */
 async function invoke<T = any>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  const merged = { connId: currentConnId, ...args };
+  // Safe Mode asks here, in front of every command, because this is the single funnel every
+  // `dbHelper.*` call passes through — see `safeMode.ts` for why the gate is not in Rust and why a
+  // command missing from its table counts as a write. Declining throws, like a backend error would,
+  // so the surrounding `catch` in each method turns it into the usual `{ success: false, error }`.
+  if (!(await approveCommand(cmd, merged))) throw i18n.t('safeMode.cancelled');
   try {
-    return translateResultErrors(await rawInvoke<T>(cmd, { connId: currentConnId, ...args }));
+    return translateResultErrors(await rawInvoke<T>(cmd, merged));
   } catch (err) {
     // A command that returns Err(String) surfaces here as a thrown *string*, and the
     // catch blocks below interpolate it directly (`${err}`). Rethrow a string, not an
@@ -368,7 +381,14 @@ function translateWarnings<T extends { warnings?: string[] }>(res: T): T {
 export const dbHelper = {
   async connect(
     config: DbConnectionConfig,
-  ): Promise<{ success: boolean; message: string; database?: string; schema?: string | null }> {
+  ): Promise<{
+    success: boolean;
+    message: string;
+    database?: string;
+    schema?: string | null;
+    /** Id kết nối vừa mint. Redis cũng trả về từ khi nó dùng chung registry (§2.3). */
+    connId?: string;
+  }> {
     // Redis đi qua bộ command redis_* riêng (không dùng connect_db của SQL).
     if (config.type === 'redis') {
       try {
@@ -399,7 +419,18 @@ export const dbHelper = {
           },
         });
         if (res.success) {
-          return { success: true, message: i18n.t('db.redisConnected'), database: `db${res.dbIndex ?? config.dbIndex ?? 0}` };
+          // Redis is a registry entry like any other now (`redis-ui-unification-plan.md` §2.3), so
+          // it mints a `connId` the same way and every later `redis_*` command carries it through
+          // the shim above. Setting it BEFORE `registerConnection` matters: Safe Mode keys the
+          // server by this id, and that is what replaced the Redis-only key it used to keep.
+          currentConnId = res.connId ?? '';
+          registerConnection(currentConnId, config);
+          return {
+            success: true,
+            message: i18n.t('db.redisConnected'),
+            database: `db${res.dbIndex ?? config.dbIndex ?? 0}`,
+            connId: currentConnId,
+          };
         }
         return { success: false, message: res.message || i18n.t('db.errRedisConnect') };
       } catch (err: any) {
@@ -443,6 +474,9 @@ export const dbHelper = {
         // The backend mints the id and hands it back; it is never derived from `config`, which
         // carries credentials (multi-connection-plan §4.3). Every later command carries it.
         currentConnId = res.connId ?? '';
+        // Safe Mode is stored per server (`connKey`), and the backend never hands the config back,
+        // so the id→server mapping has to be recorded at the one place that has both.
+        registerConnection(currentConnId, config);
         // `schema` is the schema the connection actually landed in (Postgres `current_schema()`),
         // null on MySQL/SQLite. Callers key per-connection storage on it — see connKey.ts.
         return {
@@ -472,9 +506,11 @@ export const dbHelper = {
       // Id rỗng thì mọi lệnh sau đó fail bằng đúng lỗi "chưa kết nối" vì `acquire` không resolve
       // được — đó chính là câu trả lời đúng.
       if (target === currentConnId) currentConnId = '';
+      forgetConnection(target);
       return { success: !!res.success };
     } catch {
       if (target === currentConnId) currentConnId = '';
+      forgetConnection(target);
       return { success: false };
     }
   },
@@ -677,27 +713,27 @@ export const dbHelper = {
     }
   },
 
-  async getSequences(): Promise<SequenceInfo[]> {
+  async getSequences(connId: string): Promise<SequenceInfo[]> {
     try {
-      const res: any = await invoke('get_sequences');
+      const res: any = await invoke('get_sequences', { connId });
       return res.sequences || [];
     } catch {
       return [];
     }
   },
 
-  async alterSequence(sequenceSql: string): Promise<{ success: boolean; error?: string }> {
+  async alterSequence(connId: string, sequenceSql: string): Promise<{ success: boolean; error?: string }> {
     try {
-      const res: any = await invoke('alter_sequence', { sequenceSql });
+      const res: any = await invoke('alter_sequence', { connId, sequenceSql });
       return { success: !!res.success, error: res.message };
     } catch (err: any) {
       return { success: false, error: err.toString() };
     }
   },
 
-  async dropSequence(sequenceName: string): Promise<{ success: boolean; error?: string }> {
+  async dropSequence(connId: string, sequenceName: string): Promise<{ success: boolean; error?: string }> {
     try {
-      const res: any = await invoke('drop_sequence', { sequenceName });
+      const res: any = await invoke('drop_sequence', { connId, sequenceName });
       return { success: !!res.success, error: res.message };
     } catch (err: any) {
       return { success: false, error: err.toString() };
@@ -817,6 +853,19 @@ export const dbHelper = {
   async listConnections(): Promise<OpenConnection[]> {
     const res = await invoke<{ connections: OpenConnection[] }>('list_connections');
     return res.connections || [];
+  },
+
+  /**
+   * Latency của mọi kết nối đang mở, khoá theo `connId`.
+   *
+   * Riêng khỏi `getConnectionStatus`, cái đó hỏi thêm version/user/TLS nên tốn 3–5 round trip mỗi kết
+   * nối — xem `ping_connections`. Trả về `Map` chứ không phải mảng vì mọi chỗ dùng đều tra theo id.
+   */
+  async pingConnections(): Promise<Map<string, { ok: boolean; latencyMs: number }>> {
+    const res = await invoke<{ pings: { connId: string; ok: boolean; latencyMs: number }[] }>(
+      'ping_connections',
+    );
+    return new Map((res.pings || []).map((p) => [p.connId, { ok: p.ok, latencyMs: p.latencyMs }]));
   },
 
   async txStatus(): Promise<TxStatus> {
@@ -1200,6 +1249,8 @@ export const dbHelper = {
   ): Promise<{ success: boolean; connId?: string; database?: string; schema?: string | null; error?: string }> {
     try {
       const res: any = await invoke('open_database', { connId, name });
+      // Another database on the SAME server, so it inherits that server's Safe Mode.
+      if (res.connId) inheritConnection(connId, res.connId);
       return { success: !!res.success, connId: res.connId, database: res.database, schema: res.schema ?? null };
     } catch (err: any) {
       return { success: false, error: err.toString() };
@@ -1421,14 +1472,24 @@ export const dbHelper = {
   },
 
   // ---- Redis ----
-  async redisDisconnect(): Promise<void> {
-    try { await invoke('redis_disconnect'); } catch { /* bỏ qua */ }
+  async redisDisconnect(connId?: string): Promise<void> {
+    const target = connId ?? currentConnId;
+    try { await invoke('redis_disconnect', { connId: target }); } catch { /* bỏ qua */ }
+    forgetConnection(target);
+    if (target === currentConnId) currentConnId = '';
   },
 
-  async redisSelectDb(index: number): Promise<{ success: boolean; dbIndex?: number; error?: string }> {
+  /**
+   * Đổi db index = **mở/chuyển sang một kết nối khác**, không phải đổi state của kết nối hiện tại
+   * (`redis-ui-unification-plan.md` §2.1). Trả về `connId` của db đó — đã mở sẵn thì trả lại đúng
+   * id cũ. Người gọi phải chuyển workspace sang id này; giữ id cũ nghĩa là vẫn đọc db cũ.
+   */
+  async redisSelectDb(
+    index: number,
+  ): Promise<{ success: boolean; dbIndex?: number; connId?: string; error?: string }> {
     try {
       const res: any = await invoke('redis_select_db', { index });
-      return { success: !!res.success, dbIndex: res.dbIndex };
+      return { success: !!res.success, dbIndex: res.dbIndex, connId: res.connId };
     } catch (err: any) {
       return { success: false, error: err.toString() };
     }
@@ -1634,22 +1695,44 @@ export const dbHelper = {
     }
   },
 
-  // `selectedDb` is set when the command was a `SELECT n`: the backend routed it through the
-  // same path as the database dropdown, so the UI must follow instead of drifting.
-  async redisExecuteCmd(
-    command: string
-  ): Promise<{ success: boolean; result?: any; selectedDb?: number; error?: string }> {
+  // `switchDb` is set when the command was a `SELECT n`. The backend does **not** move this
+  // connection to that database — one `conn_id` is one db index (§2.1) — it resolves the
+  // connection FOR that index and reports it. The caller must switch the workspace to
+  // `switchDb.connId`; ignoring it leaves the console showing a db it is not talking to.
+  // `selectedDb` is kept alongside for the console's own status line.
+  async redisExecuteCmd(command: string): Promise<{
+    success: boolean;
+    result?: any;
+    selectedDb?: number;
+    switchDb?: { dbIndex: number; connId: string };
+    error?: string;
+  }> {
     try {
       const res: any = await invoke('redis_execute_cmd', { command });
-      return { success: !!res.success, result: res.result, selectedDb: res.selectedDb, error: res.message };
+      return {
+        success: !!res.success,
+        result: res.result,
+        selectedDb: res.selectedDb,
+        switchDb: res.switchDb ?? undefined,
+        error: res.message,
+      };
     } catch (err: any) {
       return { success: false, error: err.toString() };
     }
   },
 
-  /** Mirrors the app's read-only toggle into the backend, which is where writes are refused. */
-  async redisSetReadOnly(flag: boolean): Promise<void> {
-    try { await invoke('redis_set_read_only', { flag }); } catch { /* bỏ qua */ }
+  /**
+   * Mirrors the app's read-only toggle into the backend, which is where writes are refused.
+   *
+   * Từ Giai đoạn 0, cờ này **là** cờ read-only của kết nối trong registry — cùng cờ mà nhãn
+   * production và nút trên rail ghi. Người gọi phải truyền vào HOẶC của hai nguồn đó, chứ không
+   * phải riêng công tắc toàn cục: ghi `false` khi tắt công tắc sẽ xoá luôn cờ chỉ-đọc của một kết
+   * nối production.
+   */
+  async redisSetReadOnly(flag: boolean, connId?: string): Promise<void> {
+    try {
+      await invoke('redis_set_read_only', { flag, connId: connId ?? currentConnId });
+    } catch { /* bỏ qua */ }
   },
 
   async redisGetElements(
@@ -1904,30 +1987,50 @@ export const dbHelper = {
     }
   },
 
-  async getDatabaseStats(): Promise<{ success: boolean; stats?: DatabaseStats; error?: string }> {
+  // Explicit connId (§4.1): the statistics modal receives its connection as a prop, so it
+  // has to ask about that one — not whichever is active — or the figures belong to another tab.
+  async getDatabaseStats(connId: string): Promise<{ success: boolean; stats?: DatabaseStats; error?: string }> {
     try {
-      const res: any = await invoke('get_database_stats');
+      const res: any = await invoke('get_database_stats', { connId });
       return { success: true, stats: res };
     } catch (err: any) {
       return { success: false, error: err.toString() };
     }
   },
 
-  async getExactTableRowCount(tableName: string): Promise<{ success: boolean; exact_rows?: number; error?: string }> {
+  async getExactTableRowCount(
+    connId: string,
+    tableName: string
+  ): Promise<{ success: boolean; exact_rows?: number; error?: string }> {
     try {
-      const res: any = await invoke('get_exact_table_row_count', { tableName });
+      const res: any = await invoke('get_exact_table_row_count', { connId, tableName });
       return { success: true, exact_rows: res.exact_rows };
     } catch (err: any) {
       return { success: false, error: err.toString() };
     }
   },
 
-  // deep = true: với Postgres sẽ mở kết nối tạm tới TỪNG database để đếm bảng/số dòng
-  // (chậm hơn nhiều), mặc định chỉ lấy dung lượng bằng một truy vấn duy nhất.
-  async getAllDatabasesStats(deep = false): Promise<{ success: boolean; stats?: AllDatabasesStats; error?: string }> {
+  // Phase 1: only what the data dictionary gives (names, charset, cheap sizes), so it comes
+  // back almost instantly. Whatever sizes/row counts are missing arrive via phase 2 below.
+  async getAllDatabasesStats(connId: string): Promise<{ success: boolean; stats?: AllDatabasesStats; error?: string }> {
     try {
-      const res: any = await invoke('get_all_databases_stats', { deep });
+      const res: any = await invoke('get_all_databases_stats', { connId });
       return { success: true, stats: res };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  // Phase 2: the expensive part (MySQL opens every table for DATA_LENGTH/TABLE_ROWS, SQLite
+  // has to COUNT(*) each table, Postgres has to connect to each database). Called after
+  // phase 1 and merged into it, so the list never waits on this.
+  async getAllDatabasesSizes(
+    connId: string,
+    includeSystem = false
+  ): Promise<{ success: boolean; items?: AllDatabasesSizeItem[]; error?: string }> {
+    try {
+      const res: any = await invoke('get_all_databases_sizes', { connId, includeSystem });
+      return { success: true, items: res.databases };
     } catch (err: any) {
       return { success: false, error: err.toString() };
     }
@@ -2051,13 +2154,33 @@ export interface AllDatabasesStatsItem {
   error: string | null;
 }
 
+/**
+ * One row of phase 2 (`getAllDatabasesSizes`). Only the fields the backend actually measured
+ * carry a value, the rest are `null` so merging cannot erase phase 1's numbers. Rows match on
+ * `schema_name` first, then `db_name` (SQLite can only be matched by schema).
+ */
+export interface AllDatabasesSizeItem {
+  db_name: string | null;
+  schema_name: string | null;
+  total_tables: number | null;
+  total_rows: number | null;
+  data_size_bytes: number | null;
+  index_size_bytes: number | null;
+  total_size_bytes: number | null;
+  error: string | null;
+}
+
 export interface AllDatabasesStats {
   db_type: string;
   current_db: string;
-  /** Kết quả này đã có số bảng/số dòng cho mọi database hay chưa. */
-  deep: boolean;
-  /** Có nút "Quét sâu" hay không (chỉ Postgres cần). */
-  supports_deep_scan: boolean;
+  /** Whether phase 2 (`getAllDatabasesSizes`) still has numbers to add. */
+  metrics_pending: boolean;
+  /**
+   * Whether phase 2 can start on its own. Counting tables/rows of another Postgres database
+   * needs a NEW connection to it, so there it waits for the user's "deep scan"; on
+   * MySQL/SQLite it runs in the background right away.
+   */
+  metrics_manual: boolean;
   rows_are_exact: boolean;
   databases: AllDatabasesStatsItem[];
 }

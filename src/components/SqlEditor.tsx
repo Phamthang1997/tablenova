@@ -25,6 +25,7 @@ import {
   findUnsafeStatements, type UnsafeStatement, type UnsafeStatementKind,
 } from '../sql/statements';
 import * as catalog from '../sql/catalog';
+import { willPromptForSql } from '../utils/safeMode';
 import { resolveResultEditability, type ResultEditability, type NotEditableReason } from '../sql/editableResult';
 import { SqlSnippetPanel } from './SqlSnippetPanel';
 
@@ -1048,7 +1049,9 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     // Cảnh báo trước khi xoá sạch dữ liệu. Không cần kiểm tra `readOnly` ở đây: khi bật Chỉ đọc,
     // mọi DELETE/DROP đã bị chặn ở nhánh trên nên đoạn này chỉ chạy khi đang cho phép ghi.
     // Đặt TRƯỚC bước hỏi tham số truy vấn để cả đường đi qua QueryParamsModal cũng được hỏi.
-    if (!skipUnsafeCheck) {
+    // Safe Mode sẽ hỏi ngay trước khi lệnh rời `dbHelper`, và hộp của nó liệt kê đúng những câu
+    // lệnh này kèm cùng nhãn cảnh báo. Hỏi thêm ở đây là hai dialog cho một lần chạy.
+    if (!skipUnsafeCheck && !willPromptForSql(connId, textToRun)) {
       const items = findUnsafeStatements(textToRun);
       if (items.length > 0) {
         setUnsafePrompt({ pane, sql: textToRun, items, resume: 'run' });
@@ -1235,7 +1238,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
         else setErrorMsg2(msg);
         return;
       }
-      if (!skipUnsafeCheck) {
+      // Cùng lý do như ở `handleRun`: để Safe Mode hỏi một lần, không xếp hai hộp.
+      if (!skipUnsafeCheck && !willPromptForSql(connId, textToRun)) {
         const items = findUnsafeStatements(textToRun);
         if (items.length > 0) {
           setUnsafePrompt({ pane: paneId, sql: textToRun, items, resume: 'analyze' });

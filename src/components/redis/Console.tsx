@@ -1,217 +1,340 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import Editor, { loader } from '@monaco-editor/react';
+import * as monaco from 'monaco-editor';
+import { Play, ListChecks } from 'lucide-react';
 import { dbHelper } from '../../utils/dbHelper';
-import { COMMANDS, commandSyntax, matchCommands, type CommandEntry } from './commandHelp';
-import { logBox, pillStyle } from './shared';
+import { SQL_EDITOR_OPTIONS } from '../../sql/editorOptions';
+import { defineSqlThemes, sqlThemeName } from '../../sql/theme';
+import { COMMANDS } from './commandHelp';
+import { REDIS_LANG_ID, registerRedisLanguage } from './redisLanguage';
+import { commandAtLine, splitRedisCommands } from './redisScript';
+
+loader.config({ monaco });
 
 interface ConsoleProps {
-  /** localStorage scope for the command history — the server, never `dbName`. */
+  /** localStorage scope for the buffer — the server, never `dbName`. */
   storageScope: string;
+  theme: 'dark' | 'light';
   onError: (msg: string) => void;
-  /** The backend routes `SELECT n` through the dropdown's path; keep the UI in step. */
-  onSelectedDb: (index: number) => void;
+  /**
+   * `SELECT n` gõ trong console. Kèm `connId` vì backend KHÔNG đổi db của kết nối này — nó phân
+   * giải ra kết nối của db đó và báo lại (§2.2); người nhận phải chuyển workspace sang id ấy.
+   */
+  onSelectedDb: (index: number, connId?: string) => void;
 }
 
 const QUICK_CMDS = ['PING', 'INFO', 'DBSIZE', 'CLIENT LIST', 'CONFIG GET maxmemory'];
-const HISTORY_MAX = 200;
+
+interface LogEntry {
+  cmd: string;
+  out: string;
+  ok: boolean;
+  /** Dòng thông báo của hệ thống (đã chuyển db…), không phải kết quả của server. */
+  note?: boolean;
+}
 
 /**
- * CLI console.
+ * CLI console — một khung Monaco nhiều dòng, không phải một ô nhập một dòng.
  *
- * Auto-complete and the syntax hint come from `commandHelp.ts` (a static table, no server
- * round trip). Two classes of command are refused by the backend rather than here — writes in
- * read-only mode, and commands that would hijack the shared connection (`SUBSCRIBE`,
- * `MONITOR`, `BLPOP`…) — so the message the user sees is the same one the IPC boundary
- * produced, not a second guess made in the UI.
+ * Đổi hình vì ô một dòng ép người dùng vào đúng một thao tác: gõ một lệnh, Enter, quên nó đi. Cái
+ * thực tế người ta làm với `redis-cli` là giữ lại một nhúm lệnh và chạy lại chúng — dò một key, sửa
+ * TTL, kiểm lại. Một buffer làm được điều đó mà không cần thêm tính năng nào; nó cũng thay luôn
+ * lịch sử ↑/↓ cũ, vì bản thân buffer đã là lịch sử và còn sửa được.
+ *
+ * Dùng lại nguyên bộ Monaco của phía SQL — `SQL_EDITOR_OPTIONS`, hai theme — nên phím tắt, cỡ chữ,
+ * hành vi gợi ý giống hệt tab truy vấn. Riêng ngôn ngữ là của Redis (`redisLanguage.ts`).
+ *
+ * Hai lớp lệnh vẫn do backend từ chối chứ không phải ở đây — ghi khi đang chỉ đọc, và lệnh chiếm
+ * dụng connection dùng chung (`SUBSCRIBE`, `MONITOR`, `BLPOP`…) — nên thông báo người dùng thấy
+ * đúng là thông báo từ biên IPC, không phải một phán đoán thứ hai của UI.
  */
-export const Console: React.FC<ConsoleProps> = ({ storageScope, onError, onSelectedDb }) => {
+export const Console: React.FC<ConsoleProps> = ({ storageScope, theme, onError, onSelectedDb }) => {
   const { t } = useTranslation();
-  const historyKey = `tf_redis_cli_history_${storageScope}`;
+  const bufKey = `tf_redis_cli_buf_${storageScope}`;
+  const legacyHistoryKey = `tf_redis_cli_history_${storageScope}`;
 
-  const [cmd, setCmd] = useState('');
-  const [log, setLog] = useState<{ cmd: string; out: string; ok: boolean }[]>([]);
-  const [history, setHistory] = useState<string[]>(() => {
-    try {
-      const raw = localStorage.getItem(historyKey);
-      return raw ? (JSON.parse(raw) as string[]) : [];
-    } catch {
-      return [];
-    }
-  });
-  const [histIdx, setHistIdx] = useState(-1); // -1 = đang gõ mới
-  const [suggestIdx, setSuggestIdx] = useState(0);
-  const [showSuggest, setShowSuggest] = useState(false);
-
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [log, setLog] = useState<LogEntry[]>([]);
+  const [running, setRunning] = useState(false);
+  // Vị trí con trỏ, hiển thị ở thanh hành động như khung SQL. State chứ không đọc thẳng từ Monaco:
+  // nó phải vẽ lại mỗi lần con trỏ nhích, và đó chính là việc của state.
+  const [pos, setPos] = useState({ line: 1, col: 1 });
+  /** Chiều cao editor do người dùng kéo, tính bằng px. `null` = chưa kéo, dùng tỉ lệ mặc định. */
+  const [editorH, setEditorH] = useState<number | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const editorBoxRef = useRef<HTMLDivElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
 
-  useEffect(() => { inputRef.current?.focus(); }, []);
-  useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [log]);
-
-  const suggestions: CommandEntry[] = useMemo(
-    // Only while typing the command itself — once there is a space the user is on arguments
-    // and the syntax hint below is the useful thing, not a list of command names.
-    () => (showSuggest && !cmd.includes(' ') ? matchCommands(cmd) : []),
-    [cmd, showSuggest],
-  );
-  const syntax = useMemo(() => commandSyntax(cmd), [cmd]);
-
-  const pushHistory = (command: string) => {
-    setHistory((prev) => {
-      const next = prev[prev.length - 1] === command ? prev : [...prev, command];
-      const capped = next.slice(-HISTORY_MAX);
-      try { localStorage.setItem(historyKey, JSON.stringify(capped)); } catch { /* quota */ }
-      return capped;
-    });
-  };
-
-  const run = async (raw?: string) => {
-    const command = (raw ?? cmd).trim();
-    if (!command) return;
-    pushHistory(command);
-    setHistIdx(-1);
-    setCmd('');
-    setShowSuggest(false);
-    const res = await dbHelper.redisExecuteCmd(command);
-    const out = res.success ? JSON.stringify(res.result, null, 2) : `(error) ${res.error}`;
-    if (!res.success && res.error) onError(res.error);
-    if (res.selectedDb != null) onSelectedDb(res.selectedDb);
-    setLog((prev) => [...prev, { cmd: command, out, ok: !!res.success }]);
-    inputRef.current?.focus();
-  };
-
-  const acceptSuggestion = () => {
-    const pick = suggestions[suggestIdx];
-    if (!pick) return;
-    setCmd(`${pick.name} `);
-    setShowSuggest(false);
-  };
-
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if (suggestions.length > 0) {
-      if (e.key === 'Tab') { e.preventDefault(); acceptSuggestion(); return; }
-      if (e.key === 'ArrowDown') { e.preventDefault(); setSuggestIdx((i) => (i + 1) % suggestions.length); return; }
-      if (e.key === 'ArrowUp') { e.preventDefault(); setSuggestIdx((i) => (i - 1 + suggestions.length) % suggestions.length); return; }
-      if (e.key === 'Enter' && suggestions.length === 1 && suggestions[0].name !== cmd.trim().toUpperCase()) {
-        e.preventDefault();
-        acceptSuggestion();
-        return;
+  /**
+   * Nội dung ban đầu.
+   *
+   * Lần đầu chạy bản mới thì chưa có buffer, nhưng có thể có lịch sử ↑/↓ của bản cũ — nạp nó vào
+   * làm buffer thay vì bỏ mặc trong localStorage. Người dùng không mất những lệnh đã gõ chỉ vì
+   * chỗ chứa chúng đổi hình.
+   */
+  const initialRef = useRef<string | null>(null);
+  if (initialRef.current === null) {
+    let buf = '';
+    try {
+      buf = localStorage.getItem(bufKey) ?? '';
+      if (!buf) {
+        const raw = localStorage.getItem(legacyHistoryKey);
+        if (raw) buf = (JSON.parse(raw) as string[]).join('\n');
       }
-      if (e.key === 'Escape') { setShowSuggest(false); return; }
+    } catch { /* localStorage hỏng -> bắt đầu rỗng */ }
+    initialRef.current = buf;
+  }
+
+  useEffect(() => { registerRedisLanguage(); defineSqlThemes(); }, []);
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [log]);
+
+  /** Đọc thẳng từ Monaco, không qua state — giống `getPaneSql()` của SqlEditor. */
+  const bufferText = () => editorRef.current?.getValue() ?? '';
+
+  const persist = useCallback(() => {
+    try { localStorage.setItem(bufKey, bufferText()); } catch { /* quota */ }
+  }, [bufKey]);
+
+  /**
+   * Chạy một dãy lệnh theo thứ tự.
+   *
+   * **Dừng ở `SELECT n`** thay vì chạy tiếp. Backend không đổi db của kết nối này — nó phân giải ra
+   * kết nối của `dbN` và báo lại (§2.2) — nên các lệnh phía sau, nếu chạy tiếp, sẽ chạy trên db
+   * CŨ trong khi người dùng viết chúng cho db mới. Chạy đúng một nửa ý định là tệ hơn dừng lại và
+   * nói ra.
+   */
+  const runCommands = useCallback(async (cmds: string[]) => {
+    if (cmds.length === 0 || running) return;
+    setRunning(true);
+    try {
+      for (let i = 0; i < cmds.length; i++) {
+        const command = cmds[i];
+        const res = await dbHelper.redisExecuteCmd(command);
+        const out = res.success ? JSON.stringify(res.result, null, 2) : `(error) ${res.error}`;
+        if (!res.success && res.error) onError(res.error);
+        setLog((prev) => [...prev, { cmd: command, out, ok: !!res.success }]);
+
+        if (res.selectedDb != null) {
+          onSelectedDb(res.selectedDb, res.switchDb?.connId);
+          const left = cmds.length - i - 1;
+          if (left > 0) {
+            setLog((prev) => [...prev, {
+              cmd: '',
+              out: t('redis.cliStoppedAtSelect', { db: res.selectedDb, n: left }),
+              ok: true,
+              note: true,
+            }]);
+          }
+          break;
+        }
+      }
+    } finally {
+      setRunning(false);
     }
-    if (e.key === 'Enter') { run(); return; }
-    if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      if (history.length === 0) return;
-      const idx = histIdx === -1 ? history.length - 1 : Math.max(0, histIdx - 1);
-      setHistIdx(idx);
-      setCmd(history[idx]);
-    } else if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      if (histIdx === -1) return;
-      const idx = histIdx + 1;
-      if (idx >= history.length) { setHistIdx(-1); setCmd(''); }
-      else { setHistIdx(idx); setCmd(history[idx]); }
-    }
+  }, [running, onError, onSelectedDb, t]);
+
+  /** Ctrl+Enter: lệnh dưới con trỏ. */
+  const runCurrent = useCallback(() => {
+    const ed = editorRef.current;
+    if (!ed) return;
+    const line = ed.getPosition()?.lineNumber ?? 1;
+    const cmd = commandAtLine(ed.getValue(), line);
+    if (!cmd) { onError(t('redis.cliNothingToRun')); return; }
+    void runCommands([cmd.text]);
+  }, [runCommands, onError, t]);
+
+  /** Ctrl+Shift+Enter: cả buffer. */
+  const runAll = useCallback(() => {
+    const cmds = splitRedisCommands(bufferText()).map((c) => c.text);
+    if (cmds.length === 0) { onError(t('redis.cliNothingToRun')); return; }
+    void runCommands(cmds);
+  }, [runCommands, onError, t]);
+
+  // Hai handler được gọi từ phím tắt của Monaco, vốn giữ closure của lần mount đầu — đọc qua ref
+  // để phím tắt luôn gọi bản mới nhất. Cùng cách `SqlEditor` xử lý action của nó.
+  const runHintRef = useRef('');
+  runHintRef.current = t('redis.cliRunThisLine');
+
+  const runCurrentRef = useRef(runCurrent);
+  runCurrentRef.current = runCurrent;
+  const runAllRef = useRef(runAll);
+  runAllRef.current = runAll;
+
+  /** Tháo listener kéo nếu tab bị đóng giữa chừng. */
+  const dragCleanupRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => dragCleanupRef.current?.(), []);
+
+  /**
+   * Kéo đường kẻ giữa thanh hành động và vùng kết quả để đổi chiều cao editor.
+   *
+   * Nghe `mousemove`/`mouseup` trên `window` chứ không trên chính đường kẻ: kéo nhanh thì con trỏ
+   * rời khỏi dải 4px trước khi trình duyệt kịp bắn sự kiện, và khi đó thao tác kéo đứt giữa chừng.
+   */
+  const startDrag = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setDragging(true);
+    const startY = e.clientY;
+    const startH = editorBoxRef.current?.clientHeight ?? 220;
+
+    const onMove = (ev: MouseEvent) => {
+      const root = rootRef.current;
+      // Chừa tối thiểu 120px cho vùng kết quả và 80px cho editor — kéo hết cỡ mà một trong hai
+      // biến mất thì không còn đường kéo ngược lại.
+      const maxH = root ? root.clientHeight - 120 : window.innerHeight - 200;
+      setEditorH(Math.max(80, Math.min(maxH, startH + ev.clientY - startY)));
+    };
+    const onUp = () => {
+      setDragging(false);
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      // Monaco đo lại ngay thay vì chờ vòng `automaticLayout` kế tiếp.
+      editorRef.current?.layout();
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    dragCleanupRef.current = onUp;
   };
 
-  const clearHistory = () => {
-    setHistory([]);
-    try { localStorage.removeItem(historyKey); } catch { /* ignore */ }
+  const onMount = (ed: monaco.editor.IStandaloneCodeEditor) => {
+    editorRef.current = ed;
+    ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => runCurrentRef.current());
+    ed.addCommand(
+      monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Enter,
+      () => runAllRef.current(),
+    );
+
+    // Bấm mũi tên ở lề = chạy đúng dòng đó. Đặt con trỏ trước rồi mới chạy, để `runCurrent` và cú
+    // bấm này không thể bất đồng về "dòng nào".
+    ed.onMouseDown((e) => {
+      if (e.target.type !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) return;
+      if (!e.target.position) return;
+      ed.setPosition(e.target.position);
+      runCurrentRef.current();
+    });
+
+    // Tô sáng dòng mà Ctrl+Enter sẽ chạy. Rẻ hơn hẳn bản SQL — ở đây "câu lệnh" luôn là một dòng,
+    // nên không phải mask chuỗi/chú thích để tìm ranh giới; chỉ cần biết con trỏ ở dòng nào.
+    const decorations = ed.createDecorationsCollection([]);
+    const refresh = () => {
+      const model = ed.getModel();
+      const pos = ed.getPosition();
+      if (!model || !pos) return;
+      const text = model.getValue();
+      const cmd = commandAtLine(text, pos.lineNumber);
+      if (!cmd) { decorations.set([]); return; }
+      const items: monaco.editor.IModelDeltaDecoration[] = [{
+        range: new monaco.Range(cmd.line, 1, cmd.line, 1),
+        options: {
+          glyphMarginClassName: 'sql-run-glyph',
+          glyphMarginHoverMessage: { value: runHintRef.current },
+        },
+      }];
+      // Chỉ tô nền khi có nhiều hơn một lệnh — một lệnh duy nhất thì tô cả nó là vô nghĩa.
+      if (splitRedisCommands(text).length > 1) {
+        items.push({
+          range: new monaco.Range(cmd.line, 1, cmd.line, model.getLineMaxColumn(cmd.line)),
+          options: { isWholeLine: true, className: 'sql-current-stmt' },
+        });
+      }
+      decorations.set(items);
+    };
+    ed.onDidChangeCursorPosition((e) => {
+      setPos({ line: e.position.lineNumber, col: e.position.column });
+      refresh();
+    });
+    ed.onDidChangeModelContent(refresh);
+    refresh();
+
+    ed.focus();
+  };
+
+  /** Lệnh nhanh: chèn thành một dòng mới ở cuối buffer rồi chạy. */
+  const runQuick = (q: string) => {
+    const ed = editorRef.current;
+    if (ed) {
+      const text = ed.getValue();
+      const next = text && !text.endsWith('\n') ? `${text}\n${q}` : `${text}${q}`;
+      ed.setValue(next);
+      const last = ed.getModel()?.getLineCount() ?? 1;
+      ed.setPosition({ lineNumber: last, column: q.length + 1 });
+      persist();
+    }
+    void runCommands([q]);
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '8px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: '10px', color: 'var(--win-text-disabled)' }}>{t('redis.quickCommands')}</span>
-        {QUICK_CMDS.map((q) => (
-          <button key={q} onClick={() => run(q)} style={pillStyle}>{q}</button>
-        ))}
-        <div style={{ flex: 1 }} />
-        <span style={{ fontSize: '10px', color: 'var(--win-text-disabled)' }}>
-          {t('redis.commandsKnown', { n: COMMANDS.length })}
+    <div className="redis-console" ref={rootRef}>
+      {/* Thứ tự theo đúng khung truy vấn SQL: editor -> thanh hành động -> tab kết quả -> vùng kết
+          quả -> dòng trạng thái. Bản trước đặt toàn bộ nút LÊN TRÊN editor, nên nút Chạy nằm xa
+          chỗ mắt đang nhìn (dòng lệnh đang gõ) và vùng kết quả thì không có gì nhận dạng. */}
+      <div
+        className="redis-cli-editor"
+        ref={editorBoxRef}
+        // Chỉ ghi đè khi người dùng đã kéo; chưa kéo thì để tỉ lệ mặc định trong CSS quyết định.
+        style={editorH != null ? { flex: '0 0 auto', height: editorH } : undefined}
+      >
+        <Editor
+          height="100%"
+          language={REDIS_LANG_ID}
+          theme={sqlThemeName(theme)}
+          defaultValue={initialRef.current}
+          onChange={persist}
+          onMount={onMount}
+          options={{ ...SQL_EDITOR_OPTIONS, lineNumbersMinChars: 2 }}
+        />
+      </div>
+
+      <div className="redis-cli-actionbar">
+        <span className="redis-cli-pos">
+          {t('redis.cliPosition', { line: pos.line, col: pos.col })}
         </span>
-        <button
-          onClick={clearHistory}
-          disabled={history.length === 0}
-          style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '4px', border: '1px solid var(--win-border)', background: 'transparent', color: 'var(--win-text-secondary)', cursor: 'pointer' }}
-        >
-          {t('redis.clearHistory')}
+        <span className="redis-value-meta">{t('redis.commandsKnown', { n: COMMANDS.length })}</span>
+        <div className="redis-keylist-spacer" />
+        {QUICK_CMDS.map((q) => (
+          <button key={q} onClick={() => runQuick(q)} className="redis-pill" disabled={running}>{q}</button>
+        ))}
+        <button className="btn btn-secondary redis-value-save" onClick={runAll} disabled={running}>
+          <ListChecks size={11} /> {t('redis.cliRunAll')}
         </button>
-        <button
-          onClick={() => setLog([])}
-          disabled={log.length === 0}
-          style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '4px', border: '1px solid var(--win-border)', background: 'transparent', color: 'var(--win-text-secondary)', cursor: 'pointer' }}
-        >
+        <button className="btn btn-primary redis-value-save" onClick={runCurrent} disabled={running}>
+          <Play size={11} /> {t('redis.runCommand')}
+        </button>
+      </div>
+
+      <div
+        className={`redis-cli-resizer${dragging ? ' dragging' : ''}`}
+        onMouseDown={startDrag}
+        title={t('redis.cliResizeHint')}
+      />
+
+      <div className="redis-cli-result-head">
+        <span className="redis-cli-result-tab">{t('redis.cliResults')}</span>
+        {log.length > 0 && (
+          <span className="redis-value-meta">{t('redis.cliResultCount', { n: log.length })}</span>
+        )}
+        <div className="redis-keylist-spacer" />
+        <button className="redis-ghost-btn" onClick={() => setLog([])} disabled={log.length === 0}>
           {t('redis.clearLog')}
         </button>
       </div>
 
-      <div ref={logRef} style={logBox}>
-        {log.length === 0 && <div style={{ color: 'var(--win-text-disabled)' }}>{t('redis.consoleHint')}</div>}
-        {log.map((l, i) => (
-          <div key={i} style={{ marginBottom: '8px' }}>
-            <div style={{ color: 'var(--win-accent)' }}>&gt; {l.cmd}</div>
-            <pre style={{ margin: '2px 0 0', whiteSpace: 'pre-wrap', color: l.ok ? 'var(--win-text-primary)' : 'var(--st-danger)' }}>{l.out}</pre>
+      <div ref={logRef} className="redis-log-box flush">
+        {log.length === 0 ? (
+          <div className="redis-cli-result-empty">{t('redis.cliResultEmpty')}</div>
+        ) : log.map((l, i) => (
+          <div key={i} className="redis-console-entry">
+            {l.cmd && <div className="redis-console-echo">&gt; {l.cmd}</div>}
+            <pre className={`redis-console-out${l.ok ? '' : ' err'}${l.note ? ' note' : ''}`}>{l.out}</pre>
           </div>
         ))}
       </div>
 
-      {syntax && (
-        <div style={{ fontSize: '10px', fontFamily: 'var(--win-font-mono)', color: 'var(--win-text-secondary)', background: 'var(--win-bg-subtle, rgba(0,0,0,0.15))', padding: '4px 8px', borderRadius: '4px' }}>
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-            <span style={{ color: 'var(--win-accent)', fontWeight: 700 }}>{syntax.name}</span>
-            {syntax.args ? <span>{syntax.args}</span> : null}
-            {syntax.complexity ? <span style={{ color: '#f59e0b', fontSize: '9px' }}>⏱ {syntax.complexity}</span> : null}
-            {syntax.since ? <span style={{ opacity: 0.7, fontSize: '9px' }}>({syntax.since})</span> : null}
-          </div>
-          {syntax.description ? (
-            <div style={{ fontSize: '10px', color: 'var(--win-text-disabled)', marginTop: '2px' }}>
-              {syntax.description}
-            </div>
-          ) : null}
-        </div>
-      )}
-
-      <div style={{ position: 'relative', display: 'flex', gap: '6px' }}>
-        {suggestions.length > 0 && (
-          <div style={{
-            position: 'absolute', bottom: '100%', left: '18px', marginBottom: '4px', zIndex: 5,
-            background: 'var(--win-bg-card)', border: '1px solid var(--win-border-strong, var(--win-border))',
-            borderRadius: '4px', boxShadow: '0 8px 20px rgba(0,0,0,0.35)', minWidth: '320px', overflow: 'hidden',
-          }}>
-            {suggestions.map((s, i) => (
-              <div
-                key={s.name}
-                onMouseDown={(e) => { e.preventDefault(); setSuggestIdx(i); acceptSuggestion(); }}
-                style={{
-                  padding: '4px 8px', fontSize: '11px', fontFamily: 'var(--win-font-mono)', cursor: 'pointer',
-                  background: i === suggestIdx ? 'var(--win-bg-active)' : 'transparent',
-                  display: 'flex', gap: '8px',
-                }}
-              >
-                <span style={{ color: 'var(--win-accent)', fontWeight: 700 }}>{s.name}</span>
-                <span style={{ color: 'var(--win-text-disabled)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.args}</span>
-              </div>
-            ))}
-            <div style={{ padding: '3px 8px', fontSize: '9px', color: 'var(--win-text-disabled)', borderTop: '1px solid var(--win-border)' }}>
-              {t('redis.completionHint')}
-            </div>
-          </div>
-        )}
-        <span style={{ display: 'flex', alignItems: 'center', color: 'var(--win-accent)', fontFamily: 'var(--win-font-mono)', fontSize: '13px', fontWeight: 700 }}>&gt;</span>
-        <input
-          type="text"
-          ref={inputRef}
-          value={cmd}
-          onChange={(e) => { setCmd(e.target.value); setShowSuggest(true); setSuggestIdx(0); }}
-          onKeyDown={onKeyDown}
-          onBlur={() => setShowSuggest(false)}
-          placeholder={t('redis.consolePlaceholder')}
-          spellCheck={false}
-          style={{ flex: 1, background: 'var(--win-bg-window)', border: '1px solid var(--win-border)', color: 'var(--win-text-primary)', borderRadius: '4px', padding: '6px 10px', fontFamily: 'var(--win-font-mono)', fontSize: '11px', outline: 'none' }}
-        />
-        <button className="btn btn-primary" onClick={() => run()} style={{ padding: '0 14px', fontSize: '11px' }}>{t('redis.runCommand')}</button>
+      <div className="redis-cli-status">
+        {running ? t('redis.cliStatusRunning') : t('redis.consoleHint')}
       </div>
     </div>
   );

@@ -557,7 +557,7 @@ pub async fn connect_db(app: tauri::AppHandle, state: tauri::State<'_, crate::Ap
                 read_only: false,
                 server,
                 db: db_name,
-                conn,
+                conn: crate::state::LiveConn::Sql(conn),
                 current_schema: schema.clone(),
             },
         )?;
@@ -593,7 +593,7 @@ pub async fn disconnect_db(
     // An unknown id is not an error: disconnecting something already gone is the state the caller
     // wanted. `reset(None)` still runs so the state machine itself is cleared.
     let entry = state.connections.remove(&conn_id)?;
-    crate::tx_session::reset(entry.as_ref().map(|e| &e.conn)).await;
+    crate::tx_session::reset(entry.as_ref().and_then(|e| e.conn.sql())).await;
     drop(entry);
     Ok(json!({ "success": true }))
 }
@@ -3994,7 +3994,7 @@ pub async fn open_database(
             read_only: inherit_read_only,
             server,
             db: name.clone(),
-            conn,
+            conn: crate::state::LiveConn::Sql(conn),
             current_schema: schema.clone(),
         },
     )?;
@@ -4439,6 +4439,43 @@ pub struct ConnectionStatusInfo {
     pub tls_version: String,
 }
 
+/// Latency của **mọi** kết nối đang mở, một `SELECT 1` cho mỗi cái, chạy song song.
+///
+/// Không dùng `get_connection_status` cho việc này: lệnh đó còn hỏi version, user và TLS, tức 3–5
+/// round trip cho *một* kết nối. Gọi nó N lần mỗi khi mở Quick Switcher là bắt một cái menu chờ vài
+/// trăm ms — đó chính là lý do lệnh này tồn tại riêng.
+///
+/// **Đi thẳng vào pool, không qua `execute_raw_sql_generic`.** Nếu đi qua đó thì `should_route` sẽ
+/// đẩy câu này vào phiên transaction khi người dùng đang bật commit thủ công, và `run_raw` gọi
+/// `ensure_begin` ở câu **đầu tiên bất kể nó là gì** — một cú ping nền sẽ âm thầm MỞ transaction
+/// trên mọi kết nối, rồi bộ đếm "đang chờ commit" nói về những thứ người dùng chưa từng gõ. Ping là
+/// thao tác đọc trạng thái; nó không được để lại dấu vết nào.
+///
+/// Không nhận `conn_id`: đây là câu hỏi về registry, giống `list_connections`, không phải về một kết
+/// nối. Lỗi của một kết nối trả về `ok: false` chứ không làm cả lệnh thất bại — một server đã ngắt
+/// là *thông tin* mà UI cần hiện, không phải lỗi che nốt N-1 kết nối còn lại.
+#[tauri::command]
+pub async fn ping_connections(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
+    let handles = state.connections.handles()?;
+    let pings = futures_util::future::join_all(handles.into_iter().map(|(id, conn)| async move {
+        let started = std::time::Instant::now();
+        let ok = match &conn.kind {
+            // SQLite là handle dùng chung sau `Mutex`: một `SELECT 1` là vi giây, nhưng khoá đang bị
+            // giữ bởi một truy vấn dài thì ping sẽ chờ theo. Đó là sự thật đáng hiện — kết nối ấy
+            // *đang* bận — nên không cố lách bằng `try_lock`.
+            DbKind::Sqlite(arc) => arc
+                .lock()
+                .map(|c| c.execute_batch("SELECT 1;").is_ok())
+                .unwrap_or(false),
+            DbKind::Postgres(pool) => sqlx::query("SELECT 1;").execute(pool).await.is_ok(),
+            DbKind::Mysql(pool) => sqlx::query("SELECT 1;").execute(pool).await.is_ok(),
+        };
+        json!({ "connId": &*id, "ok": ok, "latencyMs": started.elapsed().as_millis() as u64 })
+    }))
+    .await;
+    Ok(json!({ "success": true, "pings": pings }))
+}
+
 impl ConnectionStatusInfo {
     fn disconnected() -> Self {
         ConnectionStatusInfo {
@@ -4503,14 +4540,20 @@ pub async fn get_connection_status(
         Some(c) => c,
         None => {
             // Check Redis connection
-            let (redis_conn, redis_config, redis_db_index, has_redis_ssh, caps) = {
-                let conn = state.redis.conn.lock().ok().and_then(|g| g.clone());
-                let cfg = state.redis.config.lock().ok().and_then(|g| g.clone());
-                let db_idx = state.redis.db_index.lock().ok().map(|g| *g).unwrap_or(0);
-                let has_ssh = state.redis.ssh_tunnel.lock().ok().map(|g| g.is_some()).unwrap_or(false);
-                let caps = state.redis.caps.lock().ok().map(|g| g.clone()).unwrap_or_default();
-                (conn, cfg, db_idx, has_ssh, caps)
-            };
+            // Cùng `conn_id`, chỉ khác loại kết nối. Redis đã nằm trong registry nên không còn
+            // phải hỏi một state toàn cục "có kết nối Redis nào không" — câu hỏi đó không có câu
+            // trả lời đúng khi hai kết nối Redis cùng mở.
+            let (redis_conn, redis_config, redis_db_index, has_redis_ssh, caps) =
+                match state.connections.acquire_redis(&conn_id) {
+                    Ok(ctx) => (
+                        Some(ctx.conn()),
+                        Some(ctx.config()),
+                        ctx.db_index(),
+                        ctx.has_ssh_tunnel(),
+                        ctx.caps(),
+                    ),
+                    Err(_) => (None, None, 0, false, crate::redis_db::RedisCaps::default()),
+                };
 
             if let Some(mut r_conn) = redis_conn {
                 let start = std::time::Instant::now();

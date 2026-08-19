@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Check, Lock, Pencil, Plus, Trash2, X, Search } from 'lucide-react';
 import { dbHelper } from '../../utils/dbHelper';
 import { ConfirmDialog } from '../ConfirmDialog';
-import { ELEMENT_PAGE, cellStyle, inlineInput } from './shared';
+import { ELEMENT_PAGE } from './shared';
 import type { CollRow, CollectionEditor } from './types';
 
 interface CollectionTableProps {
@@ -157,7 +157,7 @@ export const CollectionTable: React.FC<CollectionTableProps> = ({
   };
 
   const draftCells = (prev: CollRow | null) => editor.cols.map((col, i) => (
-    <td key={i} style={cellStyle}>
+    <td key={i} className="redis-cell">
       {col.editable ? (
         <input
           type="text"
@@ -170,31 +170,30 @@ export const CollectionTable: React.FC<CollectionTableProps> = ({
           }}
           placeholder={col.placeholder}
           spellCheck={false}
-          style={inlineInput}
         />
       ) : (
-        <span style={{ color: 'var(--win-text-disabled)' }}>{prev ? prev.cells[i] : col.addHint}</span>
+        <span className="redis-cell-hint">{prev ? prev.cells[i] : col.addHint}</span>
       )}
     </td>
   ));
 
+  // Con trỏ và độ mờ lúc bận đã do `.redis-cell-btn:disabled` lo, nên chúng rời khỏi style. Chỉ
+  // `color` ở lại: mỗi nút một màu do chỗ gọi quyết định, không phải một tập hữu hạn để đặt tên class.
   const iconBtn = (title: string, Icon: typeof Pencil, onClick: () => void, color?: string) => (
     <button
+      className="redis-cell-btn"
       title={title}
       onClick={onClick}
       disabled={busy}
-      style={{
-        background: 'transparent', border: 'none', padding: '2px', cursor: busy ? 'default' : 'pointer',
-        color: color || 'var(--win-text-secondary)', display: 'flex', alignItems: 'center', opacity: busy ? 0.5 : 1,
-      }}
+      style={color ? { color } : undefined}
     >
       <Icon size={12} />
     </button>
   );
 
   const editActions = (prev: CollRow | null) => (
-    <td style={{ ...cellStyle, whiteSpace: 'nowrap' }}>
-      <div style={{ display: 'flex', gap: '2px' }}>
+    <td className="redis-cell nowrap">
+      <div className="redis-cell-actions">
         {iconBtn(t('common.save'), Check, () => commit(prev), 'var(--win-accent)')}
         {iconBtn(t('common.cancel'), X, cancel)}
       </div>
@@ -206,11 +205,11 @@ export const CollectionTable: React.FC<CollectionTableProps> = ({
     : t('redis.elementCount', { n: rows.length.toLocaleString() });
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minHeight: 0 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: '10px', color: 'var(--win-text-disabled)' }}>{loadedText}</span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'var(--win-bg-window)', border: '1px solid var(--win-border)', borderRadius: '4px', padding: '0 6px' }}>
-          <Search size={11} style={{ color: 'var(--win-text-disabled)' }} />
+    <div className="redis-coll">
+      <div className="redis-value-bar">
+        <span className="redis-value-meta">{loadedText}</span>
+        <div className="redis-keylist-search narrow">
+          <Search size={11} className="redis-keylist-search-icon" />
           <input
             type="text"
             value={filter}
@@ -219,30 +218,29 @@ export const CollectionTable: React.FC<CollectionTableProps> = ({
             onBlur={applyFilter}
             placeholder={editor.serverFilter ? t('redis.filterElements') : t('redis.filterLoadedElements')}
             title={editor.serverFilter ? t('redis.filterElementsTitle') : t('redis.filterLoadedElementsTitle')}
-            style={{ width: '150px', background: 'transparent', border: 'none', color: 'var(--win-text-primary)', fontSize: '11px', outline: 'none', padding: '3px 0' }}
           />
         </div>
-        <div style={{ flex: 1 }} />
-        <button className="btn btn-secondary" onClick={startAdd} disabled={adding || busy || readOnly} style={{ padding: '0 10px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+        <div className="redis-keylist-spacer" />
+        <button className="btn btn-secondary redis-value-save" onClick={startAdd} disabled={adding || busy || readOnly}>
           <Plus size={11} /> {t('redis.addElement')}
         </button>
       </div>
 
       {!editor.serverFilter && appliedFilter && (
-        <div style={{ fontSize: '10px', color: '#f59e0b' }}>{t('redis.filterLoadedOnlyNote')}</div>
+        <div className="redis-value-warn">{t('redis.filterLoadedOnlyNote')}</div>
       )}
 
-      <div style={{ border: '1px solid var(--win-border)', borderRadius: '4px', overflow: 'auto', background: 'var(--win-bg-window)' }}>
-        <table className="grid-table" style={{ width: '100%' }}>
+      <div className="redis-table-wrap">
+        <table className="grid-table redis-table">
           <thead>
             <tr>
               {editor.cols.map((c) => <th key={c.label} style={c.width ? { width: c.width } : undefined}>{c.label}</th>)}
-              <th style={{ width: '58px' }} />
+              <th className="redis-actions-col" />
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 && !adding && (
-              <tr><td colSpan={editor.cols.length + 1} style={{ color: 'var(--win-text-disabled)', textAlign: 'center', padding: '10px' }}>{t('redis.emptyCollection')}</td></tr>
+              <tr><td colSpan={editor.cols.length + 1} className="redis-table-empty">{t('redis.emptyCollection')}</td></tr>
             )}
             {rows.map((row) => (
               editingId === row.id ? (
@@ -253,17 +251,17 @@ export const CollectionTable: React.FC<CollectionTableProps> = ({
               ) : (
                 <tr key={row.id} onDoubleClick={() => { if (!row.binary && !readOnly) startEdit(row); }}>
                   {row.cells.map((cell, j) => (
-                    <td key={j} style={cellStyle}>
+                    <td key={j} className="redis-cell">
                       {row.binary && j === row.cells.length - 1 && (
-                        <Lock size={9} style={{ marginRight: '4px', verticalAlign: 'middle', color: 'var(--win-text-disabled)' }} />
+                        <Lock size={9} className="redis-lock-inline" />
                       )}
                       {cell}
                     </td>
                   ))}
-                  <td style={{ ...cellStyle, whiteSpace: 'nowrap' }}>
-                    <div style={{ display: 'flex', gap: '2px' }}>
+                  <td className="redis-cell nowrap">
+                    <div className="redis-cell-actions">
                       {row.binary
-                        ? <span title={t('redis.binaryCell')} style={{ color: 'var(--win-text-disabled)', display: 'flex', alignItems: 'center', padding: '2px' }}><Lock size={12} /></span>
+                        ? <span title={t('redis.binaryCell')} className="redis-cell-locked"><Lock size={12} /></span>
                         : !readOnly && iconBtn(t('redis.edit'), Pencil, () => startEdit(row), 'var(--win-accent)')}
                       {!readOnly && !row.binaryKey && iconBtn(t('redis.delete'), Trash2, () => setPendingDelete(row), 'var(--st-danger)')}
                     </div>
@@ -282,11 +280,11 @@ export const CollectionTable: React.FC<CollectionTableProps> = ({
       </div>
 
       {!done && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <button className="btn btn-secondary" onClick={() => fetchPage(cursor, false, appliedFilter)} disabled={loading} style={{ padding: '0 10px' }}>
+        <div className="redis-coll-more">
+          <button className="btn btn-secondary redis-value-btn wide" onClick={() => fetchPage(cursor, false, appliedFilter)} disabled={loading}>
             {loading ? t('redis.loading') : t('redis.loadMoreElements', { n: ELEMENT_PAGE })}
           </button>
-          <span style={{ fontSize: '10px', color: 'var(--win-text-disabled)' }}>{t('redis.pagedNote')}</span>
+          <span className="redis-value-meta">{t('redis.pagedNote')}</span>
         </div>
       )}
 

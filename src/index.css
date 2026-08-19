@@ -69,6 +69,11 @@
   box-sizing: border-box;
 }
 
+*:focus,
+*:focus-visible {
+  outline: none !important;
+}
+
 :root,
 [data-theme='dark'] {
   /* Liquid Glass Dark Theme (Default) */
@@ -202,7 +207,7 @@ body {
 
 /* TitleBar: nền kính mỏng + hairline sáng ở cạnh trên cho khớp vật liệu cửa sổ */
 .title-bar {
-  height: 50px;
+  height: 40px;
   flex-shrink: 0;
   background: rgba(255, 255, 255, 0.34);
   display: flex;
@@ -243,20 +248,26 @@ body {
   display: inline-flex;
   align-items: center;
   border: none;
-  border-radius: 22px;
-  padding: 3px 6px;
-  gap: 2px;
-  height: 36px;
+  background: transparent;
+  padding: 2px 4px;
+  gap: 6px;
+  height: 34px;
   -webkit-app-region: no-drag;
+}
+
+.tb-capsule-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .tb-capsule-btn {
   background: transparent;
   border: none;
   color: var(--win-text-secondary);
-  height: 30px;
-  padding: 0 10px;
-  border-radius: 16px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 6px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -264,15 +275,40 @@ body {
   font-size: 12px;
   font-weight: 500;
   transition: all 0.12s ease;
+  user-select: none;
 }
 
 .tb-capsule-btn:hover:not(:disabled) {
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--win-bg-hover);
   color: var(--win-text-primary);
 }
 
 [data-theme='dark'] .tb-capsule-btn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.tb-capsule-btn.is-active-accent {
+  color: var(--win-accent);
+  background: var(--win-accent-glow);
+}
+
+.tb-capsule-btn.is-active-warn {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.tb-capsule-btn-sql {
+  font-weight: 700;
+  font-size: 11px;
+  padding: 0 8px;
+  gap: 4px;
+}
+
+.tb-capsule-btn-docs {
+  padding: 0 8px;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
 }
 
 /* Màn ConnectionManager: cụm nút chỉ còn vài mục phụ trợ nên bỏ hẳn phản hồi
@@ -292,10 +328,10 @@ body {
 
 .tb-capsule-divider {
   width: 1px;
-  height: 18px;
+  height: 16px;
   background: var(--win-border);
-  margin: 0 3px;
-  opacity: 0.5;
+  margin: 0 2px;
+  opacity: 0.6;
 }
 
 .tb-status-capsule {
@@ -870,9 +906,10 @@ textarea::placeholder {
 input:focus,
 select:focus,
 textarea:focus {
-  border-color: var(--win-accent);
-  box-shadow: 0 0 0 3px var(--win-accent-glow);
+  border-color: var(--win-border-strong);
+  box-shadow: none;
   background: rgba(10, 12, 16, 0.75);
+  outline: none;
 }
 
 [data-theme='light'] .form-input,
@@ -898,8 +935,9 @@ textarea:focus {
 [data-theme='light'] select:focus,
 [data-theme='light'] textarea:focus {
   background: #ffffff;
-  border-color: #2563eb;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.20);
+  border-color: var(--win-border-strong);
+  box-shadow: none;
+  outline: none;
 }
 
 .form-row {
@@ -1159,10 +1197,12 @@ select.form-input {
   background: rgba(252, 165, 165, 0.18);
   border-color: rgba(252, 165, 165, 0.55);
 }
+
 .db-rail-item.db-rail-color-red:hover {
   background: rgba(252, 165, 165, 0.28);
   border-color: rgba(252, 165, 165, 0.85);
 }
+
 .db-rail-item.is-on.db-rail-color-red {
   background: rgba(252, 165, 165, 0.35);
   border-color: #f87171;
@@ -1172,10 +1212,12 @@ select.form-input {
   background: rgba(134, 239, 172, 0.18);
   border-color: rgba(134, 239, 172, 0.55);
 }
+
 .db-rail-item.db-rail-color-green:hover {
   background: rgba(134, 239, 172, 0.28);
   border-color: rgba(134, 239, 172, 0.85);
 }
+
 .db-rail-item.is-on.db-rail-color-green {
   background: rgba(134, 239, 172, 0.35);
   border-color: #4ade80;
@@ -1185,10 +1227,12 @@ select.form-input {
   background: rgba(165, 180, 252, 0.18);
   border-color: rgba(165, 180, 252, 0.55);
 }
+
 .db-rail-item.db-rail-color-blue:hover {
   background: rgba(165, 180, 252, 0.28);
   border-color: rgba(165, 180, 252, 0.85);
 }
+
 .db-rail-item.is-on.db-rail-color-blue {
   background: rgba(165, 180, 252, 0.35);
   border-color: #818cf8;
@@ -1198,10 +1242,12 @@ select.form-input {
   background: rgba(253, 230, 138, 0.22);
   border-color: rgba(253, 230, 138, 0.65);
 }
+
 .db-rail-item.db-rail-color-yellow:hover {
   background: rgba(253, 230, 138, 0.32);
   border-color: rgba(253, 230, 138, 0.9);
 }
+
 .db-rail-item.is-on.db-rail-color-yellow {
   background: rgba(253, 230, 138, 0.42);
   border-color: #facc15;
@@ -1212,6 +1258,7 @@ select.form-input {
   background: rgba(239, 68, 68, 0.15);
   border-color: rgba(248, 113, 113, 0.35);
 }
+
 [data-theme='dark'] .db-rail-item.is-on.db-rail-color-red {
   background: rgba(239, 68, 68, 0.28);
   border-color: rgba(248, 113, 113, 0.7);
@@ -1221,6 +1268,7 @@ select.form-input {
   background: rgba(34, 197, 94, 0.15);
   border-color: rgba(74, 222, 128, 0.35);
 }
+
 [data-theme='dark'] .db-rail-item.is-on.db-rail-color-green {
   background: rgba(34, 197, 94, 0.28);
   border-color: rgba(74, 222, 128, 0.7);
@@ -1230,6 +1278,7 @@ select.form-input {
   background: rgba(99, 102, 241, 0.15);
   border-color: rgba(129, 140, 248, 0.35);
 }
+
 [data-theme='dark'] .db-rail-item.is-on.db-rail-color-blue {
   background: rgba(99, 102, 241, 0.28);
   border-color: rgba(129, 140, 248, 0.7);
@@ -1239,6 +1288,7 @@ select.form-input {
   background: rgba(234, 179, 8, 0.15);
   border-color: rgba(250, 204, 21, 0.35);
 }
+
 [data-theme='dark'] .db-rail-item.is-on.db-rail-color-yellow {
   background: rgba(234, 179, 8, 0.28);
   border-color: rgba(250, 204, 21, 0.7);
@@ -5067,6 +5117,89 @@ select.form-input {
   opacity: 0 !important;
 }
 
+/* Row action edit button */
+.st-row-edit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  color: var(--win-text-disabled);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+
+.structure-table tr:hover .st-row-edit,
+.st-row-edit:focus-visible {
+  opacity: 0.7;
+}
+
+.st-row-edit:hover {
+  opacity: 1 !important;
+  background: var(--win-accent-glow);
+  color: var(--win-accent);
+}
+
+/* Quick helper chips in Structure modals */
+.st-chips-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.st-chip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--win-border);
+  background: var(--win-bg-hover);
+  color: var(--win-text-primary);
+  font-family: var(--win-font-mono, monospace);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  user-select: none;
+}
+
+.st-chip-btn:hover {
+  background: var(--win-accent-glow);
+  color: var(--win-accent);
+  border-color: rgba(59, 130, 246, 0.3);
+}
+
+.st-chip-btn.operator {
+  font-weight: 600;
+  color: var(--win-accent);
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.st-tpl-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--win-border);
+  background: var(--win-bg-card);
+  color: var(--win-text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.st-tpl-btn:hover {
+  color: var(--win-text-primary);
+  background: var(--win-bg-hover);
+  border-color: var(--win-border-strong);
+}
+
 /* Custom table dropdown select controls */
 .st-select {
   width: 100%;
@@ -5885,6 +6018,24 @@ select.form-input {
   }
 }
 
+/* ─── Statistics table rows (DatabaseInfoModal) ───
+   Hover lives here rather than in onMouseEnter/onMouseLeave handlers writing inline styles:
+   a database with a couple of thousand tables would otherwise carry two closures and two
+   style writes per row, on every render. `.is-current` marks the connected database, and
+   its highlight must survive hovering. */
+.stat-row {
+  border-bottom: 1px solid var(--win-border);
+  transition: background 0.12s;
+}
+
+.stat-row:not(.is-current):hover {
+  background: var(--win-bg-hover);
+}
+
+.stat-row.is-current {
+  background: var(--win-accent-glow);
+}
+
 /* ─── Copy Options Dropdown Style ─── */
 .copy-dropdown-item {
   background: transparent;
@@ -6393,7 +6544,7 @@ input.rename-input {
 /* Nút tạo kết nối mới + menu chọn loại DB */
 .cm-new-wrap {
   position: relative;
-  padding: 0 0 10px;
+  padding: 0 10px 8px;
 }
 
 .cm-new-btn {
@@ -6403,18 +6554,21 @@ input.rename-input {
   align-items: center;
   gap: 7px;
   padding: 0 10px;
-  border: 0 solid var(--win-border-strong);
-  background: var(--win-bg-btn-secondary);
+  border-radius: 8px;
+  border: none;
+  background: var(--win-bg-hover, rgba(125, 130, 145, 0.08));
   color: var(--win-text-primary);
   font-family: var(--win-font-sans);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.12s ease;
+  transition: all 0.12s ease;
 }
 
 .cm-new-btn:hover {
-  background: var(--win-bg-btn-secondary-hover);
+  background: var(--win-accent-glow, rgba(59, 130, 246, 0.12));
+  border-color: var(--win-accent);
+  color: var(--win-accent);
 }
 
 .cm-pop-backdrop {
@@ -6426,9 +6580,9 @@ input.rename-input {
 .cm-pop {
   position: absolute;
   z-index: 41;
-  top: calc(100% - 4px);
-  left: 12px;
-  right: 12px;
+  top: calc(100% + 2px);
+  left: 10px;
+  right: 10px;
   padding: 4px;
   border-radius: 10px;
   border: 1px solid var(--win-border-strong);
@@ -6466,21 +6620,23 @@ input.rename-input {
 
 /* Ô tìm kiếm */
 .cm-search {
-  margin: 0 0 10px;
+  margin: 0 10px 8px;
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 34px;
+  height: 32px;
   padding: 0 10px;
-  border: 1px solid var(--win-border);
-  border-radius: 0;
+  border: none;
+  border-radius: 8px;
   background: var(--win-bg-window);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
 
 .cm-search:focus-within {
-  border-color: var(--win-accent);
-  box-shadow: 0 0 0 3px var(--win-accent-glow);
+  background: var(--win-bg-card);
+  border-color: var(--win-border-strong);
+  box-shadow: none;
+  outline: none;
 }
 
 .cm-search-icon {
@@ -6501,8 +6657,13 @@ input.rename-input {
   box-shadow: none !important;
   outline: none !important;
   font-family: var(--win-font-sans);
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--win-text-primary) !important;
+}
+
+.cm-search input::placeholder {
+  color: var(--win-text-disabled);
+  font-size: 11.5px;
 }
 
 .cm-search input:focus {
@@ -6516,6 +6677,7 @@ input.rename-input {
 .cm-list {
   flex: 1;
   overflow-y: auto;
+  padding: 4px 0 8px;
 }
 
 .cm-empty {
@@ -6622,16 +6784,14 @@ input.rename-input {
   left: -60%;
   width: 220%;
   height: 220%;
-  background: linear-gradient(
-    115deg,
-    transparent 0%,
-    transparent 42%,
-    rgba(255, 255, 255, 0.1) 46%,
-    rgba(255, 255, 255, 0.88) 50%,
-    rgba(255, 255, 255, 0.18) 54%,
-    transparent 58%,
-    transparent 100%
-  );
+  background: linear-gradient(115deg,
+      transparent 0%,
+      transparent 42%,
+      rgba(255, 255, 255, 0.1) 46%,
+      rgba(255, 255, 255, 0.88) 50%,
+      rgba(255, 255, 255, 0.18) 54%,
+      transparent 58%,
+      transparent 100%);
   transform: translateX(-120%);
   animation: cmMetallicGlint 3.6s cubic-bezier(0.25, 1, 0.5, 1) infinite;
   border-radius: inherit;
@@ -6644,14 +6804,18 @@ input.rename-input {
     transform: translateX(-120%);
     opacity: 0;
   }
+
   6% {
     opacity: 1;
   }
+
   38% {
     transform: translateX(120%);
     opacity: 0.95;
   }
-  42%, 100% {
+
+  42%,
+  100% {
     transform: translateX(120%);
     opacity: 0;
   }
@@ -6667,20 +6831,25 @@ input.rename-input {
     transform: translateX(-120%);
     opacity: 0;
   }
+
   10% {
     opacity: 1;
   }
+
   80% {
     transform: translateX(120%);
     opacity: 1;
   }
-  90%, 100% {
+
+  90%,
+  100% {
     transform: translateX(120%);
     opacity: 0;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
+
   .cm-badge::before,
   .cm-avatar::before {
     animation: none;
@@ -6820,7 +6989,7 @@ input.rename-input {
 /* Chiều cao dùng chung cho footer sidebar và footer pane phải, để đường kẻ trên
    và nội dung hai bên thẳng đúng một hàng. Đổi ở đây là cả hai đổi theo. */
 .connection-manager-container {
-  --cm-foot-h: 57px;
+  --cm-foot-h: 48px;
 }
 
 .cm-side-foot {
@@ -6829,11 +6998,14 @@ input.rename-input {
   flex-direction: column;
   justify-content: center;
   gap: 2px;
+  padding: 0 8px;
+  flex-shrink: 0;
+  background: var(--win-bg-sidebar);
 }
 
-/* Cao bằng .cm-btn (32px) để căn giữa trùng với nút bên phải. */
+/* Cao tương đương item và có bo góc, viền đồng bộ */
 .cm-side-foot .cm-ghost-row {
-  height: 32px;
+  height: 34px;
   padding: 0 10px;
 }
 
@@ -6842,15 +7014,17 @@ input.rename-input {
   align-items: center;
   gap: 9px;
   width: 100%;
-  padding: 8px;
-  border: none;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid transparent;
   background: transparent;
   color: var(--win-text-secondary);
   font-family: var(--win-font-sans);
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 500;
   text-align: left;
   cursor: pointer;
+  transition: background 0.15s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.15s ease, box-shadow 0.15s ease, color 0.15s ease;
 }
 
 .cm-ghost-row:hover {
@@ -6860,6 +7034,7 @@ input.rename-input {
 
 .cm-ghost-row.active {
   background: var(--win-bg-active);
+  border-color: var(--win-border-strong);
   color: var(--win-text-primary);
   font-weight: 600;
 }
@@ -6877,9 +7052,23 @@ input.rename-input {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 0 24px 15px;
+  padding: 0 24px 12px;
   border-bottom: 1px solid var(--win-border);
   flex-shrink: 0;
+}
+
+.cm-head-info {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: 1;
+  min-width: 0;
+  margin-top: -24px;
+}
+
+.cm-head-text {
+  flex: 1;
+  min-width: 0;
 }
 
 .cm-avatar {
@@ -6993,15 +7182,15 @@ input.rename-input {
 .cm-tabs {
   display: flex;
   gap: 2px;
-  padding: 0 24px;
+  padding: 10px 24px;
   flex-shrink: 0;
 }
 
 .cm-tab {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 10px 14px;
+  gap: 6px;
+  padding: 8px 14px;
   margin-bottom: -1px;
   border: none;
   border-bottom: 2px solid transparent;
@@ -7034,7 +7223,7 @@ input.rename-input {
 .cm-pane {
   flex: 1;
   overflow-y: auto;
-  padding: 22px 24px 30px;
+  padding: 16px 24px 20px;
 }
 
 .cm-pane-inner {
@@ -7042,8 +7231,8 @@ input.rename-input {
 }
 
 .cm-section+.cm-section {
-  margin-top: 18px;
-  padding-top: 18px;
+  margin-top: 16px;
+  padding-top: 16px;
   border-top: 1px solid var(--win-border);
 }
 
@@ -7056,15 +7245,15 @@ input.rename-input {
 .cm-section-desc {
   margin-top: 3px;
   font-size: 11.5px;
-  line-height: 1.5;
+  line-height: 1.45;
   color: var(--win-text-secondary);
 }
 
 .cm-fields {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  margin-top: 14px;
+  gap: 12px;
+  margin-top: 12px;
 }
 
 .cm-grid {
@@ -7086,7 +7275,13 @@ input.rename-input {
 }
 
 .cm-grid.basic {
-  grid-template-columns: minmax(0, 1fr) 200px;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr);
+}
+
+@media (max-width: 680px) {
+  .cm-grid.basic {
+    grid-template-columns: 1fr;
+  }
 }
 
 .cm-label-row {
@@ -7141,8 +7336,10 @@ input.rename-input {
 }
 
 .cm-hint {
+  display: block;
+  margin-top: 4px;
   font-size: 11px;
-  line-height: 1.55;
+  line-height: 1.5;
   color: var(--win-text-disabled);
 }
 
@@ -7633,7 +7830,7 @@ input.rename-input {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 12px 24px;
+  padding: 8px 24px;
   flex-shrink: 0;
   min-height: var(--cm-foot-h);
 }
@@ -7806,12 +8003,23 @@ input.rename-input {
    loang màu vừa bỏ. Nền của *ô nhập và nút* thì vẫn giữ (xem cuối khối),
    vì chúng là control chứ không phải nền.
 
-   Các biến --cm-* khai báo ở .cm-screen chứ không ở
-   .connection-manager-container như trước: thanh tiêu đề là anh em của
-   container nên không thừa kế được từ đó.
+   Các biến --cm-* khai báo ở .cm-screen vì thanh tiêu đề là anh em của
+   container nên không thừa kế được từ đó — NHƯNG cũng phải khai ở
+   .connection-manager-container, vì `ConnectionManager` còn được mount ở một
+   chỗ thứ hai: Modal "Thêm kết nối" (App.tsx), và ở đó không có .cm-screen nào
+   bọc ngoài. Thiếu chúng thì `.cm-side { width: var(--cm-side-w) }` mất giá trị
+   và sidebar giãn theo nội dung (danh sách rộng gấp đôi), `.cm-side-head
+   { height: var(--cm-tb-h) }` sập về 0 nên lệch hàng với .cm-main-head — đó là
+   lúc pill URL đè lên cụm chip bên cạnh tên kết nối.
+
+   Một khối, hai selector: giá trị vẫn chỉ tồn tại ở MỘT chỗ. Nhân đôi khối là
+   nhân đôi thứ sẽ lệch. --cm-tb-h nằm ở đây (không ở khối grid bên dưới) đúng vì
+   lý do đó: hai hàng tiêu đề phải cao bằng nhau ở cả hai chỗ mount.
    ===================================================================== */
-.cm-screen {
+.cm-screen,
+.connection-manager-container {
   --cm-side-w: 272px;
+  --cm-tb-h: 40px;
   --cm-surface: rgba(245, 247, 250, 0.78);
   --cm-glass-weak: rgba(255, 255, 255, 0.34);
   --cm-glass: rgba(255, 255, 255, 0.46);
@@ -7820,7 +8028,8 @@ input.rename-input {
   --cm-glass-shadow: rgba(15, 23, 42, 0.12);
 }
 
-[data-theme='dark'] .cm-screen {
+[data-theme='dark'] .cm-screen,
+[data-theme='dark'] .connection-manager-container {
   --cm-surface: rgba(18, 20, 26, 0.70);
   --cm-glass-weak: rgba(18, 22, 30, 0.40);
   --cm-glass: rgba(24, 28, 38, 0.50);
@@ -7844,8 +8053,9 @@ input.rename-input {
    còn thanh tiêu đề chỉ nằm ở ô trên-phải và *đè* lên container. Xếp thanh tiêu
    đề thành một hàng riêng phía trên như trước thì sidebar không thể cao hơn nó
    được — nó nằm sâu trong ConnectionManager, không phải con của khung này. */
+/* `--cm-tb-h` khai ở khối token phía trên, không ở đây: khi nó nằm ở đây thì bản mount trong Modal
+   không thấy nó, và hai hàng tiêu đề (`.cm-side-head` / `.cm-main-head`) cao khác nhau. */
 .cm-screen {
-  --cm-tb-h: 50px;
   position: relative;
   display: grid;
   grid-template-columns: var(--cm-side-w) 1fr;
@@ -7985,11 +8195,14 @@ input.rename-input {
    để vật liệu cửa sổ của hệ điều hành ăn qua nữa. Các panel vốn đã trong suốt
    nên không phải làm gì thêm. */
 @media (prefers-reduced-transparency: reduce) {
-  .cm-screen {
+
+  .cm-screen,
+  .connection-manager-container {
     --cm-surface: #f5f7fa;
   }
 
-  [data-theme='dark'] .cm-screen {
+  [data-theme='dark'] .cm-screen,
+  [data-theme='dark'] .connection-manager-container {
     --cm-surface: #12141a;
   }
 }
@@ -8038,6 +8251,7 @@ input.rename-input {
 
 .connection-manager-container .cm-ghost-row.active {
   background: var(--cm-item-active);
+  border-color: var(--cm-item-active-border);
   box-shadow: 0 2px 10px var(--cm-glass-shadow), inset 0 1px 0 var(--cm-hairline);
 }
 
@@ -11827,4 +12041,1978 @@ input.rename-input {
 [data-theme='dark'] .monaco-menu .monaco-action-bar .action-item.focused .action-label,
 [data-theme='dark'] .monaco-menu .monaco-action-bar .action-item:hover .action-label {
   color: #38bdf8 !important;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Quick Switcher (QuickSwitcherPopover.tsx)
+
+   Thay khối popup inline cũ trong TitleBar, khối đó dựng bằng ~40 object style
+   rải trong JSX: đổi một khoảng cách phải sửa nhiều chỗ, và không chỗ nào theo
+   được theme (nền, viền, chữ đều là giá trị cứng).
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* ─── Safe Mode popover (SafeModeControl) ───
+   Cùng họ với `.qs-pop` bên dưới và cố ý dùng chung `--win-bg-popover`: nền `--win-bg-window`
+   trong suốt ở theme sáng nên nhãn tab phía sau lọt qua. Portal + backdrop cũng vì popover này
+   mở từ trong `.tb-capsule` (overflow: hidden) nên nằm trong cây sẽ bị cắt. */
+.sm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 99998;
+}
+
+.sm-pop {
+  position: fixed;
+  z-index: 99999;
+  width: 316px;
+  padding: 6px;
+  background: var(--win-bg-popover, var(--win-bg-card));
+  border: 1px solid var(--win-border-strong);
+  border-radius: 12px;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.28), 0 4px 14px rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  font-family: var(--win-font-sans);
+  animation: qsPopSlideDown 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.sm-pop-title {
+  padding: 6px 10px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--win-text-disabled);
+}
+
+.sm-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 10px;
+  text-align: left;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--win-text-primary);
+  cursor: pointer;
+}
+
+.sm-item:hover:not(:disabled) {
+  background: var(--win-bg-hover);
+}
+
+.sm-item.is-on {
+  border-color: var(--win-accent);
+  background: var(--win-accent-glow);
+}
+
+.sm-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.sm-item-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.sm-item.is-on .sm-item-label {
+  font-weight: 600;
+}
+
+.sm-item-desc {
+  display: block;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--win-text-secondary);
+}
+
+/* Chỉ đọc chặn hẳn thay vì hỏi, nên nó tách khỏi ba mức "hỏi" ở trên. */
+.sm-divider {
+  height: 1px;
+  margin: 5px 8px;
+  background: var(--win-border);
+}
+
+.qs-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 99998;
+}
+
+.qs-pop {
+  position: fixed;
+  z-index: 99999;
+  width: 368px;
+  display: flex;
+  flex-direction: column;
+  background: var(--win-bg-popover, var(--win-bg-card));
+  border: 1px solid var(--win-border-strong);
+  border-radius: 14px;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.28), 0 4px 14px rgba(0, 0, 0, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  overflow: hidden;
+  font-family: var(--win-font-sans);
+  animation: qsPopSlideDown 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+[data-theme='light'] .qs-pop {
+  box-shadow: 0 20px 48px rgba(15, 23, 42, 0.16), 0 4px 14px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+@keyframes qsPopSlideDown {
+  0% {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Header Segmented Tabs — đồng bộ với .sb-seg / .cm-seg trong toàn app */
+.qs-header {
+  padding: 8px 10px 4px;
+  background: transparent;
+}
+
+.qs-seg {
+  display: flex;
+  gap: 4px;
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+.qs-seg-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 7px;
+  border: none;
+  background: transparent;
+  color: var(--win-text-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.qs-seg-btn:hover:not(.is-on) {
+  color: var(--win-text-primary);
+  background: var(--win-bg-hover);
+}
+
+.qs-seg-btn.is-on {
+  font-weight: 600;
+  color: var(--win-text-primary);
+  background: var(--ws-sel, var(--win-bg-card));
+  box-shadow: 0 1px 4px var(--ws-shadow, rgba(0, 0, 0, 0.08));
+}
+
+[data-theme='dark'] .qs-seg-btn.is-on {
+  background: var(--ws-sel, rgba(255, 255, 255, 0.12));
+  color: var(--win-text-primary);
+  box-shadow: 0 1px 4px var(--ws-shadow, rgba(0, 0, 0, 0.35));
+}
+
+.qs-tab-count {
+  min-width: 17px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--win-bg-hover);
+  color: var(--win-text-secondary);
+  font-size: 10px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+  transition: all 0.15s ease;
+}
+
+.qs-seg-btn.is-on .qs-tab-count {
+  background: var(--win-accent-glow);
+  color: var(--win-accent);
+}
+
+/* Integrated Search Box */
+.qs-search {
+  padding: 2px 10px 8px;
+}
+
+.qs-search-box {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 10px;
+  background: var(--win-bg-hover, rgba(125, 130, 145, 0.08));
+  border: 1px solid var(--win-border);
+  border-radius: 8px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.qs-search-box:focus-within {
+  background: var(--win-bg-card, #ffffff);
+  border-color: var(--win-accent);
+  box-shadow: 0 0 0 3px var(--win-accent-glow);
+}
+
+.qs-search-icon {
+  color: var(--win-text-disabled);
+  flex-shrink: 0;
+}
+
+.qs-search-box input {
+  flex: 1;
+  min-width: 0;
+  height: 100% !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--win-text-primary) !important;
+}
+
+.qs-search-box input::placeholder {
+  color: var(--win-text-disabled);
+}
+
+.qs-search-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(125, 130, 145, 0.15);
+  color: var(--win-text-secondary);
+  cursor: pointer;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+
+.qs-search-clear:hover {
+  background: var(--win-bg-active);
+  color: var(--win-text-primary);
+}
+
+/* Danh sách kết nối / Databases */
+.qs-list {
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  scrollbar-width: thin;
+}
+
+.qs-group {
+  padding: 8px 8px 3px;
+  color: var(--win-text-disabled);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+}
+
+.qs-empty {
+  padding: 18px 10px;
+  text-align: center;
+  color: var(--win-text-disabled);
+  font-size: 11.5px;
+}
+
+.qs-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 6px 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--win-text-primary);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.12s ease, transform 0.12s ease;
+}
+
+.qs-row:hover:not(.is-on) {
+  background: var(--win-bg-hover);
+  transform: translateX(2px);
+}
+
+.qs-row.is-on {
+  background: var(--win-accent-glow);
+  border-color: rgba(96, 165, 250, 0.25);
+}
+
+.qs-row.is-on .qs-name {
+  font-weight: 600;
+  color: var(--win-accent);
+}
+
+/* Hàng database */
+.qs-row-db {
+  padding: 0;
+  cursor: default;
+}
+
+.qs-row-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 6px 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s cubic-bezier(0.4, 0, 0.2, 1), transform 0.12s ease;
+}
+
+.qs-row-main:hover {
+  background: var(--win-bg-hover);
+  transform: translateX(2px);
+}
+
+.qs-row-db.is-on .qs-row-main {
+  background: var(--win-accent-glow);
+  border-color: rgba(96, 165, 250, 0.25);
+  font-weight: 600;
+  color: var(--win-accent);
+}
+
+.qs-label {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.qs-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+}
+
+.qs-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--win-text-secondary);
+  opacity: 0.8;
+  font-size: 10.5px;
+  font-family: var(--win-font-mono, monospace);
+  font-weight: 400;
+}
+
+.qs-ro {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: rgba(125, 130, 145, 0.12);
+  color: var(--win-text-secondary);
+}
+
+.qs-group-chip {
+  flex: 0 0 auto;
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 7px;
+  border: 1px solid var(--win-border);
+  border-radius: 6px;
+  background: var(--win-bg-hover);
+  color: var(--win-text-secondary);
+  font-size: 9.5px;
+  font-weight: 500;
+}
+
+.qs-drop {
+  flex: 0 0 auto;
+  display: flex;
+  margin-right: 6px;
+  padding: 4px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--st-danger, #ef4444);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, background 0.12s ease;
+}
+
+.qs-row-db:hover .qs-drop,
+.qs-drop:focus-visible {
+  opacity: 0.75;
+}
+
+.qs-drop:hover {
+  background: rgba(239, 68, 68, 0.14);
+  opacity: 1;
+}
+
+/* Chip môi trường cao cấp */
+.qs-env-chip {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+.qs-env-chip.qs-env-production {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  color: #ef4444;
+}
+
+.qs-env-chip.qs-env-staging {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  color: #f59e0b;
+}
+
+.qs-env-chip.qs-env-development {
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  color: #10b981;
+}
+
+[data-theme='dark'] .qs-env-chip.qs-env-production {
+  color: #f87171;
+}
+
+[data-theme='dark'] .qs-env-chip.qs-env-staging {
+  color: #fbbf24;
+}
+
+[data-theme='dark'] .qs-env-chip.qs-env-development {
+  color: #34d399;
+}
+
+.qs-check-on {
+  flex: 0 0 auto;
+  color: var(--win-accent);
+}
+
+.qs-db-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  margin: 0 6px 0 3px;
+  border-radius: 50%;
+  background: var(--win-text-disabled);
+}
+
+.qs-row-db.is-on .qs-db-dot {
+  background: var(--win-accent);
+  box-shadow: 0 0 6px var(--win-accent);
+}
+
+/* Footer Action Bar */
+.qs-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border-top: 1px solid var(--win-border);
+  background: var(--win-bg-hover, rgba(125, 130, 145, 0.05));
+}
+
+.qs-foot-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--win-text-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.qs-foot-btn:hover {
+  background: var(--win-bg-hover);
+  color: var(--win-text-primary);
+}
+
+.qs-foot-btn.accent {
+  color: var(--win-accent);
+  font-weight: 600;
+}
+
+.qs-foot-btn.accent:hover {
+  background: var(--win-accent-glow);
+  color: var(--win-accent);
+}
+
+/* Latency của kết nối (QuickSwitcherPopover). Chữ số đều bề rộng: danh sách này thẳng cột, mà `1 ms`
+   và `188 ms` bằng font tỉ lệ sẽ làm mỗi dòng lệch một chút. */
+.qs-ping {
+  flex: 0 0 auto;
+  color: var(--win-text-disabled);
+  font-family: var(--win-font-mono);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Ping không thành công: kết nối còn trong registry nhưng server không trả lời. Đỏ vì đó là thứ đáng
+   biết TRƯỚC khi bấm vào, không phải sau. */
+.qs-ping.is-dead {
+  color: var(--st-danger, #ef4444);
+  font-weight: 700;
+}
+/* ============================================================
+   Redis workspace
+   ============================================================
+   Redis dùng chung khung với SQL (DbRail + Sidebar + TabManager + ActivePanel), nên phần lớn kiểu
+   dáng đã có sẵn. Nhóm này chỉ bù những chỗ Redis có mà SQL không:
+   sidebar rộng hơn (tên key dài hơn tên bảng), dòng thông báo trong tab, và trạng thái rỗng khi
+   key không còn — xem docs/redis-ui-unification-plan.md §2.4/§2.5.
+   Mọi màu đều lấy từ biến, nên Dark/Light theo cùng một bộ token với phần còn lại của app. */
+
+/* Sidebar: rộng hơn `.sidebar-navigation` mặc định vì key Redis (`app:user:1234:session`) dài hơn
+   hẳn tên bảng, và cây theo namespace còn thụt thêm mỗi cấp một mức. */
+.redis-sidebar {
+  width: 340px;
+  min-width: 260px;
+}
+
+.redis-keylist {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  /* Không có dòng này thì vùng cuộn bên trong đẩy cao cả cột thay vì tự cuộn. */
+  min-height: 0;
+}
+
+/* Footer hành động: mỗi nút mở một tab công cụ. Bọc dòng thay vì cuộn ngang — sáu nhãn ngắn, và
+   một thanh cuộn ngang ở đáy sidebar là chỗ không ai nghĩ tới việc cuộn. */
+.redis-sidebar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--win-border);
+  background: var(--win-bg-tab-bar);
+}
+
+.redis-sidebar-action {
+  flex: 1 1 auto;
+  min-width: 92px;
+  justify-content: center;
+}
+
+/* Thân một tab Redis: dòng thông báo trên cùng, nội dung cuộn bên dưới. */
+.redis-tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.redis-tab-body {
+  flex: 1;
+  overflow: auto;
+  padding: 12px;
+}
+
+/* Dòng thông báo ok/lỗi. Nền pha loãng thay vì nền đặc: nó nằm ngay trên nội dung của tab và một
+   dải màu đặc ngang toàn bộ chiều rộng đọc như một lỗi nghiêm trọng kể cả khi chỉ báo "đã lưu". */
+.redis-toast {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.redis-toast.ok {
+  background: color-mix(in srgb, var(--st-success, #10b981) 12%, transparent);
+  color: var(--st-success, #10b981);
+}
+
+.redis-toast.err {
+  background: color-mix(in srgb, var(--st-danger, #ef4444) 12%, transparent);
+  color: var(--st-danger, #ef4444);
+}
+
+/* Trạng thái rỗng của tab key: key đã hết TTL hoặc bị xoá từ nơi khác. Là chuyện bình thường của
+   Redis nên trình bày trung tính — không màu đỏ, không icon cảnh báo (§2.5). */
+.redis-empty {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--win-text-secondary);
+  text-align: center;
+  padding: 24px;
+}
+
+.redis-empty-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--win-text-primary);
+}
+
+.redis-empty-hint {
+  font-size: 11.5px;
+  color: var(--win-text-disabled);
+}
+
+.redis-empty-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+
+/* ---- Redis: danh sách key (KeyList) ----
+   Sáu `style={{}}` còn lại trong KeyList.tsx đều là giá trị động thật và cố ý giữ nguyên: chiều cao
+   hai spacer (do windowing tính), độ sâu + chiều cao mỗi dòng, màu badge tra theo TYPE_COLORS, và
+   toạ độ menu ngữ cảnh đo lúc chạy. Chiều cao dòng đặc biệt phải ở TS: nó phải bằng đúng ROW_HEIGHT
+   mà windowSlice dùng, và một bản sao trong CSS lệch đi thì danh sách cuộn sai chứ không báo lỗi. */
+
+.redis-keylist-header {
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-bottom: 1px solid var(--win-border);
+}
+
+.redis-keylist-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.redis-keylist-row.tight {
+  gap: 4px;
+}
+
+.redis-keylist-db-icon {
+  color: var(--win-accent);
+  flex-shrink: 0;
+}
+
+.redis-keylist-dbname {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--win-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Nút chỉ có icon. Không đặt `padding: 0` lên `.btn` chung — chiều cao 28px của .btn là thứ giữ
+   cho hàng nút thẳng hàng với ô select bên cạnh. */
+.redis-icon-btn {
+  width: 28px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.redis-icon-btn.danger,
+.redis-keylist-grow.danger {
+  color: var(--st-danger);
+}
+
+.redis-keylist-grow {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.redis-keylist-mode {
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.redis-keylist-step {
+  padding: 0 6px;
+  flex-shrink: 0;
+}
+
+.redis-keylist-spacer {
+  flex: 1;
+}
+
+/* Select trong header. Kiểu chung của app khớp `input[type="text"]`, không khớp `select`, nên nếu
+   không tả ở đây thì nó rơi về giao diện mặc định của trình duyệt (xem ghi chú .btn trong CLAUDE.md
+   — cùng một cái bẫy). */
+.redis-keylist-select {
+  background: var(--win-bg-window);
+  border: 1px solid var(--win-border);
+  color: var(--win-text-primary);
+  border-radius: 4px;
+  font-size: 10px;
+  padding: 2px 4px;
+  flex-shrink: 0;
+}
+
+.redis-keylist-search {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--win-bg-window);
+  border: 1px solid var(--win-border);
+  border-radius: 4px;
+  padding: 0 6px;
+  min-width: 0;
+}
+
+.redis-keylist-search-icon {
+  color: var(--win-text-disabled);
+  flex-shrink: 0;
+}
+
+/* Ô nhập nằm TRONG khung tìm kiếm nên tự nó phải trong suốt — viền và nền là của khung ngoài. */
+.redis-keylist-search input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  color: var(--win-text-primary);
+  font-size: 11px;
+  outline: none;
+  padding: 5px 0;
+}
+
+.redis-keylist-delim {
+  width: 34px;
+  text-align: center;
+  background: var(--win-bg-window);
+  border: 1px solid var(--win-border);
+  color: var(--win-text-primary);
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: var(--win-font-mono);
+  padding: 3px 0;
+  flex-shrink: 0;
+}
+
+/* Quét dừng ở KEY_CAP: nói ra chuyện đó và mời quét tiếp, không bao giờ cắt im lặng. */
+.redis-keylist-cap {
+  padding: 6px 10px;
+  font-size: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  background: color-mix(in srgb, var(--st-warning, #f59e0b) 12%, transparent);
+  color: var(--st-warning, #f59e0b);
+}
+
+.redis-keylist-cap-btn {
+  padding: 0 8px;
+  height: 20px;
+}
+
+.redis-keylist-scroll {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.redis-keylist-empty {
+  padding: 20px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--win-text-disabled);
+}
+
+.redis-keylist-scanning {
+  padding: 10px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--win-text-secondary);
+}
+
+.redis-keylist-footer {
+  padding: 6px 10px;
+  border-top: 1px solid var(--win-border);
+  font-size: 10px;
+  color: var(--win-text-disabled);
+}
+
+/* Một dòng của cây key. Độ thụt lấy từ biến `--redis-depth` mà TS đặt cho từng dòng — cách duy nhất
+   để giữ phần động (độ sâu) ở TS mà vẫn để công thức trình bày (10px + 12px mỗi cấp) ở CSS. */
+.redis-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px 0 calc(10px + var(--redis-depth, 0) * 12px);
+  cursor: pointer;
+  font-size: 11px;
+  box-sizing: border-box;
+}
+
+.redis-row-folder {
+  gap: 4px;
+}
+
+.redis-row.selected {
+  background: var(--win-bg-active);
+}
+
+.redis-row-chevron {
+  flex-shrink: 0;
+  color: var(--win-text-disabled);
+}
+
+.redis-row-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--win-text-primary);
+}
+
+.redis-row-label.folder {
+  font-weight: 600;
+}
+
+.redis-row-count {
+  font-size: 9px;
+  color: var(--win-text-disabled);
+}
+
+.redis-row-ttl {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 9px;
+  color: var(--win-text-disabled);
+  flex-shrink: 0;
+}
+
+.redis-row-type {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: #fff;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+/* Menu chuột phải trên một thư mục namespace. Dựng qua portal (xem KeyList.tsx) nên `position` và
+   `z-index` thuộc về nó, không thừa hưởng từ panel. */
+.redis-folder-menu {
+  position: fixed;
+  z-index: 99999;
+  min-width: 200px;
+}
+
+.redis-folder-menu-head {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--win-border);
+  margin-bottom: 4px;
+  max-width: 280px;
+}
+
+.redis-folder-menu-path {
+  font-size: 10px;
+  font-weight: 600;
+  font-family: var(--win-font-mono);
+  color: var(--win-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.redis-folder-menu-count {
+  font-size: 9px;
+  color: var(--win-text-disabled);
+}
+
+.redis-folder-menu-item {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--st-danger);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.redis-folder-menu-item.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+
+/* ---- Redis: bề mặt dùng chung ----
+   Năm class dưới đây thay cho năm object `CSSProperties` từng nằm trong `components/redis/shared.ts`.
+   Gom style vào một object và đặt tên cho nó không làm nó bớt là inline style: nó vẫn đi vào thuộc
+   tính `style` của thẻ, vẫn thắng mọi rule trong `index.css`, và vẫn không viết được :hover/:focus.
+   Đó là lý do chúng nằm ở đây. */
+
+/* Ô của bảng phần tử (hash/list/set/zset/stream), bảng slowlog và bảng phân tích. */
+.redis-cell {
+  font-family: var(--win-font-mono);
+  font-size: 11px;
+  word-break: break-all;
+  vertical-align: middle;
+}
+
+.redis-cell.nowrap {
+  white-space: nowrap;
+}
+
+/* Slow log: câu chạy quá 100ms. Ngưỡng nằm ở TS (nó là dữ liệu, không phải trình bày); ở đây chỉ
+   là màu tương ứng. */
+.redis-cell.slow {
+  color: var(--st-danger);
+}
+
+/* Ô sửa tại chỗ trong bảng: viền accent để phân biệt với ô chỉ đọc bên cạnh. */
+.redis-inline-input {
+  width: 100%;
+  background: var(--win-bg-card);
+  border: 1px solid var(--win-accent);
+  border-radius: 3px;
+  color: var(--win-text-primary);
+  font-family: var(--win-font-mono);
+  font-size: 11px;
+  padding: 2px 4px;
+  outline: none;
+}
+
+/* Biến thể trong form (thêm entry vào stream): viền thường, vì ở đó nó không phải là "ô đang sửa"
+   giữa những ô chỉ đọc — nó là một ô nhập bình thường. */
+.redis-inline-input.boxed {
+  border-color: var(--win-border);
+  padding: 4px 6px;
+}
+
+.redis-inline-input.field {
+  flex: 0 0 32%;
+  width: auto;
+}
+
+.redis-inline-input.grow {
+  flex: 1;
+  width: auto;
+}
+
+.redis-inline-input.fixed {
+  width: 140px;
+  padding: 3px 6px;
+}
+
+/* Vùng soạn giá trị string/JSON. */
+.redis-mono-box {
+  flex: 1;
+  width: 100%;
+  min-height: 260px;
+  background: var(--win-bg-window);
+  border: 1px solid var(--win-border);
+  color: var(--win-text-primary);
+  font-family: var(--win-font-mono);
+  font-size: 12px;
+  padding: 10px;
+  border-radius: 4px;
+  resize: vertical;
+  outline: none;
+}
+
+/* Vùng log cuộn được của Console, Pub/Sub và Profiler. */
+.redis-log-box {
+  flex: 1;
+  overflow: auto;
+  background: var(--win-bg-window);
+  border: 1px solid var(--win-border);
+  border-radius: 4px;
+  padding: 8px;
+  font-family: var(--win-font-mono);
+  font-size: 11px;
+}
+
+/* Pill: lệnh gợi ý trong Console (bấm được) và ghi chú trong StreamPanel (không bấm). */
+.redis-pill {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--win-border);
+  background: var(--win-bg-window);
+  color: var(--win-text-secondary);
+  cursor: pointer;
+  font-family: var(--win-font-mono);
+}
+
+/* Giờ mới viết được, hồi còn là object thì không. */
+.redis-pill:hover {
+  border-color: var(--win-accent);
+  color: var(--win-text-primary);
+}
+
+.redis-pill.static {
+  cursor: default;
+  align-self: flex-start;
+}
+
+.redis-pill.static:hover {
+  border-color: var(--win-border);
+  color: var(--win-text-secondary);
+}
+
+
+/* ---- Redis: trình xem giá trị (ValuePanel / CollectionTable / StreamPanel) ---- */
+
+.redis-value {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+}
+
+/* Thanh công cụ dùng lại ở cả ba file: header của key, toolbar string/JSON, toolbar bảng phần tử,
+   toolbar consumer group. Bọc dòng vì nội dung là một dãy nhãn + nút dài ngắn tuỳ dữ liệu. */
+.redis-value-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.redis-value-key {
+  font-family: var(--win-font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--win-text-primary);
+  word-break: break-all;
+}
+
+.redis-value-meta {
+  font-size: 10px;
+  color: var(--win-text-disabled);
+}
+
+.redis-value-label {
+  font-size: 10px;
+  color: var(--win-text-secondary);
+}
+
+.redis-value-warn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--st-warning, #f59e0b);
+}
+
+.redis-value-btn {
+  padding: 0 8px;
+  flex-shrink: 0;
+}
+
+.redis-value-btn.wide {
+  padding: 0 10px;
+}
+
+/* Tab Entries/Groups của StreamPanel: tab đang chọn. Hồi còn inline thì đây là hai thuộc tính màu
+   gán theo điều kiện; thành class thì điều kiện chỉ còn là có/không một tên. */
+.redis-value-btn.active {
+  border-color: var(--win-accent);
+  color: var(--win-accent);
+}
+
+.redis-value-btn.start {
+  align-self: flex-start;
+}
+
+.redis-value-btn.danger {
+  color: var(--st-danger);
+}
+
+.redis-value-save {
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* Nhãn định dạng đã nhận ra (utf8 / json / hex…). */
+.redis-format-pill {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--win-accent) 15%, transparent);
+  color: var(--win-accent);
+  font-weight: 600;
+}
+
+/* Dải cảnh báo trong thân tab (giá trị bị cắt bớt…). Cùng công thức pha loãng với .redis-toast. */
+.redis-value-notice {
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--st-warning, #f59e0b) 12%, transparent);
+  color: var(--st-warning, #f59e0b);
+  font-size: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.redis-json-path {
+  width: 180px;
+  background: var(--win-bg-window);
+  border: 1px solid var(--win-border);
+  color: var(--win-text-primary);
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: var(--win-font-mono);
+  padding: 3px 6px;
+}
+
+/* Kiểu key mà app chưa có trình xem riêng (vector set, TimeSeries…). */
+.redis-unsupported {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border: 1px dashed var(--win-border);
+  border-radius: 6px;
+  background: var(--win-bg-window);
+}
+
+.redis-unsupported-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--win-text-primary);
+}
+
+.redis-unsupported-icon {
+  color: var(--st-warning, #f59e0b);
+  flex-shrink: 0;
+}
+
+.redis-unsupported-hint {
+  font-size: 11px;
+  color: var(--win-text-secondary);
+  line-height: 1.6;
+}
+
+.redis-unsupported-console {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--win-text-disabled);
+}
+
+/* ---- Bảng phần tử ---- */
+
+.redis-coll {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+}
+
+.redis-coll-more {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.redis-table-wrap {
+  border: 1px solid var(--win-border);
+  border-radius: 4px;
+  overflow: auto;
+  background: var(--win-bg-window);
+}
+
+/* Bảng field-value bên trong một entry stream: đã nằm trong khung có nền của entry rồi, thêm nền
+   nữa thành hai lớp chồng nhau. */
+.redis-table-wrap.flat {
+  background: transparent;
+}
+
+.redis-table {
+  width: 100%;
+}
+
+.redis-table-empty {
+  text-align: center;
+  padding: 10px;
+  color: var(--win-text-disabled);
+}
+
+.redis-actions-col {
+  width: 58px;
+}
+
+.redis-actions-col.wide {
+  width: 80px;
+}
+
+.redis-cell-hint {
+  color: var(--win-text-disabled);
+}
+
+.redis-cell-actions {
+  display: flex;
+  gap: 2px;
+}
+
+/* Nút chỉ-icon trong một ô. Trạng thái bận đi qua thuộc tính `disabled` thay vì hai giá trị style
+   tính theo cờ `busy` — cùng một hành vi, nhưng trình duyệt lo phần con trỏ. */
+.redis-cell-btn {
+  background: transparent;
+  border: none;
+  padding: 2px;
+  cursor: pointer;
+  color: var(--win-text-secondary);
+  display: flex;
+  align-items: center;
+}
+
+.redis-cell-btn:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.redis-cell-btn.danger {
+  color: var(--st-danger);
+}
+
+.redis-cell-btn.accent {
+  color: var(--win-accent);
+}
+
+.redis-cell-btn.ok {
+  color: var(--st-ok, #10b981);
+}
+
+.redis-cell-locked {
+  color: var(--win-text-disabled);
+  display: flex;
+  align-items: center;
+  padding: 2px;
+}
+
+.redis-lock-inline {
+  margin-right: 4px;
+  vertical-align: middle;
+  color: var(--win-text-disabled);
+}
+
+/* Ô tìm kiếm hẹp trong toolbar bảng phần tử — cùng khung với ô pattern của sidebar, khác bề rộng. */
+.redis-keylist-search.narrow {
+  flex: 0 0 auto;
+}
+
+.redis-keylist-search.narrow input {
+  width: 150px;
+  flex: 0 0 auto;
+}
+
+.redis-keylist-select.wide {
+  font-size: 11px;
+  padding: 3px 6px;
+}
+
+/* ---- Stream ---- */
+
+.redis-stream {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+.redis-stream.groups {
+  min-height: auto;
+}
+
+.redis-stream-tabs {
+  display: flex;
+  gap: 6px;
+}
+
+.redis-stream-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.redis-stream-subtitle {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--win-text-primary);
+}
+
+.redis-stream-empty {
+  font-size: 11px;
+  color: var(--win-text-disabled);
+}
+
+/* Form thêm entry: viền accent để tách khỏi danh sách entry ngay bên dưới, vốn cùng bo góc. */
+.redis-stream-form {
+  border: 1px solid var(--win-accent);
+  border-radius: 4px;
+  padding: 8px;
+  background: var(--win-bg-window);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.redis-stream-field-row {
+  display: flex;
+  gap: 4px;
+}
+
+.redis-stream-form-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.redis-stream-entry {
+  border: 1px solid var(--win-border);
+  border-radius: 4px;
+  padding: 8px;
+  background: var(--win-bg-window);
+}
+
+.redis-stream-entry-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.redis-stream-entry-id {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--win-accent);
+  font-family: var(--win-font-mono);
+}
+
+
+/* ---- Redis: các tab công cụ (Console, Pub/Sub, Profiler, Dashboard, SlowLog, Analysis) ---- */
+
+/* Khung chung: Console/Pub/Sub/Profiler cao hết tab vì vùng log phải chiếm chỗ còn lại. */
+.redis-console {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+}
+
+/* Console dựng bố cục sát mép (đường kẻ ngang chạy hết chiều rộng như khung SQL), nên nó tự bỏ
+   padding mà .redis-tab-body áp cho các tab khác. */
+.redis-tab-body:has(> .redis-console) {
+  padding: 0;
+}
+
+/* Dashboard/Analysis/SlowLog cuộn theo nội dung thay vì ghim chiều cao — chúng là các khối xếp
+   chồng, không có vùng nào cần "phần còn lại". */
+.redis-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.redis-panel.tight {
+  gap: 10px;
+  min-height: 0;
+}
+
+.redis-panel-loading {
+  color: var(--win-text-disabled);
+  font-size: 12px;
+}
+
+.redis-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.redis-tool-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--win-text-primary);
+}
+
+.redis-tool-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.redis-tool-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--win-bg-window);
+  border: 1px solid var(--win-border);
+  color: var(--win-text-primary);
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: var(--win-font-mono);
+  padding: 5px 8px;
+  outline: none;
+}
+
+.redis-tool-input.fixed {
+  flex: 0 0 160px;
+  width: 160px;
+  padding: 4px 8px;
+}
+
+.redis-tool-input.narrow {
+  flex: 0 0 90px;
+  width: 90px;
+  padding: 3px 6px;
+}
+
+.redis-tool-btn {
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.redis-tool-btn.danger,
+.redis-value-save.danger {
+  color: var(--st-danger);
+}
+
+.redis-tool-check {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  cursor: pointer;
+  color: var(--win-text-secondary);
+}
+
+/* Nút phụ dạng viền mảnh (Xoá lịch sử, Xoá log…). Không dùng `.btn` vì cao 28px thì át hẳn hàng
+   nhãn 10px mà nó đứng cùng. */
+.redis-ghost-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--win-border);
+  background: transparent;
+  color: var(--win-text-secondary);
+  cursor: pointer;
+}
+
+.redis-ghost-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.redis-ghost-btn:hover:not(:disabled) {
+  border-color: var(--win-accent);
+  color: var(--win-text-primary);
+}
+
+.redis-value-bar.spread {
+  justify-content: space-between;
+}
+
+.redis-value-bar.config {
+  font-size: 10px;
+  color: var(--win-text-secondary);
+}
+
+/* ---- Console ---- */
+
+.redis-console-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.redis-console-entry {
+  margin-bottom: 8px;
+}
+
+.redis-console-echo {
+  color: var(--win-accent);
+}
+
+.redis-console-out {
+  margin: 2px 0 0;
+  white-space: pre-wrap;
+  color: var(--win-text-primary);
+}
+
+.redis-console-out.err {
+  color: var(--st-danger);
+}
+
+.redis-console-input-row {
+  position: relative;
+  display: flex;
+  gap: 6px;
+}
+
+.redis-console-prompt {
+  display: flex;
+  align-items: center;
+  color: var(--win-accent);
+  font-family: var(--win-font-mono);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.redis-console-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--win-bg-window);
+  border: 1px solid var(--win-border);
+  color: var(--win-text-primary);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-family: var(--win-font-mono);
+  font-size: 11px;
+  outline: none;
+}
+
+.redis-console-run {
+  padding: 0 14px;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+/* Gợi ý lệnh: nổi lên TRÊN ô nhập (bottom: 100%) vì ô nhập nằm sát đáy tab — thả xuống dưới thì
+   danh sách rơi ra ngoài vùng nhìn thấy. */
+.redis-suggest {
+  position: absolute;
+  bottom: 100%;
+  left: 18px;
+  margin-bottom: 4px;
+  z-index: 5;
+  background: var(--win-bg-card);
+  border: 1px solid var(--win-border-strong, var(--win-border));
+  border-radius: 4px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+  min-width: 320px;
+  overflow: hidden;
+}
+
+.redis-suggest-item {
+  padding: 4px 8px;
+  font-size: 11px;
+  font-family: var(--win-font-mono);
+  cursor: pointer;
+  display: flex;
+  gap: 8px;
+}
+
+.redis-suggest-item.active {
+  background: var(--win-bg-active);
+}
+
+.redis-suggest-args {
+  color: var(--win-text-disabled);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.redis-suggest-hint {
+  padding: 3px 8px;
+  font-size: 9px;
+  color: var(--win-text-disabled);
+  border-top: 1px solid var(--win-border);
+}
+
+/* Dòng cú pháp của lệnh đang gõ. */
+.redis-syntax {
+  font-size: 10px;
+  font-family: var(--win-font-mono);
+  color: var(--win-text-secondary);
+  background: var(--win-bg-subtle, rgba(0, 0, 0, 0.15));
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.redis-syntax-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.redis-syntax-name {
+  color: var(--win-accent);
+  font-weight: 700;
+}
+
+.redis-syntax-cost {
+  color: var(--st-warning, #f59e0b);
+  font-size: 9px;
+}
+
+.redis-syntax-since {
+  opacity: 0.7;
+  font-size: 9px;
+}
+
+.redis-syntax-desc {
+  font-size: 10px;
+  color: var(--win-text-disabled);
+  margin-top: 2px;
+}
+
+/* ---- Dòng log (Pub/Sub, Profiler) ---- */
+
+.redis-log-line {
+  margin-bottom: 4px;
+}
+
+.redis-log-dim {
+  color: var(--win-text-disabled);
+}
+
+.redis-log-payload {
+  color: var(--win-text-primary);
+}
+
+.redis-log-payload.wrap {
+  white-space: pre-wrap;
+}
+
+.redis-log-binary {
+  color: var(--st-warning, #f59e0b);
+}
+
+/* ---- Thẻ số liệu (Dashboard, Analysis) ---- */
+
+.redis-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+.redis-stat-grid.wide {
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+}
+
+.redis-stat-grid.narrow {
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.redis-stat {
+  border: 1px solid var(--win-border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: var(--win-bg-window);
+}
+
+.redis-stat.small {
+  border-radius: 4px;
+  padding: 8px;
+}
+
+.redis-stat-label {
+  font-size: 10px;
+  color: var(--win-text-secondary);
+}
+
+.redis-stat-value {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--win-text-primary);
+  margin-top: 2px;
+}
+
+.redis-stat-value.lg {
+  font-size: 16px;
+}
+
+.redis-stat-value.sm {
+  font-size: 13px;
+  margin-top: 0;
+}
+
+/* Thanh tỉ lệ bộ nhớ trong bảng phân tích. Bề rộng do dữ liệu quyết định nên vẫn ở inline. */
+.redis-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--win-accent);
+}
+
+/* Cột bảng có bề rộng cố định. Đặt tên theo số pixel: chúng là bề rộng cột thật, không phải một
+   khái niệm — gọi là `.redis-col-id` thì lần sau đổi 60px thành 70px sẽ phải đổi cả tên. */
+.redis-col-60 { width: 60px; }
+.redis-col-80 { width: 80px; }
+.redis-col-90 { width: 90px; }
+.redis-col-110 { width: 110px; }
+.redis-col-130 { width: 130px; }
+.redis-col-150 { width: 150px; }
+.redis-col-bar { width: 30%; }
+
+/* ---- Hộp thoại Redis (PromptDialog, BulkDeleteDialog) ----
+   `ModalBody style={{ gap }}` thì giữ nguyên: đó là API của `Modal.tsx` và style inline của nó cố ý
+   thắng mọi rule CSS — xem ghi chú trong CLAUDE.md. */
+
+.redis-dialog-label {
+  font-size: 11px;
+  color: var(--win-text-secondary);
+}
+
+.redis-dialog-label.block {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.redis-dialog-input {
+  height: 30px;
+  font-size: 11px;
+  width: 100%;
+  font-family: var(--win-font-mono);
+}
+
+.redis-dialog-select {
+  height: 30px;
+  font-size: 11px;
+  background: var(--win-bg-window);
+  border: 1px solid var(--win-border);
+  color: var(--win-text-primary);
+  border-radius: 4px;
+}
+
+.redis-dialog-note {
+  font-size: 10px;
+  color: var(--win-text-disabled);
+  line-height: 1.5;
+}
+
+.redis-dialog-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--st-warning, #f59e0b);
+  line-height: 1.5;
+}
+
+.redis-dialog-warn-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.redis-dialog-danger-icon {
+  color: var(--st-danger);
+}
+
+.redis-dialog-code {
+  color: var(--win-text-primary);
+  font-family: var(--win-font-mono);
+}
+
+.redis-dialog-status {
+  font-size: 11px;
+  color: var(--win-text-primary);
+}
+
+.redis-dialog-status.ok {
+  color: var(--st-ok, #10b981);
+}
+
+.redis-dialog-status.cancelled {
+  color: var(--st-warning, #f59e0b);
+}
+
+/* Nút xoá hàng loạt. Trạng thái "chưa gõ đủ điều kiện" đi qua `:disabled` thay vì bốn thuộc tính
+   tính theo cờ `ready` — cờ đó vốn đã điều khiển `disabled`, nên CSS suy ra được. */
+.redis-danger-btn {
+  background: var(--st-danger);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+}
+
+.redis-danger-btn:disabled {
+  background: var(--win-bg-hover);
+  color: var(--win-text-disabled);
+  cursor: not-allowed;
+}
+
+
+/* Khung soạn lệnh của CLI Console.
+   Cao cố định ~38% tab: log ở dưới mới là thứ đọc nhiều nhất, nhưng buffer cần đủ chỗ cho một nhúm
+   lệnh mà không phải cuộn. min-height để nó không bẹp lại khi tab bị thu nhỏ. */
+.redis-cli-editor {
+  flex: 1 1 45%;
+  min-height: 120px;
+  overflow: hidden;
+}
+
+/* Dòng do app tự thêm vào log (đã chuyển db, đã dừng…), không phải phản hồi của server. */
+.redis-console-out.note {
+  color: var(--win-text-secondary);
+  font-style: italic;
+}
+
+
+/* ---- CLI Console: thanh hành động, tab kết quả, dòng trạng thái ----
+   Ba khối này dựng lại đúng thứ tự của khung truy vấn SQL. Nút Chạy nằm DƯỚI editor chứ không phải
+   trên: mắt người dùng đang ở dòng lệnh vừa gõ, và đó là chỗ gần nó nhất. */
+
+.redis-cli-actionbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 6px 10px;
+  border-top: 1px solid var(--win-border);
+  border-bottom: 1px solid var(--win-border);
+  background: var(--win-bg-tab-bar);
+}
+
+/* Vị trí con trỏ: mono để con số không nhảy qua lại khi đổi từ 9 sang 10. */
+.redis-cli-pos {
+  font-family: var(--win-font-mono);
+  font-size: 10px;
+  color: var(--win-text-disabled);
+}
+
+.redis-cli-result-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--win-border);
+  background: var(--win-bg-tab-bar);
+}
+
+/* Nhãn "Kết quả" vẽ như một tab đang chọn, giống khung SQL — nó là thứ nói cho người dùng biết
+   vùng bên dưới là gì. Thiếu nó thì khung rỗng đọc y như một ô nhập thứ hai. */
+.redis-cli-result-tab {
+  padding: 7px 2px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--win-accent);
+  border-bottom: 2px solid var(--win-accent);
+  margin-bottom: -1px;
+}
+
+/* Vùng kết quả đã nằm trong khung có viền của chính nó, nên bỏ viền/bo góc của .redis-log-box. */
+.redis-log-box.flush {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 10px;
+}
+
+.redis-cli-result-empty {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--win-text-disabled);
+  font-size: 12px;
+  font-family: var(--win-font-sans);
+}
+
+.redis-cli-status {
+  padding: 4px 10px;
+  border-top: 1px solid var(--win-border);
+  background: var(--win-bg-tab-bar);
+  font-size: 10px;
+  color: var(--win-text-disabled);
+}
+
+
+/* Đường kẻ kéo giữa thanh hành động và vùng kết quả — cùng chỗ, cùng bề dày 4px với khung SQL.
+   `resize: vertical` của CSS từng đứng ở đây: nó chỉ hiện một tay nắm nhỏ ở góc phải dưới, không
+   phải một đường kẻ kéo được suốt chiều ngang, nên không khớp với phần còn lại của app. */
+.redis-cli-resizer {
+  height: 4px;
+  flex-shrink: 0;
+  cursor: row-resize;
+  background: var(--win-border-light, var(--win-border));
+  user-select: none;
+  transition: background 0.15s ease;
+  position: relative;
+  z-index: 10;
+}
+
+.redis-cli-resizer:hover,
+.redis-cli-resizer.dragging {
+  background: var(--win-accent);
 }

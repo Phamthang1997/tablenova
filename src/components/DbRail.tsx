@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { Database, Lock } from 'lucide-react';
-import { PostgresIcon, MySqlIcon, SqliteIcon } from './DbIcons';
+import { PostgresIcon, MySqlIcon, RedisIcon, SqliteIcon } from './DbIcons';
 import { dbHelper, type OpenConnection } from '../utils/dbHelper';
 import { envLabelKey, type ConnEnv } from '../utils/connEnv';
 
@@ -17,6 +17,10 @@ const DIALECT: Record<string, { label: string; Icon: React.FC<{ size?: number }>
   sqlite: { label: 'SQLite', Icon: SqliteIcon },
   postgres: { label: 'PostgreSQL', Icon: PostgresIcon },
   mysql: { label: 'MySQL', Icon: MySqlIcon },
+  // Redis dùng chung registry với SQL nên nó xuất hiện ở đây như một kết nối bình thường; mỗi db
+  // index là một ô riêng, đúng như hai database của một server Postgres
+  // (docs/redis-ui-unification-plan.md §2.1).
+  redis: { label: 'Redis', Icon: RedisIcon },
 };
 
 interface DbRailProps {

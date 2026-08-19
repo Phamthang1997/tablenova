@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { TitleBar } from './components/TitleBar';
+import { SafeModeGate } from './components/SafeModeGate';
 import { ConnectionManager } from './components/ConnectionManager';
 import { Sidebar } from './components/Sidebar';
 import { DbRail } from './components/DbRail';
@@ -18,7 +19,19 @@ import { ViewEditorModal } from './components/ViewEditorModal';
 import { SchemaMigration } from './components/SchemaMigration';
 import { DbCompareDialog } from './components/DbCompareDialog';
 import { DataGeneratorDialog } from './components/DataGeneratorDialog';
-import { RedisBrowser } from './components/RedisBrowser';
+import { RedisSidebarView } from './components/redis/RedisSidebarView';
+import { RedisKeyTab } from './components/redis/RedisKeyTab';
+import { RedisToolTab } from './components/redis/RedisToolTab';
+import {
+  REDIS_TOOL_TABS,
+  redisKeyTabId,
+  redisToolTabId,
+  redisToolTabLabel,
+  type RedisTabType,
+} from './components/redis/redisTabs';
+
+/** Sáu loại tab công cụ Redis, để tra nhanh trong nhánh render. */
+const REDIS_TOOL_TAB_TYPES = new Set<string>(REDIS_TOOL_TABS);
 import { ImportFilePicker } from './components/ImportFilePicker';
 import { ExportTableDialog } from './components/ExportTableDialog';
 import { ExportDatabaseDialog } from './components/ExportDatabaseDialog';
@@ -35,6 +48,8 @@ import type { DbConnectionConfig } from './utils/dbHelper';
 import { invalidateCatalog } from './sql/catalog';
 import { splitStatements } from './sql/statements';
 import { connKey, scopeKey, tabsStorageKey, tabsStorageKeyCandidates } from './utils/connKey';
+import { connectSavedProfile } from './utils/connectProfile';
+import type { SavedProfile } from './components/ConnectionManager';
 import { updateProfileDisplay } from './utils/connectionProfiles';
 import { applyProgressStyle, getProgressStyle } from './utils/progressStyle';
 import { parseXlsx } from './utils/xlsxReader';
@@ -870,6 +885,23 @@ export const App: React.FC = () => {
     localStorage.setItem('tf_readonly', next ? '1' : '0');
   };
 
+  /**
+   * Đẩy công tắc chỉ-đọc toàn cục xuống backend cho kết nối Redis.
+   *
+   * Chốt thật phải ở Rust: CLI Console gửi lệnh dạng văn bản tự do, nên vô hiệu hoá nút bấm ở
+   * WebView không chặn được một `FLUSHALL` gõ tay. `RedisBrowser` từng giữ effect này; nó bị xoá
+   * khi Redis chuyển sang dùng tab, nên effect về đây.
+   *
+   * Ghi HOẶC của hai nguồn, không phải riêng công tắc: từ Giai đoạn 0 cờ ở backend là cờ CỦA KẾT
+   * NỐI — cũng là cờ mà nhãn production ghi — nên tắt công tắc mà ghi thẳng `false` sẽ mở khoá ghi
+   * cho một kết nối production.
+   */
+  React.useEffect(() => {
+    if (connection?.dbType !== 'redis' || !activeConnIdState) return;
+    const own = openConns.find((c) => c.connId === activeConnIdState)?.readOnly ?? false;
+    void dbHelper.redisSetReadOnly(readOnly || own, activeConnIdState);
+  }, [readOnly, connection?.dbType, activeConnIdState, openConns]);
+
   React.useEffect(() => {
     // Skip the renders where the two disagree — see `connection.connId`. Writing then would put the
     // tabs of the connection named by `activeConnIdState` into the slot named by `dbName`.
@@ -936,7 +968,25 @@ export const App: React.FC = () => {
    * connection (`query_1` on each), which is exactly why the React keys in the render splice the
    * scope in — see the note there.
    */
-  const openInitialTab = (connId: string) => {
+  /**
+   * Tab đầu tiên của một kết nối chưa có bộ tab đã lưu.
+   *
+   * `dbType` là tham số tường minh chứ không đọc từ `connection`: mọi chỗ gọi đều đang ở giữa lúc
+   * đổi kết nối, và `connection` khi đó có thể còn là kết nối cũ.
+   */
+  const openInitialTab = (connId: string, dbType?: string) => {
+    // Redis không có "SQL Query" để mở. CLI Console là tab công cụ duy nhất dùng được ngay khi
+    // chưa chọn key nào, và một workspace trống thì không nói cho người dùng biết làm gì tiếp.
+    if (dbType === 'redis') {
+      const tabId = redisToolTabId(connId, 'redis-console');
+      const label = redisToolTabLabel('redis-console', t);
+      setTabs((prev) => [
+        ...prev.filter((tb) => tb.connId !== connId),
+        { id: tabId, connId, type: 'redis-console', name: label, label },
+      ]);
+      setActiveTabId(tabId);
+      return;
+    }
     const initialTabId = 'query_1';
     setTabs((prev) => [
       ...prev.filter((tb) => tb.connId !== connId),
@@ -1024,7 +1074,33 @@ export const App: React.FC = () => {
     if (restoreTabs(id, config, dbType, dbName, schema)) return;
 
     // Open an initial SQL Query tab on connect
-    openInitialTab(id);
+    openInitialTab(id, dbType);
+  };
+
+  /**
+   * Mở một kết nối từ profile đã lưu, chọn trong Quick Switcher.
+   *
+   * Đi qua `connectSavedProfile` (dùng chung với Connection Manager) rồi `handleConnect` — **cùng một
+   * đường** với màn hình kết nối, không phải một bản sao. Bản sao thứ hai của đường kết nối sẽ mang
+   * theo SSH, SSL, IAM và merge bí mật; hai bản sẽ lệch, và lệch ở đây thì biểu hiện là "profile này
+   * kết nối được ở màn kia mà không được ở đây".
+   */
+  const handleConnectSavedProfile = async (profile: SavedProfile) => {
+    const res = await connectSavedProfile(profile);
+    if (!res.success) {
+      alert(res.message || t('db.errConnect'));
+      return;
+    }
+    handleConnect(
+      res.database || profile.name,
+      profile.type,
+      profile.color,
+      res.config,
+      // `env` đi kèm ở đây cũng vì lý do đó: thiếu nó thì mở prod từ switcher sẽ không bật chỉ đọc,
+      // trong khi mở đúng profile ấy từ Connection Manager thì có.
+      { id: profile.id, name: profile.name, env: normalizeEnv(profile.env) },
+      res.schema,
+    );
   };
 
   // Hỏi xác nhận nếu bảng đang mở còn thay đổi chưa lưu.
@@ -1269,7 +1345,7 @@ export const App: React.FC = () => {
     invalidateCatalog();
     setDbReloadKey((k) => k + 1);
     if (from && restoreTabs(newId, { ...(from.config as DbConnectionConfig), database: dbName }, from.dbType, dbName, schema)) return;
-    openInitialTab(newId);
+    openInitialTab(newId, from?.dbType);
   };
 
   /**
@@ -1304,7 +1380,7 @@ export const App: React.FC = () => {
         return;
       }
       if (restoreTabs(connId, entry.config, entry.dbType, info.db, info.schema)) return;
-      openInitialTab(connId);
+      openInitialTab(connId, entry.dbType);
     })();
   };
 
@@ -1321,7 +1397,7 @@ export const App: React.FC = () => {
 
     if (nextConn && restoreTabs(activeConnIdState, activeConnConfig, nextConn.dbType, nextConn.dbName, newSchema)) return;
 
-    openInitialTab(activeConnIdState);
+    openInitialTab(activeConnIdState, nextConn?.dbType);
   };
 
   // `handleDatabaseChanged` từng ở đây: nó là bên nhận của `switch_database`, tức của mô hình "thay
@@ -1375,8 +1451,107 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('open-table-tab', handleOpenTableTab);
   }, []);
 
+  // ---- Tab Redis ----
+  //
+  // Ba handler dưới đây làm đúng việc mà `handleSelectTable` làm cho bảng: mở tab nếu chưa có, focus
+  // nếu đã có. Tách riêng chứ không nhồi vào `handleSelectTable` vì loại tab, nhãn và điều kiện
+  // "đã mở" đều khác, và gộp lại sẽ thành một hàm nhận cờ để chọn nhánh.
+
+  /** Db index của kết nối Redis đang xem. Nguồn là tên database (`db3`), không phải state riêng. */
+  const redisDbIndex = React.useMemo(() => {
+    if (connection?.dbType !== 'redis') return 0;
+    const n = parseInt((connection.dbName || '').replace(/^db/, ''), 10);
+    return Number.isFinite(n) ? n : 0;
+  }, [connection?.dbType, connection?.dbName]);
+
+  const handleOpenRedisKey = (key: string) => {
+    const tabId = redisKeyTabId(activeConnIdState, key);
+    if (!visibleTabs.some((tab) => tab.id === tabId)) {
+      setTabs([
+        ...tabs,
+        {
+          id: tabId,
+          connId: activeConnIdState,
+          type: 'redis-key',
+          name: key,
+          label: key,
+          redisKeyInfo: { keyName: key },
+        },
+      ]);
+    }
+    setActiveTabId(tabId);
+  };
+
+  const handleOpenRedisTool = (type: RedisTabType) => {
+    if (type === 'redis-key') return;
+    const tabId = redisToolTabId(activeConnIdState, type);
+    if (!visibleTabs.some((tab) => tab.id === tabId)) {
+      const label = redisToolTabLabel(type, t);
+      setTabs([
+        ...tabs,
+        { id: tabId, connId: activeConnIdState, type, name: label, label },
+      ]);
+    }
+    setActiveTabId(tabId);
+  };
+
+  /**
+   * Đổi db index của một kết nối Redis.
+   *
+   * Đây **không** phải đổi state của kết nối hiện tại — backend mint/tìm một `conn_id` khác cho
+   * `(server, dbN)` (§2.1) — nên việc ở đây giống hệt bấm sang một kết nối khác trên `DbRail`: trỏ
+   * `connId` sang id mới rồi để `selectConnection` khôi phục bộ tab của nó. Tab của db cũ ở nguyên
+   * trong state, đúng như tab của một kết nối khác.
+   */
+  const handleRedisSelectDb = async (index: number, knownConnId?: string) => {
+    let target = knownConnId;
+    if (!target) {
+      const res = await dbHelper.redisSelectDb(index);
+      if (!res.success || !res.connId) {
+        alert(res.error || t('redis.errSelectDb'));
+        return;
+      }
+      target = res.connId;
+    }
+    if (target === activeConnIdState) return;
+    const cfg = activeConnConfig;
+    const dbName = `db${index}`;
+    setOpenConns((prev) => [
+      ...prev.filter((c) => c.connId !== target),
+      {
+        connId: target,
+        config: cfg,
+        dbType: 'redis',
+        profileName: activeProfile.name || dbName,
+        color: activeProfile.color || '',
+        env: openConns.find((c) => c.connId === activeConnIdState)?.env ?? 'none',
+        readOnly,
+      },
+    ]);
+    setActiveConnId(target);
+    setActiveConnIdState(target);
+    setConnection({ connId: target, dbName, dbType: 'redis', schema: null });
+    if (!restoreTabs(target, cfg, 'redis', dbName, null)) {
+      // Không có tab đã lưu: mở CLI Console làm tab đầu. Redis không có "SQL Query" để mở như
+      // `openInitialTab` làm, và một workspace trống không nói cho người dùng biết làm gì tiếp.
+      const tabId = redisToolTabId(target, 'redis-console');
+      const label = redisToolTabLabel('redis-console', t);
+      setTabs((prev) => [
+        ...prev.filter((tb) => tb.connId !== target),
+        { id: tabId, connId: target, type: 'redis-console', name: label, label },
+      ]);
+      setActiveTabId(tabId);
+    }
+  };
+
   // Create a new SQL Query tab
   const handleNewQueryTab = () => {
+    // Nút `+` của thanh tab trên một kết nối Redis: mở CLI Console, không phải tab SQL. Đây là thứ
+    // gần nhất với "một chỗ trống để gõ lệnh" mà Redis có.
+    if (connection?.dbType === 'redis') {
+      handleOpenRedisTool('redis-console');
+      return;
+    }
     const tabId = `query_${Date.now()}`;
     const newTab: TabInfo = {
       id: tabId,
@@ -1595,6 +1770,10 @@ export const App: React.FC = () => {
   };
 
   const activeTab = getActiveTab();
+
+  /** Key của tab đang xem — sidebar tô sáng dòng tương ứng. */
+  const activeRedisKey =
+    activeTab?.type === 'redis-key' ? activeTab.redisKeyInfo?.keyName ?? null : null;
   const activeTable = activeTab?.type === 'table' ? activeTab.name : null;
 
   /** Cập nhật một tab. Phải ổn định: QueryTabPanel memo hoá theo props (xem đó). */
@@ -1626,6 +1805,9 @@ export const App: React.FC = () => {
   // còn ở workspace nó là con trực tiếp của #root như cũ.
   const titleBar = (
     <TitleBar
+      // Safe Mode lưu theo server, và chỉ frontend có config để suy ra khoá đó (backend cố ý không
+      // trả config về vì nó mang credential).
+      connKey={connKey(activeConnConfig)}
       hasConnection={!!connection}
       connId={activeConnIdState}
       readOnly={readOnly}
@@ -1643,6 +1825,20 @@ export const App: React.FC = () => {
       // the SQL editor's confirmation and the read-only default all read it from there, and a fourth
       // copy is a fourth thing that can disagree.
       activeProfileEnv={openConns.find((c) => c.connId === activeConnIdState)?.env ?? 'none'}
+      // `db` không nằm trong `openConns` (ở đó database là một phần của `config`), nên suy ra ở đây.
+      // Kết nối đang xem ưu tiên `connection.dbName`: sau một `USE` trong restore, backend là bên
+      // biết database thật, còn `config` chỉ là thứ đã dùng để mở.
+      openConns={openConns.map((c) => ({
+        ...c,
+        env: c.env ?? 'none',
+        db:
+          (c.connId === activeConnIdState ? connection?.dbName : undefined) ||
+          c.config?.database ||
+          c.config?.sqlitePath ||
+          '',
+      }))}
+      onSelectConnection={selectConnection}
+      onConnectSavedProfile={handleConnectSavedProfile}
       onProfileChange={handleProfileChange}
       theme={theme}
       onThemeChange={applyTheme}
@@ -1669,6 +1865,11 @@ export const App: React.FC = () => {
 
   return (
     <>
+      {/* Safe Mode hỏi qua component này. Mount một lần ở gốc: `utils/safeMode.ts` không có React
+          nên nó giữ một confirmer được đăng ký, và dialog phải sống ngoài mọi tab để câu hỏi vẫn
+          hiện dù lệnh phát ra từ đâu. */}
+      <SafeModeGate />
+
       {/* Thêm một kết nối nữa trong khi vẫn đang kết nối (nút `+` của rail). Dùng lại nguyên
           `ConnectionManager` chứ không viết màn hình thứ hai; `handleConnect` đã làm đúng việc
           (đẩy vào `openConns` rồi chuyển workspace sang kết nối mới). */}
@@ -1679,9 +1880,16 @@ export const App: React.FC = () => {
           zIndex={10000}
           width="min(1100px, 94vw)"
         >
-          <ModalBody>
+          {/* `ModalBody` mặc định là padding 16 + gap 14 + tự cuộn: đúng cho một form, sai cho một
+              màn hình hai panel. Với mặc định đó container cao theo nội dung, nên hàng nút
+              Lưu/Kiểm tra/Kết nối bị đẩy xuống dưới đáy và phải cuộn mới thấy, còn hai panel thì
+              không cuộn riêng như ở màn chính. Ghim chiều cao và giao việc cuộn lại cho chúng.
+              Dùng prop `style` chứ không class: đó là API của ModalBody và style inline của nó thắng
+              mọi rule trong CSS — xem hộp phím tắt bên dưới, cùng cách. */}
+          <ModalBody style={{ padding: 0, gap: 0, overflow: 'hidden', height: 'min(74vh, 660px)' }}>
             <ConnectionManager
               connId={activeConnIdState}
+              embedded
               onConnect={(...args) => {
                 setAddingConn(false);
                 handleConnect(...args);
@@ -1699,18 +1907,6 @@ export const App: React.FC = () => {
           {titleBar}
           <ConnectionManager connId={activeConnIdState} onConnect={handleConnect} />
         </div>
-      ) : connection.dbType === 'redis' ? (
-        <>
-          {titleBar}
-          <div className="workspace-container">
-            <RedisBrowser
-              dbName={connection.dbName}
-              initialDbIndex={activeConnConfig?.dbIndex ?? 0}
-              config={activeConnConfig}
-              readOnly={readOnly}
-            />
-          </div>
-        </>
       ) : (
         <>
           {titleBar}
@@ -1733,7 +1929,25 @@ export const App: React.FC = () => {
               />
             )}
 
-            {showSidebar && (
+            {/* Redis dùng chung khung sidebar nhưng thân khác hẳn: danh sách key thay cho cây
+                bảng/view/routine. Là một component anh em chứ không phải một chế độ bên trong
+                `Sidebar.tsx` — file đó đã 2762 dòng và không có dòng nào nói về Redis
+                (docs/redis-ui-unification-plan.md §3). */}
+            {showSidebar && connection.dbType === 'redis' && (
+              <RedisSidebarView
+                connId={activeConnIdState}
+                dbName={connection.dbName}
+                dbIndex={redisDbIndex}
+                storageScope={connKey(activeConnConfig) || 'redis'}
+                readOnly={readOnly}
+                activeKey={activeRedisKey}
+                onOpenKey={handleOpenRedisKey}
+                onOpenTool={handleOpenRedisTool}
+                onSelectDb={(idx) => { void handleRedisSelectDb(idx); }}
+              />
+            )}
+
+            {showSidebar && connection.dbType !== 'redis' && (
               <Sidebar
               connId={activeConnIdState}
                 dbName={connection.dbName}
@@ -1809,13 +2023,20 @@ export const App: React.FC = () => {
                       {t('app.terminalFloating')}
                     </div>
                   ) : null
-                ) : activeTab.type === 'query' ? (
-                  // Tab truy vấn mount thường trực bên dưới (giống terminal) nên ở đây không
-                  // render gì — nếu render, tab sẽ bị dựng lại và mất kết quả mỗi lần chuyển.
+                ) : activeTab.type === 'query' || REDIS_TOOL_TAB_TYPES.has(activeTab.type) ? (
+                  // Tab truy vấn và sáu tab công cụ Redis đều mount thường trực bên dưới (giống
+                  // terminal) nên ở đây không render gì — nếu render, tab sẽ bị dựng lại và mất kết
+                  // quả mỗi lần chuyển.
+                  //
+                  // Thiếu vế Redis ở đây là một hộp `flex: 1` RỖNG được dựng cạnh tab thật, và vì cả
+                  // hai cùng `flex: 1` nên chúng chia đôi chiều ngang — nửa trái trắng trơn.
                   null
                 ) : (
                   <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-                    {activeTab.type === 'table' ? (
+                    {/* `&& !== 'redis'`: một kết nối Redis không có tab `table` nào, và nói
+                        điều đó ra ở đây là cách để `dbType` thu hẹp về ba dialect SQL mà DataGrid
+                        nhận. Trước đây nhánh Redis return sớm nên kiểu tự hẹp. */}
+                    {activeTab.type === 'table' && connection.dbType !== 'redis' ? (
                       <DataGrid
               connId={activeConnIdState}
                         key={activeTab.id + '_' + ((activeTab as any).initialViewMode || 'data') + '_' + ((activeTab as any).initialFilter ? JSON.stringify((activeTab as any).initialFilter) : '') + '_' + dbReloadKey}
@@ -1847,6 +2068,22 @@ export const App: React.FC = () => {
                         onClose={() => handleCloseTab(activeTab.id)}
                         embedded={true}
                       />
+                    ) : activeTab.type === 'redis-key' ? (
+                      <RedisKeyTab
+                        // Cả connId trong key: cùng một tên key trên db0 và db3 là hai key khác
+                        // nhau, và React sẽ dùng lại instance nếu key trùng.
+                        key={activeConnIdState + '|' + activeTab.id}
+                        connId={activeConnIdState}
+                        keyName={activeTab.redisKeyInfo?.keyName || activeTab.name}
+                        storageScope={connKey(activeConnConfig) || 'redis'}
+                        readOnly={readOnly}
+                        onRenamed={(next) => setTabs((prev) => prev.map((tb) => (
+                          tb.id === activeTab.id
+                            ? { ...tb, name: next, label: next, redisKeyInfo: { keyName: next } }
+                            : tb
+                        )))}
+                        onClose={() => handleCloseTab(activeTab.id)}
+                      />
                     ) : null}
                   </div>
                 )}
@@ -1871,6 +2108,41 @@ export const App: React.FC = () => {
                     onPatch={patchTab}
                   />
                 ))}
+
+                {/* Tab công cụ Redis: mount thường trực, cùng lý do với tab truy vấn và terminal.
+                    Console giữ log lệnh đã chạy, Pub/Sub và Profiler đang giữ một socket riêng đọc
+                    liên tục, Dashboard giữ chuỗi số liệu theo thời gian — tháo ra khi chuyển tab là
+                    mất hết, và với Pub/Sub thì còn là bỏ lỡ message trong lúc tab bị ẩn.
+                    Ẩn bằng visibility như QueryTabPanel chứ không display:none, để lưới và biểu đồ
+                    giữ nguyên vị trí cuộn. */}
+                {visibleTabs
+                  .filter((tb) => tb.type.startsWith('redis-') && tb.type !== 'redis-key')
+                  .map((tb) => (
+                    <div
+                      key={activeConnIdState + '|' + tb.id}
+                      style={
+                        activeTabId === tb.id
+                          ? { flex: 1, display: 'flex', overflow: 'hidden' }
+                          : {
+                            position: 'absolute',
+                            inset: 0,
+                            display: 'flex',
+                            overflow: 'hidden',
+                            visibility: 'hidden',
+                            pointerEvents: 'none',
+                          }
+                      }
+                    >
+                      <RedisToolTab
+                        type={tb.type as Exclude<RedisTabType, 'redis-key'>}
+                        storageScope={connKey(activeConnConfig) || 'redis'}
+                        dbIndex={redisDbIndex}
+                        readOnly={readOnly}
+                        theme={theme}
+                        onSwitchDb={(idx, cid) => { void handleRedisSelectDb(idx, cid); }}
+                      />
+                    </div>
+                  ))}
 
                 {/* Terminal: mount thường trực (ẩn/hiện bằng CSS) để phiên PTY sống khi chuyển tab */}
                 {visibleTabs.filter(tb => tb.type === 'terminal').map(tb => (
@@ -2311,8 +2583,16 @@ export const App: React.FC = () => {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-accent)', borderBottom: '1px solid var(--win-border)', paddingBottom: '3px' }}>{t('app.shortcutsGeneral')}</span>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', alignItems: 'center' }}>
+                <span style={{ color: 'var(--win-text-primary)' }}>{t('app.shortcutQuickSwitcher')}</span>
+                <kbd style={{ fontSize: '10px', background: 'var(--win-bg-tab-bar)', padding: '2px 6px', borderRadius: '3px', border: '1px solid var(--win-border-strong)', color: 'var(--win-text-primary)' }}>Ctrl + Shift + P</kbd>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', alignItems: 'center' }}>
                 <span style={{ color: 'var(--win-text-primary)' }}>{t('app.shortcutSearchTables')}</span>
-                <kbd style={{ fontSize: '10px', background: 'var(--win-bg-tab-bar)', padding: '2px 6px', borderRadius: '3px', border: '1px solid var(--win-border-strong)', color: 'var(--win-text-primary)' }}>Ctrl + P / Ctrl + K</kbd>
+                <kbd style={{ fontSize: '10px', background: 'var(--win-bg-tab-bar)', padding: '2px 6px', borderRadius: '3px', border: '1px solid var(--win-border-strong)', color: 'var(--win-text-primary)' }}>Ctrl + K</kbd>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', alignItems: 'center' }}>
+                <span style={{ color: 'var(--win-text-primary)' }}>{t('titlebar.toggleSidebar')}</span>
+                <kbd style={{ fontSize: '10px', background: 'var(--win-bg-tab-bar)', padding: '2px 6px', borderRadius: '3px', border: '1px solid var(--win-border-strong)', color: 'var(--win-text-primary)' }}>Ctrl + B</kbd>
               </div>
             </div>
 

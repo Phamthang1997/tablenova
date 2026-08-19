@@ -43,6 +43,33 @@ export default defineConfig({
       ]
     }
   },
+  // Production build only — `vite build` (i.e. `npm run build-frontend`, which is Tauri's
+  // beforeBuildCommand) reads this; the dev server does not. Deliberately no `esbuild`/`oxc`
+  // block here: those are transform-level options that apply to dev too, and Vite 8 ships
+  // rolldown with no esbuild installed, so `drop: ['console']` would be dead config anyway.
+  build: {
+    // WebView2 and WKWebView both ship a modern engine, so nothing needs down-levelling
+    // and no polyfill has to be paid for in the installed app.
+    target: 'es2022',
+    sourcemap: false,
+    rollupOptions: {
+      output: {
+        // Vite 8 bundles with rolldown, where `manualChunks` is deprecated and its object
+        // form is not supported at all (it would be silently ignored). `codeSplitting.groups`
+        // is the supported spelling; `test` matches module ids. Splitting the heavy vendors
+        // out keeps the entry chunk from being one ~6MB file the webview has to parse before
+        // the first frame.
+        codeSplitting: {
+          groups: [
+            { name: 'monaco', test: /node_modules[/](monaco-editor|@monaco-editor)[/]/ },
+            { name: 'sql-vendor', test: /node_modules[/](monaco-sql-languages|dt-sql-parser|sql-formatter)[/]/ },
+            { name: 'xterm-vendor', test: /node_modules[/]@xterm[/]/ },
+            { name: 'react-vendor', test: /node_modules[/](react|react-dom|scheduler|i18next|react-i18next)[/]/ },
+          ],
+        },
+      },
+    },
+  },
   envPrefix: ['VITE_', 'TAURI_'],
   test: {
     globals: true,

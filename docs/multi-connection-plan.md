@@ -526,6 +526,8 @@ Ba điều phát sinh khi làm, ghi lại để khỏi tìm lại:
 - **`ServerHandle::last_config` phải là `Mutex<Value>`**, vì `USE` trong restore và `switch_database`
   đều ghi lại `database` trong đó, mà `ServerHandle` nằm sau `Arc`. Phase 3 bỏ được `Mutex` này: khi
   database đến từ `ConnEntry::db` thì `last_config` thành server-level thật và thôi thay đổi.
+  *(Sai — xem §8. `switch_database` đã bị xoá nhưng restore-`USE` thì không xoá được, nên `Mutex` ở
+  lại.)*
 - **Task refresh IAM không còn cần `generation` để bảo vệ phép swap.** Nó swap theo `conn_id`, mà
   disconnect thì xoá entry đó còn reconnect thì mint id *khác* — nên một task cũ chỉ có thể ghi vào
   một entry đã biến mất, và `replace_conn` no-op. `generation` giờ chỉ còn để dừng vòng lặp. Đây là
@@ -600,9 +602,13 @@ chung credential (**không xác thực lại** — quan trọng với token IAM 
 khi kết nối *cuối cùng* trên server đó đóng. `find(server, db)` làm lệnh idempotent: chọn lại database
 đã mở thì trả về kết nối đang giữ nó.
 
-**`switch_database` được giữ lại**, không xoá: còn ba đường thật sự muốn thay pool tại chỗ — bước
-"đổi sang database đích" của luồng nhập/phục hồi, popup thống kê, và một chỗ ở Sidebar. Hai chỗ sau
-có lẽ nên chuyển sang *mở thêm* cho nhất quán, nhưng đó là quyết định riêng.
+**`switch_database` được giữ lại ở bước này**, không xoá: còn ba đường thật sự muốn thay pool tại
+chỗ — bước "đổi sang database đích" của luồng nhập/phục hồi, popup thống kê, và một chỗ ở Sidebar.
+
+> **Quyết định này đã bị đảo về sau.** Cả ba đường đó cũng chuyển sang `open_database` và
+> `switch_database` bị xoá hẳn — lý do đầy đủ ở §8. Tóm tắt: cái đúng cho bộ chọn database đúng cho
+> cả ba, vì lớp lỗi ở trên không phải của riêng bộ chọn mà là của *hình dạng* "thay pool dưới chân một
+> `conn_id` đang sống". Giữ lại ba chỗ nghĩa là giữ lại lớp lỗi ở ba chỗ.
 
 #### Rail: chỉ hiện, chuyển, đóng
 
@@ -815,8 +821,89 @@ kết nối khác **không mount** → không có đường chạy nền nào d�
 chuyển sang hiện mọi tab trên một thanh.
 
 **`open_database` đã làm ở Phase 2**, nên phần "nhiều database mỗi server" coi như xong.
-`ServerHandle::last_config` vẫn còn `Mutex` vì `switch_database` và reconnect `USE` của restore còn
-ghi vào nó; bỏ được khi hai đường đó cũng chuyển sang *mở thêm*.
+
+**`switch_database` đã bị xoá hẳn** (sau Phase 3). Cả bốn đường gọi — bộ chọn trên thanh tiêu đề,
+Sidebar ("vừa tạo database, chuyển sang?"), popup thống kê, và bước "đổi sang database đích" của
+luồng nhập/phục hồi — đều dùng `open_database`. Lý do nó phải chết chứ không chỉ là dọn dẹp: nó thay
+pool **dưới chân một `conn_id` đang sống**, và hình dạng đó kéo theo hai thứ không sửa được nếu còn
+giữ nó. Một, phải từ chối khi kết nối còn thay đổi chưa commit. Hai, khi nó *thành công* thì mọi tab
+đang mở vẫn trỏ vào bảng của database cũ mà không ai báo. Chết theo nó: `handleDatabaseChanged`
+(`App.tsx`), `tx_session::reject_if_pending` (guard dựng riêng cho việc thay pool), và ba khoá dịch.
+
+Chỗ tinh nhất là luồng nhập: `restoreBackup` không nhận `conn_id` — nó đi theo id ngầm của
+`dbHelper` — nên id đích phải giữ trong biến cục bộ. `activeConnIdState` trong closure đó vẫn là id
+**cũ**, dùng nó sẽ gửi cả sự kiện `database-restored` sai địa chỉ.
+
+**Đính chính bản trước của mục này:** nó ghi rằng bỏ `switch_database` sẽ cho phép
+`ServerHandle::last_config` bỏ `Mutex`. Không đúng. `restore_backup` cũng ghi vào `last_config` khi
+gặp `USE` giữa dump, và đường đó **không** chuyển sang "mở thêm" được: `USE` đến từ bên trong tệp
+người dùng đang chạy, không phải từ một lệnh có `conn_id` để mint kết nối mới. `Mutex` ở lại.
+
+### #4 Production Safety Guard — đã xong
+
+Mục đầu tiên trong danh sách "sau đó, mỗi cái một thay đổi độc lập" ở §5.
+
+**Môi trường là một trường riêng của profile (`SavedProfile.env`), KHÔNG suy từ nhãn màu.** Bản kế
+hoạch ghi "ngữ nghĩa env-tag trên `color` đã có", và lần dựng đầu làm đúng như vậy — sai. Màu là thứ
+người dùng đổi vì thẩm mỹ hoặc để phân loại việc khác; buộc nó mang ý nghĩa production nghĩa là đổi
+màu cho dễ nhìn có thể vô hiệu hoá lớp bảo vệ mà không nói một lời, và ngược lại, muốn đánh dấu
+production thì buộc phải chấp nhận một màu cụ thể. `utils/connEnv.ts` giữ `legacyEnvOfColor` **chỉ**
+để di trú một lần: profile chưa có `env` được điền theo ý nghĩa màu cũ rồi ghi xuống, vì nếu không thì
+mọi kết nối đang được đánh dấu production mất dấu ngay ở lần nâng cấp — đúng loại thay đổi im lặng mà
+cả lớp bảo vệ này tồn tại để chống.
+
+Ô chọn có ở **hai** chỗ, vì đó là hai thời điểm khác nhau của cùng một nhu cầu: form Connection
+Manager (đánh dấu *trước* lần kết nối đầu) và popover thanh tiêu đề (đổi giữa phiên, có hiệu lực
+ngay). Giá trị đi vào lần kết nối lấy từ **state của form**, không từ profile đã lưu — cả `config`
+(host, port, SSL…) đã làm vậy, và một cờ an toàn mà "thứ đang hiển thị" khác "thứ đang có hiệu lực"
+là hụt tệ nhất có thể có.
+
+**Cờ chỉ đọc sống ở backend (`ConnEntry.read_only`), không chỉ ở UI**, cưỡng chế trong ba funnel qua
+`reject_if_read_only`. Nhưng ba funnel **không** phải là tất cả: bốn lệnh giữ connection riêng đi
+vòng qua chúng — `commit_changes` (Lưu của lưới), `run_fk_wrapped` (Drop/Truncate), `restore_backup`,
+`generate_data`. Cả bốn dùng `Exec`/pool riêng vì cần một session cho cả lô, cùng lý do khiến chúng
+phải hỏi `use_session()` chứ không phải `is_open()`. Mỗi cái gọi `reject_conn_read_only` ở đầu hàm.
+**Một đường mới tự lấy connection phải làm y hệt**, và nó hỏng *không ồn ào*: câu ghi đơn giản là
+thành công trên kết nối đang gắn nhãn production.
+
+Hai chỗ đặt cổng có chủ ý: `commit_changes` gọi **sau** nhánh `preview` (xem trước SQL không phải
+ghi), `run_fk_wrapped` gọi **trước** câu tắt FK (từ chối giữa chừng sẽ để lại session tắt kiểm tra
+khoá ngoại). `preview_generated_data` cố ý không chặn.
+
+**Hai công tắc, hai chỗ, và thông báo phải chỉ đúng cái đang chặn.** `tf_readonly` là công tắc toàn
+app trên thanh tiêu đề; `ConnEntry.read_only` là của một kết nối, bật/tắt từ menu chuột phải của
+rail. Bản đầu chỉ có một thông báo, và nó bảo người dùng tắt công tắc toàn cục trong khi thứ đang
+chặn là cờ per-connection — làm theo thì không có gì thay đổi. Giờ `sqlEditor.errConnReadOnlyRun` chỉ
+sang đúng menu của rail.
+
+### Bốn lỗi tìm ra khi kiểm tay Safety Guard, tất cả cùng một họ
+
+Đáng ghi vì chúng không phải lỗi của Safety Guard mà là **nợ còn lại của Phase 3**: code đọc/ghi
+`tabs` và `connection` theo phạm vi toàn cục trong khi cả hai đã thành per-connection.
+
+**Bản sao không được cập nhật.** `toggleConnectionReadOnly` chỉ đổi backend rồi refetch rail, kèm một
+comment khẳng định "không có gì để mirror trong React state". Có: `connReadOnly` truyền vào SqlEditor
+đọc từ `openConns`, được đặt một lần lúc kết nối. Ổ khoá ở rail tắt, editor vẫn từ chối.
+
+**Cuộc đua giữa hai lần render.** Effect lưu tab chọn *ô localStorage* theo `connection.dbName` nhưng
+chọn *tab để lưu* theo `activeConnIdState`. Trên đường `selectConnection` chúng được đặt ở hai thời
+điểm — id đặt ngay, tên đặt sau một `await` — nên ở render giữa chừng effect ghi **tab của kết nối A
+vào ô của kết nối B**. Mở lại B về sau thì thấy tab của A. Sửa bằng cách cho `connection` mang
+`connId` của chính nó và effect bỏ qua render nào hai giá trị không khớp: ghép chúng vào một giá trị
+là cách duy nhất biến "hai thứ này nói về cùng một kết nối" thành điều kiểm tra được thay vì điều
+được giả định.
+
+**Dò trùng trên toàn bộ kết nối.** `handleSelectTable` / `handleOpenViewTab` / `handleOpenRoutineTab`
+tìm tab đã mở trong `tabs` chứ không trong `visibleTabs`. Id tab chỉ unique *trong một* kết nối, nên
+một bảng trùng tên ở kết nối khác bị coi là "đã mở": hàm không tạo tab nào và chọn một id mà kết nối
+này không có → **pane trống**, không phải lỗi. Cùng lúc, ba đường tạo tab (view, routine, terminal)
+quên gắn `connId`, và `visibleTabs` coi tab không `connId` là của mọi kết nối.
+
+**Tham số sai chỗ.** `closeConnection` gọi `disconnect(activeConnIdState)` thay vì `disconnect(connId)`
+— "Đóng kết nối" trên một ô *không phải* ô đang xem thì ngắt nhầm ô đang xem, còn ô vừa bấm nằm
+nguyên trong rail, trông như không đóng được. `handleReconnect` cũng chỉ remap `connId` cho
+`openConns` mà không remap cho `tabs`, nên sau khi kết nối lại thanh tab trống và effect lưu ghi đè
+danh sách rỗng lên workspace.
 
 ### Hai lỗi của Phase 3 đáng ghi lại
 
@@ -845,14 +932,16 @@ cửa sổ, và `tx-state-changed` phát tới cửa sổ nào.
 
 Nền cho §4.3, và ghi lại vì hành vi hiện tại của app khác nhau theo dialect:
 
-- **MySQL** — một pool switch database bằng `USE <db>`, và truy vấn liên-database trực tiếp được
-  (`SELECT * FROM db1.t1 JOIN db2.t2`). `switch_database` hiện đã làm đường này.
+- **MySQL** — một pool *có thể* đổi database bằng `USE <db>`, và truy vấn liên-database trực tiếp được
+  (`SELECT * FROM db1.t1 JOIN db2.t2`). App **không** dùng đường đó nữa: mỗi database là một pool
+  riêng như Postgres, để một `conn_id` luôn trỏ vào đúng một database (§4.3). Chỗ duy nhất `USE` còn
+  đổi database dưới chân một entry là restore, vì câu đó nằm trong tệp dump.
 - **PostgreSQL** — mỗi TCP connection gắn với **một** database, nên nhiều database dưới cùng một node
   Server buộc phải là **nhiều pool**. Đó chính là §4.3: mỗi `(server, database)` một `conn_id`, chia
   sẻ `Arc<ServerHandle>`. Trong một database Postgres còn nhiều schema — phần đó đã xong, xem
   `docs/postgres-schema-support-plan.md`.
-- **SQLite** — một tệp là một database. `switch_database` **từ chối** SQLite (`database.rs:3874`:
-  *"SQLite không hỗ trợ nhiều database trên một kết nối"*). `ATTACH DATABASE` chưa được hỗ trợ ở đâu
+- **SQLite** — một tệp là một database. `open_database` **từ chối** SQLite (*"SQLite không hỗ trợ
+  nhiều database trên một kết nối"*). `ATTACH DATABASE` chưa được hỗ trợ ở đâu
   trong app; deep scan của `db_stats` có nhắc database đã ATTACH nhưng không có đường nào tạo ra
   chúng. Nếu muốn thì đó là việc riêng, không thuộc kế hoạch này.
 - **Redis** — `db0`…`db15` theo index, `select_db_inner` đã làm. **Ngoài phạm vi** (phụ lục B).

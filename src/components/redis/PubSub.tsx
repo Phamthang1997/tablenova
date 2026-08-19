@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Radio, Send, Square, Trash2 } from 'lucide-react';
 import i18n from '../../i18n';
 import { dbHelper } from '../../utils/dbHelper';
-import { logBox } from './shared';
+
 
 interface PubSubProps {
   readOnly: boolean;
@@ -100,55 +100,49 @@ export const PubSub: React.FC<PubSubProps> = ({ readOnly, onError, onOk, onBlock
     onOk(t('redis.published', { n: res.receivers ?? 0 }));
   };
 
-  const inputStyle: React.CSSProperties = {
-    flex: 1, background: 'var(--win-bg-window)', border: '1px solid var(--win-border)',
-    color: 'var(--win-text-primary)', borderRadius: '4px', fontSize: '11px',
-    fontFamily: 'var(--win-font-mono)', padding: '5px 8px', outline: 'none',
-  };
-
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '8px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-        <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--win-text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+    <div className="redis-console">
+      <div className="redis-stream-bar">
+        <span className="redis-tool-title">
           <Radio size={14} /> {t('redis.pubsubTitle')}
         </span>
-        <span style={{ fontSize: '10px', color: 'var(--win-text-disabled)' }}>{t('redis.pubsubOwnConnection')}</span>
+        <span className="redis-value-meta">{t('redis.pubsubOwnConnection')}</span>
       </div>
 
-      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+      <div className="redis-tool-row">
         <input
+          className="redis-tool-input"
           type="text"
           value={channels}
           onChange={(e) => setChannels(e.target.value)}
           disabled={listening}
           placeholder={t('redis.channelsPlaceholder')}
           spellCheck={false}
-          style={inputStyle}
         />
         <input
+          className="redis-tool-input"
           type="text"
           value={patterns}
           onChange={(e) => setPatterns(e.target.value)}
           disabled={listening}
           placeholder={t('redis.patternsPlaceholder')}
           spellCheck={false}
-          style={inputStyle}
         />
         {listening ? (
-          <button className="btn btn-secondary" onClick={stop} style={{ padding: '0 12px', display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--st-danger)' }}>
+          <button className="btn btn-secondary redis-tool-btn danger" onClick={stop}>
             <Square size={10} /> {t('redis.unsubscribe')}
           </button>
         ) : (
-          <button className="btn btn-primary" onClick={start} style={{ padding: '0 12px' }}>{t('redis.subscribe')}</button>
+          <button className="btn btn-primary redis-tool-btn" onClick={start}>{t('redis.subscribe')}</button>
         )}
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-        <span style={{ fontSize: '10px', color: 'var(--win-text-disabled)' }}>
+      <div className="redis-stream-bar">
+        <span className="redis-value-meta">
           {t('redis.messageCount', { n: messages.length.toLocaleString() })}
           {dropped > 0 ? ` · ${t('redis.messagesDropped', { n: dropped.toLocaleString() })}` : ''}
         </span>
-        <label style={{ fontSize: '10px', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: 'var(--win-text-secondary)' }}>
+        <label className="redis-tool-check">
           <input
             type="checkbox"
             defaultChecked
@@ -156,44 +150,44 @@ export const PubSub: React.FC<PubSubProps> = ({ readOnly, onError, onOk, onBlock
           />
           {t('redis.followTail')}
         </label>
-        <div style={{ flex: 1 }} />
+        <div className="redis-keylist-spacer" />
         <button
           onClick={() => { setMessages([]); setDropped(0); }}
           disabled={messages.length === 0}
-          style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '4px', border: '1px solid var(--win-border)', background: 'transparent', color: 'var(--win-text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+          className="redis-ghost-btn"
         >
           <Trash2 size={10} /> {t('redis.clearLog')}
         </button>
       </div>
 
-      <div ref={logRef} style={logBox}>
+      <div ref={logRef} className="redis-log-box">
         {messages.length === 0 && (
-          <div style={{ color: 'var(--win-text-disabled)' }}>
+          <div className="redis-cell-hint">
             {listening ? t('redis.pubsubWaiting') : t('redis.pubsubHint')}
           </div>
         )}
         {messages.map((m, i) => (
-          <div key={i} style={{ marginBottom: '4px' }}>
-            <span style={{ color: 'var(--win-text-disabled)' }}>
+          <div key={i} className="redis-log-line">
+            <span className="redis-log-dim">
               {new Date(m.at).toLocaleTimeString(i18n.language)}{' '}
             </span>
-            <span style={{ color: 'var(--win-accent)', fontWeight: 700 }}>{m.channel}</span>
-            {m.pattern ? <span style={{ color: 'var(--win-text-disabled)' }}> ({m.pattern})</span> : null}
-            <span style={{ color: 'var(--win-text-primary)' }}> {m.payload}</span>
-            {m.binary ? <span style={{ color: '#f59e0b' }}> {t('redis.binaryTag')}</span> : null}
+            <span className="redis-syntax-name">{m.channel}</span>
+            {m.pattern ? <span className="redis-log-dim"> ({m.pattern})</span> : null}
+            <span className="redis-log-payload"> {m.payload}</span>
+            {m.binary ? <span className="redis-log-binary"> {t('redis.binaryTag')}</span> : null}
           </div>
         ))}
       </div>
 
       {!readOnly && (
-        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+        <div className="redis-tool-row">
           <input
             type="text"
             value={pubChannel}
             onChange={(e) => setPubChannel(e.target.value)}
             placeholder={t('redis.publishChannel')}
             spellCheck={false}
-            style={{ ...inputStyle, flex: '0 0 160px' }}
+            className="redis-tool-input fixed"
           />
           <input
             type="text"
@@ -202,9 +196,8 @@ export const PubSub: React.FC<PubSubProps> = ({ readOnly, onError, onOk, onBlock
             onKeyDown={(e) => { if (e.key === 'Enter') publish(); }}
             placeholder={t('redis.publishPayload')}
             spellCheck={false}
-            style={inputStyle}
           />
-          <button className="btn btn-secondary" onClick={publish} style={{ padding: '0 12px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <button className="btn btn-secondary redis-tool-btn" onClick={publish}>
             <Send size={11} /> {t('redis.publish')}
           </button>
         </div>

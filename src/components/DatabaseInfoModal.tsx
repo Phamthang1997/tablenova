@@ -1,12 +1,74 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useDeferredValue } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
-import { dbHelper, type DatabaseStats, type AllDatabasesStats } from '../utils/dbHelper';
+import { dbHelper, type DatabaseStats, type AllDatabasesStats, type AllDatabasesSizeItem } from '../utils/dbHelper';
 import { RefreshCw, HardDrive, Hash, Table, Search, ArrowUpDown, ExternalLink, ShieldCheck, Database, Server, ScanSearch, Lock, Layers, Eye, Braces, Cog, ChevronRight, ChevronDown } from 'lucide-react';
 import { Modal, ModalFooter } from './Modal';
 
 type InfoTab = 'current' | 'all';
 /** Nhóm đối tượng đang xem trong tab "Database hiện tại". */
 type ObjKind = 'table' | 'view' | 'function' | 'procedure';
+
+/**
+ * Caches the "all databases" tab per connection, so reopening the modal shows numbers at
+ * once instead of re-running the most expensive query in the dialog. The TTL is short
+ * because these are live figures (and "refresh" always bypasses the cache); keying on
+ * `connId` keeps another server's numbers out.
+ */
+const ALL_STATS_TTL_MS = 60_000;
+const allStatsCache = new Map<string, { at: number; stats: AllDatabasesStats }>();
+
+/**
+ * How many table rows are rendered before the list is capped. A row is ~10 elements with a
+ * button, so a 2000-table database would otherwise build ~20k DOM nodes on every render of
+ * this dialog. Above the cap the user gets a count and a "show all" escape hatch — the
+ * search box narrows the list far below it anyway.
+ */
+const TABLE_ROW_CAP = 500;
+
+/**
+ * Merges phase 2's numbers onto phase 1's result. Rows match on `schema_name` first, then
+ * `db_name`; every field is written only when phase 2 actually has a number (`??`), so a
+ * null can never overwrite what phase 1 already knew.
+ */
+const mergeSizes = (base: AllDatabasesStats, items: AllDatabasesSizeItem[]): AllDatabasesStats => {
+  const byKey = new Map<string, AllDatabasesSizeItem>();
+  for (const it of items) {
+    const k = it.schema_name || it.db_name;
+    if (k) byKey.set(k, it);
+  }
+
+  return {
+    ...base,
+    metrics_pending: false,
+    databases: base.databases.map((d) => {
+      const m = byKey.get(d.schema_name || d.db_name);
+      if (!m) {
+        // An empty database is absent from phase 2's per-table aggregate (MySQL GROUP BY
+        // over information_schema.TABLES), yet its numbers are known: zero. A database
+        // phase 2 skipped (a hidden system schema) keeps its nulls and renders as "-".
+        if (d.total_tables === 0) {
+          return {
+            ...d,
+            total_rows: d.total_rows ?? 0,
+            data_size_bytes: d.data_size_bytes ?? 0,
+            index_size_bytes: d.index_size_bytes ?? 0,
+            total_size_bytes: d.total_size_bytes ?? 0,
+          };
+        }
+        return d;
+      }
+      return {
+        ...d,
+        total_tables: m.total_tables ?? d.total_tables,
+        total_rows: m.total_rows ?? d.total_rows,
+        data_size_bytes: m.data_size_bytes ?? d.data_size_bytes,
+        index_size_bytes: m.index_size_bytes ?? d.index_size_bytes,
+        total_size_bytes: m.total_size_bytes ?? d.total_size_bytes,
+        error: m.error ?? d.error,
+      };
+    }),
+  };
+};
 
 interface DatabaseInfoModalProps {
   /** Kết nối mà component này thao tác lên. Truyền tường minh, không đọc id ambient (§4.1). */
@@ -35,6 +97,15 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  /**
+   * The list filters on the deferred value, the input renders the live one: on a database
+   * with a couple of thousand tables, filtering + reconciling every row on each keystroke is
+   * what makes typing feel stuck. React keeps the input responsive and lets the heavy list
+   * lag a frame behind instead.
+   */
+  const deferredSearch = useDeferredValue(searchTerm);
+  /** "Show all" was pressed, so `TABLE_ROW_CAP` no longer applies. */
+  const [showAllTables, setShowAllTables] = useState(false);
   const [sortBy, setSortBy] = useState<'size_desc' | 'rows_desc' | 'name_asc'>('size_desc');
   const [exactCounts, setExactCounts] = useState<Record<string, number>>({});
   const [countingTable, setCountingTable] = useState<string | null>(null);
@@ -54,11 +125,19 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
   const [allSortBy, setAllSortBy] = useState<'size_desc' | 'tables_desc' | 'rows_desc' | 'name_asc'>('size_desc');
   const [showSystemDbs, setShowSystemDbs] = useState(false);
   const [switchingDb, setSwitchingDb] = useState<string | null>(null);
+  /** Phase 2 (sizes / row counts) is running in the background — the list is already up. */
+  const [metricsLoading, setMetricsLoading] = useState(false);
+  /**
+   * Token of the current "all databases" load. Phase 2 runs in the background, so it can
+   * land after the modal was closed or refresh was pressed; a stale result must be dropped
+   * rather than merged.
+   */
+  const allReqRef = useRef(0);
 
   const fetchStats = async () => {
     setLoading(true);
     setError(null);
-    const [res, objs] = await Promise.all([dbHelper.getDatabaseStats(), dbHelper.getDatabaseObjects(connId)]);
+    const [res, objs] = await Promise.all([dbHelper.getDatabaseStats(connId), dbHelper.getDatabaseObjects(connId)]);
     setLoading(false);
     setObjects({ views: objs.views, functions: objs.functions, procedures: objs.procedures });
     if (res.success && res.stats) {
@@ -86,22 +165,64 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
     }));
   };
 
-  const fetchAllStats = async (deep = false) => {
-    setAllLoading(true);
-    setAllError(null);
-    const res = await dbHelper.getAllDatabasesStats(deep);
-    setAllLoading(false);
-    if (res.success && res.stats) {
-      setAllStats(res.stats);
+  // Phase 2: sizes / row counts. Runs after the list is on screen and blocks nothing.
+  const fetchMetrics = async (req: number, base: AllDatabasesStats, includeSystem: boolean) => {
+    setMetricsLoading(true);
+    const res = await dbHelper.getAllDatabasesSizes(connId, includeSystem);
+    if (req !== allReqRef.current) return;
+    setMetricsLoading(false);
+    if (res.success && res.items) {
+      const merged = mergeSizes(base, res.items);
+      setAllStats(merged);
+      allStatsCache.set(connId, { at: Date.now(), stats: merged });
     } else {
       setAllError(res.error || t('dbInfo.errAllStats'));
     }
   };
 
-  // Mỗi lần mở lại modal đều nạp mới tab được chỉ định; đóng thì xoá cache để
-  // lần mở sau không hiển thị số liệu của database đã đổi trước đó.
+  const fetchAllStats = async (force = false) => {
+    // Bumping the token cancels an in-flight phase 2, so its flag has to go down with it.
+    const req = ++allReqRef.current;
+    setMetricsLoading(false);
+
+    if (!force) {
+      const hit = allStatsCache.get(connId);
+      if (hit && Date.now() - hit.at < ALL_STATS_TTL_MS) {
+        setAllStats(hit.stats);
+        setAllError(null);
+        if (hit.stats.metrics_pending && !hit.stats.metrics_manual) {
+          fetchMetrics(req, hit.stats, showSystemDbs);
+        }
+        return;
+      }
+    }
+
+    setAllLoading(true);
+    setAllError(null);
+    const res = await dbHelper.getAllDatabasesStats(connId);
+    if (req !== allReqRef.current) return;
+    setAllLoading(false);
+    if (res.success && res.stats) {
+      setAllStats(res.stats);
+      allStatsCache.set(connId, { at: Date.now(), stats: res.stats });
+      // Postgres needs a connection per database to count, so it waits for "deep scan".
+      if (res.stats.metrics_pending && !res.stats.metrics_manual) {
+        fetchMetrics(req, res.stats, showSystemDbs);
+      }
+    } else {
+      setAllError(res.error || t('dbInfo.errAllStats'));
+    }
+  };
+
+  // Reopening the modal always loads the requested tab; closing it clears state so the next
+  // open cannot show figures of a database that has since changed. The "all databases" tab
+  // is the exception: it reads `allStatsCache` (60s TTL, keyed by connId), so reopening
+  // within a minute is instant instead of re-running the dialog's most expensive query.
   useEffect(() => {
     if (!isOpen) {
+      // Phase 2 may still be running: bump the token so its result gets dropped.
+      allReqRef.current++;
+      setMetricsLoading(false);
       setStats(null);
       setAllStats(null);
       setExactCounts({});
@@ -111,10 +232,11 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
       setObjKind('table');
       setExpandedObj(null);
       setObjDefs({});
+      setShowAllTables(false);
       return;
     }
     setTab(initialTab);
-    if (initialTab === 'all') fetchAllStats(false);
+    if (initialTab === 'all') fetchAllStats();
     else fetchStats();
     // fetchStats/fetchAllStats close over `t`, whose identity changes on every
     // language switch. Listing them here would refetch the whole statistics set
@@ -126,7 +248,19 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
   const selectTab = (next: InfoTab) => {
     setTab(next);
     if (next === 'current' && !stats && !loading) fetchStats();
-    if (next === 'all' && !allStats && !allLoading) fetchAllStats(false);
+    if (next === 'all' && !allStats && !allLoading) fetchAllStats();
+  };
+
+  // Ticking "show system DBs" after phase 2 already ran: those schemas were skipped to save
+  // a few hundred table opens, so their numbers have to be fetched now.
+  const handleToggleSystemDbs = (checked: boolean) => {
+    setShowSystemDbs(checked);
+    // A still-true `metrics_pending` means phase 2 has not finished (on Postgres it is
+    // waiting for "deep scan") — let that path handle it instead of racing a second one.
+    if (!checked || !allStats || allStats.metrics_pending || metricsLoading) return;
+    if (allStats.databases.some((d) => d.is_system && (d.total_rows === null || d.total_tables === null))) {
+      fetchMetrics(allReqRef.current, allStats, true);
+    }
   };
 
   const handleSwitchDatabase = async (name: string) => {
@@ -144,7 +278,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
 
   const handleFetchExactCount = async (tableName: string) => {
     setCountingTable(tableName);
-    const res = await dbHelper.getExactTableRowCount(tableName);
+    const res = await dbHelper.getExactTableRowCount(connId, tableName);
     setCountingTable(null);
     if (res.success && res.exact_rows !== undefined) {
       setExactCounts((prev) => ({ ...prev, [tableName]: Math.max(0, res.exact_rows!) }));
@@ -162,11 +296,12 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
 
   const filteredTables = useMemo(() => {
     if (!stats?.tables) return [];
-    let list = stats.tables.filter((t) =>
-      t.table_name.toLowerCase().includes(searchTerm.toLowerCase().trim())
+    // Not named `t` — that is the translation function.
+    let list = stats.tables.filter((tbl) =>
+      tbl.table_name.toLowerCase().includes(deferredSearch.toLowerCase().trim())
     );
 
-    return list.sort((a, b) => {
+    return [...list].sort((a, b) => {
       if (sortBy === 'size_desc') {
         const sizeA = a.total_size_bytes ?? 0;
         const sizeB = b.total_size_bytes ?? 0;
@@ -179,16 +314,23 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
       }
       return a.table_name.localeCompare(b.table_name);
     });
-  }, [stats, searchTerm, sortBy, exactCounts]);
+  }, [stats, deferredSearch, sortBy, exactCounts]);
 
   // Danh sách view/hàm/thủ tục theo nhóm đang chọn (dùng chung ô tìm kiếm với bảng).
   const currentObjects = useMemo(() => {
     if (!objects || objKind === 'table') return [];
     const src =
       objKind === 'view' ? objects.views : objKind === 'function' ? objects.functions : objects.procedures;
-    const q = searchTerm.toLowerCase().trim();
-    return src.filter((n) => n.toLowerCase().includes(q)).sort((a, b) => a.localeCompare(b));
-  }, [objects, objKind, searchTerm]);
+    const q = deferredSearch.toLowerCase().trim();
+    return [...src].filter((n) => n.toLowerCase().includes(q)).sort((a, b) => a.localeCompare(b));
+  }, [objects, objKind, deferredSearch]);
+
+  // Only the rows actually rendered. Everything else (counts, the notice) reads
+  // `filteredTables`, so capping never changes what the dialog claims to have found.
+  const visibleTables = useMemo(
+    () => (showAllTables ? filteredTables : filteredTables.slice(0, TABLE_ROW_CAP)),
+    [filteredTables, showAllTables]
+  );
 
   const objectCounts = useMemo(
     () => ({
@@ -212,10 +354,15 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
       d.db_name.toLowerCase().includes(allSearch.toLowerCase().trim())
     );
 
+    // Always tie-break by name: before phase 2 lands every numeric key is equal, and an
+    // alphabetical list reads better than whatever incidental order the server returned.
     return [...list].sort((a, b) => {
-      if (allSortBy === 'size_desc') return (b.total_size_bytes ?? 0) - (a.total_size_bytes ?? 0);
-      if (allSortBy === 'tables_desc') return (b.total_tables ?? -1) - (a.total_tables ?? -1);
-      if (allSortBy === 'rows_desc') return (b.total_rows ?? -1) - (a.total_rows ?? -1);
+      if (allSortBy === 'size_desc' && a.total_size_bytes !== b.total_size_bytes)
+        return (b.total_size_bytes ?? 0) - (a.total_size_bytes ?? 0);
+      if (allSortBy === 'tables_desc' && a.total_tables !== b.total_tables)
+        return (b.total_tables ?? -1) - (a.total_tables ?? -1);
+      if (allSortBy === 'rows_desc' && a.total_rows !== b.total_rows)
+        return (b.total_rows ?? -1) - (a.total_rows ?? -1);
       return a.db_name.localeCompare(b.db_name);
     });
   }, [scopedDatabases, allSearch, allSortBy]);
@@ -240,7 +387,13 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
     [allStats]
   );
 
-  const busy = tab === 'all' ? allLoading : loading;
+  // A background phase 2 counts as "loading" too: the refresh button spins and stays
+  // disabled, which is the only cue that the "…" cells are about to get numbers.
+  const busy = tab === 'all' ? allLoading || metricsLoading : loading;
+
+  /** A number cell of the "all databases" tab: "…" while phase 2 runs, "-" if unmeasurable. */
+  const metricCell = (v: number | null, render: (n: number) => string) =>
+    v === null ? (metricsLoading ? '…' : '-') : render(v);
 
   if (!isOpen) return null;
 
@@ -321,7 +474,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
           ))}
           <button
             className="btn btn-secondary"
-            onClick={() => (tab === 'all' ? fetchAllStats(allStats?.deep ?? false) : fetchStats())}
+            onClick={() => (tab === 'all' ? fetchAllStats(true) : fetchStats())}
             disabled={busy}
             title={t('dbInfo.refreshTitle')}
             style={{ marginLeft: 'auto', marginBottom: '8px', padding: '0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}
@@ -515,19 +668,14 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
                       </td>
                     </tr>
                   ) : (
-                    filteredTables.map((row) => {
+                    visibleTables.map((row) => {
                       const isExact = exactCounts[row.table_name] !== undefined || row.is_exact;
                       const rawRows = exactCounts[row.table_name] ?? row.rows;
                       const displayRows = Math.max(0, rawRows);
                       const isCounting = countingTable === row.table_name;
 
                       return (
-                        <tr
-                          key={row.table_name}
-                          style={{ borderBottom: '1px solid var(--win-border)', transition: 'background 0.12s' }}
-                          onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--win-bg-hover)')}
-                          onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                        >
+                        <tr key={row.table_name} className="stat-row">
                           <td style={{ padding: '10px 16px', fontFamily: 'var(--win-font-mono, monospace)', fontWeight: 600, color: 'var(--win-accent)' }}>
                             {row.table_name}
                           </td>
@@ -605,6 +753,20 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
                       );
                     })
                   )}
+                  {visibleTables.length < filteredTables.length && (
+                    <tr>
+                      <td colSpan={7} style={{ padding: '14px 16px', textAlign: 'center', color: 'var(--win-text-secondary)', background: 'var(--win-bg-tab-bar)' }}>
+                        <span>{t('dbInfo.rowCapNotice', { n: visibleTables.length, total: filteredTables.length })}</span>
+                        <button
+                          className="btn btn-secondary"
+                          onClick={() => setShowAllTables(true)}
+                          style={{ marginLeft: '10px', padding: '0 12px' }}
+                        >
+                          {t('dbInfo.showAllRows')}
+                        </button>
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
               ) : (
@@ -642,11 +804,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
 
                       return (
                         <React.Fragment key={key}>
-                          <tr
-                            style={{ borderBottom: '1px solid var(--win-border)', transition: 'background 0.12s' }}
-                            onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--win-bg-hover)')}
-                            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                          >
+                          <tr className="stat-row">
                             <td style={{ padding: '10px 16px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
                                 <span style={{ color: 'var(--win-text-disabled)', display: 'flex', flexShrink: 0 }}>
@@ -735,7 +893,9 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
             <div style={{ padding: '16px 20px', borderRadius: '8px', background: 'var(--win-bg-window)', border: '1px solid var(--win-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div>
                 <div style={{ fontSize: '12px', color: 'var(--win-text-secondary)', fontWeight: 500, marginBottom: '4px' }}>{t('dbInfo.cardServerSize')}</div>
-                <div style={{ fontSize: '22px', fontWeight: 700, color: 'var(--win-text-primary)' }}>{formatBytes(serverSummary.size)}</div>
+                <div style={{ fontSize: '22px', fontWeight: 700, color: 'var(--win-text-primary)' }}>
+                  {metricsLoading ? '…' : formatBytes(serverSummary.size)}
+                </div>
               </div>
               <div style={{ padding: '12px', borderRadius: '8px', background: 'var(--win-accent-glow)', color: 'var(--win-accent)', display: 'flex' }}>
                 <HardDrive size={22} />
@@ -765,10 +925,13 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
                 <div style={{ fontSize: '22px', fontWeight: 700, color: 'var(--win-text-primary)' }}>
                   {serverSummary.tables.toLocaleString()}
                   <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--win-text-secondary)' }}>
-                    {' / '}{allStats?.rows_are_exact === false ? '~' : ''}{serverSummary.rows.toLocaleString()}
+                    {' / '}
+                    {metricsLoading
+                      ? '…'
+                      : `${allStats?.rows_are_exact === false ? '~' : ''}${serverSummary.rows.toLocaleString()}`}
                   </span>
                 </div>
-                {serverSummary.hasUnknown && (
+                {serverSummary.hasUnknown && !metricsLoading && (
                   <div style={{ fontSize: '11px', color: 'var(--win-text-disabled)', marginTop: '2px' }}>{t('dbInfo.incompleteScan')}</div>
                 )}
               </div>
@@ -779,24 +942,24 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
           </div>
 
           {/* Postgres: metadata số bảng/số dòng chỉ đọc được từ chính database đang kết nối */}
-          {allStats?.supports_deep_scan && !allStats.deep && (
+          {allStats?.metrics_manual && allStats.metrics_pending && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', background: 'var(--win-bg-window)', border: '1px dashed var(--win-border)', borderRadius: '8px', fontSize: '12px', color: 'var(--win-text-secondary)' }}>
               <ScanSearch size={16} style={{ color: 'var(--win-accent)', flexShrink: 0 }} />
               <span style={{ flex: 1 }}>
                 {t('dbInfo.pgScanNote')}
               </span>
               <button
-                onClick={() => fetchAllStats(true)}
-                disabled={allLoading}
+                onClick={() => fetchMetrics(allReqRef.current, allStats, showSystemDbs)}
+                disabled={busy}
                 style={{
                   display: 'inline-flex', alignItems: 'center', gap: '6px', flexShrink: 0,
                   fontSize: '12px', fontWeight: 500, color: '#ffffff', background: 'var(--win-accent)',
                   border: 'none', padding: '7px 14px', borderRadius: '6px',
-                  cursor: allLoading ? 'default' : 'pointer', opacity: allLoading ? 0.5 : 1,
+                  cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.5 : 1,
                 }}
               >
                 <ScanSearch size={13} />
-                <span>{allLoading ? t('dbInfo.scanning') : t('dbInfo.deepScan')}</span>
+                <span>{busy ? t('dbInfo.scanning') : t('dbInfo.deepScan')}</span>
               </button>
             </div>
           )}
@@ -829,7 +992,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginLeft: 'auto' }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--win-text-secondary)', cursor: 'pointer' }}>
-                <input type="checkbox" checked={showSystemDbs} onChange={(e) => setShowSystemDbs(e.target.checked)} />
+                <input type="checkbox" checked={showSystemDbs} onChange={(e) => handleToggleSystemDbs(e.target.checked)} />
                 <span>{t('dbInfo.showSystemDbs')}</span>
               </label>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -900,9 +1063,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
                       return (
                         <tr
                           key={d.schema_name || d.db_name}
-                          style={{ borderBottom: '1px solid var(--win-border)', background: d.is_current ? 'var(--win-accent-glow)' : 'transparent', transition: 'background 0.12s' }}
-                          onMouseEnter={(e) => { if (!d.is_current) e.currentTarget.style.background = 'var(--win-bg-hover)'; }}
-                          onMouseLeave={(e) => { if (!d.is_current) e.currentTarget.style.background = 'transparent'; }}
+                          className={d.is_current ? 'stat-row is-current' : 'stat-row'}
                         >
                           <td style={{ padding: '10px 16px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
@@ -933,20 +1094,21 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
                                 <div style={{ width: `${Math.min(100, pct)}%`, height: '100%', borderRadius: '3px', background: d.is_system ? 'var(--win-text-disabled)' : 'var(--win-accent)' }} />
                               </div>
                               <span style={{ fontFamily: 'var(--win-font-mono, monospace)', fontSize: '11px', color: 'var(--win-text-secondary)', width: '46px', textAlign: 'right', flexShrink: 0, whiteSpace: 'nowrap' }}>
-                                {pct.toFixed(1)}%
+                                {metricCell(d.total_size_bytes, () => `${pct.toFixed(1)}%`)}
                               </span>
                             </div>
                           </td>
                           <td style={{ padding: '10px 16px', textAlign: 'right', fontFamily: 'var(--win-font-mono, monospace)', fontWeight: 600, color: 'var(--win-text-primary)', whiteSpace: 'nowrap' }}>
-                            {formatBytes(d.total_size_bytes)}
+                            {metricCell(d.total_size_bytes, formatBytes)}
                           </td>
                           <td style={{ padding: '10px 16px', textAlign: 'right', fontFamily: 'var(--win-font-mono, monospace)', color: 'var(--win-text-secondary)', whiteSpace: 'nowrap' }}>
-                            {d.total_tables === null ? '-' : d.total_tables.toLocaleString()}
+                            {metricCell(d.total_tables, (n) => n.toLocaleString())}
                           </td>
                           <td style={{ padding: '10px 16px', textAlign: 'right', fontFamily: 'var(--win-font-mono, monospace)', color: 'var(--win-text-secondary)', whiteSpace: 'nowrap' }}>
-                            {d.total_rows === null
-                              ? '-'
-                              : `${allStats?.rows_are_exact ? '' : '~'}${d.total_rows.toLocaleString()}`}
+                            {metricCell(
+                              d.total_rows,
+                              (n) => `${allStats?.rows_are_exact ? '' : '~'}${n.toLocaleString()}`
+                            )}
                           </td>
                           <td style={{ padding: '10px 16px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             <span title={d.collation || undefined} style={{ padding: '2px 8px', fontSize: '11px', fontWeight: 500, background: 'var(--win-bg-tab-bar)', borderRadius: '4px', border: '1px solid var(--win-border)', color: 'var(--win-text-secondary)' }}>

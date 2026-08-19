@@ -7,7 +7,7 @@ import {
 } from '../../utils/redisDecode';
 import { CollectionTable } from './CollectionTable';
 import { StreamPanel } from './StreamPanel';
-import { TYPE_COLORS, formatBytes, monoBox, ttlText } from './shared';
+import { TYPE_COLORS, formatBytes, ttlText } from './shared';
 import type { CollectionEditor } from './types';
 
 interface ValuePanelProps {
@@ -34,7 +34,9 @@ export const ValuePanel: React.FC<ValuePanelProps> = ({
   const kind: string = v.kind ?? detail.type;
 
   const badge = (
-    <span style={{ fontSize: '9px', fontWeight: 700, padding: '1px 5px', borderRadius: '3px', color: '#fff', background: TYPE_COLORS[detail.type] || '#64748b', textTransform: 'uppercase' }}>
+    // Màu tra theo kiểu key nên phải ở inline: TYPE_COLORS là bảng trong TS, tách thành sáu class
+    // là thêm một cặp phải giữ đồng bộ bằng tay. Cùng lý lẽ với badge trong KeyList.
+    <span className="redis-row-type" style={{ background: TYPE_COLORS[detail.type] || '#64748b' }}>
       {detail.type}
     </span>
   );
@@ -48,23 +50,23 @@ export const ValuePanel: React.FC<ValuePanelProps> = ({
   const editor = useCollectionEditor(detail, kind, onError, onOk);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', height: '100%' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+    <div className="redis-value">
+      <div className="redis-value-bar">
         {badge}
-        <span style={{ fontFamily: 'var(--win-font-mono)', fontSize: '12px', fontWeight: 600, color: 'var(--win-text-primary)', wordBreak: 'break-all' }}>{detail.key}</span>
-        <span style={{ fontSize: '10px', color: 'var(--win-text-disabled)' }}>TTL: {ttlText(detail.ttl)}</span>
+        <span className="redis-value-key">{detail.key}</span>
+        <span className="redis-value-meta">TTL: {ttlText(detail.ttl)}</span>
         {detail.memory != null && (
-          <span style={{ fontSize: '10px', color: 'var(--win-text-disabled)' }}>· {formatBytes(detail.memory)}</span>
+          <span className="redis-value-meta">· {formatBytes(detail.memory)}</span>
         )}
         {detail.length != null && (
-          <span style={{ fontSize: '10px', color: 'var(--win-text-disabled)' }}>
+          <span className="redis-value-meta">
             · {t('redis.elementCount', { n: detail.length.toLocaleString() })}
           </span>
         )}
-        <div style={{ flex: 1 }} />
-        <button className="btn btn-secondary" onClick={onSetTtl} disabled={readOnly} style={{ padding: '0 8px' }}>TTL</button>
-        <button className="btn btn-secondary" onClick={onRename} disabled={readOnly} style={{ padding: '0 8px' }}>{t('redis.rename')}</button>
-        <button className="btn btn-secondary" onClick={onDelete} disabled={readOnly} style={{ padding: '0 8px', color: 'var(--st-danger)' }}>{t('redis.delete')}</button>
+        <div className="redis-keylist-spacer" />
+        <button className="btn btn-secondary redis-value-btn" onClick={onSetTtl} disabled={readOnly}>TTL</button>
+        <button className="btn btn-secondary redis-value-btn" onClick={onRename} disabled={readOnly}>{t('redis.rename')}</button>
+        <button className="btn btn-secondary redis-value-btn danger" onClick={onDelete} disabled={readOnly}>{t('redis.delete')}</button>
       </div>
 
       {kind === 'string' && (
@@ -320,45 +322,45 @@ const StringValue: React.FC<StringValueProps> = ({
 
   return (
     <>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: '10px', color: 'var(--win-text-secondary)' }}>{t('redis.formatLabel')}</span>
+      <div className="redis-value-bar">
+        <span className="redis-value-label">{t('redis.formatLabel')}</span>
         <select
+          className="redis-keylist-select"
           value={format}
           onChange={(e) => setFormat(e.target.value as RedisFormat)}
-          style={{ background: 'var(--win-bg-window)', border: '1px solid var(--win-border)', color: 'var(--win-text-primary)', borderRadius: '4px', fontSize: '10px', padding: '2px 4px' }}
         >
           {REDIS_FORMATS.map((f) => <option key={f} value={f}>{f}</option>)}
         </select>
         {decoded && (
-          <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '10px', background: 'rgba(77,139,244,0.15)', color: 'var(--win-accent)', fontWeight: 600 }}>
+          <span className="redis-format-pill">
             {t('redis.format', { format: decoded.format })}
           </span>
         )}
         {decoded && !decoded.ok && (
-          <span style={{ fontSize: '10px', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <span className="redis-value-warn">
             <AlertTriangle size={11} /> {t('redis.formatMismatch')}
           </span>
         )}
         {value.totalLength != null && (
-          <span style={{ fontSize: '10px', color: 'var(--win-text-disabled)' }}>
+          <span className="redis-value-meta">
             {t('redis.stringLength', { n: Number(value.totalLength).toLocaleString() })}
           </span>
         )}
-        <div style={{ flex: 1 }} />
+        <div className="redis-keylist-spacer" />
         {editableText && (
-          <button className="btn btn-primary" onClick={saveText} disabled={saving} style={{ padding: '0 10px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <button className="btn btn-primary redis-value-save" onClick={saveText} disabled={saving}>
             <Save size={11} /> {t('redis.saveSet')}
           </button>
         )}
         {editableHex && (
-          <button className="btn btn-primary" onClick={saveHex} disabled={saving} style={{ padding: '0 10px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <button className="btn btn-primary redis-value-save" onClick={saveHex} disabled={saving}>
             <Save size={11} /> {t('redis.saveHex')}
           </button>
         )}
       </div>
 
       {truncated && (
-        <div style={{ padding: '6px 8px', borderRadius: '4px', background: 'rgba(245,158,11,0.12)', color: '#f59e0b', fontSize: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+        <div className="redis-value-notice">
           <AlertTriangle size={12} /> {t('redis.truncatedNote')}
         </div>
       )}
@@ -368,12 +370,11 @@ const StringValue: React.FC<StringValueProps> = ({
         readOnly={!editableText && !editableHex}
         onChange={(e) => setDraft(e.target.value)}
         spellCheck={false}
-        style={monoBox}
         placeholder={t('redis.emptyValuePlaceholder')}
       />
 
       {isBinary && !truncated && (
-        <div style={{ fontSize: '10px', color: 'var(--win-text-disabled)' }}>{t('redis.binaryHexNote')}</div>
+        <div className="redis-value-meta">{t('redis.binaryHexNote')}</div>
       )}
     </>
   );
@@ -421,22 +422,22 @@ const JsonValue: React.FC<JsonValueProps> = ({ keyName, readOnly, onError, onOk,
 
   return (
     <>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: '10px', color: 'var(--win-text-secondary)' }}>{t('redis.jsonPath')}</span>
+      <div className="redis-value-bar">
+        <span className="redis-value-label">{t('redis.jsonPath')}</span>
         <input
           type="text"
           value={path}
           onChange={(e) => setPath(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') load(path); }}
           spellCheck={false}
-          style={{ width: '180px', background: 'var(--win-bg-window)', border: '1px solid var(--win-border)', color: 'var(--win-text-primary)', borderRadius: '4px', fontSize: '11px', fontFamily: 'var(--win-font-mono)', padding: '3px 6px' }}
+          className="redis-json-path"
         />
-        <button className="btn btn-secondary" onClick={() => load(path)} disabled={loading} style={{ padding: '0 10px' }}>
+        <button className="btn btn-secondary redis-value-btn wide" onClick={() => load(path)} disabled={loading}>
           {loading ? t('redis.loading') : t('redis.jsonLoadPath')}
         </button>
-        <div style={{ flex: 1 }} />
+        <div className="redis-keylist-spacer" />
         {!readOnly && (
-          <button className="btn btn-primary" onClick={save} style={{ padding: '0 10px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <button className="btn btn-primary redis-value-save" onClick={save}>
             <Save size={11} /> {t('redis.jsonSave')}
           </button>
         )}
@@ -446,7 +447,6 @@ const JsonValue: React.FC<JsonValueProps> = ({ keyName, readOnly, onError, onOk,
         readOnly={readOnly}
         onChange={(e) => setText(e.target.value)}
         spellCheck={false}
-        style={monoBox}
       />
     </>
   );
@@ -459,15 +459,15 @@ const JsonValue: React.FC<JsonValueProps> = ({ keyName, readOnly, onError, onOk,
 const UnsupportedValue: React.FC<{ redisType: string }> = ({ redisType }) => {
   const { t } = useTranslation();
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '16px', border: '1px dashed var(--win-border)', borderRadius: '6px', background: 'var(--win-bg-window)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', fontWeight: 600, color: 'var(--win-text-primary)' }}>
-        <AlertTriangle size={14} style={{ color: '#f59e0b' }} />
+    <div className="redis-unsupported">
+      <div className="redis-unsupported-title">
+        <AlertTriangle size={14} className="redis-unsupported-icon" />
         {t('redis.unsupportedType', { type: redisType })}
       </div>
-      <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)', lineHeight: 1.6 }}>
+      <div className="redis-unsupported-hint">
         {t('redis.unsupportedHint')}
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--win-text-disabled)' }}>
+      <div className="redis-unsupported-console">
         <Terminal size={12} /> {t('redis.unsupportedConsoleHint')}
       </div>
     </div>

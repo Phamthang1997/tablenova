@@ -20,9 +20,10 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicBool;
 
 pub struct AppState {
-    // Mọi kết nối SQL đang mở, khoá theo `conn_id` (docs/multi-connection-plan.md §4.3). Đây là
-    // nguồn sự thật DUY NHẤT — `DatabaseManager` (một `Option<DbConnection>` cho cả app) đã bị xoá.
-    // Phase 1 vẫn giữ tối đa một entry: `connect_db` xoá cái trước khi thêm cái mới.
+    // Mọi kết nối đang mở — SQL LẪN REDIS — khoá theo `conn_id`
+    // (docs/multi-connection-plan.md §4.3, docs/redis-ui-unification-plan.md §2.3). Đây là nguồn
+    // sự thật DUY NHẤT: `DatabaseManager` (một `Option<DbConnection>` cho cả app) và `RedisState`
+    // (một connection Redis cho cả app) đều đã bị xoá.
     pub connections: state::ConnRegistry,
     // Cờ hủy cho các truy vấn đang stream (query_id -> cờ). execute_query_stream đăng ký,
     // cancel_query bật cờ để dừng vòng lặp đẩy dữ liệu.
@@ -31,8 +32,6 @@ pub struct AppState {
     pub ssh_terminals: ssh_terminal::SshTerminalMap,
     // Các phiên Local Terminal (shell cục bộ) đang mở.
     pub local_terminals: local_terminal::LocalTerminalMap,
-    // Kết nối Redis (tách biệt khỏi DbConnection SQL).
-    pub redis: redis_db::RedisState,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -99,7 +98,6 @@ pub fn run() {
             cancel_flags: Mutex::new(HashMap::new()),
             ssh_terminals: Mutex::new(HashMap::new()),
             local_terminals: Mutex::new(HashMap::new()),
-            redis: redis_db::RedisState::new(),
         })
         .invoke_handler(tauri::generate_handler![
             database::connect_db,
@@ -107,6 +105,7 @@ pub fn run() {
             database::list_connections,
             database::set_connection_read_only,
             database::get_connection_status,
+            database::ping_connections,
             database::get_tables,
             database::get_full_catalog,
             database::get_table_data,
@@ -186,6 +185,7 @@ pub fn run() {
             db_compare::compare_table_data,
             db_stats::get_database_stats,
             db_stats::get_all_databases_stats,
+            db_stats::get_all_databases_sizes,
             db_stats::get_exact_table_row_count,
             redis_db::redis_connect,
             redis_db::redis_disconnect,

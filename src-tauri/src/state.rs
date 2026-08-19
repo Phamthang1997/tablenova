@@ -28,6 +28,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use serde_json::Value;
 
 use crate::database::DbConnection;
+use crate::redis_db::RedisCaps;
 use crate::ssh_tunnel::SshTunnel;
 
 /// Identifies one `(server, database)` pair. `Arc<str>` rather than `String` because it is cloned
@@ -156,19 +157,68 @@ impl ServerHandle {
     }
 }
 
+/// A Redis connection, as one registry entry holds it.
+///
+/// `db_index` lives here rather than in a global because a `conn_id` **is** a `(server, db index)`
+/// pair for Redis, exactly as it is a `(server, database)` pair for SQL — see
+/// `docs/redis-ui-unification-plan.md` §2.1. Switching db therefore mints a new entry instead of
+/// mutating a shared one, which is what stops two open key tabs from reading different databases
+/// than the one they were opened on.
+#[derive(Clone)]
+pub struct RedisConn {
+    pub conn: redis::aio::MultiplexedConnection,
+    pub db_index: i64,
+    /// What the server supports (version, modules). Probed once at connect.
+    pub caps: RedisCaps,
+}
+
+/// The live handle of one entry.
+///
+/// SQL and Redis share the registry — one list of open connections for the rail, one lifecycle, one
+/// read-only flag — and share nothing else: a Redis entry has no dialect, no schema and no
+/// transaction session. Keeping them in one map is what lets `DbRail`/`QuickSwitcherPopover` draw
+/// both from a single source; a parallel Redis registry would be a second source of truth for that
+/// list and for the read-only flag, which is the duplicate-cache mistake this file already warns
+/// about above.
+pub enum LiveConn {
+    Sql(DbConnection),
+    Redis(RedisConn),
+}
+
+impl LiveConn {
+    /// The SQL handle, or `None` for a Redis entry. Callers that need SQL go through
+    /// `ConnRegistry::acquire`, which turns that `None` into an error once, at the boundary.
+    pub fn sql(&self) -> Option<&DbConnection> {
+        match self {
+            LiveConn::Sql(c) => Some(c),
+            LiveConn::Redis(_) => None,
+        }
+    }
+
+    /// What the rail labels this connection with. Derived from the live handle for SQL, for the
+    /// reason `ctx_of` gives: `ServerHandle::db_type` can be stale, a handle cannot.
+    pub fn dialect(&self) -> &'static str {
+        match self {
+            LiveConn::Sql(c) => crate::tx_session::dialect_of(c),
+            LiveConn::Redis(_) => "redis",
+        }
+    }
+}
+
 /// One open `(server, database)`.
 pub struct ConnEntry {
     /// Refuse every write on this connection.
     ///
-    /// Lives here, in the backend, **not only in the UI** — the same call `redis_db::RedisState`
-    /// already made and for the same reason: the SQL editor sends arbitrary statement text, so a
-    /// gate in the WebView is a gate on the wrong side of the IPC boundary. Per connection, because
-    /// the point is holding production open next to dev.
+    /// Lives here, in the backend, **not only in the UI** — the same call `redis_db` used to make
+    /// in its own `RedisState` and for the same reason: the SQL editor and the Redis CLI both send
+    /// arbitrary command text, so a gate in the WebView is a gate on the wrong side of the IPC
+    /// boundary. Per connection, because the point is holding production open next to dev. Redis
+    /// reads this same field — it no longer keeps a second flag of its own.
     pub read_only: bool,
     pub server: Arc<ServerHandle>,
-    /// Database name; the file path for SQLite.
+    /// Database name; the file path for SQLite; `db0`…`db15` for Redis.
     pub db: String,
-    pub conn: DbConnection,
+    pub conn: LiveConn,
     /// Postgres only: the schema introspection filters on and generated statements qualify with.
     /// `None` on MySQL/SQLite, where schema and database are the same thing. It stays *state*
     /// rather than becoming a command argument — see `postgres-schema-support-plan.md` §5.0; only
@@ -240,19 +290,88 @@ impl ConnCtx {
     }
 }
 
-/// Shared by `acquire` and `sole` so the two cannot drift in what they read out of an entry.
 /// Takes the map key, not `entry.server.id`: the id a `ConnCtx` carries is the **conn_id**.
-fn ctx_of(key: &SessionId, entry: &ConnEntry) -> ConnCtx {
-    ConnCtx {
+///
+/// A Redis entry has no `DbConnection`, so it cannot produce a `ConnCtx`. It reuses the existing
+/// `"Chưa kết nối CSDL"` verbatim rather than adding a message: reaching here with a Redis
+/// `conn_id` means a SQL command was called with one, which the UI never does, and a new literal
+/// would have to be added to `src/utils/backendErrors.ts` and its byte-identical round-trip test
+/// for a string no user is meant to see.
+fn ctx_of(key: &SessionId, entry: &ConnEntry) -> Result<ConnCtx, String> {
+    let conn = entry
+        .conn
+        .sql()
+        .ok_or_else(|| "Chưa kết nối CSDL".to_string())?
+        .clone();
+    Ok(ConnCtx {
         id: key.clone(),
         server: entry.server.clone(),
-        conn: entry.conn.clone(),
         // Always derived from the live connection, never from `ServerHandle::db_type` — the two
         // cannot disagree that way, and `db_type` is `""` while disconnected.
-        dialect: crate::tx_session::dialect_of(&entry.conn),
+        dialect: crate::tx_session::dialect_of(&conn),
+        conn,
         schema: crate::database::pg_schema_of(&entry.current_schema),
         raw_schema: entry.current_schema.clone(),
         db: entry.db.clone(),
+    })
+}
+
+/// A Redis connection plus its identity — the twin of `ConnCtx`, and deliberately a separate type.
+///
+/// Merging the two would give every SQL call site a `schema()`/`dialect()` that may be meaningless
+/// and every Redis call site a `conn()` of the wrong type. Two types means the compiler decides
+/// which commands may see which connection.
+pub struct RedisCtx {
+    id: SessionId,
+    server: Arc<ServerHandle>,
+    conn: redis::aio::MultiplexedConnection,
+    db_index: i64,
+    caps: RedisCaps,
+    read_only: bool,
+}
+
+impl RedisCtx {
+    #[allow(dead_code)]
+    pub fn id(&self) -> &SessionId {
+        &self.id
+    }
+
+    /// The handle, cloned out of the registry — `MultiplexedConnection` is itself a cheap clone
+    /// over a shared socket, so this is the Redis equivalent of cloning a pool.
+    pub fn conn(&self) -> redis::aio::MultiplexedConnection {
+        self.conn.clone()
+    }
+
+    pub fn db_index(&self) -> i64 {
+        self.db_index
+    }
+
+    pub fn caps(&self) -> RedisCaps {
+        self.caps.clone()
+    }
+
+    /// The server config, for the paths that open a *second* socket rather than reuse this one —
+    /// Pub/Sub and the Profiler, which hold a connection in a blocking read. It is the **tunneled**
+    /// config, so a reconnect reuses the SSH tunnel that is still alive on `ServerHandle`.
+    pub fn config(&self) -> Value {
+        self.server.config()
+    }
+
+    /// The shared handle, for opening another db index on this server — the Redis twin of
+    /// `ConnCtx::server_arc`, and load-bearing for the same reason: a second `ServerHandle` would
+    /// open its own tunnel and close it as soon as the first connection went away.
+    pub fn server_arc(&self) -> Arc<ServerHandle> {
+        self.server.clone()
+    }
+
+    pub fn read_only(&self) -> bool {
+        self.read_only
+    }
+
+    /// Whether this connection reaches its server through an SSH tunnel — the connection-status
+    /// popover labels the connection `ssh` from it.
+    pub fn has_ssh_tunnel(&self) -> bool {
+        self.server.ssh_tunnel.is_some()
     }
 }
 
@@ -289,7 +408,29 @@ impl ConnRegistry {
         // what tx_session will key a session on. `entry.server.id` is a different thing — several
         // conn_ids share one server.
         let (key, entry) = map.get_key_value(id).ok_or_else(|| "Chưa kết nối CSDL".to_string())?;
-        Ok(ctx_of(key, entry))
+        ctx_of(key, entry)
+    }
+
+    /// The Redis twin of `acquire`.
+    ///
+    /// Same lookup, same error literal for an id that is not a Redis connection — see `ctx_of`.
+    /// The read-only flag is read here, inside the lock, and carried on the ctx: a command that
+    /// asked the registry a second time could see a different answer than the one it validated
+    /// against.
+    pub fn acquire_redis(&self, id: &str) -> Result<RedisCtx, String> {
+        let map = self.inner.lock().map_err(|e| e.to_string())?;
+        let (key, entry) = map.get_key_value(id).ok_or_else(|| "Chưa kết nối Redis".to_string())?;
+        let LiveConn::Redis(r) = &entry.conn else {
+            return Err("Chưa kết nối Redis".to_string());
+        };
+        Ok(RedisCtx {
+            id: key.clone(),
+            server: entry.server.clone(),
+            conn: r.conn.clone(),
+            db_index: r.db_index,
+            caps: r.caps.clone(),
+            read_only: entry.read_only,
+        })
     }
 
     /// Every open connection, as the left rail needs to draw it (§4.2c): the rail lists **open
@@ -307,7 +448,7 @@ impl ConnRegistry {
                     serde_json::json!({
                         "connId": &**id,
                         "db": e.db,
-                        "dialect": crate::tx_session::dialect_of(&e.conn),
+                        "dialect": e.conn.dialect(),
                         "serverId": &*e.server.id,
                         "schema": e.current_schema,
                         // Badge của rail (§4.2b): số câu GHI đang chờ commit trên kết nối này.
@@ -321,6 +462,24 @@ impl ConnRegistry {
         Ok(out.into_iter().map(|(_, v)| v).collect())
     }
 
+    /// Mọi kết nối đang mở, kèm handle đã **clone ra khỏi khoá**.
+    ///
+    /// Tồn tại cho `ping_connections`, thứ phải chạm tới từng kết nối bằng `.await`. Trả JSON như
+    /// `list()` thì không được: khoá registry là `std::sync::Mutex` và không bao giờ được giữ qua
+    /// một await (`CODING_STANDARDS.md` §6.3). Clone `Arc`/pool là một atomic increment.
+    ///
+    /// Chỉ kết nối SQL. `ping_connections` chạy một câu SELECT dò sống, thứ không có nghĩa với
+    /// Redis; ping Redis là `PING` trên `RedisCtx` và là một việc riêng.
+    pub fn handles(&self) -> Result<Vec<(SessionId, DbConnection)>, String> {
+        let map = self.inner.lock().map_err(|e| e.to_string())?;
+        let mut out: Vec<(SessionId, DbConnection)> = map
+            .iter()
+            .filter_map(|(id, e)| e.conn.sql().map(|c| (id.clone(), c.clone())))
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(out)
+    }
+
     pub fn insert(&self, id: SessionId, entry: ConnEntry) -> Result<(), String> {
         let mut map = self.inner.lock().map_err(|e| e.to_string())?;
         map.insert(id, entry);
@@ -331,7 +490,17 @@ impl ConnRegistry {
     pub fn replace_conn(&self, id: &str, conn: DbConnection) -> Result<(), String> {
         let mut map = self.inner.lock().map_err(|e| e.to_string())?;
         if let Some(entry) = map.get_mut(id) {
-            entry.conn = conn;
+            entry.conn = LiveConn::Sql(conn);
+        }
+        Ok(())
+    }
+
+    /// Replaces the live Redis handle of one entry — the reconnect a Pub/Sub or Profiler teardown
+    /// leaves behind, and the only Redis analogue of the IAM pool swap above.
+    pub fn replace_redis_conn(&self, id: &str, conn: RedisConn) -> Result<(), String> {
+        let mut map = self.inner.lock().map_err(|e| e.to_string())?;
+        if let Some(entry) = map.get_mut(id) {
+            entry.conn = LiveConn::Redis(conn);
         }
         Ok(())
     }
@@ -362,7 +531,8 @@ impl ConnRegistry {
         Ok(map
             .iter()
             .find(|(_, e)| {
-                if !matches!(e.conn.kind, crate::database::DbKind::Sqlite(_)) {
+                let Some(conn) = e.conn.sql() else { return false };
+                if !matches!(conn.kind, crate::database::DbKind::Sqlite(_)) {
                     return false;
                 }
                 match (&want, std::fs::canonicalize(&e.db).ok()) {

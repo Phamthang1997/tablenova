@@ -47,10 +47,10 @@ export const PromptDialog: React.FC<PromptDialogProps> = ({
   return (
     <Modal title={title} onClose={onCancel} width="420px" zIndex={10001}>
       <ModalBody style={{ gap: '8px' }}>
-        <label style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>{label}</label>
+        <label className="redis-dialog-label">{label}</label>
         <input
           type="text"
-          className="form-input"
+          className="form-input redis-dialog-input"
           autoFocus
           spellCheck={false}
           value={value}
@@ -60,10 +60,9 @@ export const PromptDialog: React.FC<PromptDialogProps> = ({
             // Enter submits; Esc is already handled by Modal.
             if (e.key === 'Enter') onSubmit(value);
           }}
-          style={{ height: '30px', fontSize: '11px', width: '100%', fontFamily: 'var(--win-font-mono)' }}
         />
         {note && (
-          <div style={{ fontSize: '10px', color: 'var(--win-text-disabled)', lineHeight: 1.5 }}>{note}</div>
+          <div className="redis-dialog-note">{note}</div>
         )}
       </ModalBody>
       <ModalFooter>
