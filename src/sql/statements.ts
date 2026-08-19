@@ -318,6 +318,47 @@ export function collectSelectListRefs(statement: string): BareColumnRef[] {
   return out;
 }
 
+/** Lời gọi hàm đang bao quanh con trỏ. */
+export interface EnclosingCall {
+  /** Tên hàm, đúng như đã gõ. */
+  name: string;
+  /** Tham số thứ mấy đang được gõ, đếm từ 0. */
+  activeParam: number;
+}
+
+/**
+ * Hàm nào đang bao quanh vị trí `offset`, và con trỏ đang ở tham số thứ mấy.
+ *
+ * Đi ngược từ con trỏ và đếm ngoặc: gặp `)` thì sâu thêm một tầng, gặp `(` ở tầng 0 thì đó chính
+ * là ngoặc mở của lời gọi đang bao quanh. Dấu phẩy chỉ được đếm khi ở tầng 0 nên
+ * `concat(a, foo(b, c), | )` cho đúng tham số thứ 3 thay vì thứ 5.
+ *
+ * Chạy trên bản đã mask nên dấu ngoặc và dấu phẩy nằm trong chuỗi hay comment không tính. Gặp
+ * `;` ở tầng 0 là dừng: đã sang câu lệnh khác, không thể còn ở trong lời gọi nào.
+ *
+ * Tên hàm phải **dính liền** ngoặc mở. Đây không phải chuyện thẩm mỹ: `SELECT (a + b` có `SELECT`
+ * đứng trước dấu ngoặc, và trong bộ tài liệu thì `SELECT` là một mục có `syntax` hẳn hoi — nới
+ * lỏng chỗ này là mỗi lần mở ngoặc để nhóm biểu thức lại bị nhảy ra bảng cú pháp của `SELECT`.
+ */
+export function enclosingCall(text: string, offset: number): EnclosingCall | null {
+  const masked = maskForSplit(text);
+  let depth = 0;
+  let commas = 0;
+  for (let i = Math.min(offset, masked.length) - 1; i >= 0; i--) {
+    const c = masked[i];
+    if (c === ')') depth++;
+    else if (c === '(') {
+      if (depth > 0) { depth--; continue; }
+      const name = /([A-Za-z_]\w*)$/.exec(masked.slice(0, i));
+      return name ? { name: name[1], activeParam: commas } : null;
+    } else if (depth === 0) {
+      if (c === ',') commas++;
+      else if (c === ';') return null;
+    }
+  }
+  return null;
+}
+
 /**
  * Bản đồ alias -> tên bảng trong một câu lệnh. Cùng một bộ dò với `collectTableRefs`
  * để hover và completion không bao giờ hiểu alias khác nhau.

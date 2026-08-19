@@ -1237,6 +1237,8 @@ const en = {
     quickFixReplaceWith: "Change to '{{n}}'",
     renameRejected: 'Cannot rename this element.',
     actionQuickFix: 'Quick Fix',
+    paramOptional: 'optional',
+    actionPeekDefinition: 'Peek Table Definition',
   },
 
   app: {

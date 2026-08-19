@@ -1223,6 +1223,8 @@ const vi: typeof en = {
     quickFixReplaceWith: "Đổi thành '{{n}}'",
     renameRejected: 'Không đổi tên được phần tử này.',
     actionQuickFix: 'Sửa nhanh',
+    paramOptional: 'tuỳ chọn',
+    actionPeekDefinition: 'Xem định nghĩa bảng',
   },
 
   app: {

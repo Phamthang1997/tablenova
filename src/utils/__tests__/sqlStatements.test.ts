@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { splitStatements, statementAt, analyzeStatements, resolveAliases, collectTableRefs, collectCteNames, isSchemaChangingSql, findUnsafeStatements } from '../../sql/statements';
+import { splitStatements, statementAt, analyzeStatements, resolveAliases, collectTableRefs, collectCteNames, enclosingCall, isSchemaChangingSql, findUnsafeStatements } from '../../sql/statements';
 import { formatSql, minifySql } from '../../sql/format';
 
 describe('splitStatements', () => {
@@ -508,6 +508,45 @@ describe('findUnsafeStatements', () => {
   it('văn bản rỗng / chỉ có comment -> không có gì', () => {
     expect(kinds('')).toEqual([]);
     expect(kinds('-- DELETE FROM t')).toEqual([]);
+  });
+});
+
+describe('enclosingCall', () => {
+  // `|` đánh dấu con trỏ; ký tự đó bị bỏ ra trước khi gọi.
+  const at = (marked: string) => {
+    const offset = marked.indexOf('|');
+    return enclosingCall(marked.replace('|', ''), offset);
+  };
+
+  it('nhận ra hàm và tham số đang gõ', () => {
+    expect(at('SELECT date_add(|')).toEqual({ name: 'date_add', activeParam: 0 });
+    expect(at('SELECT date_add(a, |')).toEqual({ name: 'date_add', activeParam: 1 });
+    expect(at('SELECT date_add(a, b, c|)')).toEqual({ name: 'date_add', activeParam: 2 });
+  });
+
+  it('không đếm dấu phẩy của lời gọi lồng bên trong', () => {
+    expect(at('SELECT concat(a, foo(b, c), |')).toEqual({ name: 'concat', activeParam: 2 });
+  });
+
+  it('bỏ qua ngoặc và phẩy nằm trong chuỗi hoặc comment', () => {
+    expect(at("SELECT concat('a, (b', |")).toEqual({ name: 'concat', activeParam: 1 });
+    expect(at('SELECT concat(a /* , ( */, |')).toEqual({ name: 'concat', activeParam: 1 });
+  });
+
+  it('ngoặc dùng để nhóm biểu thức không phải lời gọi hàm', () => {
+    // `SELECT` có mục trong bộ tài liệu, nên nới lỏng chỗ này là mỗi lần mở ngoặc lại nhảy ra
+    // bảng cú pháp của SELECT.
+    expect(at('SELECT (a + |')).toBeNull();
+    expect(at('SELECT count (|')).toBeNull();
+  });
+
+  it('không vượt qua dấu ; sang câu lệnh khác', () => {
+    expect(at('SELECT foo(a); SELECT |')).toBeNull();
+  });
+
+  it('ngoài mọi lời gọi thì không trả về gì', () => {
+    expect(at('SELECT a FROM t |')).toBeNull();
+    expect(at('SELECT foo(a) |')).toBeNull();
   });
 });
 

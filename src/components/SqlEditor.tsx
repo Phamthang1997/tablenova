@@ -13,6 +13,8 @@ import { formatSql, minifySql } from '../sql/format';
 import { attachEditorInspection } from '../sql/inspection';
 import { registerSqlRenameProvider } from '../sql/refactor';
 import { registerSqlQuickFix } from '../sql/quickFix';
+import { registerSqlSignatureHelp } from '../sql/signatureHelp';
+import { registerSqlPeekDefinition } from '../sql/peekDefinition';
 import {
   statementAt, analyzeStatements, splitStatements, isSchemaChangingSql,
   findUnsafeStatements, type UnsafeStatement, type UnsafeStatementKind,
@@ -28,6 +30,8 @@ setupSqlHover();
 defineSqlThemes();
 registerSqlRenameProvider(monaco);
 registerSqlQuickFix(monaco);
+registerSqlSignatureHelp(monaco);
+registerSqlPeekDefinition(monaco);
 import { setEditorConnId } from '../sql/editorScope';
 import { dbIndexRegistry } from '../sql/dbIndexRegistry';
 import { dbHelper, type GridChange } from '../utils/dbHelper';
@@ -897,6 +901,19 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       contextMenuOrder: 0.9,
       run: (ed: any) => {
         ed.trigger('keyboard', 'editor.action.quickFix', {});
+      },
+    });
+
+    // Alt+F12: xem DDL của bảng ngay tại chỗ, không rời tab (xem sql/peekDefinition.ts).
+    // Tách khỏi F12 vì hai việc khác nhau: liếc cấu trúc vs. mở hẳn bảng ra để xem dữ liệu.
+    editor.addAction({
+      id: 'peek-table-definition',
+      label: tRef.current('sqlEditor.actionPeekDefinition'),
+      keybindings: [monaco.KeyMod.Alt | monaco.KeyCode.F12],
+      contextMenuGroupId: 'navigation',
+      contextMenuOrder: 1.05,
+      run: (ed: any) => {
+        ed.trigger('keyboard', 'editor.action.peekDefinition', {});
       },
     });
 

@@ -1220,6 +1220,8 @@ const ja: typeof en = {
     quickFixReplaceWith: "'{{n}}' に変更",
     renameRejected: 'この要素の名前は変更できません。',
     actionQuickFix: 'クイックフィックス',
+    paramOptional: '任意',
+    actionPeekDefinition: 'テーブル定義を表示',
   },
 
   app: {
