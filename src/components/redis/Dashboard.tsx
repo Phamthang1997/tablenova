@@ -63,29 +63,29 @@ export const Dashboard: React.FC<DashboardProps> = ({ dbIndex, onError }) => {
   ];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--win-text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+    <div className="redis-panel">
+      <div className="redis-value-bar spread">
+        <span className="redis-tool-title">
           <Layers size={14} /> {t('redis.dashboardTitle')}
         </span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <label style={{ fontSize: '10px', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: 'var(--win-text-secondary)' }}>
+        <div className="redis-stream-bar">
+          <label className="redis-tool-check">
             <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} />
             {t('redis.autoRefresh5s')}
           </label>
-          <button className="btn btn-secondary" onClick={load} style={{ padding: '0 10px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <button className="btn btn-secondary redis-value-save" onClick={load}>
             <RefreshCw size={11} /> {t('redis.refresh')}
           </button>
         </div>
       </div>
       {!info ? (
-        <div style={{ color: 'var(--win-text-disabled)', fontSize: '12px' }}>{t('redis.loadingInfo')}</div>
+        <div className="redis-panel-loading">{t('redis.loadingInfo')}</div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '10px' }}>
+        <div className="redis-stat-grid wide">
           {stats.map((s) => (
-            <div key={s.label} style={{ border: '1px solid var(--win-border)', borderRadius: '6px', padding: '10px 12px', background: 'var(--win-bg-window)' }}>
-              <div style={{ fontSize: '10px', color: 'var(--win-text-secondary)' }}>{s.label}</div>
-              <div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--win-text-primary)', marginTop: '2px' }}>{s.val ?? '-'}</div>
+            <div key={s.label} className="redis-stat">
+              <div className="redis-stat-label">{s.label}</div>
+              <div className="redis-stat-value lg">{s.val ?? '-'}</div>
             </div>
           ))}
         </div>

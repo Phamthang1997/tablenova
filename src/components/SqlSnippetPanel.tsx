@@ -329,7 +329,7 @@ export const SqlSnippetPanel: React.FC<SqlSnippetPanelProps> = ({ dbType, onInse
               cursor: 'default',
             }}
           >
-            ( )
+            ()
           </div>
         </div>
 
@@ -474,7 +474,7 @@ export const SqlSnippetPanel: React.FC<SqlSnippetPanelProps> = ({ dbType, onInse
                   marginTop: '2px',
                 }}
               >
-                ( )
+                ()
               </div>
 
               {/* Snippet Details */}

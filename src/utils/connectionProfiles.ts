@@ -1,15 +1,16 @@
-// Sửa tại chỗ tên/màu của một profile kết nối đã lưu.
+// Sửa tại chỗ tên/màu/môi trường của một profile kết nối đã lưu.
 //
 // Điểm ghi profile chính vẫn là `persistProfiles` trong ConnectionManager.tsx —
 // nó còn phải bóc bí mật ra khỏi config và đẩy sang kho bảo mật của HĐH trước
-// khi chạm localStorage. Hàm ở đây cố tình chỉ đọc-sửa-ghi hai trường hiển thị
-// (`name`, `color`) trên bản ĐÃ nằm trong localStorage, tức bản đã bị bóc bí mật,
-// nên không có đường nào ghi mật khẩu trở lại.
+// khi chạm localStorage. Hàm ở đây cố tình chỉ đọc-sửa-ghi ba trường nhãn
+// (`name`, `color`, `env`) trên bản ĐÃ nằm trong localStorage, tức bản đã bị bóc
+// bí mật, nên không có đường nào ghi mật khẩu trở lại.
 //
 // Không có tranh chấp giữa hai chỗ ghi: ConnectionManager chỉ tồn tại khi chưa
 // kết nối, còn popover chi tiết kết nối chỉ mở được khi đã kết nối.
 
 import type { SavedProfile } from '../components/ConnectionManager';
+import type { ConnEnv } from './connEnv';
 
 const PROFILES_KEY = 'tf_connection_profiles';
 
@@ -20,7 +21,7 @@ const PROFILES_KEY = 'tf_connection_profiles';
  */
 export function updateProfileDisplay(
   id: string,
-  patch: { name?: string; color?: string },
+  patch: { name?: string; color?: string; env?: ConnEnv },
 ): boolean {
   if (!id) return false;
   try {
@@ -37,6 +38,7 @@ export function updateProfileDisplay(
         ...p,
         name: patch.name ?? p.name,
         color: patch.color ?? p.color,
+        env: patch.env ?? p.env,
       };
     });
     if (!found) return false;

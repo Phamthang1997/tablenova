@@ -3,9 +3,10 @@ import { Trans, useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { dbHelper } from '../utils/dbHelper';
 import type { DbConnectionConfig } from '../utils/dbHelper';
-import { Database, Server, CheckCircle2, AlertTriangle, Plus, Trash2, Save, Copy, Download, Upload, Lock, Key, TerminalSquare, Hash, FolderOpen, User, Link, Star, Eye, EyeOff, ShieldAlert, Search, X, ChevronDown, ChevronRight, RefreshCw, ShieldCheck, Network, ArrowLeft, Check, Cloud, HardDriveDownload, LogIn } from 'lucide-react';
+import { Database, Server, CheckCircle2, AlertTriangle, Plus, Trash2, Save, Copy, Download, Upload, Lock, Key, TerminalSquare, Hash, FolderOpen, User, Link, Star, Eye, EyeOff, ShieldAlert, Search, X, ChevronDown, ChevronRight, RefreshCw, ShieldCheck, Network, ArrowLeft, Check, Cloud, DatabaseBackup, LogIn } from 'lucide-react';
 import { PostgresIcon, MySqlIcon, RedisIcon, SqliteIcon } from './DbIcons';
 import { encryptConnectionExport, decryptConnectionExport } from '../utils/cryptoHelper';
+import { CONN_ENVS, envLabelKey, legacyEnvOfColor, normalizeEnv, type ConnEnv } from '../utils/connEnv';
 import {
   parseDumpObjects,
   parseDumpTableNames,
@@ -17,8 +18,8 @@ import {
   commentOnlyFromBody,
 } from '../utils/dumpPreview';
 import { splitStatements } from '../sql/statements';
-import { buildDump } from '../utils/dumpBuilder';
-import { gzipText, getLastExportDir, saveExportFile } from '../utils/fileSave';
+import { buildDump, dumpReaderFor } from '../utils/dumpBuilder';
+import { gzipText, getLastExportDir, saveExportFile, pickOpenFile, pickSqliteDatabaseFile } from '../utils/fileSave';
 import { ProgressBar, type ProgressState } from './ProgressBar';
 import { ConfirmDialog } from './ConfirmDialog';
 
@@ -87,35 +88,77 @@ const EyeBtn: React.FC<{ on: boolean; onClick: () => void }> = ({ on, onClick })
 };
 
 // Nút chọn tệp (chứng chỉ SSL, private key...) — chỉ hiện tên tệp cho gọn.
-const FilePick: React.FC<{ id: string; value: string; label: string; onPick: (path: string) => void }> = ({ id, value, label, onPick }) => (
-  <>
-    <input
-      type="file"
-      id={id}
-      style={{ display: 'none' }}
-      onChange={(e) => {
-        const file = e.target.files?.[0];
-        if (file) onPick((file as any).path || file.name);
-      }}
-    />
-    <button type="button" className={`cm-file-btn ${value ? 'has-file' : ''}`} onClick={() => document.getElementById(id)?.click()} title={value || label}>
-      <FolderOpen size={12} />
-      <span>{value ? value.split(/[\\/]/).pop() : label}</span>
-    </button>
-  </>
-);
+const FilePick: React.FC<{ id: string; value: string; label: string; onPick: (path: string) => void }> = ({ id, value, label, onPick }) => {
+  const handleClick = async () => {
+    const file = await pickOpenFile({ title: label });
+    if (file) {
+      onPick(file);
+      return;
+    }
+    if (file === null) {
+      // Fallback for non-Tauri / web mode
+      document.getElementById(id)?.click();
+    }
+  };
+
+  return (
+    <>
+      <input
+        type="file"
+        id={id}
+        className="cm-hidden-file"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) onPick((file as any).path || file.name);
+        }}
+      />
+      <button type="button" className={`cm-file-btn ${value ? 'has-file' : ''}`} onClick={handleClick} title={value || label}>
+        <FolderOpen size={12} />
+        <span>{value ? value.split(/[\\/]/).pop() : label}</span>
+      </button>
+    </>
+  );
+};
 
 export interface SavedProfile {
   id: string;
   name: string;
   type: 'sqlite' | 'postgres' | 'mysql' | 'redis';
   config: any;
+  /** Nhãn màu, thuần trang trí. Môi trường nằm ở `env` — xem `utils/connEnv.ts`. */
   color?: string;
+  /**
+   * Môi trường. Vắng mặt ở profile lưu trước khi có trường này; được điền một lần lúc nạp, suy từ
+   * `color` theo cách hiểu cũ (xem `migrateProfileEnvs`).
+   */
+  env?: ConnEnv;
   group?: string;
   isDefault?: boolean;
 }
 
+/**
+ * Điền `env` cho những profile chưa có, theo đúng ý nghĩa mà màu từng mang.
+ *
+ * Trả về `null` khi không có gì phải đổi, để chỗ gọi khỏi ghi lại localStorage vô ích. Bỏ bước này
+ * thì mọi kết nối đang được đánh dấu production mất dấu ngay ở lần nâng cấp, không một lời báo.
+ */
+function migrateProfileEnvs(list: SavedProfile[]): SavedProfile[] | null {
+  if (list.every((p) => p.env !== undefined)) return null;
+  return list.map((p) => (p.env === undefined ? { ...p, env: legacyEnvOfColor(p.color) } : p));
+}
+
 interface ConnectionManagerProps {
+  /** Kết nối mà component này thao tác lên. Truyền tường minh, không đọc id ambient (§4.1). */
+  connId: string;
+  /**
+   * Đang mount trong Modal "Thêm kết nối" (từ thanh tiêu đề), không phải làm màn hình đầu.
+   *
+   * Ẩn phần chrome thuộc *quản lý* kết nối chứ không thuộc việc *mở thêm một* kết nối: nhập/xuất tệp
+   * profile, và Sao lưu & Phục hồi. Cái thứ hai đáng ẩn nhất — nó thao tác trên kết nối **đang mở**,
+   * nên đặt nó trong hộp thoại "thêm kết nối" là mời người dùng backup một database khác với cái họ
+   * đang nhìn.
+   */
+  embedded?: boolean;
   // `profile` là profile đã chọn để kết nối (nếu có). App giữ id + tên để popover
   // chi tiết kết nối sửa tên/màu rồi ghi thẳng ngược vào tf_connection_profiles.
   onConnect: (
@@ -123,7 +166,13 @@ interface ConnectionManagerProps {
     dbType: 'sqlite' | 'postgres' | 'mysql' | 'redis',
     color?: string,
     config?: DbConnectionConfig,
-    profile?: { id: string; name: string },
+    // `env` sống ở đây chứ không thành tham số vị trí thứ bảy: nó là thuộc tính của profile, đúng
+    // như `name`, và một kết nối không đến từ profile nào thì không có môi trường.
+    profile?: { id: string; name: string; env?: ConnEnv },
+    // Schema the backend actually landed in (Postgres `current_schema()`), null elsewhere.
+    // Passed on rather than re-queried: it is part of the tab storage key, so App needs it
+    // before it restores anything.
+    schema?: string | null,
   ) => void;
 }
 
@@ -144,7 +193,7 @@ const TYPE_META: Record<string, { label: string; color: string; Icon: React.FC<{
   redis: { label: 'Redis', color: '#DC382D', Icon: RedisIcon },
 };
 
-export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect }) => {
+export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, embedded = false, onConnect }) => {
   const { t } = useTranslation();
 
   // A switch rather than t(`...${mode}`): a key built at runtime is not checked
@@ -237,7 +286,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
   const [awsProfile, setAwsProfile] = useState('');
   const [awsRegion, setAwsRegion] = useState('');
 
-  const [loading, setLoading] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
+  const isBusy = isConnecting || isTesting;
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [isSuccessConnecting, setIsSuccessConnecting] = useState(false);
@@ -475,6 +526,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
   const [selectedBrProfileId, setSelectedBrProfileId] = useState<string | null>(null);
   const [profileNameInput, setProfileNameInput] = useState('');
   const [profileColor, setProfileColor] = useState('');
+  const [profileEnv, setProfileEnv] = useState<ConnEnv>('none');
   const [profileGroup, setProfileGroup] = useState('');
   const [secretError, setSecretError] = useState<string | null>(null); // lỗi khi thao tác với kho bí mật HĐH
 
@@ -567,6 +619,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
   // Profile đang mở Terminal (null = không mở). Có SSH -> SSH terminal; không -> shell cục bộ.
   const [terminalProfile, setTerminalProfile] = useState<SavedProfile | null>(null);
 
+  // Two confirmations replacing window.confirm (which shows nothing in the Tauri webview).
+  const [deleteProfileId, setDeleteProfileId] = useState<string | null>(null);
+  const [confirmPlainExport, setConfirmPlainExport] = useState(false);
+
   const openExportModal = (scope: 'all' | 'group' | 'single', groupName?: string, profile?: SavedProfile) => {
     setExportScope(scope);
     setExportGroupTarget(groupName || '');
@@ -577,7 +633,19 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     setContextMenu(null);
   };
 
-  const handlePerformExport = async () => {
+  /**
+   * `plainConfirmed` = the "passwords in the clear" warning has already been answered.
+   *
+   * The warning used to be a `window.confirm()` in the middle of this function, which shows
+   * nothing inside the Tauri webview (the dialog plugin has no `confirm` command) — the
+   * export then continued as if the user had agreed. It is now asked BEFORE any work, so
+   * cancelling also means no secret is read out of the OS keychain.
+   */
+  const handlePerformExport = async (plainConfirmed = false) => {
+    if (exportIncludePasswords && !exportFilePassword.trim() && !plainConfirmed) {
+      setConfirmPlainExport(true);
+      return;
+    }
     setExporting(true);
     try {
       let targetProfiles: SavedProfile[] = [];
@@ -604,14 +672,6 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
           return cloned;
         })
       );
-
-      if (exportIncludePasswords && !exportFilePassword.trim()) {
-        const ok = confirm(t('connection.confirmExportPlainPasswords'));
-        if (!ok) {
-          setExporting(false);
-          return;
-        }
-      }
 
       const encryptedText = await encryptConnectionExport(processedProfiles, exportFilePassword);
 
@@ -805,10 +865,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     const savedDefaultId = localStorage.getItem('tf_default_profile_id');
     if (saved) {
       try {
-        const parsed: SavedProfile[] = JSON.parse(saved);
+        const raw: SavedProfile[] = JSON.parse(saved);
+        // Di trú bản cũ #2: môi trường từng được suy từ màu. Điền `env` một lần rồi ghi xuống, để
+        // từ đây màu chỉ còn là màu.
+        const migrated = migrateProfileEnvs(raw);
+        const parsed = migrated ?? raw;
         // Di trú bản cũ: profile lưu trước đây còn mật khẩu nằm thẳng trong localStorage.
         // Đẩy chúng sang kho bảo mật của HĐH rồi ghi đè lại bản đã bóc sạch.
-        if (parsed.some(p => hasInlineSecrets(p.config))) {
+        if (migrated || parsed.some(p => hasInlineSecrets(p.config))) {
           persistProfiles(parsed);
         } else {
           setProfiles(parsed);
@@ -840,6 +904,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     setSuccessMsg(null);
     setProfileNameInput(profile.name);
     setProfileColor(profile.color || '');
+    // `normalizeEnv` chứ không phải `profile.env ?? 'none'`: profile có thể đến từ tệp export của
+    // bản khác, và một chuỗi lạ lọt vào đây sẽ làm ô chọn không khớp lựa chọn nào.
+    setProfileEnv(normalizeEnv(profile.env));
     setProfileGroup(profile.group || '');
 
     const config = await configWithSecrets(profile);
@@ -1022,7 +1089,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
 
     const updatedProfiles = profiles.map(p => {
       if (p.id === activeProfileId) {
-        return { ...p, name: targetName, type: activeType as any, config, color: profileColor, group: profileGroup };
+        return { ...p, name: targetName, type: activeType as any, config, color: profileColor, env: profileEnv, group: profileGroup };
       }
       return p;
     });
@@ -1053,10 +1120,12 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     selectProfile(newProfile);
   };
 
-  const handleDeleteProfile = async (id: string, e: React.MouseEvent) => {
+  const handleDeleteProfile = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm(t('connection.confirmDeleteProfile'))) return;
+    setDeleteProfileId(id);
+  };
 
+  const doDeleteProfile = async (id: string) => {
     const newProfiles = profiles.filter(p => p.id !== id);
     await persistProfiles(newProfiles);
     // Dọn luôn bí mật trong kho HĐH, đừng để lại mục mồ côi.
@@ -1092,7 +1161,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
   };
 
   const handleConnect = async (_isDemo = false) => {
-    setLoading(true);
+    setIsConnecting(true);
     setErrorMsg(null);
     setSuccessMsg(null);
 
@@ -1173,19 +1242,32 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
 
     const res = await dbHelper.connect(config);
 
-    setLoading(false);
+    setIsConnecting(false);
     if (res.success) {
       setSuccessMsg(res.message);
       setIsSuccessConnecting(true);
       setConnectingDbName(res.database || (config.type === 'sqlite' ? config.sqlitePath : config.database) || 'Database');
       const activeProfile = profiles.find(p => p.id === activeProfileId);
+      // Môi trường lấy từ STATE CỦA FORM, không từ profile đã lưu.
+      //
+      // `config` ngay bên trên cũng dựng từ form: host, port, user, SSL... đều đi thẳng vào lần kết
+      // nối này dù người dùng chưa bấm Lưu. Riêng `env` mà đọc từ bản đã lưu thì ô chọn hiện
+      // "Production" nhưng kết nối lại mở theo giá trị cũ — chỗ hụt tệ nhất có thể có cho một cờ an
+      // toàn, vì thứ đang hiển thị và thứ đang có hiệu lực không còn là một. Lưu vẫn là việc riêng:
+      // nó quyết định lần sau có nhớ hay không, chứ không quyết định lần này.
+      const env = profileEnv;
       setTimeout(() => {
         onConnect(
           res.database || 'Database',
           config.type,
           activeProfile?.color,
           config,
-          activeProfile ? { id: activeProfile.id, name: activeProfile.name } : undefined,
+          // Kết nối dựng tay (chưa lưu thành profile) vẫn phải nhận được môi trường vừa chọn: không
+          // có chỗ để nhớ nó không có nghĩa là phiên này được phép bỏ qua nó.
+          activeProfile || env !== 'none'
+            ? { id: activeProfile?.id ?? '', name: activeProfile?.name ?? '', env }
+            : undefined,
+          res.schema,
         );
       }, 480);
     } else {
@@ -1194,14 +1276,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
   };
 
   const handleTestConnection = async () => {
-    setLoading(true);
+    setIsTesting(true);
     setErrorMsg(null);
     setSuccessMsg(null);
 
     // Redis: test bằng chính redis_connect (PING) qua dbHelper.connect.
     if (activeType === 'redis') {
       const res = await dbHelper.connect(buildRedisConfig());
-      setLoading(false);
+      setIsTesting(false);
       setTestStatus(res.success ? 'ok' : 'fail');
       if (res.success) setSuccessMsg(t('connection.redisTestOk'));
       else setErrorMsg(res.message);
@@ -1276,7 +1358,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     }
 
     const res = await dbHelper.connect(config);
-    setLoading(false);
+    setIsTesting(false);
     setTestStatus(res.success ? 'ok' : 'fail');
     if (res.success) {
       setSuccessMsg(t('connection.testOk'));
@@ -1339,13 +1421,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
         // Dump dựng bằng đúng code của popup "Xuất Cơ sở dữ liệu" (buildDump): trước đây chỗ
         // này gọi lệnh Rust `export_multi_tables`, vốn coi view là bảng (sinh DROP TABLE và
         // INSERT INTO cho view), ghi một INSERT cho mỗi dòng, và không hề có routine/trigger.
-        const list = await dbHelper.getTables();
+        const list = await dbHelper.getTables(connId);
         const tables = list.map(item => item.name);
         if (tables.length === 0) {
           throw new Error(t('connection.errNoTablesToBackup'));
         }
         const [dbObjs, triggers] = await Promise.all([
-          dbHelper.getDatabaseObjects(),
+          dbHelper.getDatabaseObjects(connId),
           dbHelper.getAllTriggers(),
         ]);
 
@@ -1364,8 +1446,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
             includeStructure: brIncludeStructure,
             includeContent: brIncludeContent,
           },
+          // Schema mà `connect` vừa báo là đang dùng — cùng schema mà getTables() ở trên đọc ra.
+          // Không có ô chọn schema ở màn hình này, nên đây luôn là schema đầu search_path.
+          schema: connRes.schema,
           onProgress: setBrProgress,
-        }, dbHelper);
+        }, dumpReaderFor(dbHelper, connId));
 
         const base = (brFilename.trim() || 'database_backup').replace(/\.(sql|sql\.gz|gz)$/i, '');
         const fileName = base + (brCompressGzip ? '.sql.gz' : '.sql');
@@ -1591,71 +1676,85 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
   const renderBasicSection = () => (
     <div className="cm-section">
       <div className="cm-section-title">{t('connection.basicSection')}</div>
-      {/* Tên + nhóm gộp trên một dòng: header phía trên đã hiển thị lại những
-          thông tin này nên không cần mô tả dài dòng ở đây. */}
-      <div className="cm-grid basic" style={{ marginTop: '12px' }}>
-        <div className="form-group">
-          <label>{t('connection.profileName')}</label>
-          <input
-            type="text"
-            className="form-input"
-            value={profileNameInput}
-            onChange={(e) => setProfileNameInput(e.target.value)}
-            placeholder={t('connection.profileNamePlaceholder')}
-          />
-        </div>
-        <div className="form-group">
-          <label>{t('connection.group')}</label>
-          {/* Combobox tự dựng thay cho <datalist>: native datalist hiện thêm một
-              mũi tên riêng và popup không theo được theme của app. */}
-          <div className="cm-combo">
+      <div className="cm-fields">
+        <div className="cm-grid basic">
+          <div className="form-group">
+            <label>{t('connection.profileName')}</label>
             <input
               type="text"
               className="form-input"
-              value={profileGroup}
-              onChange={(e) => setProfileGroup(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Escape') setShowGroupList(false); }}
-              placeholder={existingGroups.length ? t('connection.groupPlaceholderPick') : t('connection.groupPlaceholderNew')}
+              value={profileNameInput}
+              onChange={(e) => setProfileNameInput(e.target.value)}
+              placeholder={t('connection.profileNamePlaceholder')}
             />
-            {existingGroups.length > 0 && (
-              <button
-                type="button"
-                className={`cm-combo-btn ${showGroupList ? 'on' : ''}`}
-                title={t('connection.pickExistingGroup')}
-                onClick={() => setShowGroupList((v) => !v)}
-              >
-                <ChevronDown size={13} />
-              </button>
-            )}
-            {showGroupList && (
-              <>
-                <div className="cm-pop-backdrop" onClick={() => setShowGroupList(false)} />
-                <div className="cm-combo-pop">
-                  {existingGroups.map(g => (
-                    <button
-                      key={g}
-                      type="button"
-                      className={`cm-combo-opt ${g === profileGroup.trim() ? 'on' : ''}`}
-                      onClick={() => { setProfileGroup(g); setShowGroupList(false); }}
-                    >
-                      <span className="cm-ellipsis">{g}</span>
-                      {g === profileGroup.trim() && <Check size={12} style={{ flexShrink: 0 }} />}
-                    </button>
-                  ))}
-                  {profileGroup.trim() && (
-                    <>
-                      <div className="cm-pop-sep" />
-                      <button type="button" className="cm-combo-opt" onClick={() => { setProfileGroup(''); setShowGroupList(false); }}>
-                        <X size={12} style={{ flexShrink: 0 }} />
-                        <span>{t('connection.clearGroup')}</span>
+          </div>
+          <div className="form-group">
+            <label>{t('connection.group')}</label>
+            {/* Combobox tự dựng thay cho <datalist>: native datalist hiện thêm một
+                mũi tên riêng và popup không theo được theme của app. */}
+            <div className="cm-combo">
+              <input
+                type="text"
+                className="form-input"
+                value={profileGroup}
+                onChange={(e) => setProfileGroup(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Escape') setShowGroupList(false); }}
+                placeholder={existingGroups.length ? t('connection.groupPlaceholderPick') : t('connection.groupPlaceholderNew')}
+              />
+              {existingGroups.length > 0 && (
+                <button
+                  type="button"
+                  className={`cm-combo-btn ${showGroupList ? 'on' : ''}`}
+                  title={t('connection.pickExistingGroup')}
+                  onClick={() => setShowGroupList((v) => !v)}
+                >
+                  <ChevronDown size={13} />
+                </button>
+              )}
+              {showGroupList && (
+                <>
+                  <div className="cm-pop-backdrop" onClick={() => setShowGroupList(false)} />
+                  <div className="cm-combo-pop">
+                    {existingGroups.map(g => (
+                      <button
+                        key={g}
+                        type="button"
+                        className={`cm-combo-opt ${g === profileGroup.trim() ? 'on' : ''}`}
+                        onClick={() => { setProfileGroup(g); setShowGroupList(false); }}
+                      >
+                        <span className="cm-ellipsis">{g}</span>
+                        {g === profileGroup.trim() && <Check size={12} style={{ flexShrink: 0 }} />}
                       </button>
-                    </>
-                  )}
-                </div>
-              </>
-            )}
+                    ))}
+                    {profileGroup.trim() && (
+                      <>
+                        <div className="cm-pop-sep" />
+                        <button type="button" className="cm-combo-opt" onClick={() => { setProfileGroup(''); setShowGroupList(false); }}>
+                          <X size={12} style={{ flexShrink: 0 }} />
+                          <span>{t('connection.clearGroup')}</span>
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+          {/* Môi trường */}
+          <div className="form-group">
+            <label>{t('connEnv.label')}</label>
+            <select
+              className="form-input"
+              value={profileEnv}
+              onChange={(e) => setProfileEnv(normalizeEnv(e.target.value))}
+            >
+              {CONN_ENVS.map((env) => (
+                <option key={env} value={env}>{t(envLabelKey(env))}</option>
+              ))}
+            </select>
           </div>
         </div>
+        {profileEnv === 'production' && <small className="cm-hint">{t('connEnv.hint')}</small>}
       </div>
     </div>
   );
@@ -1688,6 +1787,17 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
     );
   };
 
+  const handlePickSqlitePath = async () => {
+    const file = await pickSqliteDatabaseFile(sqlitePath);
+    if (file) {
+      setSqlitePath(file);
+      const filename = file.split(/[\\/]/).pop();
+      if (filename && (!profileNameInput || profileNameInput.toLowerCase().includes('sqlite') || profileNameInput.trim() === '')) {
+        setProfileNameInput(filename.replace(/\.[^/.]+$/, ''));
+      }
+    }
+  };
+
   // ——— Tab "Chung" cho từng loại DB ———
   const renderGeneralTab = () => (
     <>
@@ -1700,15 +1810,26 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
           <div className="cm-fields">
             <div className="form-group">
               <label>{t('connection.sqlitePathLabel')}</label>
-              <div className="input-icon-wrapper">
-                <input
-                  type="text"
-                  className="form-input"
-                  value={sqlitePath}
-                  onChange={(e) => setSqlitePath(e.target.value)}
-                  placeholder={t('connection.sqlitePathPlaceholder')}
-                />
-                <FolderOpen size={14} className="input-icon" />
+              <div className="cm-file-row">
+                <div className="input-icon-wrapper">
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={sqlitePath}
+                    onChange={(e) => setSqlitePath(e.target.value)}
+                    placeholder={t('connection.sqlitePathPlaceholder')}
+                  />
+                  <FolderOpen size={14} className="input-icon" />
+                </div>
+                <button
+                  type="button"
+                  className="cm-file-btn"
+                  onClick={handlePickSqlitePath}
+                  title={t('connection.pickFile')}
+                >
+                  <FolderOpen size={12} />
+                  <span>{t('connection.pickFile')}</span>
+                </button>
               </div>
               <span className="cm-hint">{t('connection.sqliteHint')}</span>
             </div>
@@ -2328,9 +2449,29 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
           {brType === 'sqlite' ? (
             <div className="form-group">
               <label>{t('connection.brSqlitePath')}</label>
-              <div className="input-icon-wrapper">
-                <input type="text" className="form-input" value={brSqlitePath} onChange={(e) => setBrSqlitePath(e.target.value)} />
-                <FolderOpen size={14} className="input-icon" />
+              <div className="cm-file-row">
+                <div className="input-icon-wrapper">
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={brSqlitePath}
+                    onChange={(e) => setBrSqlitePath(e.target.value)}
+                    placeholder={t('connection.sqlitePathPlaceholder')}
+                  />
+                  <FolderOpen size={14} className="input-icon" />
+                </div>
+                <button
+                  type="button"
+                  className="cm-file-btn"
+                  onClick={async () => {
+                    const picked = await pickSqliteDatabaseFile(brSqlitePath);
+                    if (picked) setBrSqlitePath(picked);
+                  }}
+                  title={t('connection.pickFile')}
+                >
+                  <FolderOpen size={12} />
+                  <span>{t('connection.pickFile')}</span>
+                </button>
               </div>
             </div>
           ) : (
@@ -2547,13 +2688,18 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
           <aside className="cm-side">
             <div className="cm-side-head">
               <span className="cm-side-title">{t('connection.sideTitle', { n: profiles.length })}</span>
-              <button className="cm-icon-btn" title={t('connection.importFromFile')} onClick={() => document.getElementById('cm-import-file')?.click()}>
-                <Upload size={13} />
-              </button>
-              <input id="cm-import-file" type="file" accept=".tableplusconnection,.tableforgeconnection,.json" onChange={handleFileImportSelect} style={{ display: 'none' }} />
-              <button className="cm-icon-btn" title={t('connection.exportAll')} onClick={() => openExportModal('all')}>
-                <Download size={13} />
-              </button>
+              {/* Nhập/xuất tệp profile: quản lý cả bộ profile, không phải mở thêm một kết nối. */}
+              {!embedded && (
+                <>
+                  <button className="cm-icon-btn" title={t('connection.importFromFile')} onClick={() => document.getElementById('cm-import-file')?.click()}>
+                    <Upload size={13} />
+                  </button>
+                  <input id="cm-import-file" type="file" accept=".tableplusconnection,.tableforgeconnection,.json" onChange={handleFileImportSelect} className="cm-hidden-file" />
+                  <button className="cm-icon-btn" title={t('connection.exportAll')} onClick={() => openExportModal('all')}>
+                    <Download size={13} />
+                  </button>
+                </>
+              )}
             </div>
 
             <div className="cm-new-wrap">
@@ -2573,7 +2719,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                           className="cm-pop-item"
                           onClick={() => { setShowNewMenu(false); handleCreateNewProfile(nt.val); }}
                         >
-                          <span className="cm-badge sm" style={{ background: m.color }}><m.Icon size={13} /></span>
+                          <span className={`cm-badge sm ${nt.val}`}><m.Icon size={13} /></span>
                           <span>{nt.label}</span>
                         </button>
                       );
@@ -2589,7 +2735,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
             </div>
 
             <div className="cm-search">
-              <Search size={13} style={{ color: 'var(--win-text-disabled)', flexShrink: 0 }} />
+              <Search size={14} className="cm-search-icon" />
               <input
                 type="text"
                 value={profileSearch}
@@ -2632,16 +2778,18 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                     {!collapsed && groupedProfiles[groupName].map(p => {
                       const m = TYPE_META[p.type] || TYPE_META.sqlite;
                       const isActive = activeProfileId === p.id && !isBrMode;
+                      const sqliteFile = p.config?.sqlitePath ? (p.config.sqlitePath.split(/[/\\]/).pop() || p.config.sqlitePath) : '';
                       const sub = p.config?.host
                         ? `${p.config.host}${p.config.database ? ' / ' + p.config.database : ''}`
-                        : (p.config?.sqlitePath || '');
+                        : sqliteFile;
+                      const fullSubInfo = p.config?.sqlitePath || sub;
                       // Đèn trạng thái: chỉ dòng đang được tác động mới có, và chỉ
                       // 'busy' được nháy. Màn hình này chỉ tồn tại khi chưa có kết
                       // nối nào mở, nên "đang mở" không phải trạng thái khả dụng —
                       // thay vào đó là đang kết nối/kiểm tra và kết quả kiểm tra.
                       const led: 'busy' | 'ok' | 'fail' | null = !isActive
                         ? null
-                        : loading ? 'busy'
+                        : isBusy ? 'busy'
                           : testStatus === 'ok' ? 'ok'
                             : testStatus === 'fail' ? 'fail'
                               : null;
@@ -2652,15 +2800,20 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                           onClick={() => selectProfile(p)}
                           onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenu({ x: e.clientX, y: e.clientY, scope: 'single', groupName, profile: p }); }}
                         >
-                          <span className="cm-badge" style={{ background: m.color }}><m.Icon size={15} /></span>
+                          <span
+                            className={`cm-badge ${p.type}`}
+                            style={p.color ? { background: p.color } : undefined}
+                          >
+                            <m.Icon size={16} />
+                          </span>
                           <div className="cm-item-body">
                             <div className="cm-item-name">
                               <span className="cm-ellipsis">{p.name}</span>
                               {/* Đèn trạng thái: chỉ 'busy' nháy. */}
                               {led && <span className={`cm-item-led ${led}`} title={ledTitle[led]} />}
-                              {defaultProfileId === p.id && <Star size={10} style={{ fill: 'var(--st-warn)', color: 'var(--st-warn)', flexShrink: 0 }} aria-label={t('connection.defaultConnectionAria')} />}
+                              {defaultProfileId === p.id && <Star size={10} className="cm-default-star" aria-label={t('connection.defaultConnectionAria')} />}
                             </div>
-                            <div className="cm-item-sub">{m.label}{sub ? ` · ${sub}` : ''}</div>
+                            <div className="cm-item-sub" title={fullSubInfo}>{m.label}{sub ? ` · ${sub}` : ''}</div>
                           </div>
                           <div className="cm-item-actions">
                             <button
@@ -2668,9 +2821,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                               onClick={(e) => handleToggleDefaultProfile(p.id, e)}
                               title={defaultProfileId === p.id ? t('connection.unsetDefault') : t('connection.setDefault')}
                             >
-                              {/* fill đặt qua CSS chứ không qua prop: prop thành thuộc
-                                  tính SVG, mà thuộc tính SVG không nhận var(). */}
-                              <Star size={12} style={{ fill: defaultProfileId === p.id ? 'var(--st-warn)' : 'none', color: defaultProfileId === p.id ? 'var(--st-warn)' : 'currentColor' }} />
+                              <Star size={12} className={defaultProfileId === p.id ? 'cm-star-active' : ''} />
                             </button>
                             <button className="cm-icon-btn sm" onClick={(e) => handleDuplicateProfile(p, e)} title={t('connection.duplicateProfile')}>
                               <Copy size={12} />
@@ -2687,15 +2838,20 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
               })}
             </div>
 
-            <div className="cm-side-foot">
-              <button
-                className={`cm-ghost-row ${isBrMode ? 'active' : ''}`}
-                onClick={() => setActiveType('backup_restore' as any)}
-              >
-                <HardDriveDownload size={14} />
-                <span>{t('connection.backupRestore')}</span>
-              </button>
-            </div>
+            {/* Sao lưu & Phục hồi thao tác trên kết nối ĐANG MỞ, nên trong hộp thoại "thêm kết nối"
+                nó vừa lệch việc vừa dễ hiểu sai là đang backup cái sắp mở. Ở workspace nó đã có chỗ
+                riêng trên thanh tiêu đề. */}
+            {!embedded && (
+              <div className="cm-side-foot">
+                <button
+                  className={`cm-ghost-row ${isBrMode ? 'active' : ''}`}
+                  onClick={() => setActiveType('backup_restore' as any)}
+                >
+                  <DatabaseBackup size={15} />
+                  <span>{t('connection.backupRestore')}</span>
+                </button>
+              </div>
+            )}
           </aside>
 
           {/* ————— Pane chính ————— */}
@@ -2713,20 +2869,25 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
             ) : hasProfile ? (
               <>
                 <header className="cm-main-head">
-                  <div className="cm-avatar" style={{ background: activeMeta.color }}>
-                    <activeMeta.Icon size={22} />
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div className="cm-head-name">
-                      <span className="cm-ellipsis">{profileNameInput || t('connection.defaultProfileName')}</span>
+                  <div className="cm-head-info">
+                    <div
+                      className={`cm-avatar ${activeType}`}
+                      style={profiles.find(p => p.id === activeProfileId)?.color ? { background: profiles.find(p => p.id === activeProfileId)?.color } : undefined}
+                    >
+                      <activeMeta.Icon size={22} />
                     </div>
-                    <div className="cm-head-meta">
-                      <span>{activeMeta.label}</span>
-                      {profileGroup && <span className="cm-chip">{profileGroup}</span>}
-                      <span className={`cm-pill ${testStatus === 'ok' ? 'ok' : testStatus === 'fail' ? 'fail' : 'idle'}`}>
-                        <i />
-                        {testStatus === 'ok' ? t('connection.pillTested') : testStatus === 'fail' ? t('connection.pillFailed') : t('connection.pillUntested')}
-                      </span>
+                    <div className="cm-head-text">
+                      <div className="cm-head-name">
+                        <span className="cm-ellipsis">{profileNameInput || t('connection.defaultProfileName')}</span>
+                      </div>
+                      <div className="cm-head-meta">
+                        <span>{activeMeta.label}</span>
+                        {profileGroup && <span className="cm-chip">{profileGroup}</span>}
+                        <span className={`cm-pill ${testStatus === 'ok' ? 'ok' : testStatus === 'fail' ? 'fail' : 'idle'}`}>
+                          <i />
+                          {testStatus === 'ok' ? t('connection.pillTested') : testStatus === 'fail' ? t('connection.pillFailed') : t('connection.pillUntested')}
+                        </span>
+                      </div>
                     </div>
                   </div>
                   <button className="cm-uri" onClick={handleCopyUri} title={t('connection.copyUri')}>
@@ -2840,11 +3001,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
                     <Save size={13} /> {t('connection.saveChanges')}
                   </button>
                   <span className="cm-foot-msg" />
-                  <button className="cm-btn" onClick={handleTestConnection} disabled={loading}>
-                    {loading ? <LoadingSpinner size={13} /> : <CheckCircle2 size={13} />} {t('connection.test')}
+                  <button className="cm-btn" onClick={handleTestConnection} disabled={isBusy}>
+                    {isTesting ? <LoadingSpinner size={13} /> : <CheckCircle2 size={13} />} {t('connection.test')}
                   </button>
-                  <button className="cm-btn primary" onClick={() => handleConnect(false)} disabled={loading}>
-                    {loading
+                  <button className="cm-btn primary" onClick={() => handleConnect(false)} disabled={isBusy}>
+                    {isConnecting
                       ? <><LoadingSpinner size={13} /> {t('connection.connecting')}</>
                       : <><LogIn size={14} /> {t('connection.connect')}</>}
                   </button>
@@ -2932,6 +3093,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
       {/* Terminal overlay (SSH nếu profile có SSH, ngược lại shell cục bộ) */}
       {terminalProfile && (
         <TerminalPanel
+          connId={connId}
           config={terminalProfile.config as DbConnectionConfig}
           profileName={terminalProfile.name}
           floating
@@ -2979,7 +3141,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
 
             <div className="cm-modal-foot">
               <button className="cm-btn" onClick={() => setShowExportModal(false)} disabled={exporting}>{t('common.cancel')}</button>
-              <button className="cm-btn primary" onClick={handlePerformExport} disabled={exporting}>
+              {/* Wrapped in an arrow: passed directly, the MouseEvent lands in
+                  `plainConfirmed` (truthy) and the plain-password warning is skipped. */}
+              <button className="cm-btn primary" onClick={() => handlePerformExport()} disabled={exporting}>
                 {exporting ? <LoadingSpinner size={12} /> : <Download size={13} />} {t('connection.exportAction')}
               </button>
             </div>
@@ -3019,6 +3183,28 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnect 
           </div>
         </div>
       )}
+
+      {/* Delete profile. zIndex above the export/import modals (.cm-modal sets its own). */}
+      <ConfirmDialog
+        open={!!deleteProfileId}
+        danger
+        zIndex={1000000}
+        title={t('connection.confirmDeleteProfileTitle')}
+        message={t('connection.confirmDeleteProfile')}
+        onConfirm={() => { const id = deleteProfileId; setDeleteProfileId(null); if (id) doDeleteProfile(id); }}
+        onCancel={() => setDeleteProfileId(null)}
+      />
+
+      {/* Warning about exporting passwords in the clear — asked before reading the keychain. */}
+      <ConfirmDialog
+        open={confirmPlainExport}
+        danger
+        zIndex={1000000}
+        title={t('connection.confirmExportPlainTitle')}
+        message={t('connection.confirmExportPlainPasswords')}
+        onConfirm={() => { setConfirmPlainExport(false); handlePerformExport(true); }}
+        onCancel={() => setConfirmPlainExport(false)}
+      />
     </div>
   );
 };

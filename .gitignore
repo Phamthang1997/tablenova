@@ -80,3 +80,10 @@ Thumbs.db
 .oxlintcache
 .vite/
 coverage/
+
+# Credentials
+# The Google "installed app" JSON as downloaded from the Cloud console. Nothing in the app reads it
+# — the client id lives in oauth.rs and the secret in aiAuth.ts — so a copy sitting here is a file
+# that can only leak, never be used.
+google_client_secret.json
+client_secret_*.json

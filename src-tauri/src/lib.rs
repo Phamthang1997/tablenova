@@ -11,14 +11,20 @@ pub mod local_terminal;
 pub mod aws_iam;
 pub mod export;
 pub mod secret_store;
+pub mod state;
 pub mod tx_session;
+pub mod oauth;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::atomic::AtomicBool;
 
 pub struct AppState {
-    pub db_manager: Mutex<database::DatabaseManager>,
+    // Mọi kết nối đang mở — SQL LẪN REDIS — khoá theo `conn_id`
+    // (docs/multi-connection-plan.md §4.3, docs/redis-ui-unification-plan.md §2.3). Đây là nguồn
+    // sự thật DUY NHẤT: `DatabaseManager` (một `Option<DbConnection>` cho cả app) và `RedisState`
+    // (một connection Redis cho cả app) đều đã bị xoá.
+    pub connections: state::ConnRegistry,
     // Cờ hủy cho các truy vấn đang stream (query_id -> cờ). execute_query_stream đăng ký,
     // cancel_query bật cờ để dừng vòng lặp đẩy dữ liệu.
     pub cancel_flags: Mutex<HashMap<String, Arc<AtomicBool>>>,
@@ -26,10 +32,6 @@ pub struct AppState {
     pub ssh_terminals: ssh_terminal::SshTerminalMap,
     // Các phiên Local Terminal (shell cục bộ) đang mở.
     pub local_terminals: local_terminal::LocalTerminalMap,
-    // Tăng mỗi lần connect/disconnect. Task làm mới token IAM dùng để biết kết nối còn "đời" của nó không.
-    pub conn_generation: AtomicU64,
-    // Kết nối Redis (tách biệt khỏi DbConnection SQL).
-    pub redis: redis_db::RedisState,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -85,26 +87,25 @@ pub fn run() {
             // Park one here so it can emit "tx-state-changed" instead of every command's response
             // shape having to carry the state.
             tx_session::set_app_handle(app.handle().clone());
+            // Same trick, different purpose: the SQL funnels read the read-only flag out of the
+            // connection registry, and they have a `&DbConnection` but no `AppState`.
+            state::set_app_handle(app.handle().clone());
 
             Ok(())
         })
         .manage(AppState {
-            db_manager: Mutex::new(database::DatabaseManager {
-                connection: None,
-                db_type: String::new(),
-                ssh_tunnel: None,
-                last_config: None,
-            }),
+            connections: state::ConnRegistry::new(),
             cancel_flags: Mutex::new(HashMap::new()),
             ssh_terminals: Mutex::new(HashMap::new()),
             local_terminals: Mutex::new(HashMap::new()),
-            conn_generation: AtomicU64::new(0),
-            redis: redis_db::RedisState::new(),
         })
         .invoke_handler(tauri::generate_handler![
             database::connect_db,
             database::disconnect_db,
+            database::list_connections,
+            database::set_connection_read_only,
             database::get_connection_status,
+            database::ping_connections,
             database::get_tables,
             database::get_full_catalog,
             database::get_table_data,
@@ -116,6 +117,7 @@ pub fn run() {
             database::execute_query_stream,
             database::cancel_query,
             tx_session::tx_status,
+            tx_session::tx_any_pending,
             tx_session::tx_set_autocommit,
             tx_session::tx_set_isolation,
             tx_session::tx_commit,
@@ -144,7 +146,9 @@ pub fn run() {
             database::import_table_data,
             database::get_databases_list,
             database::list_databases,
-            database::switch_database,
+            database::open_database,
+            database::list_schemas,
+            database::set_current_schema,
             database::create_database,
             database::drop_database,
             database::rename_database,
@@ -164,6 +168,7 @@ pub fn run() {
             database::get_check_constraints,
             database::save_view_definition,
             database::open_url,
+            oauth::start_google_oauth_flow,
             database::set_app_window_size,
             secret_store::secret_set,
             secret_store::secret_get,
@@ -180,6 +185,7 @@ pub fn run() {
             db_compare::compare_table_data,
             db_stats::get_database_stats,
             db_stats::get_all_databases_stats,
+            db_stats::get_all_databases_sizes,
             db_stats::get_exact_table_row_count,
             redis_db::redis_connect,
             redis_db::redis_disconnect,

@@ -2,10 +2,12 @@ import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallba
 import { Trans, useTranslation } from 'react-i18next';
 import { clampMenu, type MenuRect } from '../utils/menuPosition';
 import { dbHelper } from '../utils/dbHelper';
+import { isMariaDbVersion } from '../utils/serverFlavor';
 import type { TableItem, SchemaInfo, TriggerInfo, CheckConstraintInfo } from '../utils/dbHelper';
 import { Search, Table, Terminal, TerminalSquare, RefreshCw, Layers, Plus, ChevronDown, ChevronRight, Braces, Cog, Info, Key, Sliders, FileCode, Trash2, CheckCircle2, Copy, AlertTriangle, History, Bookmark, Columns3, ArrowDownAZ, Link2, Zap } from 'lucide-react';
 import { CreateTableModal } from './CreateTableModal';
 import { Modal, ModalBody, ModalFooter } from './Modal';
+import { ConfirmDialog } from './ConfirmDialog';
 import { GitCompare, ArrowLeftRight, HardDriveDownload, HardDriveUpload, Wand2 } from 'lucide-react';
 import { RoutineEditorModal } from './RoutineEditorModal';
 import { ViewEditorModal } from './ViewEditorModal';
@@ -269,7 +271,7 @@ const GroupNode: React.FC<GroupNodeProps> = ({ open, icon, label, count, onToggl
  * table was expanded. Checks and Triggers are two SEPARATE backend commands, so they only
  * run when the user opens that group — expanding a table still costs exactly one call.
  */
-const TableDetailTree: React.FC<{ tableName: string; schema: SchemaInfo }> = ({ tableName, schema }) => {
+const TableDetailTree: React.FC<{ connId: string; tableName: string; schema: SchemaInfo }> = ({ connId, tableName, schema }) => {
   const { t } = useTranslation();
   const [open, setOpen] = useState<Record<DetailGroup, boolean>>({
     fields: true, indexes: false, fks: false, checks: false, triggers: false,
@@ -285,13 +287,13 @@ const TableDetailTree: React.FC<{ tableName: string; schema: SchemaInfo }> = ({ 
     if (!willOpen) return;
     if (g === 'checks' && checks === null && !loadingExtra.checks) {
       setLoadingExtra((p) => ({ ...p, checks: true }));
-      dbHelper.getCheckConstraints(tableName)
+      dbHelper.getCheckConstraints(connId, tableName)
         .then(setChecks)
         .finally(() => setLoadingExtra((p) => ({ ...p, checks: false })));
     }
     if (g === 'triggers' && triggers === null && !loadingExtra.triggers) {
       setLoadingExtra((p) => ({ ...p, triggers: true }));
-      dbHelper.getTableTriggers(tableName)
+      dbHelper.getTableTriggers(connId, tableName)
         .then(setTriggers)
         .finally(() => setLoadingExtra((p) => ({ ...p, triggers: false })));
     }
@@ -441,6 +443,8 @@ const TableDetailTree: React.FC<{ tableName: string; schema: SchemaInfo }> = ({ 
 type ObjectSection = 'tables' | 'views';
 
 interface ObjectItemProps {
+  /** Kết nối mà dòng này thuộc về — `TableDetailTree` cần để đọc check/trigger. */
+  connId: string;
   item: TableItem;
   /** Block, and position within it: Shift+click needs both to take the range from the anchor. */
   section: ObjectSection;
@@ -469,6 +473,7 @@ interface ObjectItemProps {
  * nguyên identity — xem các useCallback trong Sidebar.
  */
 const ObjectItem = memo(function ObjectItem({
+  connId,
   item,
   section,
   index,
@@ -536,7 +541,7 @@ const ObjectItem = memo(function ObjectItem({
           ) : !schema ? (
             <div style={COLS_HINT_STYLE}>{t('sidebar.noColumns')}</div>
           ) : (
-            <TableDetailTree tableName={item.name} schema={schema} />
+            <TableDetailTree connId={connId} tableName={item.name} schema={schema} />
           )}
         </div>
       )}
@@ -545,6 +550,8 @@ const ObjectItem = memo(function ObjectItem({
 });
 
 interface SidebarProps {
+  /** Kết nối mà component này thao tác lên. Truyền tường minh, không đọc id ambient (§4.1). */
+  connId: string;
   dbName: string;
   dbType: 'sqlite' | 'postgres' | 'mysql';
   /** Chế độ chỉ đọc: chặn mọi lệnh ghi phát sinh từ sidebar (drop/truncate/rename/create). */
@@ -569,13 +576,27 @@ interface SidebarProps {
   onGenerateData?: (tableName?: string) => void;
   onTableRenamed?: (oldName: string, newName: string) => void;
   onTableDropped?: (tableName: string) => void;
-  onDatabaseChanged?: (name: string) => void;
+  /**
+   * A database was **opened as another connection** (`open_database`), not switched to.
+   *
+   * Switching replaced this connection's pool, so it had to refuse whenever the current database
+   * held uncommitted work — a refusal the user could not clear without losing that work, and it
+   * silently detached every open tab from the database they were opened against. Opening adds a
+   * pool on the same `ServerHandle` (same tunnel, same credentials, no re-auth), so there is nothing
+   * to refuse and the old database keeps its tabs and its transaction.
+   */
+  onDatabaseOpened?: (connId: string, name: string, schema?: string | null) => void;
+  /** Schema đang chọn (chỉ Postgres). Nguồn sự thật là backend — xem App.tsx. */
+  schema?: string | null;
+  /** Đổi schema xong: App cập nhật state + khoá localStorage, Sidebar tự nạp lại danh sách. */
+  onSchemaChanged?: (name: string) => void;
   onOpenQueryWithSql?: (sql: string) => void;
   onOpenRoutineTab?: (name: string, kind: 'procedure' | 'function') => void;
   onOpenViewTab?: (name: string) => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
+  connId,
   dbName,
   dbType,
   readOnly = false,
@@ -597,7 +618,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onGenerateData,
   onTableRenamed,
   onTableDropped,
-  onDatabaseChanged,
+  onDatabaseOpened,
+  schema,
+  onSchemaChanged,
   onOpenQueryWithSql,
   onOpenRoutineTab,
   onOpenViewTab,
@@ -614,6 +637,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const [tables, setTables] = useState<TableItem[]>([]);
+  const [schemas, setSchemas] = useState<string[]>([]);
+  const [isMariaDb, setIsMariaDb] = useState(false);
+  const [switchingSchema, setSwitchingSchema] = useState(false);
   const [functions, setFunctions] = useState<string[]>([]);
   const [procedures, setProcedures] = useState<string[]>([]);
   const [objDef, setObjDef] = useState<{ name: string; kind: 'view' | 'function' | 'procedure'; sql: string } | null>(null);
@@ -691,7 +717,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     if (willExpand && !columnsMapRef.current[tableName] && !loadingColumnsRef.current[tableName]) {
       setLoadingColumns(prev => ({ ...prev, [tableName]: true }));
       try {
-        const schema = await dbHelper.getTableSchema(tableName);
+        const schema = await dbHelper.getTableSchema(connId, tableName);
         setTableSchemaMap(prev => ({ ...prev, [tableName]: schema }));
       } catch (err) {
         console.error(`Failed to fetch schema for ${tableName}:`, err);
@@ -699,7 +725,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         setLoadingColumns(prev => ({ ...prev, [tableName]: false }));
       }
     }
-  }, []);
+  }, [connId]);
 
   // Kéo viền phải để đổi độ rộng thanh bên.
   const rootRef = useRef<HTMLDivElement>(null);
@@ -809,6 +835,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [newDb, setNewDb] = useState({ name: '', encoding: '', collation: '' });
   const [dbCharsets, _setDbCharsets] = useState<{ encodings: string[]; collations?: string[]; collationsByEncoding?: Record<string, string[]> }>({ encodings: [] });
   const [renameDbState, setRenameDbState] = useState<{ oldName: string; value: string } | null>(null);
+  /** Freshly created database, waiting on the "switch to it now?" answer. */
+  const [switchToNewDb, setSwitchToNewDb] = useState<string | null>(null);
 
 
   const handleRenameDatabase = async () => {
@@ -817,10 +845,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const { oldName, value } = renameDbState;
     const newName = value.trim();
     if (!newName || newName === oldName) { setRenameDbState(null); return; }
-    const res = await dbHelper.renameDatabase(oldName, newName);
+    const res = await dbHelper.renameDatabase(connId, oldName, newName);
     setRenameDbState(null);
     if (res.success) {
-      const list = await dbHelper.listDatabases();
+      const list = await dbHelper.listDatabases(connId);
       setDbList(list.databases || []);
     } else {
       alert(t('sidebar.errRenameDb', { message: res.error }));
@@ -831,7 +859,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     if (blockedByReadOnly()) return;
     const name = newDb.name.trim();
     if (!name) { alert(t('sidebar.promptDbName')); return; }
-    const res = await dbHelper.createDatabase({
+    const res = await dbHelper.createDatabase(connId, {
       name,
       encoding: newDb.encoding.trim() || undefined,
       collation: newDb.collation.trim() || undefined,
@@ -839,10 +867,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     if (res.success) {
       setShowCreateDb(false);
       setNewDb({ name: '', encoding: '', collation: '' });
-      if (confirm(t('sidebar.createdDbSwitch', { name }))) {
-        await dbHelper.switchDatabase(name);
-        onDatabaseChanged?.(name);
-      }
+      // "Created — switch to it now?" — window.confirm shows nothing in the Tauri webview,
+      // so this question used to return undefined silently and never switched database.
+      setSwitchToNewDb(name);
     } else {
       alert(t('sidebar.errCreateDb', { message: res.error }));
     }
@@ -850,13 +877,80 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const fetchTables = async () => {
     setRefreshing(true);
-    const list = await dbHelper.getTables();
+    const list = await dbHelper.getTables(connId);
     setTables(list);
     // Nạp thêm hàm & thủ tục (đối tượng CSDL)
-    const objs = await dbHelper.getDatabaseObjects();
+    const objs = await dbHelper.getDatabaseObjects(connId);
     setFunctions(objs.functions || []);
     setProcedures(objs.procedures || []);
     setRefreshing(false);
+  };
+
+  // `fetchTables` giờ BẮT `connId`, nên hai effect dưới không được giữ closure của lần render cũ:
+  // sau khi đổi kết nối, một handler cũ sẽ nạp bảng của kết nối trước. Nó lại là hàm thường (identity
+  // đổi mỗi render) nên đưa thẳng vào deps là vòng lặp vô tận — đọc qua ref là khuôn `CLAUDE.md` đã
+  // ghi cho đúng tình huống này.
+  const connIdRef = useRef(connId);
+  connIdRef.current = connId;
+  const fetchTablesRef = useRef(fetchTables);
+  fetchTablesRef.current = fetchTables;
+
+  // Danh sách schema cho ô chọn. Rỗng với MySQL/SQLite (backend trả mảng rỗng), nên chỉ cần
+  // kiểm tra độ dài là biết có hiện ô chọn hay không.
+  //
+  // Nạp lại khi ĐỔI DATABASE: database mới có tập schema riêng, danh sách cũ là của server
+  // trước đó. Giá trị đang chọn thì lấy từ prop `schema` (nguồn là backend), không giữ ở đây —
+  // hai bản sao sẽ lệch nhau ngay lần đổi database đầu tiên.
+  useEffect(() => {
+    if (dbType !== 'postgres') {
+      setSchemas([]);
+      return;
+    }
+    let alive = true;
+    dbHelper.listSchemas(connId).then((res) => {
+      if (alive) setSchemas(res.schemas || []);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [connId, dbType, dbName]);
+
+  // MySQL and MariaDB reach us as the same `dbType`, so the only way to know which server this
+  // is is to ask it — see `isMariaDbVersion`. One `SELECT VERSION()` per connection, and only
+  // on MySQL: Postgres never needs it and SQLite has no server to ask.
+  //
+  // `dbName` is deliberately NOT a dep, unlike the schema list above: switching database keeps
+  // the same server, so the version cannot change and re-probing would be a wasted round trip.
+  //
+  // A failed probe leaves this false, i.e. the gated feature stays hidden. That is the right way
+  // round: a MariaDB user briefly missing the Sequences section beats a MySQL user opening one
+  // whose every write fails.
+  useEffect(() => {
+    if (dbType !== 'mysql') {
+      setIsMariaDb(false);
+      return;
+    }
+    let alive = true;
+    dbHelper.executeQuery(connId, 'SELECT VERSION() AS v').then((res) => {
+      if (alive) setIsMariaDb(isMariaDbVersion(res.data?.[0]?.v));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [connId, dbType]);
+
+  const handleSchemaChange = async (name: string) => {
+    if (!name || name === schema || switchingSchema) return;
+    setSwitchingSchema(true);
+    try {
+      // set_current_schema từ chối schema không tồn tại — báo đúng lời backend thay vì để ô chọn
+      // hiển thị một schema mà mọi truy vấn sau đó không dùng.
+      const res = await dbHelper.setSchema(connId, name);
+      if (res.success) onSchemaChanged?.(res.schema || name);
+      else alert(t('sidebar.errSwitchSchema', { message: res.error || '' }));
+    } finally {
+      setSwitchingSchema(false);
+    }
   };
 
   const handleShowObjectDef = async (name: string, kind: 'view' | 'function' | 'procedure') => {
@@ -868,7 +962,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       onOpenRoutineTab(name, kind);
       return;
     }
-    const res = await dbHelper.getObjectDefinition(name, kind);
+    const res = await dbHelper.getObjectDefinition(connId, name, kind);
     if (res.success && res.sql) {
       setObjDef({ name, kind, sql: res.sql });
     } else {
@@ -876,33 +970,47 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
+  // `schema` cũng nằm trong deps: đổi schema là đổi hẳn tập bảng, y như đổi database.
   useEffect(() => {
-    fetchTables();
+    fetchTablesRef.current();
     // After a database switch the old selection points at names that no longer exist —
     // clear it, and drop the Shift anchor so no range is taken against the previous list.
     setSelection({ section: 'tables', names: [] });
     anchorRef.current = -1;
-  }, [dbName]);
+    // `connId` nằm trong deps: hai kết nối có thể trỏ CÙNG tên database (cùng `sakila` trên hai
+    // server), lúc đó `dbName` không đổi và sidebar sẽ hiện bảng của kết nối cũ.
+  }, [connId, dbName, schema]);
 
   useEffect(() => {
-    const handleGlobalRename = () => {
-      fetchTables();
+    // Only reload for changes on the connection this sidebar is showing. A restore on another
+    // connection used to make every sidebar refetch its whole object list for nothing. An event
+    // without an id is treated as ours, which is how every dispatch looked before they carried one.
+    //
+    // `connIdRef`, not `connId`: putting the id in the deps would tear the listeners down and
+    // re-register them on every connection switch, for a value the handler can simply read.
+    const onChanged = (e: Event) => {
+      const from = (e as CustomEvent<{ connId?: string }>).detail?.connId;
+      if (from && from !== connIdRef.current) return;
+      fetchTablesRef.current();
     };
-    const handleGlobalRestore = () => {
-      fetchTables();
-    };
-    window.addEventListener('table-renamed', handleGlobalRename);
-    window.addEventListener('database-restored', handleGlobalRestore);
+    window.addEventListener('table-renamed', onChanged);
+    window.addEventListener('database-restored', onChanged);
     return () => {
-      window.removeEventListener('table-renamed', handleGlobalRename);
-      window.removeEventListener('database-restored', handleGlobalRestore);
+      window.removeEventListener('table-renamed', onChanged);
+      window.removeEventListener('database-restored', onChanged);
     };
   }, []);
 
-  // Keyboard shortcut to focus search input: Ctrl+P / Cmd+P or Ctrl+K / Cmd+K
+  // Focus ô tìm kiếm: Ctrl+K / Cmd+K.
+  //
+  // `Ctrl+P` đã bị bỏ khỏi đây. Nó là listener trên `window` kèm `preventDefault`, nên nó **giành**
+  // Ctrl+P trước mọi thứ khác — kể cả mục "Ẩn/hiện thanh bên" trong menu thanh tiêu đề, mục đó quảng
+  // cáo `Ctrl+P` nhưng chưa bao giờ chạy. Bộ phím giờ theo VS Code và mỗi phím một nghĩa:
+  // `Ctrl+Shift+P` mở Quick Switcher, `Ctrl+B` ẩn/hiện thanh bên (cả hai ở `TitleBar.tsx`), còn ô
+  // này giữ `Ctrl+K`.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && (e.key.toLowerCase() === 'p' || e.key.toLowerCase() === 'k')) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         inputRef.current?.focus();
         inputRef.current?.select();
@@ -1026,7 +1134,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
 
     try {
-      const res = await dbHelper.renameTable(tableName, newName);
+      const res = await dbHelper.renameTable(connId, tableName, newName);
       if (res.success) {
         alert(t('sidebar.renameTableSuccess'));
         if (onTableRenamed) onTableRenamed(tableName, newName);
@@ -1060,7 +1168,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
     setCreatingView(true);
     setCreateViewError(null);
-    const res = await dbHelper.executeQuery(`CREATE VIEW ${quoted} AS ${body}`);
+    const res = await dbHelper.executeQuery(connId, `CREATE VIEW ${quoted} AS ${body}`);
     setCreatingView(false);
 
     if (res.success) {
@@ -1088,7 +1196,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       // this one's. A failure on one table does not stop the rest — reported in full below.
       const failed: string[] = [];
       for (const name of names) {
-        const res = await dbHelper.truncateTable(name, {
+        const res = await dbHelper.truncateTable(connId, name, {
           restartIdentity,
           disableFk: disableFkCheck,
           cascade,
@@ -1096,7 +1204,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         if (!res.success) failed.push(`${name}: ${res.error || ''}`);
       }
 
-      window.dispatchEvent(new CustomEvent('database-restored'));
+      window.dispatchEvent(new CustomEvent('database-restored', { detail: { connId } }));
       fetchTables();
 
       if (failed.length === 0) {
@@ -1128,7 +1236,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       // the rest. onTableDropped fires per dropped object so App closes exactly those tabs.
       const failed: string[] = [];
       for (const name of names) {
-        const res = await dbHelper.dropTable(name, { isView, cascade, ignoreFk: ignoreFkCheck });
+        const res = await dbHelper.dropTable(connId, name, { isView, cascade, ignoreFk: ignoreFkCheck });
         if (res.success) onTableDropped?.(name);
         else failed.push(`${name}: ${res.error || ''}`);
       }
@@ -1232,6 +1340,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const isExpanded = !!expandedTables[item.name];
     return (
       <ObjectItem
+        connId={connId}
         key={item.name}
         item={item}
         section={section}
@@ -1279,6 +1388,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </button>
         ))}
       </div>
+
+      {/* Ô chọn schema — chỉ Postgres. MySQL coi schema là database (đã có ô chọn database ở
+          thanh tiêu đề) và SQLite thì luôn là `main`, nên `list_schemas` trả rỗng ở cả hai và
+          khối này tự biến mất mà không cần kiểm tra dbType ở đây. */}
+      {schemas.length > 0 && (
+        <div className="sidebar-schema-bar">
+          <Layers size={13} className="sidebar-schema-icon" />
+          <select
+            className="form-input sidebar-schema-select"
+            value={schema ?? ''}
+            disabled={switchingSchema}
+            title={t('sidebar.schemaHint')}
+            aria-label={t('sidebar.schema')}
+            onChange={(e) => handleSchemaChange(e.target.value)}
+          >
+            {/* Chỉ xuất hiện khi backend chưa báo được schema nào (probe lỗi) — không để ô chọn
+                hiện bừa một tên mà backend không dùng. */}
+            {!schema && <option value="">{t('sidebar.schema')}</option>}
+            {schemas.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {/* Top Search Input with Left Search Icon & Right Sliders Icon */}
       <div className="sidebar-search-container" style={{ padding: '4px 8px' }}>
@@ -1577,8 +1712,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
             )}
 
-            {/* 5. Sequences Section */}
-            {(dbType === 'postgres' || dbType === 'mysql') && (
+            {/* 5. Sequences Section — Postgres and MariaDB only. MySQL has no `CREATE SEQUENCE`, and
+                both arrive here as `dbType === 'mysql'`, so the distinction comes from the version
+                probe above rather than from `dbType`. */}
+            {(dbType === 'postgres' || isMariaDb) && (
               <div style={{ marginBottom: '6px' }}>
                 <div
                   className="sidebar-section-title"
@@ -2430,11 +2567,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
       )}
 
       {showSequencesModal && (
-        <SequenceManagerModal onClose={() => setShowSequencesModal(false)} />
+        <SequenceManagerModal
+          connId={connId}
+          dbType={dbType}
+          onClose={() => setShowSequencesModal(false)}
+        />
       )}
 
       {objDef && objDef.kind === 'view' && (
         <ViewEditorModal
+          connId={connId}
           name={objDef.name}
           initialSql={objDef.sql}
           onClose={() => setObjDef(null)}
@@ -2444,6 +2586,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {objDef && (objDef.kind === 'procedure' || objDef.kind === 'function') && (
         <RoutineEditorModal
+          connId={connId}
           name={objDef.name}
           kind={objDef.kind}
           initialSql={objDef.sql}
@@ -2453,6 +2596,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       )}
       {showCreateRoutine && (
         <CreateRoutineModal
+          connId={connId}
           dbType={dbType}
           onClose={() => setShowCreateRoutine(false)}
           onCreated={() => fetchTables()}
@@ -2623,6 +2767,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </ModalFooter>
         </Modal>
       )}
+
+      {/* zIndex above the sidebar's own 999999 dialogs. */}
+      <ConfirmDialog
+        open={!!switchToNewDb}
+        tone="success"
+        zIndex={1000000}
+        title={t('sidebar.createdDbTitle')}
+        message={t('sidebar.createdDbSwitch', { name: switchToNewDb || '' })}
+        onConfirm={async () => {
+          const name = switchToNewDb;
+          setSwitchToNewDb(null);
+          if (!name) return;
+          const res = await dbHelper.openDatabase(connId, name);
+          if (res.success && res.connId) onDatabaseOpened?.(res.connId, res.database || name, res.schema);
+          else alert(t('sidebar.errOpenDb', { message: res.error || '' }));
+        }}
+        onCancel={() => setSwitchToNewDb(null)}
+      />
     </div>
   );
 };

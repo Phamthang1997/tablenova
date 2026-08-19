@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Plus, Save, Trash2, X, Users, RefreshCw, Check, HandGrab } from 'lucide-react';
 import { dbHelper } from '../../utils/dbHelper';
 import { ConfirmDialog } from '../ConfirmDialog';
-import { ELEMENT_PAGE, cellStyle, inlineInput, pillStyle } from './shared';
+import { ELEMENT_PAGE } from './shared';
 
 interface StreamPanelProps {
   keyName: string;
@@ -92,18 +92,13 @@ export const StreamPanel: React.FC<StreamPanelProps> = ({
     setFields((prev) => prev.map((f, j) => (j === i ? { ...f, ...part } : f)));
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', minHeight: 0 }}>
-      <div style={{ display: 'flex', gap: '6px' }}>
+    <div className="redis-stream">
+      <div className="redis-stream-tabs">
         {([['entries', t('redis.streamEntries')], ['groups', t('redis.streamGroups')]] as const).map(([id, label]) => (
           <button
             key={id}
-            className="btn btn-secondary"
+            className={`btn btn-secondary redis-value-btn wide${tab === id ? ' active' : ''}`}
             onClick={() => setTab(id)}
-            style={{
-              padding: '0 10px',
-              borderColor: tab === id ? 'var(--win-accent)' : undefined,
-              color: tab === id ? 'var(--win-accent)' : undefined,
-            }}
           >
             {label}
           </button>
@@ -112,50 +107,50 @@ export const StreamPanel: React.FC<StreamPanelProps> = ({
 
       {tab === 'entries' ? (
         <>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '10px', color: 'var(--win-text-disabled)' }}>
+          <div className="redis-stream-bar">
+            <span className="redis-value-meta">
               {total != null && total > entries.length
                 ? t('redis.elementsOf', { n: entries.length.toLocaleString(), total: total.toLocaleString() })
                 : t('redis.elementCount', { n: entries.length.toLocaleString() })}
             </span>
-            <span style={{ fontSize: '10px', color: 'var(--win-text-disabled)' }}>{t('redis.streamImmutable')}</span>
-            <div style={{ flex: 1 }} />
-            <button className="btn btn-secondary" onClick={() => setAdding(true)} disabled={adding || busy || readOnly} style={{ padding: '0 10px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <span className="redis-value-meta">{t('redis.streamImmutable')}</span>
+            <div className="redis-keylist-spacer" />
+            <button className="btn btn-secondary redis-value-save" onClick={() => setAdding(true)} disabled={adding || busy || readOnly}>
               <Plus size={11} /> {t('redis.streamAddEntry')}
             </button>
           </div>
 
           {adding && (
-            <div style={{ border: '1px solid var(--win-accent)', borderRadius: '4px', padding: '8px', background: 'var(--win-bg-window)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <div className="redis-stream-form">
               <input
                 type="text"
                 value={newId}
                 onChange={(e) => setNewId(e.target.value)}
                 placeholder={t('redis.streamIdPlaceholder')}
                 spellCheck={false}
-                style={{ ...inlineInput, border: '1px solid var(--win-border)', borderRadius: '3px', padding: '4px 6px' }}
+                className="redis-inline-input boxed"
               />
               {fields.map((f, i) => (
-                <div key={i} style={{ display: 'flex', gap: '4px' }}>
-                  <input type="text" value={f.field} onChange={(e) => patch(i, { field: e.target.value })} placeholder="field" spellCheck={false} style={{ ...inlineInput, flex: '0 0 32%', border: '1px solid var(--win-border)', borderRadius: '3px', padding: '4px 6px' }} />
-                  <input type="text" value={f.value} onChange={(e) => patch(i, { value: e.target.value })} placeholder="value" spellCheck={false} style={{ ...inlineInput, flex: 1, border: '1px solid var(--win-border)', borderRadius: '3px', padding: '4px 6px' }} />
+                <div key={i} className="redis-stream-field-row">
+                  <input type="text" value={f.field} onChange={(e) => patch(i, { field: e.target.value })} placeholder="field" spellCheck={false} className="redis-inline-input boxed field" />
+                  <input type="text" value={f.value} onChange={(e) => patch(i, { value: e.target.value })} placeholder="value" spellCheck={false} className="redis-inline-input boxed grow" />
                   <button
                     onClick={() => setFields((prev) => (prev.length > 1 ? prev.filter((_, j) => j !== i) : prev))}
                     disabled={fields.length === 1}
                     title={t('redis.delete')}
-                    style={{ background: 'transparent', border: 'none', color: 'var(--st-danger)', cursor: fields.length === 1 ? 'default' : 'pointer', opacity: fields.length === 1 ? 0.4 : 1, padding: '0 2px' }}
+                    className="redis-cell-btn danger"
                   >
                     <X size={13} />
                   </button>
                 </div>
               ))}
-              <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                <button className="btn btn-secondary" onClick={() => setFields((prev) => [...prev, { field: '', value: '' }])} style={{ padding: '0 8px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <div className="redis-stream-form-actions">
+                <button className="btn btn-secondary redis-keylist-mode" onClick={() => setFields((prev) => [...prev, { field: '', value: '' }])}>
                   <Plus size={10} /> {t('redis.streamAddField')}
                 </button>
-                <div style={{ flex: 1 }} />
-                <button className="btn btn-secondary" onClick={resetForm} disabled={busy} style={{ padding: '0 10px' }}>{t('common.cancel')}</button>
-                <button className="btn btn-primary" onClick={submitAdd} disabled={busy} style={{ padding: '0 10px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <div className="redis-keylist-spacer" />
+                <button className="btn btn-secondary redis-value-btn wide" onClick={resetForm} disabled={busy}>{t('common.cancel')}</button>
+                <button className="btn btn-primary redis-value-save" onClick={submitAdd} disabled={busy}>
                   <Save size={11} /> {t('common.save')}
                 </button>
               </div>
@@ -163,32 +158,32 @@ export const StreamPanel: React.FC<StreamPanelProps> = ({
           )}
 
           {entries.length === 0 && !adding && (
-            <div style={{ fontSize: '11px', color: 'var(--win-text-disabled)' }}>{t('redis.emptyCollection')}</div>
+            <div className="redis-stream-empty">{t('redis.emptyCollection')}</div>
           )}
           {entries.map((e: any, i: number) => (
-            <div key={e.id ?? i} style={{ border: '1px solid var(--win-border)', borderRadius: '4px', padding: '8px', background: 'var(--win-bg-window)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
-                <span style={{ fontSize: '10px', fontWeight: 700, color: 'var(--win-accent)', fontFamily: 'var(--win-font-mono)' }}>{e.id}</span>
-                <div style={{ flex: 1 }} />
+            <div key={e.id ?? i} className="redis-stream-entry">
+              <div className="redis-stream-entry-head">
+                <span className="redis-stream-entry-id">{e.id}</span>
+                <div className="redis-keylist-spacer" />
                 {!readOnly && (
                   <button
                     onClick={() => setPendingDelete(e.id)}
                     disabled={busy}
                     title={t('redis.delete')}
-                    style={{ background: 'transparent', border: 'none', color: 'var(--st-danger)', cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.5 : 1, padding: '2px', display: 'flex' }}
+                    className="redis-cell-btn danger"
                   >
                     <Trash2 size={12} />
                   </button>
                 )}
               </div>
-              <div style={{ border: '1px solid var(--win-border)', borderRadius: '4px', overflow: 'auto' }}>
-                <table className="grid-table" style={{ width: '100%' }}>
+              <div className="redis-table-wrap flat">
+                <table className="grid-table redis-table">
                   <thead><tr><th>Field</th><th>Value</th></tr></thead>
                   <tbody>
                     {(e.fields || []).map((f: any, j: number) => (
                       <tr key={j}>
-                        <td style={cellStyle}>{f.field}</td>
-                        <td style={cellStyle}>{typeof f.value === 'object' ? JSON.stringify(f.value) : String(f.value)}</td>
+                        <td className="redis-cell">{f.field}</td>
+                        <td className="redis-cell">{typeof f.value === 'object' ? JSON.stringify(f.value) : String(f.value)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -198,7 +193,7 @@ export const StreamPanel: React.FC<StreamPanelProps> = ({
           ))}
 
           {!done && (
-            <button className="btn btn-secondary" onClick={loadMore} disabled={loading} style={{ padding: '0 10px', alignSelf: 'flex-start' }}>
+            <button className="btn btn-secondary redis-value-btn wide start" onClick={loadMore} disabled={loading}>
               {loading ? t('redis.loading') : t('redis.loadMoreElements', { n: ELEMENT_PAGE })}
             </button>
           )}
@@ -281,27 +276,27 @@ const ConsumerGroups: React.FC<GroupsProps> = ({ keyName, readOnly, onError, onO
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-        <Users size={12} style={{ color: 'var(--win-accent)' }} />
+    <div className="redis-stream groups">
+      <div className="redis-value-bar">
+        <Users size={12} className="redis-keylist-db-icon" />
         <select
           value={group}
           onChange={(e) => setGroup(e.target.value)}
-          style={{ background: 'var(--win-bg-window)', border: '1px solid var(--win-border)', color: 'var(--win-text-primary)', borderRadius: '4px', fontSize: '11px', padding: '3px 6px' }}
+          className="redis-keylist-select wide"
         >
           <option value="">{t('redis.pickGroup')}</option>
           {groups.map((g: any) => <option key={String(g.name)} value={String(g.name)}>{String(g.name)}</option>)}
         </select>
-        <button className="btn btn-secondary" onClick={loadGroups} disabled={loading} style={{ padding: '0 8px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+        <button className="btn btn-secondary redis-keylist-mode" onClick={loadGroups} disabled={loading}>
           <RefreshCw size={11} /> {t('redis.refresh')}
         </button>
       </div>
 
       {groups.length === 0 ? (
-        <div style={{ fontSize: '11px', color: 'var(--win-text-disabled)' }}>{t('redis.noGroups')}</div>
+        <div className="redis-stream-empty">{t('redis.noGroups')}</div>
       ) : (
-        <div style={{ border: '1px solid var(--win-border)', borderRadius: '4px', overflow: 'auto', background: 'var(--win-bg-window)' }}>
-          <table className="grid-table" style={{ width: '100%' }}>
+        <div className="redis-table-wrap">
+          <table className="grid-table redis-table">
             <thead>
               <tr>
                 <th>{t('redis.colGroup')}</th>
@@ -313,10 +308,10 @@ const ConsumerGroups: React.FC<GroupsProps> = ({ keyName, readOnly, onError, onO
             <tbody>
               {groups.map((g: any) => (
                 <tr key={String(g.name)}>
-                  <td style={cellStyle}>{String(g.name)}</td>
-                  <td style={cellStyle}>{String(g.consumers ?? '-')}</td>
-                  <td style={cellStyle}>{String(g.pending ?? '-')}</td>
-                  <td style={cellStyle}>{String(g['last-delivered-id'] ?? '-')}</td>
+                  <td className="redis-cell">{String(g.name)}</td>
+                  <td className="redis-cell">{String(g.consumers ?? '-')}</td>
+                  <td className="redis-cell">{String(g.pending ?? '-')}</td>
+                  <td className="redis-cell">{String(g['last-delivered-id'] ?? '-')}</td>
                 </tr>
               ))}
             </tbody>
@@ -326,9 +321,9 @@ const ConsumerGroups: React.FC<GroupsProps> = ({ keyName, readOnly, onError, onO
 
       {group && (
         <>
-          <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-primary)' }}>{t('redis.consumersOf', { group })}</div>
-          <div style={{ border: '1px solid var(--win-border)', borderRadius: '4px', overflow: 'auto', background: 'var(--win-bg-window)' }}>
-            <table className="grid-table" style={{ width: '100%' }}>
+          <div className="redis-stream-subtitle">{t('redis.consumersOf', { group })}</div>
+          <div className="redis-table-wrap">
+            <table className="grid-table redis-table">
               <thead>
                 <tr>
                   <th>{t('redis.colConsumer')}</th>
@@ -338,63 +333,63 @@ const ConsumerGroups: React.FC<GroupsProps> = ({ keyName, readOnly, onError, onO
               </thead>
               <tbody>
                 {consumers.length === 0 && (
-                  <tr><td colSpan={3} style={{ textAlign: 'center', padding: '8px', color: 'var(--win-text-disabled)' }}>{t('redis.noConsumers')}</td></tr>
+                  <tr><td colSpan={3} className="redis-table-empty">{t('redis.noConsumers')}</td></tr>
                 )}
                 {consumers.map((c: any) => (
                   <tr key={String(c.name)}>
-                    <td style={cellStyle}>{String(c.name)}</td>
-                    <td style={cellStyle}>{String(c.pending ?? '-')}</td>
-                    <td style={cellStyle}>{String(c.idle ?? '-')}</td>
+                    <td className="redis-cell">{String(c.name)}</td>
+                    <td className="redis-cell">{String(c.pending ?? '-')}</td>
+                    <td className="redis-cell">{String(c.idle ?? '-')}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-primary)' }}>{t('redis.pendingEntries')}</span>
+          <div className="redis-value-bar">
+            <span className="redis-stream-subtitle">{t('redis.pendingEntries')}</span>
             {!readOnly && (
               <>
-                <span style={{ fontSize: '10px', color: 'var(--win-text-disabled)' }}>{t('redis.claimAs')}</span>
+                <span className="redis-value-meta">{t('redis.claimAs')}</span>
                 <input
                   type="text"
                   value={claimAs}
                   onChange={(e) => setClaimAs(e.target.value)}
                   placeholder="consumer"
                   spellCheck={false}
-                  style={{ ...inlineInput, width: '140px', border: '1px solid var(--win-border)', padding: '3px 6px' }}
+                  className="redis-inline-input boxed fixed"
                 />
               </>
             )}
           </div>
-          <div style={{ border: '1px solid var(--win-border)', borderRadius: '4px', overflow: 'auto', background: 'var(--win-bg-window)' }}>
-            <table className="grid-table" style={{ width: '100%' }}>
+          <div className="redis-table-wrap">
+            <table className="grid-table redis-table">
               <thead>
                 <tr>
                   <th>ID</th>
                   <th>{t('redis.colConsumer')}</th>
                   <th>{t('redis.colIdle')}</th>
                   <th>{t('redis.colDeliveries')}</th>
-                  {!readOnly && <th style={{ width: '80px' }} />}
+                  {!readOnly && <th className="redis-actions-col wide" />}
                 </tr>
               </thead>
               <tbody>
                 {pending.length === 0 && (
-                  <tr><td colSpan={readOnly ? 4 : 5} style={{ textAlign: 'center', padding: '8px', color: 'var(--win-text-disabled)' }}>{t('redis.noPending')}</td></tr>
+                  <tr><td colSpan={readOnly ? 4 : 5} className="redis-table-empty">{t('redis.noPending')}</td></tr>
                 )}
                 {pending.map((p: any) => (
                   <tr key={p.id}>
-                    <td style={cellStyle}>{p.id}</td>
-                    <td style={cellStyle}>{p.consumer}</td>
-                    <td style={cellStyle}>{p.idleMs} ms</td>
-                    <td style={cellStyle}>{p.deliveryCount}</td>
+                    <td className="redis-cell">{p.id}</td>
+                    <td className="redis-cell">{p.consumer}</td>
+                    <td className="redis-cell">{p.idleMs} ms</td>
+                    <td className="redis-cell">{p.deliveryCount}</td>
                     {!readOnly && (
-                      <td style={cellStyle}>
-                        <div style={{ display: 'flex', gap: '2px' }}>
-                          <button onClick={() => ack(p.id)} title="XACK" style={{ background: 'transparent', border: 'none', color: 'var(--st-ok, #10b981)', cursor: 'pointer', padding: '2px', display: 'flex' }}>
+                      <td className="redis-cell">
+                        <div className="redis-cell-actions">
+                          <button onClick={() => ack(p.id)} title="XACK" className="redis-cell-btn ok">
                             <Check size={12} />
                           </button>
-                          <button onClick={() => claim(p.id)} title="XCLAIM" style={{ background: 'transparent', border: 'none', color: 'var(--win-accent)', cursor: 'pointer', padding: '2px', display: 'flex' }}>
+                          <button onClick={() => claim(p.id)} title="XCLAIM" className="redis-cell-btn accent">
                             <HandGrab size={12} />
                           </button>
                         </div>
@@ -405,7 +400,7 @@ const ConsumerGroups: React.FC<GroupsProps> = ({ keyName, readOnly, onError, onO
               </tbody>
             </table>
           </div>
-          <div style={{ ...pillStyle, cursor: 'default', alignSelf: 'flex-start' }}>{t('redis.pendingNote')}</div>
+          <div className="redis-pill static">{t('redis.pendingNote')}</div>
         </>
       )}
     </div>

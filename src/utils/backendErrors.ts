@@ -22,6 +22,9 @@ import i18n from '../i18n';
 /** Backend messages with no interpolation — matched whole, after trimming. */
 export const EXACT: Record<string, string> = {
   'Chưa kết nối CSDL': 'backend.notConnected',
+  'Kết nối đang ở chế độ chỉ đọc — tắt chế độ này trước khi ghi': 'backend.connReadOnly',
+  // oauth.rs — client id được nạp lúc biên dịch, có thể rỗng
+  'Chưa cấu hình Google OAuth client id cho bản dựng này': 'backend.oauthClientMissing',
   // tx_session.rs — transaction thủ công
   'Không có transaction nào đang mở': 'backend.txNotOpen',
   'Transaction đã bị huỷ do lỗi trước đó, chỉ có thể rollback': 'backend.txAborted',
@@ -64,6 +67,8 @@ export const EXACT: Record<string, string> = {
   'SQLite không hỗ trợ xóa database': 'backend.sqliteNoDropDb',
   'SQLite không hỗ trợ tạo database (mỗi tệp là một database)': 'backend.sqliteNoCreateDb',
   'SQLite không hỗ trợ nhiều database trên một kết nối': 'backend.sqliteSingleDb',
+  'Chỉ PostgreSQL mới hỗ trợ chọn schema': 'backend.schemaOnlyPostgres',
+  'Thiếu tên schema': 'backend.missingSchemaName',
   'CASCADE chỉ được hỗ trợ trên PostgreSQL': 'backend.cascadeOnlyPostgres',
   'Phiên terminal đã đóng': 'backend.terminalClosed',
   'Tham số truy vấn chỉ hỗ trợ một câu lệnh. Vui lòng chạy từng câu lệnh riêng hoặc tắt Tham số Truy vấn.':
@@ -139,6 +144,7 @@ export const PATTERNS: { re: RegExp; key: string; nested?: boolean }[] = [
     key: 'backend.redisBlockingCmd',
   },
   { re: /^Chưa hỗ trợ phân trang cho kiểu '([^']*)'$/, key: 'backend.redisNoPagingForType' },
+  { re: /^Schema '([^']*)' không tồn tại$/, key: 'backend.schemaNotFound' },
   // `nested` — the payload is one of our own TLS messages when the dedicated connection fails
   // while building the client, so it has to go through the table instead of staying Vietnamese
   // inside a translated frame.

@@ -447,6 +447,29 @@ describe('findUnsafeStatements', () => {
     expect(kinds('DELETE FROM users WHERE id = 1')).toEqual([]);
   });
 
+  it('cảnh báo UPDATE không có WHERE', () => {
+    expect(kinds('UPDATE users SET active = 0')).toEqual(['updateNoWhere']);
+  });
+
+  it('bỏ qua UPDATE có WHERE', () => {
+    expect(kinds('UPDATE users SET active = 0 WHERE id = 1')).toEqual([]);
+  });
+
+  // Cùng luật mask với DELETE: WHERE nằm trong chuỗi không cứu được câu lệnh.
+  it('vẫn cảnh báo UPDATE khi WHERE chỉ nằm trong chuỗi', () => {
+    expect(kinds("UPDATE users SET note = 'no WHERE here'")).toEqual(['updateNoWhere']);
+  });
+
+  it('cảnh báo TRUNCATE, có hay không có TABLE', () => {
+    expect(kinds('TRUNCATE users')).toEqual(['truncate']);
+    expect(kinds('TRUNCATE TABLE users')).toEqual(['truncate']);
+  });
+
+  it('gom nhiều câu lệnh nguy hiểm trong một script', () => {
+    expect(kinds('UPDATE a SET x = 1; TRUNCATE b; DELETE FROM c WHERE id = 1; DROP TABLE d;'))
+      .toEqual(['updateNoWhere', 'truncate', 'dropTable']);
+  });
+
   it('cảnh báo DROP TABLE (kể cả IF EXISTS / TEMPORARY)', () => {
     expect(kinds('DROP TABLE users')).toEqual(['dropTable']);
     expect(kinds('DROP TABLE IF EXISTS users')).toEqual(['dropTable']);

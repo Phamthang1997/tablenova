@@ -196,20 +196,9 @@ export const COMMANDS: CommandEntry[] = [
 /** Longest-first so `CONFIG GET` wins over `CONFIG` when both could match. */
 const BY_LENGTH = [...COMMANDS].sort((a, b) => b.name.length - a.name.length);
 
-/**
- * Auto-complete candidates for what the user has typed so far. Matches on the whole typed
- * prefix (so `xinfo g` finds `XINFO GROUPS`, not just `XINFO`).
- */
-export function matchCommands(input: string, limit = 8): CommandEntry[] {
-  const q = input.trimStart().toUpperCase();
-  if (!q) return [];
-  const out: CommandEntry[] = [];
-  for (const c of COMMANDS) {
-    if (c.name.startsWith(q)) out.push(c);
-    if (out.length >= limit) break;
-  }
-  return out;
-}
+// `matchCommands` từng ở đây: nó lọc danh sách gợi ý cho popup tự viết của console cũ. Monaco tự
+// lọc theo tiền tố người dùng gõ, nên provider trong `redisLanguage.ts` đưa cả bảng và không cần
+// hàm này nữa.
 
 /**
  * Syntax hint for the command already typed on the line, or `null` when it is not in the

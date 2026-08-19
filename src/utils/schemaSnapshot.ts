@@ -4,6 +4,7 @@
 // Tái dùng backend previewAlterTableSchema để sinh ALTER cho bảng thay đổi.
 
 import { dbHelper, type SchemaInfo, type ColumnInfo } from './dbHelper';
+import { editorConnId } from '../sql/editorScope';
 
 export interface TableSnapshot {
   schema: SchemaInfo;
@@ -45,12 +46,12 @@ export function deleteSnapshot(name: string): void {
 
 // Chụp schema hiện tại: duyệt các bảng, lấy cấu trúc + DDL từng bảng.
 export async function captureCurrentSchema(name: string, dbType: string, database?: string): Promise<SchemaSnapshot> {
-  const items = await dbHelper.getTables();
+  const items = await dbHelper.getTables(editorConnId());
   const tables: Record<string, TableSnapshot> = {};
   for (const it of items) {
     if (it.type !== 'table') continue; // chỉ bảng (bỏ view) cho migration
-    const schema = await dbHelper.getTableSchema(it.name);
-    const def = await dbHelper.getTableDefinition(it.name);
+    const schema = await dbHelper.getTableSchema(editorConnId(), it.name);
+    const def = await dbHelper.getTableDefinition(editorConnId(), it.name);
     tables[it.name] = { schema, ddl: def.sql || '' };
   }
   return { name, createdAt: new Date().toISOString(), dbType, database, tables };
@@ -176,7 +177,7 @@ export async function buildMigrationSql(
 
   for (const ch of diff.changedTables) {
     lines.push(`-- [~] Thay đổi bảng: ${ch.table} (${ch.summary.join(', ')})`);
-    const res = await dbHelper.previewAlterTableSchema(ch.table, ch.payload);
+    const res = await dbHelper.previewAlterTableSchema(editorConnId(), ch.table, ch.payload);
     const body = (res.sqls || []).join('\n').trim();
     if (body) {
       lines.push(body.endsWith(';') ? body : body + ';');

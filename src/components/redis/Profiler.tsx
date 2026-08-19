@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Activity, AlertTriangle, Play, Square, Trash2 } from 'lucide-react';
 import { dbHelper } from '../../utils/dbHelper';
 import { ConfirmDialog } from '../ConfirmDialog';
-import { logBox } from './shared';
+
 
 interface ProfilerProps {
   onError: (msg: string) => void;
@@ -89,17 +89,17 @@ export const Profiler: React.FC<ProfilerProps> = ({ onError }) => {
     : lines;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '8px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--win-text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+    <div className="redis-console">
+      <div className="redis-value-bar">
+        <span className="redis-tool-title">
           <Activity size={14} /> {t('redis.profilerTitle')}
         </span>
         {running ? (
-          <button className="btn btn-secondary" onClick={stop} style={{ padding: '0 12px', display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--st-danger)' }}>
+          <button className="btn btn-secondary redis-tool-btn danger" onClick={stop}>
             <Square size={10} /> {t('redis.profilerStop')}
           </button>
         ) : (
-          <button className="btn btn-primary" onClick={() => setConfirmStart(true)} style={{ padding: '0 12px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <button className="btn btn-primary redis-tool-btn" onClick={() => setConfirmStart(true)}>
             <Play size={11} /> {t('redis.profilerStart')}
           </button>
         )}
@@ -109,42 +109,42 @@ export const Profiler: React.FC<ProfilerProps> = ({ onError }) => {
           onChange={(e) => setFilter(e.target.value)}
           placeholder={t('redis.profilerFilter')}
           spellCheck={false}
-          style={{ width: '160px', background: 'var(--win-bg-window)', border: '1px solid var(--win-border)', color: 'var(--win-text-primary)', borderRadius: '4px', fontSize: '11px', fontFamily: 'var(--win-font-mono)', padding: '4px 8px', outline: 'none' }}
+          className="redis-tool-input fixed"
         />
-        <label style={{ fontSize: '10px', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: 'var(--win-text-secondary)' }}>
+        <label className="redis-tool-check">
           <input type="checkbox" defaultChecked onChange={(e) => { followRef.current = e.target.checked; }} />
           {t('redis.followTail')}
         </label>
-        <div style={{ flex: 1 }} />
-        <span style={{ fontSize: '10px', color: 'var(--win-text-disabled)' }}>
+        <div className="redis-keylist-spacer" />
+        <span className="redis-value-meta">
           {t('redis.profilerLineCount', { n: lines.length.toLocaleString() })}
           {dropped > 0 ? ` · ${t('redis.messagesDropped', { n: dropped.toLocaleString() })}` : ''}
         </span>
         <button
           onClick={() => { setLines([]); setDropped(0); }}
           disabled={lines.length === 0}
-          style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '4px', border: '1px solid var(--win-border)', background: 'transparent', color: 'var(--win-text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+          className="redis-ghost-btn"
         >
           <Trash2 size={10} /> {t('redis.clearLog')}
         </button>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '10px', color: '#f59e0b' }}>
+      <div className="redis-value-warn">
         <AlertTriangle size={12} /> {t('redis.profilerCostNote')}
       </div>
 
       {stopReason && (
-        <div style={{ fontSize: '10px', color: 'var(--win-text-secondary)' }}>{reasonText(stopReason)}</div>
+        <div className="redis-value-label">{reasonText(stopReason)}</div>
       )}
 
-      <div ref={logRef} style={logBox}>
+      <div ref={logRef} className="redis-log-box">
         {shown.length === 0 && (
-          <div style={{ color: 'var(--win-text-disabled)' }}>
+          <div className="redis-cell-hint">
             {running ? t('redis.profilerWaiting') : t('redis.profilerHint')}
           </div>
         )}
         {shown.map((l, i) => (
-          <div key={i} style={{ whiteSpace: 'pre-wrap', color: 'var(--win-text-primary)' }}>{l}</div>
+          <div key={i} className="redis-log-payload wrap">{l}</div>
         ))}
       </div>
 

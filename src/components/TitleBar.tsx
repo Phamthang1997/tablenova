@@ -1,24 +1,31 @@
-import React, { useState, useEffect } from 'react';
-import { createPortal } from 'react-dom';
+import React, { useState, useEffect, useRef } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import {
   Minus, Square, X, Plus, Unplug, FileCode, HardDriveDownload, HardDriveUpload,
   PanelLeft, SunMoon, RotateCw, Info, Keyboard, Check, Database,
-  GitBranch, PanelBottom, Bot, Lock, LockOpen, ChevronUp, ChevronRight, ChevronLeft, Trash2, BarChart3, BookOpen,
+  GitBranch, PanelBottom, Bot, ChevronRight, ChevronLeft, BookOpen, Sparkles,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { SUPPORTED_LANGUAGES, currentLanguage } from '../i18n';
 import { DbConnectionStatusPill } from './DbConnectionStatusPill';
 import { TxControl } from './TxControl';
+import { SafeModeControl } from './SafeModeControl';
 import { ConnectionInfoPopover } from './ConnectionInfoPopover';
+import { QuickSwitcherPopover, type SwitcherConn } from './QuickSwitcherPopover';
+import type { SavedProfile } from './ConnectionManager';
 import { dbHelper } from '../utils/dbHelper';
 import type { ConnectionStatus } from '../utils/dbHelper';
+import type { ConnEnv } from '../utils/connEnv';
 import { Modal, ModalBody, ModalFooter } from './Modal';
 import { ConfirmDialog } from './ConfirmDialog';
 
 interface TitleBarProps {
   hasConnection: boolean;
+  /** Kết nối đang hiển thị — `TxControl` lọc sự kiện `tx-state-changed` theo id này. */
+  connId?: string;
+  /** `connKey(config)` của kết nối đang xem — Safe Mode lưu theo server. Xem SafeModeControl.tsx. */
+  connKey?: string;
   readOnly?: boolean;
   onToggleReadOnly?: () => void;
   activeConnectionInfo?: {
@@ -31,7 +38,9 @@ interface TitleBarProps {
   /** Tên + màu của profile đang kết nối, hiển thị & sửa được trong popover kết nối. */
   activeProfileName?: string;
   activeProfileColor?: string;
-  onProfileChange?: (patch: { name?: string; color?: string }) => void;
+  /** Môi trường của kết nối đang xem. Trường riêng của profile, không suy từ màu. */
+  activeProfileEnv?: ConnEnv;
+  onProfileChange?: (patch: { name?: string; color?: string; env?: ConnEnv }) => void;
   theme?: 'dark' | 'light';
   onThemeChange?: (theme: 'dark' | 'light') => void;
   onReconnect?: () => Promise<{ success: boolean; message?: string }>;
@@ -45,11 +54,20 @@ interface TitleBarProps {
   onToggleTheme?: () => void;
   onShowShortcuts?: () => void;
   onShowAbout?: () => void;
+  onShowWhatsNew?: () => void;
   onToggleTerminal?: () => void;
   /** Panel AI Copilot đang mở -> tô nút bằng màu accent. */
   aiOpen?: boolean;
   onToggleAiAssistant?: () => void;
-  onDatabaseChanged?: (dbName: string) => void;
+  /** Người dùng chọn một database khác -> backend đã mở nó thành kết nối MỚI (`open_database`). */
+  onDatabaseOpened?: (connId: string, dbName: string, schema?: string | null) => void;
+  /**
+   * Kết nối đang mở, cho Quick Switcher. Truyền vào chứ không đọc `list_connections` ở đây: nhãn,
+   * môi trường và config chỉ App biết (backend không trả config vì nó mang credential).
+   */
+  openConns?: SwitcherConn[];
+  onSelectConnection?: (connId: string) => void;
+  onConnectSavedProfile?: (profile: SavedProfile) => void;
   onOpenAllDbStats?: () => void;
   onOpenDocs?: () => void;
   onOpenCompare?: () => void;
@@ -57,14 +75,17 @@ interface TitleBarProps {
 
 export const TitleBar: React.FC<TitleBarProps> = ({
   hasConnection,
+  connId,
+  connKey = '',
   readOnly = false,
   onToggleReadOnly,
   activeConnectionInfo,
   activeProfileName = '',
   activeProfileColor = '',
+  activeProfileEnv = 'none',
   onProfileChange,
-  theme = 'dark',
-  onThemeChange,
+  theme: _theme = 'dark',
+  onThemeChange: _onThemeChange,
   onReconnect,
   activeTableName,
   onNewConnection,
@@ -76,10 +97,14 @@ export const TitleBar: React.FC<TitleBarProps> = ({
   onToggleTheme,
   onShowShortcuts,
   onShowAbout,
+  onShowWhatsNew,
   onToggleTerminal,
   aiOpen = false,
   onToggleAiAssistant,
-  onDatabaseChanged,
+  onDatabaseOpened,
+  openConns = [],
+  onSelectConnection,
+  onConnectSavedProfile,
   onOpenAllDbStats,
   onOpenDocs,
   onOpenCompare,
@@ -93,9 +118,8 @@ export const TitleBar: React.FC<TitleBarProps> = ({
   // Database Switcher Popover state
   const [showDbPopover, setShowDbPopover] = useState(false);
   const [dbPopoverPos, setDbPopoverPos] = useState<{ top: number; left: number } | null>(null);
-  const [dbList, setDbList] = useState<string[]>([]);
-  const [dbLoading, setDbLoading] = useState(false);
-  const [dbFilter, setDbFilter] = useState('');
+  /** Nút database — neo của popover, cần cả khi mở bằng Ctrl+P (không có sự kiện chuột). */
+  const dbBtnRef = useRef<HTMLButtonElement>(null);
   const [showCreateDbModal, setShowCreateDbModal] = useState(false);
   /** Database awaiting drop confirmation — see handleDropDb. */
   const [dropDbTarget, setDropDbTarget] = useState<string | null>(null);
@@ -149,34 +173,65 @@ export const TitleBar: React.FC<TitleBarProps> = ({
     setShowConnPopover(true);
   };
 
-  const handleOpenDbPopover = async (e: React.MouseEvent<HTMLButtonElement>) => {
+  // Danh sách database do `QuickSwitcherPopover` tự nạp khi nó mở — không nạp trước ở đây nữa: làm
+  // vậy thì popup chỉ hiện sau khi truy vấn xong, tức bấm rồi phải chờ mới thấy gì.
+  //
+  // Vị trí tính từ ref của nút, không từ `e.currentTarget`: `Ctrl+Shift+P` cũng mở popover này và
+  // bàn phím không có sự kiện chuột nào để đọc toạ độ ra.
+  const openDbPopover = () => {
     if (!hasConnection) return;
-    const rect = e.currentTarget.getBoundingClientRect();
+    const rect = dbBtnRef.current?.getBoundingClientRect();
+    if (!rect) return;
     setDbPopoverPos({ top: rect.bottom + 6, left: Math.max(10, rect.left - 100) });
-    setDbFilter('');
     setShowDbPopover(true);
-    setDbLoading(true);
-    try {
-      const res = await dbHelper.listDatabases();
-      setDbList(res.databases || []);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setDbLoading(false);
-    }
   };
 
+  const handleOpenDbPopover = () => openDbPopover();
+
+  /**
+   * Phím tắt điều hướng, theo đúng quy ước VS Code — nơi người dùng đã có phản xạ sẵn.
+   *
+   *   `Ctrl+Shift+P` → Quick Switcher (VS Code: Command Palette)
+   *   `Ctrl+B`       → ẩn/hiện thanh bên
+   *   `Ctrl+K`       → focus ô tìm kiếm của Sidebar (giữ nguyên, xem `Sidebar.tsx`)
+   *
+   * `Ctrl+P` trơn cố ý để trống. Trước đây nó mang **hai** nghĩa và không nghĩa nào là cái người dùng
+   * thấy: menu quảng cáo nó là "ẩn/hiện thanh bên", còn listener của Sidebar giành nó trước để focus
+   * ô tìm kiếm. Giờ mỗi phím có đúng một nghĩa, và nhãn trong menu nói đúng thứ sẽ xảy ra.
+   *
+   * Với Shift giữ, `e.key` của phím P là `'P'` — nên phải `toLowerCase()` rồi mới so.
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k === 'p' && e.shiftKey) {
+        e.preventDefault();
+        if (showDbPopover) setShowDbPopover(false);
+        else openDbPopover();
+      } else if (k === 'b' && !e.shiftKey) {
+        e.preventDefault();
+        onToggleSidebar?.();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // `openDbPopover` đọc `hasConnection` và ref; ref ổn định, nên đây là toàn bộ deps thật.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showDbPopover, hasConnection, onToggleSidebar]);
+
   const handleSwitchDb = async (name: string) => {
-    if (name === activeConnectionInfo?.dbName) {
-      setShowDbPopover(false);
-      return;
-    }
-    setShowDbPopover(false);
-    const res = await dbHelper.switchDatabase(name);
-    if (res.success) {
-      onDatabaseChanged?.(res.database || name);
+    if (name === activeConnectionInfo?.dbName) return;
+    // Picking a database OPENS it as another connection rather than switching this one onto it.
+    // Switching replaced the pool, so it had to refuse whenever the current database had
+    // uncommitted work — a refusal the user could not clear without losing that work. Opening adds
+    // a pool on the same `ServerHandle` (same tunnel, same credentials, no re-auth), so there is
+    // nothing to refuse and the transaction on the old database keeps running.
+    const res = await dbHelper.openDatabase(connId || '', name);
+    if (res.success && res.connId) {
+      onDatabaseOpened?.(res.connId, res.database || name, res.schema);
     } else {
-      alert(`Error switching database: ${res.error}`);
+      alert(t('sidebar.errOpenDb', { message: res.error || '' }));
     }
   };
 
@@ -188,8 +243,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
    * throws "Command not found" and the user sees nothing at all. `alert()` still works
    * because it maps to `message`. Use the app's ConfirmDialog, like every other delete.
    */
-  const handleDropDb = (name: string, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleDropDb = (name: string) => {
     if (readOnly) {
       alert(t('sidebar.errReadOnly'));
       return;
@@ -206,26 +260,20 @@ export const TitleBar: React.FC<TitleBarProps> = ({
     setDropDbTarget(null);
     if (!name) return;
     const res = await dbHelper.dropDatabase(name);
-    if (res.success) {
-      setDbList(prev => prev.filter(d => d !== name));
-    } else {
-      alert(t('sidebar.errDropDb', { message: res.error || '' }));
-    }
+    if (!res.success) alert(t('sidebar.errDropDb', { message: res.error || '' }));
   };
 
   const handleCreateDbSubmit = async () => {
     if (!newDbName.trim()) return;
-    const res = await dbHelper.createDatabase({ name: newDbName.trim() });
+    const res = await dbHelper.createDatabase(connId || '', { name: newDbName.trim() });
     if (res.success) {
       setShowCreateDbModal(false);
       setNewDbName('');
       handleSwitchDb(newDbName.trim());
     } else {
-      alert(`Error creating database: ${res.error}`);
+      alert(t('quickSwitcher.errCreateDb', { message: res.error || '' }));
     }
   };
-
-  const filteredDbList = dbList.filter(d => d.toLowerCase().includes(dbFilter.toLowerCase().trim()));
 
   // Dòng chữ giữa thanh tiêu đề. Ưu tiên số liệu thật của phiên, lùi về
   // activeConnectionInfo khi lần ping đầu chưa về. Postgres trả version dạng
@@ -319,7 +367,9 @@ export const TitleBar: React.FC<TitleBarProps> = ({
     {
       title: t('titlebar.menuView'),
       items: [
-        { label: t('titlebar.toggleSidebar'), Icon: PanelLeft, onClick: onToggleSidebar, shortcut: 'Ctrl+P', disabled: !hasConnection },
+        // `Ctrl+B` chứ không phải `Ctrl+P`: nhãn cũ chưa bao giờ đúng vì listener của Sidebar giành
+        // Ctrl+P trước để focus ô tìm kiếm. Giờ nhãn này có một binding thật đứng sau nó.
+        { label: t('titlebar.toggleSidebar'), Icon: PanelLeft, onClick: onToggleSidebar, shortcut: 'Ctrl+B', disabled: !hasConnection },
         { label: t('titlebar.toggleTheme'), Icon: SunMoon, onClick: onToggleTheme },
         { label: t('titlebar.reload'), Icon: RotateCw, onClick: () => window.location.reload(), separatorBefore: true },
       ],
@@ -338,6 +388,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
       items: [
         { label: t('docs.title'), Icon: BookOpen, onClick: onOpenDocs, shortcut: 'F1' },
         { label: t('titlebar.shortcuts'), Icon: Keyboard, onClick: onShowShortcuts },
+        { label: t('titlebar.whatsNew'), Icon: Sparkles, onClick: onShowWhatsNew },
         { label: t('titlebar.about'), Icon: Info, onClick: onShowAbout, separatorBefore: true },
       ],
     },
@@ -357,17 +408,25 @@ export const TitleBar: React.FC<TitleBarProps> = ({
     el: React.ReactNode;
   }
 
-  // Dựng cụm từ danh sách rồi mới chèn gạch ngăn, để cụm không bao giờ mở đầu
-  // hay kết thúc bằng một gạch mồ côi khi các nút ở giữa bị lọc bỏ.
-  const renderCapsule = (tools: Tool[]) => {
-    const visible = tools.filter(tool => hasConnection || tool.offline);
-    if (visible.length === 0) return null;
+  // Dựng các cụm công cụ theo nhóm logic.
+  // Gạch ngăn chỉ xuất hiện giữa các nhóm chức năng, không xuất hiện giữa từng nút lẻ.
+  const renderCapsuleGroups = (groups: Tool[][]) => {
+    const visibleGroups = groups
+      .map(grp => grp.filter(tool => hasConnection || tool.offline))
+      .filter(grp => grp.length > 0);
+
+    if (visibleGroups.length === 0) return null;
+
     return (
       <div className="tb-capsule">
-        {visible.map((tool, i) => (
-          <React.Fragment key={tool.key}>
-            {i > 0 && <div className="tb-capsule-divider" />}
-            {tool.el}
+        {visibleGroups.map((grp, grpIdx) => (
+          <React.Fragment key={grpIdx}>
+            {grpIdx > 0 && <div className="tb-capsule-divider" />}
+            <div className="tb-capsule-group">
+              {grp.map(tool => (
+                <React.Fragment key={tool.key}>{tool.el}</React.Fragment>
+              ))}
+            </div>
           </React.Fragment>
         ))}
       </div>
@@ -452,143 +511,158 @@ export const TitleBar: React.FC<TitleBarProps> = ({
     ),
   };
 
-  const leftTools: Tool[] = [
-    {
-      key: 'sidebar',
-      el: (
-        <button className="tb-capsule-btn" onClick={onToggleSidebar} title={t('titlebar.toggleSidebar')}>
-          <PanelLeft size={14} />
-        </button>
-      ),
-    },
-    ...(menuOnRight ? [] : [menuTool]),
-    {
-      key: 'new-connection',
-      el: (
-        <button className="tb-capsule-btn" onClick={onNewConnection} title={t('titlebar.newConnection')}>
-          <Unplug size={14} />
-        </button>
-      ),
-    },
-    {
-      key: 'disconnect',
-      el: (
-        <button className="tb-capsule-btn" onClick={onDisconnect} disabled={!hasConnection} title={t('titlebar.disconnect')}>
-          <X size={14} />
-        </button>
-      ),
-    },
-    {
-      key: 'read-only',
-      el: (
-        <button
-          className="tb-capsule-btn"
-          onClick={onToggleReadOnly}
-          style={{ color: readOnly ? '#f59e0b' : 'var(--win-text-secondary)' }}
-          title={readOnly ? t('app.readOnlyOnTitle') : t('app.readOnlyOffTitle')}
-        >
-          {readOnly ? <Lock size={13} color="#f59e0b" /> : <LockOpen size={13} />}
-        </button>
-      ),
-    },
-    {
-      key: 'databases',
-      el: (
-        <button
-          className="tb-capsule-btn"
-          onClick={handleOpenDbPopover}
-          disabled={!hasConnection}
-          title={t('titlebar.menuDatabase')}
-        >
-          <Database size={13} />
-        </button>
-      ),
-    },
-    {
-      key: 'sql',
-      el: (
-        <button
-          className="tb-capsule-btn"
-          onClick={onNewQuery}
-          disabled={!hasConnection}
-          style={{ fontWeight: 700, fontSize: '11px', padding: '0 8px' }}
-          title={t('titlebar.newQuery')}
-        >
-          {t('titlebar.sqlButton')}
-        </button>
-      ),
-    },
+  const leftToolGroups: Tool[][] = [
+    // Nhóm 1: Điều hướng & Menu chính
+    [
+      {
+        key: 'sidebar',
+        el: (
+          <button className="tb-capsule-btn" onClick={onToggleSidebar} title={t('titlebar.toggleSidebar')}>
+            <PanelLeft size={14} />
+          </button>
+        ),
+      },
+      ...(menuOnRight ? [] : [menuTool]),
+    ],
+    // Nhóm 2: Quản lý kết nối & Chế độ an toàn
+    [
+      {
+        key: 'new-connection',
+        el: (
+          <button className="tb-capsule-btn" onClick={onNewConnection} title={t('titlebar.newConnection')}>
+            <Unplug size={14} />
+          </button>
+        ),
+      },
+      {
+        key: 'disconnect',
+        el: (
+          <button className="tb-capsule-btn" onClick={onDisconnect} disabled={!hasConnection} title={t('titlebar.disconnect')}>
+            <X size={14} />
+          </button>
+        ),
+      },
+      {
+        // Chỉ đọc là mức khắt khe nhất của cùng một thang "kết nối này bảo vệ tới đâu", nên nó nằm
+        // trong menu Safe Mode chứ không còn là công tắc riêng: hai nút cạnh nhau bắt người dùng
+        // suy ra từ hai chỗ mới biết một câu DELETE sẽ ra sao. Xem SafeModeControl.tsx.
+        key: 'safe-mode',
+        el: (
+          <SafeModeControl
+            connected={hasConnection}
+            connKey={connKey}
+            readOnly={readOnly}
+            onToggleReadOnly={onToggleReadOnly}
+          />
+        ),
+      },
+    ],
+    // Nhóm 3: Công cụ Database & Query Editor
+    [
+      {
+        key: 'databases',
+        el: (
+          <button
+            ref={dbBtnRef}
+            className="tb-capsule-btn"
+            onClick={handleOpenDbPopover}
+            disabled={!hasConnection}
+            title={`${t('titlebar.menuDatabase')} (Ctrl+Shift+P)`}
+          >
+            <Database size={13} />
+          </button>
+        ),
+      },
+      {
+        key: 'sql',
+        el: (
+          <button
+            className="tb-capsule-btn tb-capsule-btn-sql"
+            onClick={onNewQuery}
+            disabled={!hasConnection}
+            title={t('titlebar.newQuery')}
+          >
+            <FileCode size={13} />
+            <span>{t('titlebar.sqlButton')}</span>
+          </button>
+        ),
+      },
+    ],
   ];
 
-  const rightTools: Tool[] = [
-    ...(menuOnRight ? [menuTool] : []),
-    {
-      key: 'docs',
-      offline: true,
-      el: (
-        <button
-          className="tb-capsule-btn"
-          onClick={onOpenDocs}
-          style={{ padding: '0 8px', display: 'inline-flex', alignItems: 'center', gap: '5px' }}
-          title={t('docs.title') + ' (F1)'}
-        >
-          <BookOpen size={13} style={{ color: 'var(--win-accent)' }} />
-          <span style={{ fontSize: '11px', fontWeight: 600 }}>Docs</span>
-        </button>
-      ),
-    },
-    {
-      key: 'compare',
-      el: (
-        <button
-          className="tb-capsule-btn"
-          disabled={!hasConnection}
-          onClick={onOpenCompare}
-          title={t('titlebar.schemaCompare')}
-        >
-          <GitBranch size={13} />
-        </button>
-      ),
-    },
-    {
-      key: 'reload',
-      offline: true,
-      el: (
-        <button className="tb-capsule-btn" onClick={() => window.location.reload()} title={t('titlebar.reload')}>
-          <RotateCw size={13} />
-        </button>
-      ),
-    },
-    {
-      key: 'shortcuts',
-      offline: true,
-      el: (
-        <button className="tb-capsule-btn" onClick={onShowShortcuts} title={t('titlebar.shortcuts')}>
-          <Keyboard size={13} />
-        </button>
-      ),
-    },
-    {
-      key: 'terminal',
-      el: (
-        <button className="tb-capsule-btn" onClick={onToggleTerminal} title={t('titlebar.toggleTerminal')}>
-          <PanelBottom size={14} />
-        </button>
-      ),
-    },
-    {
-      key: 'ai',
-      el: (
-        <button
-          className="tb-capsule-btn"
-          onClick={onToggleAiAssistant}
-          style={{ color: aiOpen ? 'var(--win-accent)' : undefined }}
-          title={t('app.toggleAiCopilot')}
-        >
-          <Bot size={14} />
-        </button>
-      ),
-    },
+  const rightToolGroups: Tool[][] = [
+    // Nhóm 1: Công cụ làm việc chính (Docs, So sánh, Terminal, AI Copilot)
+    [
+      ...(menuOnRight ? [menuTool] : []),
+      {
+        key: 'docs',
+        offline: true,
+        el: (
+          <button
+            className="tb-capsule-btn tb-capsule-btn-docs"
+            onClick={onOpenDocs}
+            title={t('docs.title') + ' (F1)'}
+          >
+            <BookOpen size={13} style={{ color: 'var(--win-accent)' }} />
+            <span>Docs</span>
+          </button>
+        ),
+      },
+      {
+        key: 'compare',
+        el: (
+          <button
+            className="tb-capsule-btn"
+            disabled={!hasConnection}
+            onClick={onOpenCompare}
+            title={t('titlebar.schemaCompare')}
+          >
+            <GitBranch size={13} />
+          </button>
+        ),
+      },
+      {
+        key: 'terminal',
+        el: (
+          <button className="tb-capsule-btn" onClick={onToggleTerminal} title={t('titlebar.toggleTerminal')}>
+            <PanelBottom size={14} />
+          </button>
+        ),
+      },
+      {
+        key: 'ai',
+        el: (
+          <button
+            className={`tb-capsule-btn ${aiOpen ? 'is-active-accent' : ''}`}
+            onClick={onToggleAiAssistant}
+            title={t('app.toggleAiCopilot')}
+          >
+            <Bot size={14} />
+          </button>
+        ),
+      },
+    ],
+    // Nhóm 2: Tiện ích hệ thống (Phím tắt & Tải lại)
+    [
+      {
+        key: 'shortcuts',
+        offline: true,
+        el: (
+          <button className="tb-capsule-btn" onClick={onShowShortcuts} title={t('titlebar.shortcuts')}>
+            <Keyboard size={13} />
+          </button>
+        ),
+      },
+      {
+        key: 'reload',
+        offline: true,
+        el: (
+          <button className="tb-capsule-btn" onClick={() => window.location.reload()} title={t('titlebar.reload')}>
+            <RotateCw size={13} />
+          </button>
+        ),
+      },
+    ],
   ];
 
   return (
@@ -602,43 +676,38 @@ export const TitleBar: React.FC<TitleBarProps> = ({
           </div>
         )}
 
-        {renderCapsule(leftTools)}
+        {renderCapsuleGroups(leftToolGroups)}
       </div>
 
       {/* Center Status Capsule: Merged Connection Info + Speed Status Pill into 1 single capsule */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0, justifyContent: 'center' }}>
-        <button
-          type="button"
-          className="tb-status-capsule"
-          style={{ margin: 0, gap: '10px', justifyContent: 'center', maxWidth: '750px', padding: '0 14px' }}
-          onClick={handleOpenConnPopover}
-          disabled={!hasConnection}
-          title={hasConnection ? t('connInfo.openTitle') : undefined}
-        >
-          {hasConnection ? (
-            <>
-              {activeProfileColor && (
-                <span
-                  aria-hidden
-                  style={{
-                    width: '8px',
-                    height: '8px',
-                    borderRadius: '50%',
-                    background: activeProfileColor,
-                    flexShrink: 0,
-                  }}
-                />
-              )}
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {statusLine}
-              </span>
-              <div style={{ height: '12px', width: '1px', background: 'var(--win-border)', opacity: 0.6, flexShrink: 0 }} />
-              <DbConnectionStatusPill status={connStatus} />
-            </>
-          ) : (
-            <span style={{ opacity: 0.7 }}>{t('connInfo.notConnected')}</span>
-          )}
-        </button>
+        {hasConnection && (
+          <button
+            type="button"
+            className="tb-status-capsule"
+            style={{ margin: 0, gap: '10px', justifyContent: 'center', maxWidth: '750px', padding: '0 14px' }}
+            onClick={handleOpenConnPopover}
+            title={t('connInfo.openTitle')}
+          >
+            {activeProfileColor && (
+              <span
+                aria-hidden
+                style={{
+                  width: '8px',
+                  height: '8px',
+                  borderRadius: '50%',
+                  background: activeProfileColor,
+                  flexShrink: 0,
+                }}
+              />
+            )}
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {statusLine}
+            </span>
+            <div style={{ height: '12px', width: '1px', background: 'var(--win-border)', opacity: 0.6, flexShrink: 0 }} />
+            <DbConnectionStatusPill status={connStatus} />
+          </button>
+        )}
       </div>
 
       {/* Right Section: Unified Right Toolbar Capsule + Window Controls */}
@@ -647,9 +716,10 @@ export const TitleBar: React.FC<TitleBarProps> = ({
             không ở toolbar của từng tab. Xem TxControl.tsx. */}
         <TxControl
           connected={hasConnection}
-          dbType={(connStatus?.dbType || activeConnectionInfo?.dbType || '').toLowerCase()}
+          connId={connId || ""}
+          dbType={(connStatus?.dbType || activeConnectionInfo?.dbType || "").toLowerCase()}
         />
-        {renderCapsule(rightTools)}
+        {renderCapsuleGroups(rightToolGroups)}
 
         {!isMac && (
           <div className="title-bar-right" style={{ marginLeft: '4px' }}>
@@ -672,9 +742,8 @@ export const TitleBar: React.FC<TitleBarProps> = ({
           status={connStatus}
           profileName={activeProfileName}
           profileColor={activeProfileColor}
+          profileEnv={activeProfileEnv}
           onProfileChange={(patch) => onProfileChange?.(patch)}
-          theme={theme}
-          onThemeChange={(next) => onThemeChange?.(next)}
           onDisconnect={() => {
             setShowConnPopover(false);
             onDisconnect?.();
@@ -688,221 +757,51 @@ export const TitleBar: React.FC<TitleBarProps> = ({
         />
       )}
 
-      {/* Database Switcher Popover Menu (Matching Image 2) */}
-      {showDbPopover && dbPopoverPos && createPortal(
-        <>
-          <div
-            style={{ position: 'fixed', inset: 0, zIndex: 99998 }}
-            onClick={() => setShowDbPopover(false)}
-          />
-          <div
-            className="db-switcher-popover"
-            style={{
-              position: 'fixed',
-              top: `${dbPopoverPos.top}px`,
-              left: `${dbPopoverPos.left}px`,
-              width: '300px',
-              background: 'var(--win-bg-popover)',
-              border: '1px solid var(--win-border)',
-              borderRadius: '12px',
-              boxShadow: '0 10px 30px rgba(0, 0, 0, 0.22)',
-              padding: '12px',
-              zIndex: 99999,
-            }}
-          >
-            {/* Popover Header */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-              <div>
-                <div style={{ fontWeight: 700, fontSize: '15px', color: 'var(--win-text-primary)' }}>
-                  {activeConnectionInfo?.dbName || 'sakila'}
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--win-text-secondary)', marginTop: '2px' }}>
-                  <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#22c55e', display: 'inline-block' }} />
-                  <span>{(activeConnectionInfo?.dbType || 'MYSQL').toUpperCase()} • Connected</span>
-                </div>
-              </div>
-              <button
-                onClick={() => setShowDbPopover(false)}
-                style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--win-text-disabled)', padding: '2px' }}
-              >
-                <ChevronUp size={16} />
-              </button>
-            </div>
-
-            <div style={{ height: '1px', background: 'var(--win-border)', margin: '8px 0', opacity: 0.5 }} />
-
-            {/* Databases Count & Search Filter */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-              <span style={{ fontSize: '10px', fontWeight: 700, color: 'var(--win-text-disabled)', letterSpacing: '0.5px' }}>
-                DATABASES ({filteredDbList.length})
-              </span>
-            </div>
-
-            <div style={{ marginBottom: '8px' }}>
-              <input
-                type="text"
-                placeholder="Filter databases..."
-                value={dbFilter}
-                onChange={(e) => setDbFilter(e.target.value)}
-                className="form-input"
-                style={{ width: '100%', height: '28px', fontSize: '11px', padding: '0 8px', borderRadius: '6px' }}
-                autoFocus
-              />
-            </div>
-
-            {/* Scrollable Databases List */}
-            <div style={{ maxHeight: '200px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-              {dbLoading ? (
-                <div style={{ padding: '12px', textAlign: 'center', fontSize: '11px', color: 'var(--win-text-disabled)' }}>
-                  Loading databases...
-                </div>
-              ) : filteredDbList.length === 0 ? (
-                <div style={{ padding: '12px', textAlign: 'center', fontSize: '11px', color: 'var(--win-text-disabled)' }}>
-                  No databases found
-                </div>
-              ) : (
-                filteredDbList.map((db) => {
-                  const isActive = db === activeConnectionInfo?.dbName;
-                  return (
-                    <div
-                      key={db}
-                      className="db-switcher-row"
-                      onClick={() => handleSwitchDb(db)}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        padding: '5px 8px',
-                        borderRadius: '6px',
-                        cursor: 'pointer',
-                        fontSize: '12px',
-                        background: isActive ? 'var(--win-bg-hover, rgba(0,0,0,0.05))' : 'transparent',
-                        fontWeight: isActive ? 600 : 400,
-                        color: isActive ? 'var(--win-accent)' : 'var(--win-text-primary)',
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0 }}>
-                        <span style={{ width: '14px', display: 'inline-flex', justifyContent: 'center' }}>
-                          {isActive ? <Check size={14} color="var(--win-accent)" /> : null}
-                        </span>
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {db}
-                        </span>
-                      </div>
-
-                      {!isActive && (
-                        <button
-                          className="db-drop-btn"
-                          onClick={(e) => handleDropDb(db, e)}
-                          title={`Drop database ${db}`}
-                          style={{
-                            background: 'transparent',
-                            border: 'none',
-                            color: '#ef4444',
-                            cursor: 'pointer',
-                            padding: '2px',
-                            borderRadius: '4px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            opacity: 0.6,
-                          }}
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      )}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-
-            <div style={{ height: '1px', background: 'var(--win-border)', margin: '8px 0', opacity: 0.5 }} />
-
-            {/* Footer Buttons */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-              <button
-                className="db-footer-btn"
-                onClick={() => {
-                  setShowDbPopover(false);
-                  setShowCreateDbModal(true);
-                }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  background: 'transparent',
-                  border: 'none',
-                  color: 'var(--win-accent)',
-                  fontSize: '12px',
-                  fontWeight: 500,
-                  cursor: 'pointer',
-                  padding: '5px 8px',
-                  borderRadius: '6px',
-                }}
-              >
-                <Plus size={14} />
-                <span>Create new database...</span>
-              </button>
-
-              <button
-                className="db-footer-btn"
-                onClick={() => {
-                  setShowDbPopover(false);
-                  onOpenAllDbStats?.();
-                }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  background: 'transparent',
-                  border: 'none',
-                  color: 'var(--win-text-primary)',
-                  fontSize: '12px',
-                  fontWeight: 500,
-                  cursor: 'pointer',
-                  padding: '5px 8px',
-                  borderRadius: '6px',
-                }}
-              >
-                <BarChart3 size={14} />
-                <span>All database statistics</span>
-              </button>
-            </div>
-          </div>
-        </>,
-        document.body
+      {showDbPopover && dbPopoverPos && (
+        <QuickSwitcherPopover
+          anchor={dbPopoverPos}
+          activeConnId={connId || ''}
+          activeDbName={activeConnectionInfo?.dbName}
+          openConns={openConns}
+          onSelectConnection={(id) => onSelectConnection?.(id)}
+          onConnectSavedProfile={(p) => onConnectSavedProfile?.(p)}
+          onOpenDatabase={handleSwitchDb}
+          onCreateDatabase={() => setShowCreateDbModal(true)}
+          onDropDatabase={handleDropDb}
+          onNewConnection={() => onNewConnection?.()}
+          onOpenAllDbStats={() => onOpenAllDbStats?.()}
+          onClose={() => setShowDbPopover(false)}
+        />
       )}
 
       {/* Modal Create New Database */}
       {showCreateDbModal && (
         <Modal
-          title="Create New Database"
+          title={t('quickSwitcher.createDbTitle')}
           onClose={() => setShowCreateDbModal(false)}
           width="420px"
           zIndex={99999}
         >
           <ModalBody>
             <div className="form-group">
-              <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)' }}>
-                Database Name
-              </label>
+              <label>{t('quickSwitcher.createDbNameLabel')}</label>
               <input
                 type="text"
                 className="form-input"
-                placeholder="e.g. sakila_new"
+                placeholder={t('quickSwitcher.createDbPlaceholder')}
                 value={newDbName}
                 onChange={(e) => setNewDbName(e.target.value)}
-                style={{ height: '32px', fontSize: '12px', width: '100%', marginTop: '4px' }}
+                onKeyDown={(e) => { if (e.key === 'Enter' && newDbName.trim()) void handleCreateDbSubmit(); }}
                 autoFocus
               />
             </div>
           </ModalBody>
           <ModalFooter>
-            <button className="cm-btn" onClick={() => setShowCreateDbModal(false)}>
-              Cancel
+            <button className="btn btn-secondary" onClick={() => setShowCreateDbModal(false)}>
+              {t('common.cancel')}
             </button>
-            <button className="cm-btn cm-btn-primary" onClick={handleCreateDbSubmit} disabled={!newDbName.trim()}>
-              Create Database
+            <button className="btn btn-primary" onClick={handleCreateDbSubmit} disabled={!newDbName.trim()}>
+              {t('quickSwitcher.createDbSubmit')}
             </button>
           </ModalFooter>
         </Modal>

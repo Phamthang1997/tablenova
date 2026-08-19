@@ -11,6 +11,12 @@ interface TxControlProps {
   dbType: string;
   /** Ẩn hoàn toàn khi chưa kết nối. */
   connected: boolean;
+  /**
+   * Connection this control is showing. Every session is per connection now, and the backend emits
+   * one `tx-state-changed` per connection — without filtering on this, a second connection's event
+   * would overwrite the first one's display.
+   */
+  connId: string;
 }
 
 /**
@@ -25,7 +31,7 @@ interface TxControlProps {
  * do Rust phát sau mỗi câu lệnh — kể cả câu người dùng tự gõ `COMMIT` trong SQL Editor và câu DDL
  * mà MySQL tự commit. Xem `src-tauri/src/tx_session.rs`.
  */
-export const TxControl: React.FC<TxControlProps> = ({ dbType, connected }) => {
+export const TxControl: React.FC<TxControlProps> = ({ dbType, connected, connId }) => {
   const { t } = useTranslation();
   const [status, setStatus] = useState<TxStatus | null>(null);
   const [open, setOpen] = useState(false);
@@ -56,11 +62,17 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected }) => {
       return;
     }
     void refresh();
-    const un = listen<TxStatus>(TX_EVENT, (e) => setStatus(e.payload));
+    const un = listen<TxStatus>(TX_EVENT, (e) => {
+      // Drop events belonging to another connection. `connId` is absent only on a backend older
+      // than this window (tauri dev keeps the last binary that built), so treat a missing one as
+      // "mine" rather than showing nothing at all.
+      if (e.payload.connId && e.payload.connId !== connId) return;
+      setStatus(e.payload);
+    });
     return () => {
       void un.then((f) => f());
     };
-  }, [connected, refresh]);
+  }, [connected, connId, refresh]);
 
   // Mốc thời gian tính ở client: backend chỉ gửi `sinceMs` tại thời điểm phát sự kiện, còn
   // transaction có thể nằm im hàng phút mà không có sự kiện nào.
@@ -74,11 +86,27 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected }) => {
   // Đóng app khi còn thay đổi chưa commit = mất trắng. Chặn ở `onCloseRequested` chứ không ở nút
   // × của TitleBar: Alt+F4 và nút đóng của hệ điều hành không đi qua nút đó.
   useEffect(() => {
-    const un = getCurrentWindow().onCloseRequested((event) => {
-      const s = statusRef.current;
-      if (!s?.open || s.statements === 0) return;
+    const un = getCurrentWindow().onCloseRequested(async (event) => {
+      // Asks the BACKEND about every connection, not `statusRef` about the one on screen. Closing
+      // the window ends every session, so a per-connection answer would silently discard another
+      // connection's transaction — see `tx_any_pending`.
+      //
+      // `preventDefault()` first: the check is async, and by the time it resolves the window would
+      // already be gone. Nothing pending -> close it explicitly.
       event.preventDefault();
-      setAskOnClose(true);
+      let pending = false;
+      try {
+        pending = await dbHelper.txAnyPending();
+      } catch {
+        // Backend unreachable: fall back to what this window knows rather than trapping the user.
+        const s = statusRef.current;
+        pending = !!s?.open && s.statements > 0;
+      }
+      if (pending) {
+        setAskOnClose(true);
+        return;
+      }
+      void getCurrentWindow().destroy();
     });
     return () => {
       void un.then((f) => f());
@@ -121,11 +149,25 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected }) => {
     void run(() => dbHelper.txSetAutocommit(!status.autocommit));
   };
 
-  const run = async (fn: () => Promise<TxStatus>, closeAfter = false) => {
+  /**
+   * `refetch` is for the operations that change the rows the user is looking at — Commit, Discard,
+   * `ROLLBACK TO`. Without it the grid keeps showing the value that was just rolled back, which
+   * reads as "Discard did not roll anything back" even though the backend did. `database-restored`
+   * is the event `DataGrid` and `Sidebar` already listen to, so this needs no new channel.
+   *
+   * Mode / isolation / savepoint do NOT refetch: they change no row, and reloading the grid there
+   * would be a round trip for nothing.
+   */
+  const run = async (
+    fn: () => Promise<TxStatus>,
+    closeAfter = false,
+    refetch = false,
+  ) => {
     setBusy(true);
     setError(null);
     try {
       setStatus(await fn());
+      if (refetch) window.dispatchEvent(new CustomEvent('database-restored', { detail: { connId } }));
       if (closeAfter) setOpen(false);
     } catch (err) {
       // Message đã được dịch ở biên dbHelper (backendErrors.ts).
@@ -416,7 +458,7 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected }) => {
                     className="btn btn-secondary"
                     disabled={busy}
                     title={t('tx.savepointRollback')}
-                    onClick={() => void run(() => dbHelper.txRollbackTo(sp))}
+                    onClick={() => void run(() => dbHelper.txRollbackTo(sp), false, true)}
                   >
                     <Undo2 size={12} />
                     <span>{sp}</span>
@@ -445,7 +487,7 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected }) => {
               type="button"
               className="btn btn-secondary"
               disabled={busy || !status.open}
-              onClick={() => void run(() => dbHelper.txRollback(), true)}
+              onClick={() => void run(() => dbHelper.txRollback(), true, true)}
             >
               {t('tx.discard')}
             </button>
@@ -453,7 +495,7 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected }) => {
               type="button"
               className="btn btn-primary"
               disabled={busy || !status.open || status.aborted}
-              onClick={() => void run(() => dbHelper.txCommit(), true)}
+              onClick={() => void run(() => dbHelper.txCommit(), true, true)}
             >
               {t('tx.commit')}
             </button>

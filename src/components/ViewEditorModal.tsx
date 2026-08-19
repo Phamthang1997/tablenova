@@ -4,6 +4,8 @@ import { dbHelper } from '../utils/dbHelper';
 import { Save, Copy, CheckCircle, AlertTriangle, Eye } from 'lucide-react';
 
 interface ViewEditorModalProps {
+  /** Kết nối mà component này thao tác lên. Truyền tường minh, không đọc id ambient (§4.1). */
+  connId: string;
   name: string;
   initialSql: string;
   onClose?: () => void;
@@ -12,6 +14,7 @@ interface ViewEditorModalProps {
 }
 
 export const ViewEditorModal: React.FC<ViewEditorModalProps> = ({
+  connId,
   name,
   initialSql,
   onClose,
@@ -43,7 +46,7 @@ export const ViewEditorModal: React.FC<ViewEditorModalProps> = ({
 
   const handlePreview = async () => {
     setPreviewing(true);
-    const res = await dbHelper.executeQuery(`SELECT * FROM ${name} LIMIT 15;`);
+    const res = await dbHelper.executeQuery(connId, `SELECT * FROM ${name} LIMIT 15;`);
     setPreviewing(false);
     if (res.success && res.data) {
       setPreviewData({ columns: res.columns || [], rows: res.data });

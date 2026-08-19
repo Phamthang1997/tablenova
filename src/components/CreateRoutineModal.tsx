@@ -4,6 +4,8 @@ import { dbHelper } from '../utils/dbHelper';
 import { Plus, Trash2, Save, AlertTriangle, CheckCircle } from 'lucide-react';
 
 interface CreateRoutineModalProps {
+  /** Kết nối mà component này thao tác lên. Truyền tường minh, không đọc id ambient (§4.1). */
+  connId: string;
   dbType: 'sqlite' | 'postgres' | 'mysql';
   onClose: () => void;
   onCreated: () => void;
@@ -16,6 +18,7 @@ interface RoutineParamDraft {
 }
 
 export const CreateRoutineModal: React.FC<CreateRoutineModalProps> = ({
+  connId,
   dbType,
   onClose,
   onCreated,
@@ -67,7 +70,7 @@ export const CreateRoutineModal: React.FC<CreateRoutineModalProps> = ({
     setSaving(true);
     setErrorMsg(null);
 
-    const res = await dbHelper.saveRoutineDefinition(generatedDdl);
+    const res = await dbHelper.saveRoutineDefinition(connId, generatedDdl);
     setSaving(false);
     if (res.success) {
       setSuccessMsg('Đã tạo ' + (kind === 'procedure' ? 'Thủ tục' : 'Hàm') + ' thành công');

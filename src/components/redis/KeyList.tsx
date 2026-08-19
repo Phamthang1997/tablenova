@@ -1,11 +1,15 @@
-import React, { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import {
   Search, RefreshCw, Plus, Trash2, Key, Clock, Database, Square,
   ChevronRight, ChevronDown, FolderTree, List as ListIcon, Timer,
 } from 'lucide-react';
 import { dbHelper, type RedisKeyItem } from '../../utils/dbHelper';
-import { buildKeyTree, flattenTree, allFolderPaths, windowSlice, type TreeRow } from '../../utils/redisKeyTree';
+import {
+  buildKeyTree, flattenTree, allFolderPaths, folderMatchPattern, windowSlice, type TreeRow,
+} from '../../utils/redisKeyTree';
+import { clampMenu, type MenuRect } from '../../utils/menuPosition';
 import { KEY_CAP, ROW_HEIGHT, SCAN_COUNT, TYPE_COLORS, ttlText } from './shared';
 
 export interface KeyListHandle {
@@ -214,51 +218,99 @@ export const KeyList = React.forwardRef<KeyListHandle, KeyListProps>(function Ke
   const expandAll = () => setExpanded(new Set(tree ? allFolderPaths(tree) : []));
   const collapseAll = () => setExpanded(new Set());
 
+  // ---- Folder context menu ----
+  // A namespace is the unit people actually think in (`post:*`, `session:*`), but until now the
+  // only way to delete one was to retype its prefix into the bulk-delete dialog by hand.
+  const [folderMenu, setFolderMenu] = useState<{
+    x: number;
+    y: number;
+    /** Prefix including the trailing delimiter, i.e. `TreeRow.path`. */
+    path: string;
+    /** Keys under it *in the tree* — see the caveat where this is rendered. */
+    count: number;
+  } | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [menuPos, setMenuPos] = useState<MenuRect | null>(null);
+
+  useLayoutEffect(() => {
+    if (!folderMenu) {
+      setMenuPos(null);
+      return;
+    }
+    const el = menuRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setMenuPos(clampMenu(folderMenu.x, folderMenu.y, r.width, r.height, window.innerWidth, window.innerHeight));
+  }, [folderMenu]);
+
+  useEffect(() => {
+    const close = () => setFolderMenu(null);
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  }, []);
+
+  // Scrolling would leave the menu pinned to a row that is no longer under it.
+  const onScrollList = (e: React.UIEvent<HTMLDivElement>) => {
+    setScrollTop((e.target as HTMLDivElement).scrollTop);
+    if (folderMenu) setFolderMenu(null);
+  };
+
+  /**
+   * Hands the group to the existing bulk-delete dialog rather than deleting on the spot: that
+   * dialog already carries the retype-to-confirm step, the live progress and the cancel button,
+   * and this action can remove far more keys than the tree is showing.
+   */
+  const deleteFolder = (path: string) => {
+    setFolderMenu(null);
+    onBulkDelete(folderMatchPattern(path), typeFilter);
+  };
+
   return (
-    <div style={{ width: '340px', borderRight: '1px solid var(--win-border)', display: 'flex', flexDirection: 'column', background: 'var(--win-bg-sidebar)' }}>
-      <div style={{ padding: '10px', display: 'flex', flexDirection: 'column', gap: '8px', borderBottom: '1px solid var(--win-border)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <Database size={14} style={{ color: 'var(--win-accent)' }} />
-          <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--win-text-primary)', flex: 1 }}>{dbName}</span>
+    // Bề rộng, viền và nền đã chuyển lên `.redis-sidebar` (khung sidebar chứa nó) — ở đây chỉ
+    // còn việc lấp đầy khung đó. `min-height: 0` là bắt buộc: không có nó, con cuộn bên trong một
+    // flex column sẽ đẩy cao container thay vì tự cuộn.
+    <div className="redis-keylist">
+      <div className="redis-keylist-header">
+        <div className="redis-keylist-row">
+          <Database size={14} className="redis-keylist-db-icon" />
+          <span className="redis-keylist-dbname">{dbName}</span>
           {/* FLUSHDB đứng cạnh bộ chọn database vì nó tác động lên đúng db đang chọn —
               đặt ở đây thì phạm vi của lệnh nằm ngay bên cạnh thứ quyết định phạm vi đó,
               và nó không nằm cạnh Refresh/New key là hai nút bấm liên tục. */}
           <button
-            className="btn btn-secondary"
+            className="btn btn-secondary redis-icon-btn danger"
             onClick={onFlush}
             disabled={readOnly}
             title={t('redis.flushDbTitle')}
-            style={{ width: '26px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--st-danger)' }}
           >
             <Trash2 size={12} />
           </button>
           <select
+            className="redis-keylist-select"
             value={dbIndex}
             onChange={(e) => onSelectDb(parseInt(e.target.value))}
             title={t('redis.dbIndexTitle')}
-            style={{ background: 'var(--win-bg-window)', border: '1px solid var(--win-border)', color: 'var(--win-text-primary)', borderRadius: '4px', fontSize: '10px', padding: '2px 4px' }}
           >
             {Array.from({ length: 16 }, (_, i) => <option key={i} value={i}>db{i}</option>)}
           </select>
         </div>
 
-        <div style={{ display: 'flex', gap: '6px' }}>
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '4px', background: 'var(--win-bg-window)', border: '1px solid var(--win-border)', borderRadius: '4px', padding: '0 6px' }}>
-            <Search size={12} style={{ color: 'var(--win-text-disabled)' }} />
+        <div className="redis-keylist-row">
+          <div className="redis-keylist-search">
+            <Search size={12} className="redis-keylist-search-icon" />
             <input
               type="text"
               value={pattern}
               onChange={(e) => setPattern(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') refresh(); }}
               placeholder={t('redis.patternPlaceholder')}
-              style={{ flex: 1, background: 'transparent', border: 'none', color: 'var(--win-text-primary)', fontSize: '11px', outline: 'none', padding: '5px 0' }}
             />
           </div>
           <select
+            className="redis-keylist-select"
             value={typeFilter}
             onChange={(e) => onChangeTypeFilter(e.target.value)}
             title={t('redis.filterByTypeTitle')}
-            style={{ background: 'var(--win-bg-window)', border: '1px solid var(--win-border)', color: 'var(--win-text-primary)', borderRadius: '4px', fontSize: '10px' }}
           >
             <option value="">{t('redis.allTypes')}</option>
             <option value="string">string</option>
@@ -270,36 +322,34 @@ export const KeyList = React.forwardRef<KeyListHandle, KeyListProps>(function Ke
           </select>
         </div>
 
-        <div style={{ display: 'flex', gap: '4px' }}>
+        <div className="redis-keylist-row tight">
           {streaming ? (
-            <button className="btn btn-secondary" onClick={stopScan} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', color: 'var(--st-danger)' }}>
+            <button className="btn btn-secondary redis-keylist-grow danger" onClick={stopScan}>
               <Square size={10} /> {t('redis.stopScan')}
             </button>
           ) : (
-            <button className="btn btn-secondary" onClick={refresh} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+            <button className="btn btn-secondary redis-keylist-grow" onClick={refresh}>
               <RefreshCw size={11} /> {t('redis.refresh')}
             </button>
           )}
-          <button className="btn btn-secondary" onClick={onNewKey} disabled={readOnly} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+          <button className="btn btn-secondary redis-keylist-grow" onClick={onNewKey} disabled={readOnly}>
             <Plus size={11} /> {t('redis.newKey')}
           </button>
           <button
-            className="btn btn-secondary"
+            className="btn btn-secondary redis-icon-btn danger"
             onClick={() => onBulkDelete(pattern, typeFilter)}
             disabled={readOnly}
             title={t('redis.bulkDeleteTitle')}
-            style={{ width: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--st-danger)' }}
           >
             <Trash2 size={11} />
           </button>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+        <div className="redis-keylist-row tight">
           <button
-            className="btn btn-secondary"
+            className="btn btn-secondary redis-keylist-mode"
             onClick={() => setTreeMode(!treeMode)}
             title={treeMode ? t('redis.viewFlatTitle') : t('redis.viewTreeTitle')}
-            style={{ padding: '0 8px', display: 'flex', alignItems: 'center', gap: '4px' }}
           >
             {treeMode ? <FolderTree size={11} /> : <ListIcon size={11} />}
             {treeMode ? t('redis.viewTree') : t('redis.viewFlat')}
@@ -307,23 +357,23 @@ export const KeyList = React.forwardRef<KeyListHandle, KeyListProps>(function Ke
           {treeMode && (
             <>
               <input
+                className="redis-keylist-delim"
                 type="text"
                 value={delimiter}
                 onChange={(e) => setDelimiter(e.target.value)}
                 title={t('redis.delimiterTitle')}
-                style={{ width: '34px', textAlign: 'center', background: 'var(--win-bg-window)', border: '1px solid var(--win-border)', color: 'var(--win-text-primary)', borderRadius: '4px', fontSize: '11px', fontFamily: 'var(--win-font-mono)', padding: '3px 0' }}
               />
-              <button className="btn btn-secondary" onClick={expandAll} title={t('redis.expandAll')} style={{ padding: '0 6px' }}><ChevronDown size={11} /></button>
-              <button className="btn btn-secondary" onClick={collapseAll} title={t('redis.collapseAll')} style={{ padding: '0 6px' }}><ChevronRight size={11} /></button>
+              <button className="btn btn-secondary redis-keylist-step" onClick={expandAll} title={t('redis.expandAll')}><ChevronDown size={11} /></button>
+              <button className="btn btn-secondary redis-keylist-step" onClick={collapseAll} title={t('redis.collapseAll')}><ChevronRight size={11} /></button>
             </>
           )}
-          <div style={{ flex: 1 }} />
-          <Timer size={11} style={{ color: 'var(--win-text-disabled)' }} />
+          <div className="redis-keylist-spacer" />
+          <Timer size={11} className="redis-keylist-search-icon" />
           <select
+            className="redis-keylist-select"
             value={autoRefresh}
             onChange={(e) => setAutoRefresh(parseInt(e.target.value))}
             title={t('redis.autoRefreshTitle')}
-            style={{ background: 'var(--win-bg-window)', border: '1px solid var(--win-border)', color: 'var(--win-text-primary)', borderRadius: '4px', fontSize: '10px' }}
           >
             {AUTO_REFRESH_OPTIONS.map((s) => (
               <option key={s} value={s}>{s === 0 ? t('redis.autoRefreshOff') : `${s}s`}</option>
@@ -334,21 +384,17 @@ export const KeyList = React.forwardRef<KeyListHandle, KeyListProps>(function Ke
 
       {capped && (
         // Never truncate silently: say what happened and offer to continue.
-        <div style={{ padding: '6px 10px', fontSize: '10px', background: 'rgba(245,158,11,0.12)', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+        <div className="redis-keylist-cap">
           <span>{t('redis.capReached', { n: keys.length.toLocaleString() })}</span>
-          <button className="btn btn-secondary" onClick={loadMore} style={{ padding: '0 8px', height: '20px' }}>
+          <button className="btn btn-secondary redis-keylist-cap-btn" onClick={loadMore}>
             {t('redis.loadMore')}
           </button>
         </div>
       )}
 
-      <div
-        ref={scrollRef}
-        onScroll={(e) => setScrollTop((e.target as HTMLDivElement).scrollTop)}
-        style={{ flex: 1, overflowY: 'auto' }}
-      >
+      <div ref={scrollRef} onScroll={onScrollList} className="redis-keylist-scroll">
         {rows.length === 0 && !streaming && (
-          <div style={{ padding: '20px', textAlign: 'center', fontSize: '11px', color: 'var(--win-text-disabled)' }}>{t('redis.noKeyMatch')}</div>
+          <div className="redis-keylist-empty">{t('redis.noKeyMatch')}</div>
         )}
         {/* Spacers keep the scrollbar proportional to the full list while only the window renders. */}
         <div style={{ height: win.padTop }} />
@@ -357,37 +403,42 @@ export const KeyList = React.forwardRef<KeyListHandle, KeyListProps>(function Ke
             <div
               key={`f:${row.path}`}
               onClick={() => toggleFolder(row.path)}
-              className="sidebar-item"
-              style={{ display: 'flex', alignItems: 'center', gap: '4px', height: ROW_HEIGHT, padding: `0 10px 0 ${10 + row.depth * 12}px`, cursor: 'pointer', fontSize: '11px', boxSizing: 'border-box' }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setFolderMenu({ x: e.clientX, y: e.clientY, path: row.path, count: row.count });
+              }}
+              className="sidebar-item redis-row redis-row-folder"
+              // Hai giá trị này phải ở inline vì chúng động theo từng dòng: độ thụt tính từ độ sâu
+              // trong cây, và chiều cao PHẢI đúng bằng `ROW_HEIGHT` mà `windowSlice` dùng để tính
+              // cửa sổ hiển thị. Để chiều cao trong CSS là mở đường cho hai con số lệch nhau, và
+              // khi đó danh sách cuộn sai chỗ chứ không báo lỗi.
+              style={{ '--redis-depth': row.depth, height: ROW_HEIGHT } as React.CSSProperties}
             >
-              {row.expanded ? <ChevronDown size={11} style={{ flexShrink: 0 }} /> : <ChevronRight size={11} style={{ flexShrink: 0 }} />}
-              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--win-text-primary)', fontWeight: 600 }}>
+              {row.expanded ? <ChevronDown size={11} className="redis-row-chevron" /> : <ChevronRight size={11} className="redis-row-chevron" />}
+              <span className="redis-row-label folder">
                 {row.label || t('redis.emptySegment')}
               </span>
-              <span style={{ fontSize: '9px', color: 'var(--win-text-disabled)' }}>{row.count.toLocaleString()}</span>
+              <span className="redis-row-count">{row.count.toLocaleString()}</span>
             </div>
           ) : (
             <div
               key={`k:${row.item.key}`}
               onClick={() => onSelectKey(row.item.key)}
-              className="sidebar-item"
-              style={{
-                display: 'flex', alignItems: 'center', gap: '6px', height: ROW_HEIGHT,
-                padding: `0 10px 0 ${10 + row.depth * 12}px`, cursor: 'pointer', fontSize: '11px',
-                boxSizing: 'border-box',
-                background: selectedKey === row.item.key ? 'var(--win-bg-active)' : 'transparent',
-              }}
+              className={`sidebar-item redis-row${selectedKey === row.item.key ? ' selected' : ''}`}
+              style={{ '--redis-depth': row.depth, height: ROW_HEIGHT } as React.CSSProperties}
             >
-              <Key size={11} style={{ color: 'var(--win-text-disabled)', flexShrink: 0 }} />
-              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--win-text-primary)' }} title={row.item.key}>
+              <Key size={11} className="redis-row-chevron" />
+              <span className="redis-row-label" title={row.item.key}>
                 {row.label || t('redis.emptySegment')}
               </span>
               {row.item.ttl >= 0 && (
-                <span style={{ fontSize: '9px', color: 'var(--win-text-disabled)', display: 'flex', alignItems: 'center', gap: '2px' }}>
+                <span className="redis-row-ttl">
                   <Clock size={9} />{ttlText(row.item.ttl)}
                 </span>
               )}
-              <span style={{ fontSize: '9px', fontWeight: 700, padding: '1px 5px', borderRadius: '3px', color: '#fff', background: TYPE_COLORS[row.item.type] || '#64748b', textTransform: 'uppercase', flexShrink: 0 }}>
+              {/* Màu badge tra theo kiểu key nên phải ở inline — TYPE_COLORS là bảng trong TS,
+                  nhân bản nó thành sáu class CSS là thêm một cặp phải giữ đồng bộ bằng tay. */}
+              <span className="redis-row-type" style={{ background: TYPE_COLORS[row.item.type] || '#64748b' }}>
                 {row.item.type}
               </span>
             </div>
@@ -395,15 +446,52 @@ export const KeyList = React.forwardRef<KeyListHandle, KeyListProps>(function Ke
         ))}
         <div style={{ height: win.padBottom }} />
         {streaming && (
-          <div style={{ padding: '10px', textAlign: 'center', fontSize: '11px', color: 'var(--win-text-secondary)' }}>
+          <div className="redis-keylist-scanning">
             {t('redis.scanning', { n: keys.length.toLocaleString() })}
           </div>
         )}
       </div>
 
+      {/* Rendered through a portal, like Modal.tsx: a `position: fixed` menu is measured against
+          the nearest ancestor with a `backdrop-filter`, and the panel sits inside the app shell
+          where several of those exist. */}
+      {folderMenu && createPortal(
+        <div
+          ref={menuRef}
+          className="ws-menu redis-folder-menu"
+          // Toạ độ là kết quả đo lúc chạy nên buộc phải inline. `visibility` đi kèm ở đây chứ không
+          // tách sang class: nó phụ thuộc đúng vào việc đã đo xong hay chưa, và tách ra thì hai thứ
+          // luôn phải đổi cùng lúc.
+          style={{
+            top: menuPos ? menuPos.top : folderMenu.y,
+            left: menuPos ? menuPos.left : folderMenu.x,
+            // Hidden until measured, so the menu never visibly jumps into place.
+            visibility: menuPos ? 'visible' : 'hidden',
+          }}
+        >
+          <div className="redis-folder-menu-head">
+            <div className="redis-folder-menu-path">{folderMenu.path}</div>
+            {/* Labelled "shown" on purpose: this count comes from the tree, which the scan cap and
+                the pattern/type filter can make smaller than what the prefix matches on the server.
+                The item below therefore promises the prefix, not this number. */}
+            <div className="redis-folder-menu-count">
+              {t('redis.ctxFolderShown', { n: folderMenu.count.toLocaleString() })}
+            </div>
+          </div>
+          <div
+            onClick={(e) => { e.stopPropagation(); deleteFolder(folderMenu.path); }}
+            className={`sidebar-context-item redis-folder-menu-item${readOnly ? ' disabled' : ''}`}
+            title={readOnly ? t('redis.errReadOnly') : undefined}
+          >
+            <Trash2 size={11} /> {t('redis.ctxDeleteGroup')}
+          </div>
+        </div>,
+        document.body,
+      )}
+
       {/* Chân panel giờ chỉ còn số lượng key: FLUSHDB chuyển lên cạnh bộ chọn db, còn
           Disconnect bỏ hẳn vì TitleBar đã có sẵn ở menu Connection và nút capsule. */}
-      <div style={{ padding: '6px 10px', borderTop: '1px solid var(--win-border)', fontSize: '10px', color: 'var(--win-text-disabled)' }}>
+      <div className="redis-keylist-footer">
         {streaming
           ? t('redis.keyCountScanning', { n: keys.length.toLocaleString() })
           : typeFilter

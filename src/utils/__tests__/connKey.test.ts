@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { connKey, scopeKey, tabsStorageKey, legacyTabsStorageKey } from '../connKey';
+import {
+  connKey,
+  scopeKey,
+  scopeKeyCandidates,
+  tabsStorageKey,
+  tabsStorageKeyCandidates,
+  legacyTabsStorageKey,
+} from '../connKey';
 import type { DbConnectionConfig } from '../dbHelper';
 
 const mysql = (over: Partial<DbConnectionConfig> = {}): DbConnectionConfig => ({
@@ -7,6 +14,14 @@ const mysql = (over: Partial<DbConnectionConfig> = {}): DbConnectionConfig => ({
   host: 'localhost',
   port: 3306,
   database: 'sakila',
+  ...over,
+});
+
+const pg = (over: Partial<DbConnectionConfig> = {}): DbConnectionConfig => ({
+  type: 'postgres',
+  host: 'localhost',
+  port: 5432,
+  database: 'shop',
   ...over,
 });
 
@@ -77,6 +92,39 @@ describe('scopeKey', () => {
   it('falls back to the server alone when no database is known', () => {
     expect(scopeKey(mysql({ database: undefined }))).toBe('mysql:localhost:3306');
   });
+
+  it('separates two schemas of one postgres database', () => {
+    expect(scopeKey(pg(), 'shop', 'sales')).toBe('postgres:localhost:5432/shop:sales');
+    expect(scopeKey(pg(), 'shop', 'sales')).not.toBe(scopeKey(pg(), 'shop', 'staging'));
+  });
+
+  it('spells `public` exactly like a key written before schemas existed', () => {
+    // Bỏ hậu tố cho public là cách người dùng cũ không mất tab khi nâng cấp.
+    const before = scopeKey(pg(), 'shop');
+    expect(scopeKey(pg(), 'shop', 'public')).toBe(before);
+    expect(scopeKey(pg(), 'shop', null)).toBe(before);
+    expect(scopeKey(pg(), 'shop', '  ')).toBe(before);
+  });
+
+  it('ignores the schema on mysql and sqlite, which have none of their own', () => {
+    expect(scopeKey(mysql(), 'sakila', 'sales')).toBe('mysql:localhost:3306/sakila');
+    const sqlite: DbConnectionConfig = { type: 'sqlite', sqlitePath: '/a/demo.db' };
+    expect(scopeKey(sqlite, 'demo', 'sales')).toBe(connKey(sqlite));
+  });
+});
+
+describe('scopeKeyCandidates', () => {
+  it('reads the schema-less key as a fallback so tabs survive the upgrade', () => {
+    expect(scopeKeyCandidates(pg(), 'shop', 'sales')).toEqual([
+      'postgres:localhost:5432/shop:sales',
+      'postgres:localhost:5432/shop',
+    ]);
+  });
+
+  it('offers one key when there is nothing older to fall back to', () => {
+    expect(scopeKeyCandidates(pg(), 'shop', 'public')).toEqual(['postgres:localhost:5432/shop']);
+    expect(scopeKeyCandidates(mysql(), 'sakila', 'sales')).toEqual(['mysql:localhost:3306/sakila']);
+  });
 });
 
 describe('tabsStorageKey', () => {
@@ -93,5 +141,31 @@ describe('tabsStorageKey', () => {
 
   it('falls back to the legacy key without a config (vite-dev, no backend)', () => {
     expect(tabsStorageKey(null, 'mysql', 'sakila')).toBe(legacyTabsStorageKey('mysql', 'sakila'));
+  });
+
+  it('keys a non-public schema separately', () => {
+    expect(tabsStorageKey(pg(), 'postgres', 'shop', 'sales'))
+      .toBe('tn_tabs_postgres:localhost:5432/shop:sales');
+    expect(tabsStorageKey(pg(), 'postgres', 'shop', 'public'))
+      .toBe(tabsStorageKey(pg(), 'postgres', 'shop'));
+  });
+});
+
+describe('tabsStorageKeyCandidates', () => {
+  it('reads newest first, then the schema-less key, then the pre-connKey one', () => {
+    expect(tabsStorageKeyCandidates(pg(), 'postgres', 'shop', 'sales')).toEqual([
+      'tn_tabs_postgres:localhost:5432/shop:sales',
+      'tn_tabs_postgres:localhost:5432/shop',
+      'tn_tabs_postgres_shop',
+    ]);
+  });
+
+  it('offers only the legacy key when there is no usable config', () => {
+    expect(tabsStorageKeyCandidates(null, 'mysql', 'sakila')).toEqual(['tn_tabs_mysql_sakila']);
+  });
+
+  it('never repeats a key when the spellings coincide', () => {
+    const keys = tabsStorageKeyCandidates(mysql(), 'mysql', 'sakila');
+    expect(new Set(keys).size).toBe(keys.length);
   });
 });

@@ -2,6 +2,7 @@
 // Dữ liệu lấy từ catalog cache (không gọi backend mỗi lần hover).
 import * as monaco from 'monaco-editor';
 import * as catalog from './catalog';
+import { editorConnId } from './editorScope';
 import { LANG_IDS } from './sqlLanguage';
 import { statementAt, resolveAliases } from './statements';
 import { getDoc, formatDocMarkdown } from '../utils/docsService';
@@ -11,7 +12,7 @@ import { currentLanguage } from '../i18n';
 export async function findTable(name: string): Promise<{ name: string; type: string } | null> {
   if (!name) return null;
   const bare = name.replace(/^[`"[]|[`"\]]$/g, '');
-  const tables = await catalog.getTables();
+  const tables = await catalog.getTables(editorConnId());
   return tables.find(t => t.name.toLowerCase() === bare.toLowerCase()) || null;
 }
 
@@ -77,7 +78,7 @@ export function setupSqlHover(): void {
       // 1) Chính là tên bảng/view?
       const table = await findTable(name);
       if (table) {
-        const schema = await catalog.getSchema(table.name);
+        const schema = await catalog.getSchema(editorConnId(), table.name);
         return { range, contents: [{ value: tableMarkdown(table.name, table.type, schema) }] };
       }
 
@@ -111,13 +112,13 @@ export function setupSqlHover(): void {
       } else if (aliases.size) {
         candidates = Array.from(new Set(aliases.values()));
       } else {
-        candidates = (await catalog.getTables()).map(t => t.name);
+        candidates = (await catalog.getTables(editorConnId())).map(t => t.name);
         cacheOnly = true;
       }
 
       const owners: { table: string; type: string; isPrimaryKey?: boolean; nullable?: boolean }[] = [];
       for (const t of candidates) {
-        const schema = cacheOnly ? catalog.getCachedSchema(t) : await catalog.getSchema(t);
+        const schema = cacheOnly ? catalog.getCachedSchema(editorConnId(), t) : await catalog.getSchema(editorConnId(), t);
         const col = (schema?.columns || []).find(c => c.name.toLowerCase() === name.toLowerCase());
         if (col) owners.push({ table: t, type: col.type, isPrimaryKey: col.isPrimaryKey, nullable: col.nullable });
       }

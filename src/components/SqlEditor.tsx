@@ -25,6 +25,7 @@ import {
   findUnsafeStatements, type UnsafeStatement, type UnsafeStatementKind,
 } from '../sql/statements';
 import * as catalog from '../sql/catalog';
+import { willPromptForSql } from '../utils/safeMode';
 import { resolveResultEditability, type ResultEditability, type NotEditableReason } from '../sql/editableResult';
 import { SqlSnippetPanel } from './SqlSnippetPanel';
 
@@ -70,6 +71,8 @@ if (typeof document !== 'undefined' && (document as any).fonts?.ready) {
 
 // Pack monaco directly into the loader config
 loader.config({ monaco });
+import { setEditorConnId } from '../sql/editorScope';
+import { dbIndexRegistry } from '../sql/dbIndexRegistry';
 import { dbHelper, type GridChange } from '../utils/dbHelper';
 
 const LoadingSpinner: React.FC<{ size?: number; style?: React.CSSProperties }> = ({ size = 16, style }) => (
@@ -124,7 +127,7 @@ function registerSqlFormatter(dbType: string) {
     monaco.languages.registerDocumentFormattingEditProvider(lang, formatProvider)
   );
 }
-import { Play, Clipboard, Trash2, CheckCircle2, AlertTriangle, ChevronLeft, ChevronRight, Copy, AlignLeft, History, X, Bookmark, ChevronDown, MoreHorizontal, SlidersHorizontal, Star, Columns, Rows, Settings, Network, Zap, FileText, Square } from 'lucide-react';
+import { Play, Clipboard, Trash2, CheckCircle2, AlertTriangle, ChevronLeft, ChevronRight, Copy, AlignLeft, History, X, Bookmark, ChevronDown, MoreHorizontal, SlidersHorizontal, Star, Columns, Rows, Settings, Network, Zap, FileText, Square, Calendar } from 'lucide-react';
 import { getQueryParamsConfig, saveQueryParamsConfig, extractQueryParams, buildParameterizedSql, type QueryParamsConfig } from '../utils/queryParamHelper';
 import { buildExplainQuery, explainJsonLabel, parseExplainOutput, supportsJsonExplain, type ExplainResult } from '../utils/explainHelper';
 import {
@@ -150,6 +153,18 @@ import { ExplainViewer } from './ExplainViewer';
 import { Modal, ModalBody, ModalFooter } from './Modal';
 
 interface SqlEditorProps {
+  /** Kết nối mà component này thao tác lên. Truyền tường minh, không đọc id ambient (§4.1). */
+  connId: string;
+  /** Kết nối gắn nhãn production -> cảnh báo câu lệnh nguy hiểm đòi gõ tên database. */
+  isProdConn?: boolean;
+  /**
+   * Kết nối NÀY đang ở chế độ chỉ đọc (cờ ở backend, khác công tắc toàn cục `readOnly`).
+   *
+   * Cần cả hai: backend mới là chỗ thực sự từ chối, nhưng nếu UI không biết thì nó sẽ mời người
+   * dùng gõ tên database để xác nhận một câu lệnh chắc chắn bị chặn — một hộp thoại hứa điều
+   * không xảy ra.
+   */
+  connReadOnly?: boolean;
   dbType?: string;
   /** Định danh máy chủ đang kết nối (utils/connKey) — dùng để gắn nhãn & lọc lịch sử. */
   connKey?: string;
@@ -223,6 +238,9 @@ function applyLimitToSql(sqlText: string, limitOption: string): string {
 }
 
 export const SqlEditor: React.FC<SqlEditorProps> = ({
+  connId,
+  isProdConn = false,
+  connReadOnly = false,
   dbType = 'sqlite',
   connKey = '',
   dbName = '',
@@ -329,6 +347,19 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   const inScope = (entry: HistoryEntry) => matchesScope(entry, connKey, dbName, effectiveScope);
 
   const [showSaveModal, setShowSaveModal] = useState(false);
+  /**
+   * Pending confirmation for the three history/saved-query deletions. One state instead of
+   * three flags — the dialog is the same shape, only the wording differs.
+   *
+   * `window.confirm()` is unusable here: the Tauri webview maps it to `plugin:dialog|confirm`,
+   * a command the dialog plugin does not ship, so it throws and the click does nothing.
+   */
+  const [confirmAction, setConfirmAction] = useState<
+    | { kind: 'clearHistory' }
+    | { kind: 'deleteSaved'; id: string }
+    | { kind: 'deleteHistoryItem'; id: string }
+    | null
+  >(null);
   const [newQueryName, setNewQueryName] = useState('');
 
   const [runMenuPane, setRunMenuPane] = useState<1 | 2 | null>(null);
@@ -349,6 +380,21 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   const [showRowNumbers, setShowRowNumbers] = useState<boolean>(true);
   const [autoFitColsPane1, setAutoFitColsPane1] = useState<boolean>(false);
   const [autoFitColsPane2, setAutoFitColsPane2] = useState<boolean>(false);
+  // Mount and focus alone are not enough: switching connection changes `connId` while this editor
+  // is already mounted and focused, and no focus event fires for that.
+  useEffect(() => {
+    setEditorConnId(connId);
+    // Nothing told the symbol index about a CONNECTION change — it rebuilt only on table-renamed
+    // and database-restored — so it kept the previous connection's tables and the inspection marked
+    // every table of the new one as non-existent.
+    //
+    // No `invalidate()` here on purpose: `buildIndex` compares against the connection it already
+    // holds, so it rebuilds when this one differs and returns immediately when it does not. Every
+    // mounted editor runs this effect, and forcing a discard first turned each of them into another
+    // full catalog fetch.
+    void dbIndexRegistry.buildIndex();
+  }, [connId]);
+
   const [cursorPos1, setCursorPos1] = useState<{ line: number; column: number }>({ line: 1, column: 1 });
   const [cursorPos2, setCursorPos2] = useState<{ line: number; column: number }>({ line: 1, column: 1 });
 
@@ -445,6 +491,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     switch (kind) {
       case 'deleteNoWhere': return t('sqlEditor.unsafeKindDeleteNoWhere');
       case 'dropTable': return t('sqlEditor.unsafeKindDropTable');
+      case 'updateNoWhere': return t('sqlEditor.unsafeKindUpdateNoWhere');
+      case 'truncate': return t('sqlEditor.unsafeKindTruncate');
     }
   };
 
@@ -514,15 +562,24 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     }
   };
 
-  const handleClearHistory = () => {
-    const message = effectiveScope === 'db'
-      ? t('sqlEditor.confirmClearDbHistory')
-      : effectiveScope === 'conn'
-        ? t('sqlEditor.confirmClearConnHistory')
-        : t('sqlEditor.confirmClearHistory');
-    if (confirm(message)) {
-      setHistoryList(clearHistory(effectiveScope, connKey, dbName));
+  // Same reason as the switch in clearHistoryLabel: the key must be a literal.
+  const clearHistoryMessage = (): string => {
+    switch (effectiveScope) {
+      case 'db': return t('sqlEditor.confirmClearDbHistory');
+      case 'conn': return t('sqlEditor.confirmClearConnHistory');
+      case 'all': return t('sqlEditor.confirmClearHistory');
     }
+  };
+
+  const handleClearHistory = () => setConfirmAction({ kind: 'clearHistory' });
+
+  const runConfirmAction = () => {
+    if (!confirmAction) return;
+    const action = confirmAction;
+    setConfirmAction(null);
+    if (action.kind === 'clearHistory') setHistoryList(clearHistory(effectiveScope, connKey, dbName));
+    else if (action.kind === 'deleteSaved') setSavedQueries(deleteSavedQuery(action.id));
+    else setHistoryList(deleteHistoryEntry(action.id));
   };
 
   const handleSaveQuery = () => {
@@ -553,9 +610,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
 
   const handleDeleteSaved = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (confirm(t('sqlEditor.confirmDeleteSaved'))) {
-      setSavedQueries(deleteSavedQuery(id));
-    }
+    setConfirmAction({ kind: 'deleteSaved', id });
   };
 
   const handleSelectHistoryItem = (sqlText: string) => {
@@ -719,6 +774,19 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     } else {
       editorRef2.current = editor;
     }
+
+    // Tell the Monaco layer which connection this editor belongs to.
+    //
+    // Completion, hover, F12 and the inspection index are registered ONCE for the whole app and are
+    // called BY Monaco, so they cannot take a `connId` argument — they read `editorConnId()` instead
+    // (see src/sql/editorScope.ts). Setting it on focus is what makes that honest: the provider that
+    // is about to run belongs to the editor the user is typing in.
+    //
+    // Without this the scope stays empty and every one of those readers asks the backend for
+    // connection "", which fails — the visible symptom being the inspection marking every table as
+    // non-existent while the sidebar lists them.
+    setEditorConnId(connId);
+    editor.onDidFocusEditorText(() => setEditorConnId(connId));
 
     const syncCursor = () => {
       const pos = editor.getPosition();
@@ -938,7 +1006,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     refreshStatementHighlight();
 
     registerSqlFormatter(dbType);
-    void catalog.getTables(); // nạp nền catalog cho autocomplete/hover
+    void catalog.getTables(connId); // nạp nền catalog cho autocomplete/hover
     const cleanupInspection = attachEditorInspection(monaco, editor);
     editor.onDidDispose(() => {
       cleanupInspection();
@@ -969,8 +1037,10 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     if (!textToRun.trim()) return;
 
     // Chế độ Chỉ đọc: chỉ cho phép câu lệnh đọc (SELECT/SHOW/...)
-    if (readOnly && !isReadOnlySql(textToRun)) {
-      const msg = t('sqlEditor.errReadOnlyRun');
+    if ((readOnly || connReadOnly) && !isReadOnlySql(textToRun)) {
+      // Two different switches block writes and they live in different places. Naming the wrong one
+      // leaves the user toggling something that changes nothing.
+      const msg = connReadOnly && !readOnly ? t('sqlEditor.errConnReadOnlyRun') : t('sqlEditor.errReadOnlyRun');
       if (pane === 1) setErrorMsg(msg);
       else setErrorMsg2(msg);
       return;
@@ -979,7 +1049,9 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     // Cảnh báo trước khi xoá sạch dữ liệu. Không cần kiểm tra `readOnly` ở đây: khi bật Chỉ đọc,
     // mọi DELETE/DROP đã bị chặn ở nhánh trên nên đoạn này chỉ chạy khi đang cho phép ghi.
     // Đặt TRƯỚC bước hỏi tham số truy vấn để cả đường đi qua QueryParamsModal cũng được hỏi.
-    if (!skipUnsafeCheck) {
+    // Safe Mode sẽ hỏi ngay trước khi lệnh rời `dbHelper`, và hộp của nó liệt kê đúng những câu
+    // lệnh này kèm cùng nhãn cảnh báo. Hỏi thêm ở đây là hai dialog cho một lần chạy.
+    if (!skipUnsafeCheck && !willPromptForSql(connId, textToRun)) {
       const items = findUnsafeStatements(textToRun);
       if (items.length > 0) {
         setUnsafePrompt({ pane, sql: textToRun, items, resume: 'run' });
@@ -1071,7 +1143,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     };
 
     try {
-      await dbHelper.executeQueryStream(textToRun, queryId, (msg) => {
+      await dbHelper.executeQueryStream(connId, textToRun, queryId, (msg) => {
         if (msg.type === 'columns') {
           const i = msg.stmtIndex ?? 0;
           acc[i] = { query: msg.query || '', columns: msg.columns || [], data: [] };
@@ -1158,13 +1230,16 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     // `EXPLAIN ANALYZE`) — `EXPLAIN ANALYZE DELETE FROM t` xoá dữ liệu thật. Nên nó phải đi qua
     // đúng hai chốt của nút Run. Các variant còn lại chỉ lấy kế hoạch nên không cần.
     if (variant === 'analyze') {
-      if (readOnly && !isReadOnlySql(textToRun)) {
-        const msg = t('sqlEditor.errReadOnlyRun');
+      if ((readOnly || connReadOnly) && !isReadOnlySql(textToRun)) {
+        // Two different switches block writes and they live in different places. Naming the wrong one
+      // leaves the user toggling something that changes nothing.
+      const msg = connReadOnly && !readOnly ? t('sqlEditor.errConnReadOnlyRun') : t('sqlEditor.errReadOnlyRun');
         if (paneId === 1) setErrorMsg(msg);
         else setErrorMsg2(msg);
         return;
       }
-      if (!skipUnsafeCheck) {
+      // Cùng lý do như ở `handleRun`: để Safe Mode hỏi một lần, không xếp hai hộp.
+      if (!skipUnsafeCheck && !willPromptForSql(connId, textToRun)) {
         const items = findUnsafeStatements(textToRun);
         if (items.length > 0) {
           setUnsafePrompt({ pane: paneId, sql: textToRun, items, resume: 'analyze' });
@@ -1197,7 +1272,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     }
 
     try {
-      const res = await dbHelper.executeQuery(explainQuery, params);
+      const res = await dbHelper.executeQuery(connId, explainQuery, params);
       const rows = res.data || (res as any).rows || [];
       if (res.success && rows.length > 0) {
         const parsed = parseExplainOutput(rows, dbType);
@@ -1417,24 +1492,11 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
 
   const renderPaneActionBar = (paneId: 1 | 2) => {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', width: '100%', flexShrink: 0 }}>
-        <div 
-          className="sql-pane-action-bar" 
-          style={{ 
-            display: 'flex', 
-            justifyContent: 'space-between', 
-            alignItems: 'center', 
-            padding: '2px 8px', 
-            background: 'var(--win-bg-card, var(--win-bg-window))', 
-            borderTop: 'none', 
-            flexShrink: 0,
-            fontSize: '11px',
-            userSelect: 'none'
-          }}
-        >
+      <div className="sql-toolbar-wrap">
+        <div className="sql-pane-action-bar">
           {/* Khối bên trái: Icon Cấu hình Sliders (Image 2 + Image 3) & Vị trí con trỏ (line X, column Y) */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <div style={{ position: 'relative' }}>
+          <div className="sql-toolbar-left">
+            <div className="gp-popover-wrap">
               <button
                 onClick={(e) => {
                   setRunMenuPane(null);
@@ -1443,23 +1505,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                   setLimitMenuPane(null);
                   toggleDropdown('settings', paneId, e, setEditorSettingsMenuPane);
                 }}
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  boxShadow: 'none',
-                  padding: '2px 4px',
-                  fontSize: '12px',
-                  height: '24px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: 'var(--win-text-secondary)',
-                  cursor: 'pointer',
-                  borderRadius: '4px',
-                  transition: 'background 0.12s ease, color 0.12s ease'
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(0,0,0,0.06)'; e.currentTarget.style.color = 'var(--win-text-primary)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--win-text-secondary)'; }}
+                className="sql-sliders-btn"
                 title={t('sqlEditor.settingsTitle', 'Cấu hình Editor & Lưới')}
               >
                 <SlidersHorizontal size={14} />
@@ -1468,17 +1514,12 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
               {/* TablePlus Editor & Grid Settings Popover Menu (Image 3) */}
               {editorSettingsMenuPane === paneId && (
                 <>
-                  <div style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={() => setEditorSettingsMenuPane(null)} />
-                  <div style={{
+                  <div className="sql-menu-overlay" onClick={() => setEditorSettingsMenuPane(null)} />
+                  <div className="ws-menu" style={{
                     position: 'absolute',
                     top: dropdownPlacement[`settings_${paneId}`] === 'up' ? undefined : 'calc(100% + 4px)',
                     bottom: dropdownPlacement[`settings_${paneId}`] === 'up' ? 'calc(100% + 4px)' : undefined,
                     left: 0,
-                    background: 'var(--win-bg-popover, var(--win-bg-card))',
-                    border: '1px solid var(--win-border-strong, var(--win-border))',
-                    borderRadius: '6px',
-                    boxShadow: '0 10px 30px rgba(0,0,0,0.45)',
-                    zIndex: 9999,
                     minWidth: '230px',
                     display: 'flex',
                     flexDirection: 'column',
@@ -1502,27 +1543,27 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                       </select>
                     </div>
 
-                    <div style={{ borderTop: '1px solid var(--win-border)', margin: '3px 0' }} />
+                    <div className="sql-menu-divider" />
 
-                    <button className="copy-dropdown-item" onClick={() => setShowInvisibleChars(v => !v)} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}>
-                      <span style={{ width: '14px', fontWeight: 'bold', color: 'var(--win-accent)' }}>{showInvisibleChars ? '✓' : ''}</span>
+                    <button className="copy-dropdown-item" onClick={() => setShowInvisibleChars(v => !v)}>
+                      <span className="sql-item-check">{showInvisibleChars ? '✓' : ''}</span>
                       <span>{t('sqlEditor.showInvisibleChars', 'Show invisible Characters')}</span>
                     </button>
 
-                    <button className="copy-dropdown-item" onClick={() => setWordWrap(v => !v)} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}>
-                      <span style={{ width: '14px', fontWeight: 'bold', color: 'var(--win-accent)' }}>{wordWrap ? '✓' : ''}</span>
+                    <button className="copy-dropdown-item" onClick={() => setWordWrap(v => !v)}>
+                      <span className="sql-item-check">{wordWrap ? '✓' : ''}</span>
                       <span>{t('sqlEditor.wrapLines', 'Wrap lines to Editor Width')}</span>
                     </button>
 
-                    <button className="copy-dropdown-item" onClick={() => setHighlightQuery(v => !v)} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}>
-                      <span style={{ width: '14px', fontWeight: 'bold', color: 'var(--win-accent)' }}>{highlightQuery ? '✓' : ''}</span>
+                    <button className="copy-dropdown-item" onClick={() => setHighlightQuery(v => !v)}>
+                      <span className="sql-item-check">{highlightQuery ? '✓' : ''}</span>
                       <span>{t('sqlEditor.highlightQuery', 'Highlight current Query')}</span>
                     </button>
 
-                    <div style={{ borderTop: '1px solid var(--win-border)', margin: '3px 0' }} />
+                    <div className="sql-menu-divider" />
 
-                    <button className="copy-dropdown-item" onClick={() => setShowRowNumbers(v => !v)} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}>
-                      <span style={{ width: '14px', fontWeight: 'bold', color: 'var(--win-accent)' }}>{showRowNumbers ? '✓' : ''}</span>
+                    <button className="copy-dropdown-item" onClick={() => setShowRowNumbers(v => !v)}>
+                      <span className="sql-item-check">{showRowNumbers ? '✓' : ''}</span>
                       <span>{t('sqlEditor.showRowNumbers', 'Show result Row Numbers')}</span>
                     </button>
 
@@ -1530,8 +1571,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                       if (paneId === 1) setAutoFitColsPane1(v => !v);
                       else setAutoFitColsPane2(v => !v);
                       setEditorSettingsMenuPane(null);
-                    }} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}>
-                      <span style={{ width: '14px', fontWeight: 'bold', color: 'var(--win-accent)' }}>{(paneId === 1 ? autoFitColsPane1 : autoFitColsPane2) ? '✓' : ''}</span>
+                    }}>
+                      <span className="sql-item-check">{(paneId === 1 ? autoFitColsPane1 : autoFitColsPane2) ? '✓' : ''}</span>
                       <span>{t('sqlEditor.autoFitColumns', 'Auto-fit Column Widths')}</span>
                     </button>
                   </div>
@@ -1540,13 +1581,13 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
             </div>
 
             {/* Trạng thái vị trí con trỏ: line X, column Y (Image 2) */}
-            <span style={{ fontSize: '11px', color: 'var(--win-text-secondary)', fontFamily: 'var(--win-font-mono)' }}>
+            <span className="sql-status-info">
               line {(paneId === 1 ? cursorPos1 : cursorPos2).line}, column {(paneId === 1 ? cursorPos1 : cursorPos2).column}
             </span>
           </div>
 
           {/* Khối bên phải: Nút No limit + cụm nút Format, Run, [...] */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: 'auto' }}>
+          <div className="sql-toolbar-right">
             {/* Nút No limit / Giới hạn câu truy vấn */}
             <div style={{ position: 'relative' }}>
               <button
@@ -1756,7 +1797,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
               style={{ padding: '0 8px', fontSize: '11.5px', height: '26px', display: 'flex', alignItems: 'center', gap: '4px' }}
               title="Mở thư viện mẫu SQL Snippet"
             >
-              <span style={{ fontWeight: 700, fontSize: '12px', color: showSnippetPanel ? '#ffffff' : '#10b981' }}>( )</span>
+              <span style={{ fontWeight: 700, fontSize: '12px', color: showSnippetPanel ? '#ffffff' : '#10b981' }}>()</span>
               <span>Snippets</span>
             </button>
 
@@ -2029,7 +2070,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
 
     // 1. Kiểm tra trong catalog foreign keys của bảng hiện tại
     if (pTargetTable) {
-      const schema = catalog.getCachedSchema(pTargetTable) || await catalog.getSchema(pTargetTable);
+      const schema = catalog.getCachedSchema(connId, pTargetTable) || await catalog.getSchema(connId, pTargetTable);
       if (schema && schema.foreignKeys) {
         // Tên trường phải khớp JSON của get_full_catalog: column / refTable / refColumn
         // (xem SchemaInfo trong dbHelper.ts và json! ở database.rs).
@@ -2054,7 +2095,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
 
     // 3. Nếu chưa biết tên cột đích, kiểm tra schema bảng đích để dùng đúng tên cột hoặc PK
     if (targetTable) {
-      const targetSchema = catalog.getCachedSchema(targetTable) || await catalog.getSchema(targetTable);
+      const targetSchema = catalog.getCachedSchema(connId, targetTable) || await catalog.getSchema(connId, targetTable);
       if (targetSchema && targetSchema.columns && targetSchema.columns.length > 0) {
         const hasCol = targetSchema.columns.some((c: any) => c.name.toLowerCase() === colName.toLowerCase());
         if (hasCol) {
@@ -2081,7 +2122,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
 
   /** Editability of the result tab currently shown in a pane. Pure — safe to call in render. */
   const editabilityOf = (query: string, cols: string[]): ResultEditability =>
-    resolveResultEditability(query, cols, catalog.getCachedSchema);
+    resolveResultEditability(query, cols, (tbl: string) => catalog.getCachedSchema(connId, tbl));
 
   /**
    * Same, plus the app-wide Read-only switch. Deliberately a separate wrapper rather than a
@@ -2108,7 +2149,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     }
     if (wanted.size === 0) return;
     let alive = true;
-    Promise.all([...wanted].map(tbl => catalog.getSchema(tbl))).then(() => {
+    Promise.all([...wanted].map(tbl => catalog.getSchema(connId, tbl))).then(() => {
       if (alive) setSchemaTick(x => x + 1);
     });
     return () => { alive = false; };
@@ -2155,7 +2196,10 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   };
 
   /** `original` is the value straight off the row, i.e. before any buffered edit. */
-  const saveCellEdit = (original: any) => {
+  const saveCellEdit = (original: any, e?: React.FocusEvent) => {
+    if (e?.relatedTarget && (e.relatedTarget as HTMLElement).closest('.grid-edit-wrapper')) {
+      return;
+    }
     if (!editingCell) return;
     const { pane, rowKey, col } = editingCell;
     setCellEdits(prev => {
@@ -2187,7 +2231,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       newData: cols,
     }));
     if (changes.length === 0) return;
-    const preview = await dbHelper.commitChanges(table, changes, primaryKey, true);
+    const preview = await dbHelper.commitChanges(connId, table, changes, primaryKey, true);
     if (!preview.success) {
       showEditMsg(pane, t('sqlEditor.errEditPreview', { message: preview.message }), 'err');
       return;
@@ -2199,7 +2243,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     if (!editCommit) return;
     const { pane, table, primaryKey, changes } = editCommit;
     setEditCommitting(true);
-    const res = await dbHelper.commitChanges(table, changes, primaryKey);
+    const res = await dbHelper.commitChanges(connId, table, changes, primaryKey);
     setEditCommitting(false);
     setEditCommit(null);
     if (!res.success) {
@@ -2518,7 +2562,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                             return (
                               <td
                                 key={ci}
-                                className={isDirty ? 'grid-cell-dirty' : ''}
+                                className={`${isDirty ? 'grid-cell-dirty' : ''} ${isEditing ? 'is-editing' : ''}`.trim()}
                                 style={{ textAlign: isNum ? 'right' : 'left', whiteSpace: isAutoFit ? 'nowrap' : undefined }}
                                 title={
                                   pTarget && !canEdit
@@ -2528,18 +2572,72 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                                 onDoubleClick={canEdit ? () => startCellEdit(paneId, rowKey, col, cellVal) : undefined}
                               >
                                 {isEditing ? (
-                                  <input
-                                    type="text"
-                                    className="grid-input-edit"
-                                    value={editValue}
-                                    onChange={(e) => setEditValue(e.target.value)}
-                                    onBlur={() => saveCellEdit(row[col])}
-                                    onKeyDown={(e) => {
-                                      if (e.key === 'Enter') saveCellEdit(row[col]);
-                                      if (e.key === 'Escape') setEditingCell(null);
-                                    }}
-                                    autoFocus
-                                  />
+                                  <>
+                                    <span className="grid-cell-ghost">{cellVal === null ? 'NULL' : String(cellVal)}</span>
+                                    <div className="grid-edit-wrapper">
+                                    <input
+                                      type="text"
+                                      className="grid-input-edit"
+                                      value={editValue}
+                                      onChange={(e) => setEditValue(e.target.value)}
+                                      onBlur={(e) => saveCellEdit(row[col], e)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') saveCellEdit(row[col]);
+                                        if (e.key === 'Escape') setEditingCell(null);
+                                      }}
+                                      autoFocus
+                                    />
+                                    {(col.toLowerCase().includes('date') || col.toLowerCase().includes('time') || col.toLowerCase().endsWith('_at') || /^\d{4}-\d{2}-\d{2}/.test(String(cellVal || ''))) && (
+                                      <div
+                                        className="grid-date-picker-btn"
+                                        title={t('common.selectDate', 'Select Date & Time')}
+                                        onMouseDown={(e) => {
+                                          e.preventDefault();
+                                          e.stopPropagation();
+                                          const pickerEl = e.currentTarget.querySelector('input[type="datetime-local"]') as HTMLInputElement;
+                                          if (pickerEl && typeof pickerEl.showPicker === 'function') {
+                                            try { pickerEl.showPicker(); } catch {}
+                                          }
+                                        }}
+                                      >
+                                        <Calendar size={13} style={{ pointerEvents: 'none' }} />
+                                        <input
+                                          type="datetime-local"
+                                          step="1"
+                                          className="grid-date-picker-input"
+                                          value={(() => {
+                                            if (!editValue) return new Date().toISOString().slice(0, 19);
+                                            const str = String(editValue).trim().replace(' ', 'T');
+                                            const match = str.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?)/);
+                                            return match ? match[1] : '';
+                                          })()}
+                                          onMouseDown={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            if (typeof e.currentTarget.showPicker === 'function') {
+                                              try { e.currentTarget.showPicker(); } catch {}
+                                            }
+                                          }}
+                                          onChange={(e) => {
+                                            if (e.target.value) {
+                                              const orig = String(cellVal || editValue || '');
+                                              if (orig.includes('+')) {
+                                                const tz = orig.slice(orig.indexOf('+'));
+                                                setEditValue(e.target.value + tz);
+                                              } else if (orig.includes('Z')) {
+                                                setEditValue(e.target.value + 'Z');
+                                              } else if (orig.includes(' ') && !orig.includes('T')) {
+                                                setEditValue(e.target.value.replace('T', ' '));
+                                              } else {
+                                                setEditValue(e.target.value);
+                                              }
+                                            }
+                                          }}
+                                        />
+                                      </div>
+                                    )}
+                                  </div>
+                                  </>
                                 ) : cellVal === null ? (
                                   <span style={{ color: 'var(--win-accent, #3b82f6)', opacity: 0.8, fontStyle: 'italic' }}>{'NULL'}</span>
                                 ) : isFkCol ? (
@@ -3026,9 +3124,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                                   style={{ cursor: 'pointer', color: 'var(--st-danger)', display: 'flex', alignItems: 'center', gap: '2px' }}
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    if (confirm(t('sqlEditor.confirmDeleteHistoryItem'))) {
-                                      setHistoryList(deleteHistoryEntry(item.id));
-                                    }
+                                    setConfirmAction({ kind: 'deleteHistoryItem', id: item.id });
                                   }}
                                   title={t('sqlEditor.deleteHistoryItemTitle')}
                                 >
@@ -3229,7 +3325,11 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
               </div>
             </div>
           }
-          note={t('sqlEditor.unsafeNote')}
+          note={isProdConn ? t('sqlEditor.unsafeNoteProd') : t('sqlEditor.unsafeNote')}
+          // On a connection labelled production, an OK button is one reflex away from a wiped
+          // table. Typing the database name forces the user to look at WHICH database this is —
+          // which is the mistake being guarded against, not the SQL itself.
+          requireText={isProdConn ? dbName : undefined}
           confirmLabel={t('sqlEditor.unsafeConfirm')}
           onConfirm={() => {
             const p = unsafePrompt;
@@ -3238,6 +3338,26 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
             else executeSql(p.sql, p.pane, true);
           }}
           onCancel={() => setUnsafePrompt(null)}
+        />
+      )}
+
+      {/* Clearing history / deleting a saved statement — replaces window.confirm, see confirmAction. */}
+      {confirmAction && (
+        <ConfirmDialog
+          open
+          danger
+          title={
+            confirmAction.kind === 'clearHistory' ? clearHistoryLabel()
+              : confirmAction.kind === 'deleteSaved' ? t('sqlEditor.deleteSavedTitle')
+                : t('sqlEditor.deleteHistoryItemTitle')
+          }
+          message={
+            confirmAction.kind === 'clearHistory' ? clearHistoryMessage()
+              : confirmAction.kind === 'deleteSaved' ? t('sqlEditor.confirmDeleteSaved')
+                : t('sqlEditor.confirmDeleteHistoryItem')
+          }
+          onConfirm={runConfirmAction}
+          onCancel={() => setConfirmAction(null)}
         />
       )}
 

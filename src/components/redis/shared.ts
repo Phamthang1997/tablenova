@@ -1,5 +1,3 @@
-import type { CSSProperties } from 'react';
-
 // Constants and pure formatters shared by the Redis panels. No JSX here on purpose:
 // oxlint's `react/only-export-components` is an error in this repo, so a module that mixes
 // components with helpers would fail lint.
@@ -53,59 +51,7 @@ export function formatMicros(us: number): string {
   return `${(us / 1_000_000).toFixed(2)} s`;
 }
 
-export const cellStyle: CSSProperties = {
-  fontFamily: 'var(--win-font-mono)',
-  fontSize: '11px',
-  wordBreak: 'break-all',
-  verticalAlign: 'middle',
-};
-
-export const inlineInput: CSSProperties = {
-  width: '100%',
-  background: 'var(--win-bg-card)',
-  border: '1px solid var(--win-accent)',
-  borderRadius: '3px',
-  color: 'var(--win-text-primary)',
-  fontFamily: 'var(--win-font-mono)',
-  fontSize: '11px',
-  padding: '2px 4px',
-  outline: 'none',
-};
-
-export const monoBox: CSSProperties = {
-  flex: 1,
-  width: '100%',
-  minHeight: '260px',
-  background: 'var(--win-bg-window)',
-  border: '1px solid var(--win-border)',
-  color: 'var(--win-text-primary)',
-  fontFamily: 'var(--win-font-mono)',
-  fontSize: '12px',
-  padding: '10px',
-  borderRadius: '4px',
-  resize: 'vertical',
-  outline: 'none',
-};
-
-/** Scrollable log surface used by the console, Pub/Sub and Profiler panels. */
-export const logBox: CSSProperties = {
-  flex: 1,
-  overflow: 'auto',
-  background: 'var(--win-bg-window)',
-  border: '1px solid var(--win-border)',
-  borderRadius: '4px',
-  padding: '8px',
-  fontFamily: 'var(--win-font-mono)',
-  fontSize: '11px',
-};
-
-export const pillStyle: CSSProperties = {
-  fontSize: '10px',
-  padding: '2px 8px',
-  borderRadius: '10px',
-  border: '1px solid var(--win-border)',
-  background: 'var(--win-bg-window)',
-  color: 'var(--win-text-secondary)',
-  cursor: 'pointer',
-  fontFamily: 'var(--win-font-mono)',
-};
+// Năm object `CSSProperties` từng ở đây (cellStyle, inlineInput, monoBox, logBox, pillStyle) đã
+// thành class trong `index.css`: `.redis-cell`, `.redis-inline-input`, `.redis-mono-box`,
+// `.redis-log-box`, `.redis-pill`. Chúng là inline CSS y như `style={{...}}`, chỉ khác là được đặt
+// tên — gom vào một object không làm nó bớt là inline style, và :hover/:focus thì vẫn không viết được.

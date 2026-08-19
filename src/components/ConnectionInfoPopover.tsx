@@ -2,13 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import type { ConnectionStatus } from '../utils/dbHelper';
-import {
-  PROGRESS_STYLES,
-  PROGRESS_STYLE_LABEL_KEYS,
-  applyProgressStyle,
-  getProgressStyle,
-  type ProgressStyle,
-} from '../utils/progressStyle';
+import { CONN_ENVS, envLabelKey, normalizeEnv, type ConnEnv } from '../utils/connEnv';
 
 /**
  * Bảng chi tiết kết nối, mở khi bấm vào cụm trạng thái giữa thanh tiêu đề.
@@ -26,10 +20,10 @@ interface ConnectionInfoPopoverProps {
   /** Tên + màu của profile đang kết nối (rỗng khi kết nối không đến từ profile nào). */
   profileName: string;
   profileColor: string;
-  /** Đổi tên/màu -> ghi thẳng vào profile trong localStorage (App.tsx làm việc đó). */
-  onProfileChange: (patch: { name?: string; color?: string }) => void;
-  theme: 'dark' | 'light';
-  onThemeChange: (theme: 'dark' | 'light') => void;
+  /** Môi trường của profile đang kết nối. Trường riêng, không suy từ màu. */
+  profileEnv: ConnEnv;
+  /** Đổi tên/màu/môi trường -> ghi thẳng vào profile trong localStorage (App.tsx làm việc đó). */
+  onProfileChange: (patch: { name?: string; color?: string; env?: ConnEnv }) => void;
   onDisconnect: () => void;
   onReconnect: () => Promise<{ success: boolean; message?: string }>;
   onEdit: () => void;
@@ -95,9 +89,8 @@ export const ConnectionInfoPopover: React.FC<ConnectionInfoPopoverProps> = ({
   status,
   profileName,
   profileColor,
+  profileEnv,
   onProfileChange,
-  theme,
-  onThemeChange,
   onDisconnect,
   onReconnect,
   onEdit,
@@ -105,7 +98,6 @@ export const ConnectionInfoPopover: React.FC<ConnectionInfoPopoverProps> = ({
 }) => {
   const { t } = useTranslation();
   const [name, setName] = useState(profileName);
-  const [progressStyle, setProgressStyle] = useState<ProgressStyle>(getProgressStyle);
   const [reconnecting, setReconnecting] = useState(false);
   const [reconnectError, setReconnectError] = useState<string | null>(null);
 
@@ -120,11 +112,6 @@ export const ConnectionInfoPopover: React.FC<ConnectionInfoPopoverProps> = ({
   const commitName = () => {
     const next = name.trim();
     if (next && next !== profileName) onProfileChange({ name: next });
-  };
-
-  const handleProgressStyle = (next: ProgressStyle) => {
-    setProgressStyle(next);
-    applyProgressStyle(next);
   };
 
   const handleReconnect = async () => {
@@ -212,6 +199,24 @@ export const ConnectionInfoPopover: React.FC<ConnectionInfoPopoverProps> = ({
           </div>
         </div>
 
+        {/* Môi trường. Ngay dưới tên + màu vì đó là bộ ba "kết nối này là cái gì", nhưng là ô riêng:
+            màu bên trên thuần trang trí, còn ô này bật chỉ-đọc và xác nhận hai bước. */}
+        <div style={{ ...cardStyle, display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ fontSize: '11px', color: 'var(--win-text-secondary)', flexShrink: 0 }}>
+            {t('connEnv.label')}
+          </span>
+          <select
+            className="form-input"
+            value={profileEnv}
+            onChange={(e) => onProfileChange({ env: normalizeEnv(e.target.value) })}
+            style={{ flex: 1, minWidth: 0, height: '28px', fontSize: '12px', padding: '0 6px', borderRadius: '6px' }}
+          >
+            {CONN_ENVS.map((env) => (
+              <option key={env} value={env}>{t(envLabelKey(env))}</option>
+            ))}
+          </select>
+        </div>
+
         {/* Máy chủ */}
         <div style={cardStyle}>
           <InfoRow label={t('connInfo.server')} value={hostLabel} />
@@ -229,32 +234,6 @@ export const ConnectionInfoPopover: React.FC<ConnectionInfoPopoverProps> = ({
             title={status?.tlsVersion ? `${status.tlsVersion} · ${status.cipher}` : undefined}
           />
           <InfoRow label={t('connInfo.latency')} value={`${status?.latencyMs ?? 0} ms`} />
-        </div>
-
-        {/* Thiết lập hiển thị */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '8px 12px', alignItems: 'center' }}>
-          <span style={rowLabelStyle}>{t('connInfo.progressStyle')}</span>
-          <select
-            className="form-input"
-            value={progressStyle}
-            onChange={(e) => handleProgressStyle(e.target.value as ProgressStyle)}
-            style={{ height: '28px', fontSize: '12px', borderRadius: '6px' }}
-          >
-            {PROGRESS_STYLES.map((s) => (
-              <option key={s} value={s}>{t(PROGRESS_STYLE_LABEL_KEYS[s])}</option>
-            ))}
-          </select>
-
-          <span style={rowLabelStyle}>{t('connInfo.theme')}</span>
-          <select
-            className="form-input"
-            value={theme}
-            onChange={(e) => onThemeChange(e.target.value as 'dark' | 'light')}
-            style={{ height: '28px', fontSize: '12px', borderRadius: '6px' }}
-          >
-            <option value="light">{t('connInfo.themeLight')}</option>
-            <option value="dark">{t('connInfo.themeDark')}</option>
-          </select>
         </div>
 
         {reconnectError !== null && (

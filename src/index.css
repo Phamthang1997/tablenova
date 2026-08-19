@@ -69,6 +69,11 @@
   box-sizing: border-box;
 }
 
+*:focus,
+*:focus-visible {
+  outline: none !important;
+}
+
 :root,
 [data-theme='dark'] {
   /* Liquid Glass Dark Theme (Default) */
@@ -94,7 +99,7 @@
   /* The bundled Inter and JetBrains Mono carry no CJK glyphs, so Japanese text
      falls through to the platform CJK faces listed after them. These are OS
      fonts, never fetched — the app still renders offline. */
-  --win-font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Yu Gothic UI', 'Hiragino Sans', 'Noto Sans JP', Meiryo, sans-serif;
+  --win-font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', 'Yu Gothic UI', 'Hiragino Sans', 'Noto Sans JP', Meiryo, sans-serif;
   --win-font-mono: 'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', 'Yu Gothic UI', 'Hiragino Sans', monospace;
 
   --win-bg-btn-secondary: rgba(255, 255, 255, 0.08);
@@ -202,7 +207,7 @@ body {
 
 /* TitleBar: nền kính mỏng + hairline sáng ở cạnh trên cho khớp vật liệu cửa sổ */
 .title-bar {
-  height: 50px;
+  height: 40px;
   flex-shrink: 0;
   background: rgba(255, 255, 255, 0.34);
   display: flex;
@@ -243,20 +248,26 @@ body {
   display: inline-flex;
   align-items: center;
   border: none;
-  border-radius: 22px;
-  padding: 3px 6px;
-  gap: 2px;
-  height: 36px;
+  background: transparent;
+  padding: 2px 4px;
+  gap: 6px;
+  height: 34px;
   -webkit-app-region: no-drag;
+}
+
+.tb-capsule-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .tb-capsule-btn {
   background: transparent;
   border: none;
   color: var(--win-text-secondary);
-  height: 30px;
-  padding: 0 10px;
-  border-radius: 16px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 6px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -264,15 +275,40 @@ body {
   font-size: 12px;
   font-weight: 500;
   transition: all 0.12s ease;
+  user-select: none;
 }
 
 .tb-capsule-btn:hover:not(:disabled) {
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--win-bg-hover);
   color: var(--win-text-primary);
 }
 
 [data-theme='dark'] .tb-capsule-btn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.tb-capsule-btn.is-active-accent {
+  color: var(--win-accent);
+  background: var(--win-accent-glow);
+}
+
+.tb-capsule-btn.is-active-warn {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.tb-capsule-btn-sql {
+  font-weight: 700;
+  font-size: 11px;
+  padding: 0 8px;
+  gap: 4px;
+}
+
+.tb-capsule-btn-docs {
+  padding: 0 8px;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
 }
 
 /* Màn ConnectionManager: cụm nút chỉ còn vài mục phụ trợ nên bỏ hẳn phản hồi
@@ -292,10 +328,10 @@ body {
 
 .tb-capsule-divider {
   width: 1px;
-  height: 18px;
+  height: 16px;
   background: var(--win-border);
-  margin: 0 3px;
-  opacity: 0.5;
+  margin: 0 2px;
+  opacity: 0.6;
 }
 
 .tb-status-capsule {
@@ -870,9 +906,10 @@ textarea::placeholder {
 input:focus,
 select:focus,
 textarea:focus {
-  border-color: var(--win-accent);
-  box-shadow: 0 0 0 3px var(--win-accent-glow);
+  border-color: var(--win-border-strong);
+  box-shadow: none;
   background: rgba(10, 12, 16, 0.75);
+  outline: none;
 }
 
 [data-theme='light'] .form-input,
@@ -898,8 +935,9 @@ textarea:focus {
 [data-theme='light'] select:focus,
 [data-theme='light'] textarea:focus {
   background: #ffffff;
-  border-color: #2563eb;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.20);
+  border-color: var(--win-border-strong);
+  box-shadow: none;
+  outline: none;
 }
 
 .form-row {
@@ -961,6 +999,43 @@ select.form-input {
 
 .btn:active:not(:disabled) {
   opacity: 0.8;
+}
+
+/* Solid Opaque Background for all Popovers & Context Menus to prevent background bleed-through */
+.tab-context-menu,
+.grid-context-menu,
+.db-rail-menu,
+.st-fk-popover,
+.sql-run-menu,
+.tp-menu,
+.ws-menu {
+  background-color: var(--win-bg-popover, #ffffff) !important;
+  opacity: 1 !important;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.25), 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+}
+
+[data-theme='light'] .tab-context-menu,
+[data-theme='light'] .grid-context-menu,
+[data-theme='light'] .db-rail-menu,
+[data-theme='light'] .st-fk-popover,
+[data-theme='light'] .sql-run-menu,
+[data-theme='light'] .tp-menu,
+[data-theme='light'] .ws-menu {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+}
+
+[data-theme='dark'] .tab-context-menu,
+[data-theme='dark'] .grid-context-menu,
+[data-theme='dark'] .db-rail-menu,
+[data-theme='dark'] .st-fk-popover,
+[data-theme='dark'] .sql-run-menu,
+[data-theme='dark'] .tp-menu,
+[data-theme='dark'] .ws-menu {
+  background-color: #1e222d !important;
+  color: #f8fafc !important;
+  border-color: rgba(255, 255, 255, 0.2) !important;
 }
 
 /* Global Context Menu Items */
@@ -1029,26 +1104,232 @@ select.form-input {
   width: 64px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 6px 4px;
+  gap: 3px;
+  padding: 8px 5px;
   overflow-y: auto;
   overflow-x: hidden;
   background: var(--win-bg-sidebar);
   border-right: 1px solid var(--win-border);
+  /* The rail is chrome, not content: its own scrollbar should not draw a track over 64px. */
+  scrollbar-width: thin;
 }
 
 .db-rail-item {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding: 8px 2px;
+  gap: 5px;
+  padding: 9px 3px 8px;
   border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;
   color: var(--win-text-secondary);
   cursor: pointer;
   font-family: inherit;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+/* Where the server changes. A hairline plus a little air, so two databases of one server read as a
+   group — a flat column makes `(server A, sakila)` and `(server B, sakila)` look like one thing. */
+.db-rail-sep {
+  margin-top: 9px;
+}
+
+.db-rail-sep::before {
+  content: '';
+  position: absolute;
+  top: -5px;
+  left: 8px;
+  right: 8px;
+  height: 1px;
+  background: var(--win-border);
+}
+
+/* The engine's own mark, not a generic cylinder: with similar database names the engine is the
+   fastest thing to tell two connections apart by. Muted until the cell is active or hovered, so the
+   column reads as one surface rather than a row of logos. */
+.db-rail-icon-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.db-rail-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  opacity: 0.75;
+  filter: grayscale(0.2);
+  transition: opacity 0.12s ease, filter 0.12s ease;
+}
+
+.db-rail-item:hover .db-rail-icon,
+.db-rail-item.is-on .db-rail-icon {
+  opacity: 1;
+  filter: none;
+}
+
+/* Uncommitted writes on THIS connection. Amber badge at top-right corner. */
+.db-rail-badge {
+  position: absolute;
+  top: 3px;
+  right: 5px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #f59e0b;
+  box-shadow: 0 0 0 2px var(--win-bg-sidebar);
+  color: #1c1917;
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Tag Color tint matching the color picker palette directly.
+   No left border stripe: the cell is beautifully and evenly tinted with soft pastel tone and border. */
+.db-rail-item.db-rail-color-red {
+  background: rgba(252, 165, 165, 0.18);
+  border-color: rgba(252, 165, 165, 0.55);
+}
+
+.db-rail-item.db-rail-color-red:hover {
+  background: rgba(252, 165, 165, 0.28);
+  border-color: rgba(252, 165, 165, 0.85);
+}
+
+.db-rail-item.is-on.db-rail-color-red {
+  background: rgba(252, 165, 165, 0.35);
+  border-color: #f87171;
+}
+
+.db-rail-item.db-rail-color-green {
+  background: rgba(134, 239, 172, 0.18);
+  border-color: rgba(134, 239, 172, 0.55);
+}
+
+.db-rail-item.db-rail-color-green:hover {
+  background: rgba(134, 239, 172, 0.28);
+  border-color: rgba(134, 239, 172, 0.85);
+}
+
+.db-rail-item.is-on.db-rail-color-green {
+  background: rgba(134, 239, 172, 0.35);
+  border-color: #4ade80;
+}
+
+.db-rail-item.db-rail-color-blue {
+  background: rgba(165, 180, 252, 0.18);
+  border-color: rgba(165, 180, 252, 0.55);
+}
+
+.db-rail-item.db-rail-color-blue:hover {
+  background: rgba(165, 180, 252, 0.28);
+  border-color: rgba(165, 180, 252, 0.85);
+}
+
+.db-rail-item.is-on.db-rail-color-blue {
+  background: rgba(165, 180, 252, 0.35);
+  border-color: #818cf8;
+}
+
+.db-rail-item.db-rail-color-yellow {
+  background: rgba(253, 230, 138, 0.22);
+  border-color: rgba(253, 230, 138, 0.65);
+}
+
+.db-rail-item.db-rail-color-yellow:hover {
+  background: rgba(253, 230, 138, 0.32);
+  border-color: rgba(253, 230, 138, 0.9);
+}
+
+.db-rail-item.is-on.db-rail-color-yellow {
+  background: rgba(253, 230, 138, 0.42);
+  border-color: #facc15;
+}
+
+/* Dark mode adjustments */
+[data-theme='dark'] .db-rail-item.db-rail-color-red {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(248, 113, 113, 0.35);
+}
+
+[data-theme='dark'] .db-rail-item.is-on.db-rail-color-red {
+  background: rgba(239, 68, 68, 0.28);
+  border-color: rgba(248, 113, 113, 0.7);
+}
+
+[data-theme='dark'] .db-rail-item.db-rail-color-green {
+  background: rgba(34, 197, 94, 0.15);
+  border-color: rgba(74, 222, 128, 0.35);
+}
+
+[data-theme='dark'] .db-rail-item.is-on.db-rail-color-green {
+  background: rgba(34, 197, 94, 0.28);
+  border-color: rgba(74, 222, 128, 0.7);
+}
+
+[data-theme='dark'] .db-rail-item.db-rail-color-blue {
+  background: rgba(99, 102, 241, 0.15);
+  border-color: rgba(129, 140, 248, 0.35);
+}
+
+[data-theme='dark'] .db-rail-item.is-on.db-rail-color-blue {
+  background: rgba(99, 102, 241, 0.28);
+  border-color: rgba(129, 140, 248, 0.7);
+}
+
+[data-theme='dark'] .db-rail-item.db-rail-color-yellow {
+  background: rgba(234, 179, 8, 0.15);
+  border-color: rgba(250, 204, 21, 0.35);
+}
+
+[data-theme='dark'] .db-rail-item.is-on.db-rail-color-yellow {
+  background: rgba(234, 179, 8, 0.28);
+  border-color: rgba(250, 204, 21, 0.7);
+}
+
+/* Read-only lock icon: top-left corner, clean & minimal */
+.db-rail-lock {
+  position: absolute;
+  top: 4px;
+  left: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: var(--win-text-secondary);
+  opacity: 0.85;
+}
+
+.db-rail-item.is-on .db-rail-lock {
+  color: var(--win-text-primary);
+  opacity: 1;
+}
+
+/* Right-click menu of a rail cell. Colours and shadow come from the shared popover family above;
+   only geometry and placement live here. */
+.db-rail-menu {
+  position: fixed;
+  z-index: 100000;
+  min-width: 190px;
+  padding: 4px 0;
+  border: 1px solid var(--win-border-strong);
+  border-radius: 6px;
+}
+
+/* Catches the click that dismisses the menu, including a right-click elsewhere. Transparent and
+   below the menu, above everything else. */
+.db-rail-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
 }
 
 .db-rail-item:hover {
@@ -1056,21 +1337,51 @@ select.form-input {
   color: var(--win-text-primary);
 }
 
+/* Active cell: fill + brighter text + weight. No accent bar on the left — the fill already reads,
+   and a rule inside a 64px column made the layout feel busier rather than clearer. */
 .db-rail-item.is-on {
   background: var(--win-accent-glow);
-  border-color: var(--win-border-strong);
+  border-color: transparent;
   color: var(--win-text-primary);
+  font-weight: 600;
+}
+
+/* Keyboard users get the same affordance as the mouse. */
+.db-rail-item:focus-visible {
+  outline: 2px solid var(--win-accent);
+  outline-offset: -2px;
 }
 
 /* One line, clipped: two databases whose names differ only at the end are still
    told apart by the tooltip, and the rail never grows to fit a long name. */
 .db-rail-name {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3.5px;
   max-width: 100%;
+  padding: 0 2px;
   font-size: 10.5px;
   line-height: 1.2;
   overflow: hidden;
+  letter-spacing: -0.01em;
+}
+
+.db-rail-name-text {
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.db-rail-name-lock {
+  flex-shrink: 0;
+  opacity: 0.75;
+  color: var(--win-text-secondary);
+}
+
+.db-rail-item.is-on .db-rail-name-lock {
+  opacity: 1;
+  color: var(--win-text-primary);
 }
 
 .db-rail-status {
@@ -1310,6 +1621,27 @@ select.form-input {
   padding: 2px 0;
   margin: 6px 8px 4px;
   gap: 4px;
+}
+
+/* Ô chọn schema (chỉ Postgres) — nằm giữa dải tab và ô tìm kiếm của thanh bên.
+   Cùng chiều cao 30px với .sidebar-search-input ngay dưới nó. */
+.sidebar-schema-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 4px;
+}
+
+.sidebar-schema-icon {
+  color: var(--win-text-disabled);
+  flex-shrink: 0;
+}
+
+.sidebar-schema-select {
+  flex: 1;
+  height: 30px;
+  min-width: 0;
+  font-size: 11.5px;
 }
 
 .sb-seg-tab {
@@ -2084,7 +2416,7 @@ select.form-input {
   border-collapse: collapse;
   width: max-content;
   min-width: 100%;
-  font-family: var(--win-font-mono, 'Cascadia Code', 'Fira Code', Consolas, monospace);
+  font-family: var(--win-font-mono, 'JetBrains Mono', monospace);
   font-size: 11.5px;
 }
 
@@ -2093,7 +2425,7 @@ select.form-input {
   top: 0;
   background: #1e2227;
   color: var(--win-text-secondary);
-  font-family: var(--win-font-mono, 'Cascadia Code', 'Fira Code', Consolas, monospace);
+  font-family: var(--win-font-mono, 'JetBrains Mono', monospace);
   font-size: 11.5px;
   font-weight: 500;
   text-align: left;
@@ -2112,18 +2444,63 @@ select.form-input {
   font-weight: 500;
 }
 
+.grid-table tr {
+  height: 25px;
+  background: transparent;
+}
+
+[data-theme='light'] .grid-table tr {
+  background: #ffffff;
+}
+
+.grid-table tr:nth-child(even) {
+  background: rgba(255, 255, 255, 0.025);
+}
+
+[data-theme='light'] .grid-table tr:nth-child(even) {
+  background: #f4f4f5;
+}
+
+.grid-table tr:hover {
+  background: rgba(255, 255, 255, 0.05) !important;
+}
+
+[data-theme='light'] .grid-table tr:hover {
+  background: #e4e4e7 !important;
+}
+
+.grid-table tr.selected {
+  background: #2b303b !important;
+}
+
+[data-theme='light'] .grid-table tr.selected {
+  background: #e0f2fe !important;
+}
+
+.grid-table tr {
+  height: 25px !important;
+  max-height: 25px !important;
+  box-sizing: border-box !important;
+}
+
 .grid-table td {
-  font-family: var(--win-font-mono, 'Cascadia Code', 'Fira Code', Consolas, monospace);
+  height: 25px !important;
+  max-height: 25px !important;
+  box-sizing: border-box !important;
+  font-family: var(--win-font-mono, 'JetBrains Mono', monospace);
   font-size: 11.5px;
+  line-height: 18px;
   border-right: 1px solid var(--win-border);
   border-bottom: 1px solid var(--win-border);
-  padding: 3px 8px;
+  padding: 3px 8px !important;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 320px;
   color: #fff;
   cursor: default;
+  vertical-align: middle;
+  position: relative;
 }
 
 [data-theme='light'] .grid-table td {
@@ -2159,46 +2536,6 @@ select.form-input {
   border-bottom: 1px solid #f0f0f4 !important;
 }
 
-/* Nền dòng: giao diện TỐI là mặc định, giao diện sáng ghi đè qua [data-theme='light'].
-   `#ffffff` từng nằm ở luật gốc này — tức là mọi dòng đều trắng đặc ở giao diện tối, mà
-   `.grid-table td` lại đặt `color: #fff`, nên chữ trắng trên nền trắng: dòng trống hoàn
-   toàn. Chỉ dòng CHẴN nhìn được vì luật nth-child bên dưới ghi đè bằng một lớp phủ gần
-   như trong suốt, để lộ nền tối của .grid-table-container.
-   Base phải là transparent: lớp tint dòng chẵn được thiết kế để nằm TRÊN nền container. */
-.grid-table tr {
-  background: transparent;
-}
-
-[data-theme='light'] .grid-table tr {
-  background: #ffffff;
-}
-
-.grid-table tr:nth-child(even) {
-  background: rgba(255, 255, 255, 0.025);
-}
-
-[data-theme='light'] .grid-table tr:nth-child(even) {
-  background: #f4f4f5;
-  /* TablePlus soft light grey even row tint */
-}
-
-.grid-table tr:hover {
-  background: rgba(255, 255, 255, 0.05) !important;
-}
-
-[data-theme='light'] .grid-table tr:hover {
-  background: #e4e4e7 !important;
-}
-
-.grid-table tr.selected {
-  background: #2b303b !important;
-}
-
-[data-theme='light'] .grid-table tr.selected {
-  background: #e0f2fe !important;
-  /* TablePlus light blue selected row */
-}
-
 /* Grid Change/Dirty Indicators */
 .grid-cell-dirty {
   position: relative;
@@ -2216,22 +2553,136 @@ select.form-input {
   opacity: 0.5;
 }
 
-.grid-input-edit {
-  width: 100%;
-  height: 100%;
-  background: #1e1f22;
-  border: 1px solid var(--win-accent);
-  color: #fff;
-  font-family: var(--win-font-sans);
-  font-size: 12px;
-  padding: 2px 6px;
-  outline: none;
-  border-radius: 2px;
+.grid-table td.is-editing,
+.grid-table td:has(.grid-input-edit) {
+  padding: 3px 8px !important;
+  height: 25px !important;
+  max-height: 25px !important;
+  box-sizing: border-box !important;
+  position: relative !important;
 }
 
-[data-theme='light'] .grid-input-edit {
-  background: #ffffff;
-  color: #000;
+/* Ghost span keeps identical in-flow content width during edit mode */
+.grid-cell-ghost {
+  visibility: hidden !important;
+  pointer-events: none !important;
+  white-space: nowrap !important;
+  font-family: var(--win-font-mono, 'JetBrains Mono', monospace) !important;
+  font-size: 11.5px !important;
+  line-height: 18px !important;
+  height: 18px !important;
+  max-height: 18px !important;
+  box-sizing: border-box !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  display: inline-block !important;
+  vertical-align: top !important;
+  opacity: 0 !important;
+}
+
+.grid-input-edit,
+.grid-input-edit:focus {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+  background: #1e1f22 !important;
+  color: #ffffff !important;
+  font-family: var(--win-font-mono, 'JetBrains Mono', monospace) !important;
+  font-size: 11.5px !important;
+  line-height: 23px !important;
+  padding: 0 7px !important;
+  margin: 0 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+  z-index: 2 !important;
+}
+
+[data-theme='light'] .grid-input-edit,
+[data-theme='light'] .grid-input-edit:focus {
+  background: #ffffff !important;
+  color: #000000 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+/* Integrated Datetime Picker in Grid Cell Edit */
+.grid-edit-wrapper {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  z-index: 2;
+}
+
+.grid-edit-wrapper:has(.grid-date-picker-btn) .grid-input-edit,
+.grid-input-edit.has-date-picker {
+  padding-right: 26px !important;
+}
+
+.grid-date-picker-btn {
+  position: absolute;
+  right: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 19px;
+  height: 19px;
+  border-radius: 3px;
+  color: #94a3b8;
+  cursor: pointer;
+  z-index: 3;
+  opacity: 0.75;
+  transition: all 0.15s ease;
+}
+
+[data-theme='light'] .grid-date-picker-btn {
+  color: #64748b;
+}
+
+.grid-date-picker-btn:hover {
+  opacity: 1;
+  color: var(--win-accent, #3b82f6);
+  background: rgba(59, 130, 246, 0.14);
+}
+
+.grid-date-picker-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  border: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  z-index: 4;
+}
+
+.grid-date-picker-input::-webkit-calendar-picker-indicator {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
 }
 
 /* DB Connection Speed & Status Pill (TablePlus style) */
@@ -2416,130 +2867,1816 @@ select.form-input {
   font-weight: 700;
 }
 
-/* AI Copilot panel */
+/* ==========================================================================
+   TableNova AI Copilot Panel & Smart Chat UI (Theme Adaptive)
+   ========================================================================== */
+
 .ai-panel {
-  width: 320px;
+  width: 360px;
+  min-width: 320px;
+  max-width: 480px;
   border-left: 1px solid var(--win-border);
   background: var(--win-bg-sidebar);
   display: flex;
   flex-direction: column;
+  height: 100%;
   overflow: hidden;
   flex-shrink: 0;
+  position: relative;
 }
 
+/* AI Header Bar */
 .ai-panel-header {
-  padding: 12px 16px;
+  height: 42px;
+  padding: 0 12px;
   border-bottom: 1px solid var(--win-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: transparent;
+  user-select: none;
+}
+
+.ai-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.ai-header-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ai-header-divider {
+  width: 1px;
+  height: 16px;
+  background: var(--win-border);
+}
+
+.ai-header-icon-btn {
+  background: transparent;
+  border: none;
+  color: var(--win-text-secondary);
+  padding: 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.ai-header-icon-btn:hover {
+  background: var(--win-bg-hover);
+  color: var(--win-text-primary);
+}
+
+.ai-header-session-btn {
+  background: transparent;
+  border: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--win-text-primary);
+  font-weight: 600;
+  font-size: 13px;
+  min-width: 0;
+  transition: background 0.15s;
+}
+
+.ai-header-session-btn:hover {
+  background: var(--win-bg-hover);
+}
+
+.ai-header-session-icon {
+  display: flex;
+  align-items: center;
+  color: var(--win-accent);
+}
+
+.ai-header-session-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 130px;
+}
+
+.ai-header-chevron {
+  color: var(--win-text-secondary);
+  opacity: 0.7;
+}
+
+/* More Menu Dropdown */
+.ai-header-more-wrapper {
+  position: relative;
+}
+
+.ai-header-menu-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 6px;
+  background: var(--win-bg-popover);
+  border: 1px solid var(--win-border-strong);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  padding: 4px;
+  min-width: 210px;
+  z-index: 100;
+}
+
+.ai-header-menu-item {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--win-text-primary);
+  padding: 8px 12px;
+  font-size: 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.ai-header-menu-item:hover {
+  background: var(--win-accent);
+  color: #ffffff;
+}
+
+/* Messages Scroll Container */
+.ai-messages-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Message Rows */
+.ai-message-row {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.ai-message-row.user {
+  align-items: flex-end;
+}
+
+.ai-message-row.assistant {
+  align-items: flex-start;
+}
+
+.ai-message-bubble.user {
+  background: var(--win-accent);
+  color: #ffffff;
+  padding: 10px 14px;
+  border-radius: 16px 16px 4px 16px;
+  font-size: 13px;
+  line-height: 145%;
+  max-width: 88%;
+  word-break: break-word;
+  box-shadow: 0 2px 8px var(--win-accent-glow);
+}
+
+.ai-user-text {
+  white-space: pre-wrap;
+}
+
+.ai-message-bubble.assistant {
+  width: 100%;
+  color: var(--win-text-primary);
+  font-size: 13px;
+  line-height: 155%;
+}
+
+.ai-message-bubble.assistant.thinking {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--win-text-secondary);
+  font-size: 12px;
+  padding: 8px 0;
+}
+
+/* Assistant Header */
+.ai-assistant-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.ai-assistant-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--win-bg-hover);
+  border: 1px solid var(--win-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--win-accent);
+}
+
+.ai-assistant-name {
+  font-weight: 600;
+  font-size: 12.5px;
+  color: var(--win-text-primary);
+}
+
+.ai-assistant-time {
+  font-size: 11px;
+  color: var(--win-text-secondary);
+  opacity: 0.7;
+}
+
+/* Message Text & Highlights */
+.ai-message-body-text {
+  margin-bottom: 8px;
+  white-space: pre-wrap;
+  color: var(--win-text-primary);
+}
+
+.ai-inline-tag {
+  color: #e11d48;
+  background: rgba(225, 29, 72, 0.08);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: var(--win-font-mono);
+  font-size: 12px;
+  font-weight: 500;
+  margin: 0 2px;
+  border: 1px solid rgba(225, 29, 72, 0.2);
+}
+
+/* SQL Code Block */
+.ai-code-wrapper {
+  margin-top: 8px;
+  margin-bottom: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--win-border-strong);
+  background: var(--win-bg-card);
+  overflow: hidden;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+}
+
+.ai-code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: var(--win-bg-hover);
+  border-bottom: 1px solid var(--win-border);
+}
+
+.ai-code-lang {
+  font-family: var(--win-font-mono);
+  font-size: 11px;
+  color: var(--win-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+}
+
+.ai-code-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ai-code-action-btn {
+  background: var(--win-bg-card);
+  border: 1px solid var(--win-border);
+  color: var(--win-text-primary);
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.15s;
+}
+
+.ai-code-action-btn:hover {
+  background: var(--win-bg-hover);
+  border-color: var(--win-accent);
+}
+
+.ai-code-action-btn.primary {
+  background: rgba(37, 99, 235, 0.1);
+  border-color: rgba(37, 99, 235, 0.3);
+  color: var(--win-accent);
+}
+
+.ai-code-action-btn.primary:hover {
+  background: var(--win-accent);
+  color: #ffffff;
+}
+
+.ai-sql-pre {
+  margin: 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  font-family: var(--win-font-mono);
+  font-size: 12px;
+  line-height: 150%;
+  color: var(--win-text-primary);
+  background: transparent;
+}
+
+.ai-sql-code {
+  font-family: inherit;
+}
+
+/* Multi-Model Comparison Section */
+.ai-compare-container {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--win-border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ai-compare-title {
+  font-size: 12px;
+  color: var(--win-text-secondary);
+  font-weight: 500;
+}
+
+.ai-compare-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ai-compare-btn {
+  background: var(--win-bg-card);
+  border: 1px solid var(--win-border);
+  border-radius: 20px;
+  padding: 6px 12px;
+  color: var(--win-text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.15s;
+  text-align: left;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+}
+
+.ai-compare-btn:hover {
+  background: var(--win-bg-hover);
+  border-color: var(--win-accent);
+}
+
+.ai-compare-btn-icon {
+  color: var(--win-accent);
+  display: flex;
+  align-items: center;
+}
+
+.ai-compare-btn-name {
+  font-weight: 600;
+  color: var(--win-accent);
+}
+
+.ai-compare-btn-model {
+  color: var(--win-text-secondary);
+  font-size: 11px;
+}
+
+/* Empty State / Welcome Screen */
+.ai-empty-welcome-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 24px 12px;
+}
+
+.ai-welcome-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--win-bg-hover);
+  color: var(--win-accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 12px;
+  border: 1px solid var(--win-border);
+}
+
+.ai-welcome-title {
+  font-weight: 700;
+  font-size: 15px;
+  margin-bottom: 6px;
+  color: var(--win-text-primary);
+}
+
+.ai-welcome-desc {
+  font-size: 12px;
+  color: var(--win-text-secondary);
+  line-height: 145%;
+  margin-bottom: 20px;
+  max-width: 280px;
+}
+
+.ai-quick-prompts-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--win-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+  align-self: flex-start;
+}
+
+.ai-quick-prompts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.ai-quick-prompt-chip {
+  background: var(--win-bg-card);
+  border: 1px solid var(--win-border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: var(--win-text-primary);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.15s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+}
+
+.ai-quick-prompt-chip:hover {
+  background: var(--win-bg-hover);
+  border-color: var(--win-accent);
+  color: var(--win-accent);
+}
+
+/* Bottom Composite Smart Input Card */
+.ai-input-card-container {
+  padding: 12px;
+  border-top: 1px solid var(--win-border);
+  background: var(--win-bg-sidebar);
+}
+
+.ai-input-card {
+  border: 1px solid var(--win-border-strong);
+  border-radius: 12px;
+  background: var(--win-bg-card);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  transition: border-color 0.15s;
+}
+
+.ai-input-card:focus-within {
+  border-color: var(--win-accent);
+}
+
+.ai-textarea {
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  font-family: var(--win-font-sans);
+  font-size: 13px;
+  line-height: 140%;
+  color: var(--win-text-primary);
+  min-height: 48px;
+  max-height: 120px;
+}
+
+.ai-textarea::placeholder {
+  color: var(--win-text-secondary);
+  opacity: 0.6;
+}
+
+/* Context Picker & Pills */
+.ai-context-picker-wrapper {
+  position: relative;
+}
+
+.ai-context-pills-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ai-context-pill {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--win-bg-hover);
+  border: 1px solid var(--win-border);
+  border-radius: 6px;
+  padding: 2px 6px 2px 8px;
+  font-size: 11px;
+  color: var(--win-text-primary);
+}
+
+.ai-context-table-icon {
+  color: #f59e0b;
+}
+
+.ai-context-pill-text {
+  font-family: var(--win-font-mono);
+  font-weight: 500;
+}
+
+.ai-context-pill-remove {
+  background: transparent;
+  border: none;
+  color: var(--win-text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: 3px;
+}
+
+.ai-context-pill-remove:hover {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+.ai-context-add-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: 1px dashed var(--win-border-strong);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--win-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.ai-context-add-btn:hover {
+  background: var(--win-bg-hover);
+  border-color: var(--win-accent);
+  color: var(--win-text-primary);
+}
+
+.ai-context-popover {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  margin-bottom: 8px;
+  background: var(--win-bg-popover);
+  border: 1px solid var(--win-border-strong);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  width: 240px;
+  max-height: 220px;
+  display: flex;
+  flex-direction: column;
+  z-index: 120;
+  overflow: hidden;
+}
+
+.ai-context-search-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--win-border);
+}
+
+.ai-context-search-icon {
+  color: var(--win-text-secondary);
+}
+
+.ai-context-search-input {
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 12px;
+  color: var(--win-text-primary);
+  flex: 1;
+}
+
+.ai-context-table-list {
+  overflow-y: auto;
+  padding: 4px;
+  max-height: 160px;
+}
+
+.ai-context-table-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--win-text-primary);
+  font-size: 12px;
+  text-align: left;
+  transition: background 0.15s;
+}
+
+.ai-context-table-item:hover {
+  background: var(--win-bg-hover);
+}
+
+.ai-context-table-item.selected {
+  background: rgba(37, 99, 235, 0.12);
+  color: var(--win-accent);
+}
+
+.ai-context-item-icon {
+  color: #f59e0b;
+}
+
+.ai-context-item-name {
+  flex: 1;
+  font-family: var(--win-font-mono);
+}
+
+.ai-context-item-status {
+  font-weight: bold;
+}
+
+.ai-context-empty {
+  padding: 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--win-text-secondary);
+}
+
+/* Bottom Control Row */
+.ai-input-bottom-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 4px;
+}
+
+/* Model Selector */
+.ai-model-selector-wrapper {
+  position: relative;
+}
+
+.ai-model-selector-btn {
+  background: transparent;
+  border: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--win-text-primary);
+  font-size: 12px;
+  transition: background 0.15s;
+}
+
+.ai-model-selector-btn:hover {
+  background: var(--win-bg-hover);
+}
+
+.ai-model-icon-box {
+  color: var(--win-accent);
+  display: flex;
+  align-items: center;
+}
+
+.ai-model-active-name {
+  font-weight: 600;
+}
+
+.ai-model-active-tag {
+  color: var(--win-text-secondary);
+  font-size: 11px;
+}
+
+.ai-model-chevron {
+  color: var(--win-text-secondary);
+  opacity: 0.6;
+}
+
+.ai-model-dropdown-menu {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  margin-bottom: 8px;
+  background: var(--win-bg-popover);
+  border: 1px solid var(--win-border-strong);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  width: 250px;
+  z-index: 120;
+  overflow: hidden;
+}
+
+.ai-model-dropdown-header {
+  padding: 8px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--win-text-secondary);
+  border-bottom: 1px solid var(--win-border);
+}
+
+.ai-model-dropdown-list {
+  padding: 4px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.ai-model-dropdown-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--win-text-primary);
+  text-align: left;
+  transition: background 0.15s;
+}
+
+.ai-model-dropdown-item:hover {
+  background: var(--win-bg-hover);
+}
+
+.ai-model-dropdown-item.active {
+  background: rgba(37, 99, 235, 0.12);
+  color: var(--win-accent);
+}
+
+.ai-model-item-icon {
+  color: var(--win-accent);
+  display: flex;
+  align-items: center;
+}
+
+.ai-model-item-info {
+  flex: 1;
+}
+
+.ai-model-item-name {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ai-model-item-sub {
+  font-size: 10.5px;
+  color: var(--win-text-secondary);
+}
+
+.ai-model-item-check {
+  color: var(--win-accent);
+  font-weight: bold;
+}
+
+.ai-model-dropdown-footer {
+  border-top: 1px solid var(--win-border);
+  padding: 4px;
+}
+
+.ai-model-settings-shortcut {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: transparent;
+  border: none;
+  color: var(--win-text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+
+.ai-model-settings-shortcut:hover {
+  background: var(--win-bg-hover);
+  color: var(--win-text-primary);
+}
+
+.ai-input-actions-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ai-input-add-prompt-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: transparent;
+  border: 1px solid var(--win-border);
+  color: var(--win-text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.ai-input-add-prompt-btn:hover {
+  background: var(--win-bg-hover);
+  color: var(--win-text-primary);
+}
+
+.ai-send-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--win-accent);
+  border: none;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s;
+  box-shadow: 0 2px 6px var(--win-accent-glow);
+}
+
+.ai-send-btn:hover:not(:disabled) {
+  opacity: 0.9;
+  transform: scale(1.04);
+}
+
+.ai-send-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Spinner Animation */
+.ai-spinning {
+  animation: ai-spin 1s linear infinite;
+}
+
+@keyframes ai-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Session History Drawer */
+.ai-session-drawer-backdrop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 200;
+  display: flex;
+}
+
+.ai-session-drawer {
+  width: 260px;
+  background: var(--win-bg-popover);
+  border-right: 1px solid var(--win-border);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 4px 0 16px rgba(0, 0, 0, 0.2);
+}
+
+.ai-session-drawer-header {
+  padding: 12px;
+  border-bottom: 1px solid var(--win-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ai-session-drawer-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--win-text-primary);
+}
+
+.ai-session-new-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--win-accent);
+  border: none;
+  color: #fff;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.ai-session-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.ai-session-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--win-text-primary);
+  font-size: 12px;
+  transition: background 0.15s;
+}
+
+.ai-session-item:hover {
+  background: var(--win-bg-hover);
+}
+
+.ai-session-item.active {
+  background: rgba(37, 99, 235, 0.12);
+  color: var(--win-accent);
+}
+
+.ai-session-item-icon {
+  opacity: 0.7;
+}
+
+.ai-session-item-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ai-session-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.ai-session-item:hover .ai-session-item-actions {
+  opacity: 1;
+}
+
+.ai-session-action-btn {
+  background: transparent;
+  border: none;
+  color: var(--win-text-secondary);
+  padding: 4px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.ai-session-action-btn:hover {
+  background: var(--win-bg-hover);
+  color: var(--win-text-primary);
+}
+
+.ai-session-action-btn.danger:hover {
+  color: #ef4444;
+}
+
+.ai-session-edit-box {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+}
+
+.ai-session-edit-input {
+  background: var(--win-bg-card);
+  border: 1px solid var(--win-accent);
+  border-radius: 3px;
+  color: var(--win-text-primary);
+  padding: 2px 6px;
+  font-size: 12px;
+  flex: 1;
+  outline: none;
+}
+
+/* Settings Modal */
+.ai-modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(2px);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ai-modal-container {
+  width: 680px;
+  max-width: 90vw;
+  background: var(--win-bg-popover);
+  border: 1px solid var(--win-border-strong);
+  border-radius: 12px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: var(--win-text-primary);
+}
+
+.ai-modal-header {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--win-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ai-modal-header-title {
   display: flex;
   align-items: center;
   gap: 8px;
   font-weight: 600;
-  color: var(--win-accent);
-  font-size: 13px;
+  font-size: 14px;
 }
 
-.ai-messages-container {
+.ai-modal-header-icon {
+  color: var(--win-accent);
+}
+
+.ai-modal-close-btn {
+  background: transparent;
+  border: none;
+  color: var(--win-text-secondary);
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.ai-modal-body {
+  display: flex;
+  min-height: 400px;
+}
+
+.ai-modal-sidebar {
+  width: 210px;
+  border-right: 1px solid var(--win-border);
+  background: var(--win-bg-sidebar);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ai-modal-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--win-text-secondary);
+  margin-bottom: 4px;
+}
+
+.ai-modal-add-profile-btn {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  background: transparent;
+  border: 1px solid var(--win-border);
+  color: var(--win-text-primary);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.ai-modal-profile-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   flex: 1;
   overflow-y: auto;
+}
+
+.ai-modal-profile-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+  color: var(--win-text-primary);
+}
+
+.ai-modal-profile-tab:hover {
+  background: var(--win-bg-hover);
+}
+
+.ai-modal-profile-tab.active {
+  background: rgba(37, 99, 235, 0.12);
+  border: 1px solid rgba(37, 99, 235, 0.3);
+}
+
+.ai-modal-tab-icon {
+  color: var(--win-accent);
+}
+
+.ai-modal-tab-info {
+  flex: 1;
+}
+
+.ai-modal-tab-name {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ai-modal-tab-sub {
+  font-size: 10.5px;
+  color: var(--win-text-secondary);
+}
+
+.ai-modal-tab-default-tag {
+  font-size: 9.5px;
+  background: rgba(37, 99, 235, 0.15);
+  color: var(--win-accent);
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-weight: 600;
+}
+
+.ai-modal-oauth-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  padding: 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  color: #059669;
+}
+
+.ai-modal-shield-icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.ai-modal-form-area {
+  flex: 1;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+}
+
+.ai-modal-form-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--win-border);
+  padding-bottom: 8px;
+}
+
+.ai-modal-form-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.ai-modal-form-top-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ai-modal-btn-sub {
+  background: transparent;
+  border: 1px solid var(--win-border);
+  color: var(--win-text-primary);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.ai-modal-btn-danger {
+  background: transparent;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #ef4444;
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+/* AI Auth Clean Card & Segmented Control */
+.ai-auth-card {
+  background: var(--win-bg-card);
+  border: 1px solid var(--win-border-strong);
+  border-radius: 10px;
   padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+}
+
+.ai-auth-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ai-auth-segmented-control {
+  display: flex;
+  background: var(--win-bg-hover);
+  padding: 3px;
+  border-radius: 8px;
+  border: 1px solid var(--win-border);
+  gap: 3px;
+  width: 100%;
+}
+
+.ai-auth-segment-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--win-text-secondary);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.ai-auth-segment-btn:hover {
+  color: var(--win-text-primary);
+}
+
+.ai-auth-segment-btn.active {
+  background: var(--win-accent);
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.25);
+}
+
+.ai-auth-dot-active {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10b981;
+  display: inline-block;
+}
+
+.ai-auth-tab-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Google Logged In State */
+.ai-google-logged-in-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+
+.ai-google-account-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ai-google-logo-box {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.08);
+  flex-shrink: 0;
+}
+
+.ai-google-g-text {
+  font-weight: 800;
+  font-size: 17px;
+  background: linear-gradient(135deg, #4285f4 0%, #34a853 50%, #fbbc05 75%, #ea4335 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  display: inline-block;
+}
+
+.ai-google-account-details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ai-google-account-email {
+  font-weight: 600;
+  font-size: 12.5px;
+  color: var(--win-text-primary);
+}
+
+.ai-google-account-status {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: #10b981;
+}
+
+.ai-dot-green {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10b981;
+}
+
+.ai-google-logout-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #ef4444;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.ai-google-logout-btn:hover {
+  background: rgba(239, 68, 68, 0.12);
+}
+
+/* Google Login Box */
+.ai-google-login-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ai-google-login-desc {
+  font-size: 11.5px;
+  color: var(--win-text-secondary);
+  line-height: 140%;
+}
+
+.ai-google-login-action-row {
+  display: flex;
+}
+
+.ai-google-primary-login-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: #1a73e8;
+  border: none;
+  color: #ffffff;
+  padding: 9px 16px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+  box-shadow: 0 2px 8px rgba(26, 115, 232, 0.3);
+  width: 100%;
+}
+
+.ai-google-primary-login-btn:hover:not(:disabled) {
+  background: #1557b0;
+  transform: translateY(-1px);
+}
+
+.ai-google-primary-login-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.ai-google-btn-g {
+  font-weight: 800;
+  font-size: 13px;
+  background: #ffffff;
+  color: #1a73e8;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* OAuth Client ID Settings Accordion */
+.ai-oauth-client-toggle-wrap {
+  display: flex;
+  margin-top: 2px;
+}
+
+.ai-oauth-toggle-link {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: transparent;
+  border: none;
+  color: var(--win-text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+  opacity: 0.85;
+  transition: color 0.15s, opacity 0.15s;
+}
+
+.ai-oauth-toggle-link:hover {
+  color: var(--win-accent);
+  opacity: 1;
+}
+
+.ai-oauth-client-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--win-bg-hover);
+  border: 1px solid var(--win-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-top: 4px;
+}
+
+.ai-oauth-help-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--win-text-secondary);
+}
+
+.ai-oauth-gcp-link {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  background: transparent;
+  border: none;
+  color: #38bdf8;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.ai-oauth-gcp-link:hover {
+  text-decoration: underline;
+}
+
+.ai-oauth-inline-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ai-oauth-field-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ai-form-sublabel {
+  font-size: 10.5px;
+  color: var(--win-text-secondary);
+  font-weight: 500;
+}
+
+.ai-oauth-save-row {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.ai-oauth-save-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--win-accent);
+  border: none;
+  color: #ffffff;
+  padding: 5px 12px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.ai-oauth-save-btn:hover {
+  opacity: 0.9;
+}
+
+/* API Key Form Wrap & Action Chips */
+.ai-apikey-form-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ai-apikey-action-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ai-chip-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(37, 99, 235, 0.12);
+  border: 1px solid rgba(37, 99, 235, 0.25);
+  color: var(--win-accent);
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.ai-chip-action-btn:hover {
+  background: rgba(37, 99, 235, 0.20);
+  border-color: var(--win-accent);
+}
+
+.ai-chip-paste-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--win-bg-hover);
+  border: 1px solid var(--win-border);
+  color: var(--win-text-secondary);
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.ai-chip-paste-btn:hover {
+  border-color: var(--win-accent);
+  color: var(--win-text-primary);
+}
+
+.ai-form-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ai-form-label-with-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ai-live-model-badge {
+  font-size: 10.5px;
+  background: rgba(16, 185, 129, 0.12);
+  color: #059669;
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.ai-fetch-live-models-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: 1px solid var(--win-border);
+  color: var(--win-accent);
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.ai-fetch-live-models-btn:hover:not(:disabled) {
+  background: var(--win-bg-hover);
+  border-color: var(--win-accent);
+}
+
+.ai-fetch-live-models-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ai-form-label-hint {
+  font-size: 10.5px;
+  color: var(--win-text-secondary);
+  opacity: 0.7;
+}
+
+.ai-model-preset-select {
+  margin-bottom: 4px;
+  font-weight: 500;
+}
+
+.ai-modal-form-grid {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
-.ai-message {
-  padding: 8px 12px;
-  border-radius: 6px;
-  font-size: 12px;
-  line-height: 140%;
-  max-width: 85%;
-}
-
-.ai-message.assistant {
-  background: rgba(255, 255, 255, 0.02);
-  color: var(--win-text-primary);
-  align-self: flex-start;
-  border: 1px solid var(--win-border);
-}
-
-.ai-message.user {
-  background: var(--win-accent);
-  color: #fff;
-  align-self: flex-end;
-}
-
-.ai-code-block {
-  font-family: var(--win-font-mono);
-  background: #111215;
-  padding: 8px;
-  border-radius: 4px;
-  margin-top: 8px;
-  font-size: 11px;
-  white-space: pre-wrap;
-  user-select: text;
-  border: 1px solid var(--win-border-strong);
-  color: #e2e8f0;
-}
-
-.ai-action-btn {
-  background: rgba(77, 139, 244, 0.12);
-  border: 1px solid rgba(77, 139, 244, 0.25);
-  color: var(--win-accent);
-  font-family: var(--win-font-sans);
-  font-size: 11px;
-  padding: 4px 8px;
-  border-radius: 4px;
-  cursor: pointer;
-  margin-top: 6px;
-}
-
-.ai-action-btn:hover {
-  background: var(--win-accent);
-  color: #fff;
-}
-
-.ai-input-container {
-  padding: 12px;
-  border-top: 1px solid var(--win-border);
+.ai-form-group {
   display: flex;
-  gap: 8px;
+  flex-direction: column;
+  gap: 4px;
 }
 
-.ai-textarea {
-  flex: 1;
-  height: 34px;
-  background: rgba(0, 0, 0, 0.15);
-  border: 1px solid var(--win-border);
-  border-radius: 4px;
-  color: #fff;
-  font-family: var(--win-font-sans);
+.ai-form-label {
   font-size: 12px;
-  padding: 6px 10px;
+  color: var(--win-text-secondary);
+  font-weight: 500;
+}
+
+.ai-form-input,
+.ai-form-select {
+  background: var(--win-bg-hover);
+  border: 1px solid var(--win-border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  color: var(--win-text-primary);
   outline: none;
-  resize: none;
+  font-family: var(--win-font-sans);
 }
 
-[data-theme='light'] .ai-textarea {
-  background: #ffffff;
-  color: #000;
-}
-
-.ai-textarea:focus {
+.ai-form-input:focus,
+.ai-form-select:focus {
   border-color: var(--win-accent);
 }
 
-.ai-send-btn {
-  background: var(--win-accent);
-  color: #fff;
-  border: none;
-  border-radius: 4px;
-  width: 34px;
-  height: 34px;
+.ai-form-key-input-box {
   display: flex;
-  justify-content: center;
   align-items: center;
+  background: var(--win-bg-hover);
+  border: 1px solid var(--win-border);
+  border-radius: 6px;
+  padding: 0 8px;
+}
+
+.ai-form-key-input-box:focus-within {
+  border-color: var(--win-accent);
+}
+
+.ai-form-key-icon {
+  color: var(--win-text-secondary);
+}
+
+.ai-form-input.with-icon {
+  background: transparent;
+  border: none;
+  flex: 1;
+}
+
+.ai-form-key-toggle-btn {
+  background: transparent;
+  border: none;
+  color: var(--win-text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  padding: 4px;
+}
+
+.ai-form-checkbox-row {
+  margin-top: 4px;
+}
+
+.ai-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--win-text-primary);
   cursor: pointer;
 }
+
+.ai-test-feedback-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.ai-test-feedback-box.success {
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  color: #059669;
+}
+
+.ai-test-feedback-box.error {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #ef4444;
+}
+
+.ai-modal-bottom-actions {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid var(--win-border);
+  padding-top: 12px;
+}
+
+.ai-modal-test-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--win-bg-hover);
+  border: 1px solid var(--win-border);
+  color: var(--win-text-primary);
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ai-modal-test-btn:hover:not(:disabled) {
+  border-color: var(--win-accent);
+}
+
+.ai-modal-done-btn {
+  background: var(--win-accent);
+  border: none;
+  color: #ffffff;
+  padding: 6px 16px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ai-error-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  padding: 8px 12px;
+  border-radius: 6px;
+  color: #ef4444;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
 
 /* SQL Editor Query History Panel */
 .sql-editor-container {
@@ -2703,20 +4840,21 @@ select.form-input {
 }
 
 .segment-btn {
-  border: 1px solid transparent;
+  border: none !important;
   background: transparent;
   color: var(--win-text-secondary, #64748b);
   padding: 0 12px;
-  border-radius: 8px;
+  border-radius: 0 !important;
   font-size: 12px;
   cursor: pointer;
   font-weight: 500;
   transition: all 0.15s ease;
-  font-family: var(--win-font-sans);
+  font-family: var(--win-font-mono, 'JetBrains Mono', monospace);
   display: inline-flex;
   align-items: center;
   gap: 5px;
   height: 26px;
+  box-shadow: none !important;
 }
 
 .segment-btn:hover:not(.active) {
@@ -2732,17 +4870,19 @@ select.form-input {
 .segment-btn.active {
   background: rgba(255, 255, 255, 0.12) !important;
   color: #ffffff !important;
-  border-radius: 8px !important;
+  border-radius: 0 !important;
+  border: none !important;
   font-weight: 600 !important;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3) !important;
+  box-shadow: none !important;
 }
 
 [data-theme='light'] .segment-btn.active {
   background: #ffffff !important;
   color: #0f172a !important;
-  border-radius: 8px !important;
+  border-radius: 0 !important;
+  border: none !important;
   font-weight: 600 !important;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08) !important;
+  box-shadow: none !important;
 }
 
 /* Structure View Styling */
@@ -2977,6 +5117,89 @@ select.form-input {
   opacity: 0 !important;
 }
 
+/* Row action edit button */
+.st-row-edit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  color: var(--win-text-disabled);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+
+.structure-table tr:hover .st-row-edit,
+.st-row-edit:focus-visible {
+  opacity: 0.7;
+}
+
+.st-row-edit:hover {
+  opacity: 1 !important;
+  background: var(--win-accent-glow);
+  color: var(--win-accent);
+}
+
+/* Quick helper chips in Structure modals */
+.st-chips-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.st-chip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--win-border);
+  background: var(--win-bg-hover);
+  color: var(--win-text-primary);
+  font-family: var(--win-font-mono, monospace);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  user-select: none;
+}
+
+.st-chip-btn:hover {
+  background: var(--win-accent-glow);
+  color: var(--win-accent);
+  border-color: rgba(59, 130, 246, 0.3);
+}
+
+.st-chip-btn.operator {
+  font-weight: 600;
+  color: var(--win-accent);
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.st-tpl-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--win-border);
+  background: var(--win-bg-card);
+  color: var(--win-text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.st-tpl-btn:hover {
+  color: var(--win-text-primary);
+  background: var(--win-bg-hover);
+  border-color: var(--win-border-strong);
+}
+
 /* Custom table dropdown select controls */
 .st-select {
   width: 100%;
@@ -3003,7 +5226,8 @@ select.form-input {
 }
 
 .st-select-type {
-  min-width: 160px;
+  width: 100%;
+  min-width: 0 !important;
 }
 
 .st-select:hover {
@@ -3109,12 +5333,127 @@ select.form-input {
   opacity: 0.5;
 }
 
+/* Structure Table Cell Locks */
+.structure-table tr {
+  height: 26px !important;
+  max-height: 26px !important;
+  box-sizing: border-box !important;
+}
+
+.structure-table td {
+  height: 26px !important;
+  max-height: 26px !important;
+  box-sizing: border-box !important;
+  vertical-align: middle !important;
+  padding: 3px 8px !important;
+  line-height: 20px !important;
+}
+
+.structure-table td.st-edit,
+.structure-table td.st-edit-select,
+.structure-table td:has(.st-cell-input),
+.structure-table td:has(.st-select) {
+  position: relative !important;
+  height: 26px !important;
+  max-height: 26px !important;
+  padding: 3px 8px !important;
+  box-sizing: border-box !important;
+}
+
+.structure-table input[type="text"],
+.structure-table select,
+.structure-table .form-input,
+.structure-table .st-cell-input,
+.structure-table .st-cell-input:focus,
+.structure-table .st-select,
+.structure-table .st-select:focus {
+  border: none !important;
+  border-radius: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
 .st-cell-input {
   width: 100%;
   padding: 2px 6px;
   font-size: 12px;
-  height: 24px;
-  border-radius: 4px;
+  height: 24px !important;
+  box-sizing: border-box !important;
+  border-radius: 0 !important;
+  font-family: var(--win-font-mono, 'JetBrains Mono', monospace) !important;
+}
+
+/* Ghost span for Structure Viewer cell edit - locks column width */
+.st-cell-ghost {
+  visibility: hidden !important;
+  pointer-events: none !important;
+  white-space: nowrap !important;
+  font-family: var(--win-font-mono, 'JetBrains Mono', monospace) !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  line-height: 20px !important;
+  height: 20px !important;
+  max-height: 20px !important;
+  box-sizing: border-box !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  display: inline-block !important;
+  vertical-align: top !important;
+  opacity: 0 !important;
+}
+
+.st-cell-input-overlay {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+  background: var(--win-bg-card, #1e1f22) !important;
+  color: var(--win-text-primary, #ffffff) !important;
+  font-family: var(--win-font-mono, 'JetBrains Mono', monospace) !important;
+  font-size: 12px !important;
+  padding: 3px 8px !important;
+  margin: 0 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+  z-index: 2 !important;
+}
+
+.st-select-overlay {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+  margin: 0 !important;
+  padding: 0 20px 0 8px !important;
+  z-index: 2 !important;
+  background-color: var(--win-bg-card, #1e1f22) !important;
+  color: var(--win-text-primary, #ffffff) !important;
+  font-family: var(--win-font-mono, 'JetBrains Mono', monospace) !important;
+  font-size: 12px !important;
+  border: none !important;
+  border-radius: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+[data-theme='light'] .st-cell-input-overlay,
+[data-theme='light'] .st-select-overlay {
+  background: #ffffff !important;
+  color: #000000 !important;
 }
 
 /* Editable cells */
@@ -3319,6 +5658,63 @@ select.form-input {
   height: 6px;
   border-radius: 50%;
   background: var(--st-warn);
+}
+
+.st-ddl-codeblock {
+  margin: 0;
+  padding: 8px 0;
+  font-family: var(--win-font-mono, 'JetBrains Mono', monospace);
+  font-size: 12px;
+  line-height: 1.6;
+  background: var(--win-bg-window, #12141a);
+  border: 1px solid var(--win-border, rgba(255, 255, 255, 0.12));
+  border-radius: 6px;
+  overflow: auto;
+  max-height: 540px;
+}
+
+[data-theme='light'] .st-ddl-codeblock {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.st-ddl-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: inherit;
+}
+
+.st-ddl-table td {
+  padding: 1px 8px;
+  height: auto !important;
+  border: none !important;
+  box-sizing: border-box !important;
+}
+
+.st-ddl-linenum {
+  width: 40px;
+  min-width: 40px;
+  text-align: right;
+  color: var(--win-text-disabled, #64748b);
+  user-select: none;
+  border-right: 1px solid var(--win-border, rgba(255, 255, 255, 0.08)) !important;
+  background: rgba(0, 0, 0, 0.15);
+  font-size: 11px;
+  vertical-align: top !important;
+  padding-right: 10px !important;
+}
+
+[data-theme='light'] .st-ddl-linenum {
+  background: #f1f5f9;
+  border-right-color: #cbd5e1 !important;
+}
+
+.st-ddl-linecontent {
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--win-text-primary, #f8fafc);
+  vertical-align: top !important;
+  padding-left: 14px !important;
 }
 
 .st-ddl {
@@ -3620,6 +6016,24 @@ select.form-input {
   to {
     transform: rotate(360deg);
   }
+}
+
+/* ─── Statistics table rows (DatabaseInfoModal) ───
+   Hover lives here rather than in onMouseEnter/onMouseLeave handlers writing inline styles:
+   a database with a couple of thousand tables would otherwise carry two closures and two
+   style writes per row, on every render. `.is-current` marks the connected database, and
+   its highlight must survive hovering. */
+.stat-row {
+  border-bottom: 1px solid var(--win-border);
+  transition: background 0.12s;
+}
+
+.stat-row:not(.is-current):hover {
+  background: var(--win-bg-hover);
+}
+
+.stat-row.is-current {
+  background: var(--win-accent-glow);
 }
 
 /* ─── Copy Options Dropdown Style ─── */
@@ -4130,7 +6544,7 @@ input.rename-input {
 /* Nút tạo kết nối mới + menu chọn loại DB */
 .cm-new-wrap {
   position: relative;
-  padding: 0 12px 10px;
+  padding: 0 10px 8px;
 }
 
 .cm-new-btn {
@@ -4141,18 +6555,20 @@ input.rename-input {
   gap: 7px;
   padding: 0 10px;
   border-radius: 8px;
-  border: 0 solid var(--win-border-strong);
-  background: var(--win-bg-btn-secondary);
+  border: none;
+  background: var(--win-bg-hover, rgba(125, 130, 145, 0.08));
   color: var(--win-text-primary);
   font-family: var(--win-font-sans);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.12s ease;
+  transition: all 0.12s ease;
 }
 
 .cm-new-btn:hover {
-  background: var(--win-bg-btn-secondary-hover);
+  background: var(--win-accent-glow, rgba(59, 130, 246, 0.12));
+  border-color: var(--win-accent);
+  color: var(--win-accent);
 }
 
 .cm-pop-backdrop {
@@ -4164,9 +6580,9 @@ input.rename-input {
 .cm-pop {
   position: absolute;
   z-index: 41;
-  top: calc(100% - 4px);
-  left: 12px;
-  right: 12px;
+  top: calc(100% + 2px);
+  left: 10px;
+  right: 10px;
   padding: 4px;
   border-radius: 10px;
   border: 1px solid var(--win-border-strong);
@@ -4204,43 +6620,64 @@ input.rename-input {
 
 /* Ô tìm kiếm */
 .cm-search {
-  margin: 0 12px 8px;
+  margin: 0 10px 8px;
   display: flex;
   align-items: center;
-  gap: 6px;
-  height: 30px;
-  padding: 0 4px 0 9px;
-  border: 0 solid var(--win-border);
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  border: none;
   border-radius: 8px;
   background: var(--win-bg-window);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
 
 .cm-search:focus-within {
-  border-color: var(--win-accent);
-  box-shadow: 0 0 0 3px var(--win-accent-glow);
+  background: var(--win-bg-card);
+  border-color: var(--win-border-strong);
+  box-shadow: none;
+  outline: none;
+}
+
+.cm-search-icon {
+  color: var(--win-text-disabled);
+  flex-shrink: 0;
 }
 
 .cm-search input {
   flex: 1;
   min-width: 0;
-  height: 100%;
-  padding: 0;
+  height: 100% !important;
+  padding: 0 !important;
+  margin: 0 !important;
   /* Khung + focus ring do .cm-search (phần tử cha) vẽ, input phải phẳng hoàn toàn
      — kể cả outline mặc định của trình duyệt. */
   border: none !important;
   background: transparent !important;
   box-shadow: none !important;
   outline: none !important;
+  font-family: var(--win-font-sans);
   font-size: 12px;
-  color: var(--win-text-primary);
+  color: var(--win-text-primary) !important;
+}
+
+.cm-search input::placeholder {
+  color: var(--win-text-disabled);
+  font-size: 11.5px;
+}
+
+.cm-search input:focus {
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
 }
 
 /* Danh sách kết nối */
 .cm-list {
   flex: 1;
   overflow-y: auto;
-  padding: 0 8px 10px;
+  padding: 4px 0 8px;
 }
 
 .cm-empty {
@@ -4279,19 +6716,26 @@ input.rename-input {
 .cm-group-count {
   margin-left: auto;
   letter-spacing: 0;
-  opacity: 0.8;
+  font-size: 9.5px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(125, 130, 145, 0.14);
+  color: var(--win-text-secondary);
 }
 
 .cm-item {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 7px 8px;
-  border-radius: 8px;
-  border: 0 solid transparent;
+  gap: 10px;
+  margin: 2px 6px;
+  padding: 6px 8px;
+  border-radius: 9px;
+  border: 1px solid transparent;
   cursor: pointer;
   overflow: hidden;
+  transition: background 0.15s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .cm-item:hover {
@@ -4307,10 +6751,12 @@ input.rename-input {
   font-weight: 600;
 }
 
+/* ————— DB Logo Badges & Avatars (Mặc định sạch đẹp + Hiệu ứng Ánh kim chạy lướt) ————— */
 .cm-badge {
-  width: 27px;
-  height: 27px;
-  border-radius: 8px;
+  position: relative;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -4318,7 +6764,131 @@ input.rename-input {
   font-size: 9px;
   font-weight: 800;
   letter-spacing: 0.2px;
-  color: #fff;
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 3px 8px -1px rgba(0, 0, 0, 0.2);
+  overflow: hidden;
+  transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.18s ease;
+}
+
+.cm-item:hover .cm-badge {
+  transform: translateY(-1px) scale(1.03);
+}
+
+/* Vệt ánh kim chạy lướt qua icon (Animated Metallic Glint Sweep) */
+.cm-badge::before,
+.cm-avatar::before {
+  content: '';
+  position: absolute;
+  top: -60%;
+  left: -60%;
+  width: 220%;
+  height: 220%;
+  background: linear-gradient(115deg,
+      transparent 0%,
+      transparent 42%,
+      rgba(255, 255, 255, 0.1) 46%,
+      rgba(255, 255, 255, 0.88) 50%,
+      rgba(255, 255, 255, 0.18) 54%,
+      transparent 58%,
+      transparent 100%);
+  transform: translateX(-120%);
+  animation: cmMetallicGlint 3.6s cubic-bezier(0.25, 1, 0.5, 1) infinite;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 2;
+}
+
+@keyframes cmMetallicGlint {
+  0% {
+    transform: translateX(-120%);
+    opacity: 0;
+  }
+
+  6% {
+    opacity: 1;
+  }
+
+  38% {
+    transform: translateX(120%);
+    opacity: 0.95;
+  }
+
+  42%,
+  100% {
+    transform: translateX(120%);
+    opacity: 0;
+  }
+}
+
+.cm-item:hover .cm-badge::before,
+.cm-avatar:hover::before {
+  animation: cmMetallicGlintHover 1.2s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
+}
+
+@keyframes cmMetallicGlintHover {
+  0% {
+    transform: translateX(-120%);
+    opacity: 0;
+  }
+
+  10% {
+    opacity: 1;
+  }
+
+  80% {
+    transform: translateX(120%);
+    opacity: 1;
+  }
+
+  90%,
+  100% {
+    transform: translateX(120%);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+  .cm-badge::before,
+  .cm-avatar::before {
+    animation: none;
+    transform: translateX(0);
+    opacity: 0;
+  }
+}
+
+.cm-badge svg,
+.cm-avatar svg {
+  position: relative;
+  z-index: 3;
+  color: #ffffff;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35));
+}
+
+/* Gradient thương hiệu mượt mà, tự nhiên */
+.cm-badge.sqlite,
+.cm-avatar.sqlite {
+  background: linear-gradient(145deg, #005a84 0%, #00334c 100%);
+  box-shadow: 0 4px 12px -2px rgba(0, 59, 87, 0.45);
+}
+
+.cm-badge.postgres,
+.cm-avatar.postgres {
+  background: linear-gradient(145deg, #3d7fb5 0%, #254d70 100%);
+  box-shadow: 0 4px 12px -2px rgba(51, 103, 145, 0.45);
+}
+
+.cm-badge.mysql,
+.cm-avatar.mysql {
+  background: linear-gradient(145deg, #009abb 0%, #005a6d 100%);
+  box-shadow: 0 4px 12px -2px rgba(0, 117, 143, 0.45);
+}
+
+.cm-badge.redis,
+.cm-avatar.redis {
+  background: linear-gradient(145deg, #f03e33 0%, #b31d14 100%);
+  box-shadow: 0 4px 12px -2px rgba(220, 56, 45, 0.45);
 }
 
 .cm-badge.sm {
@@ -4326,11 +6896,39 @@ input.rename-input {
   height: 22px;
   border-radius: 6px;
   font-size: 8px;
+  box-shadow: 0 2px 6px -1px rgba(0, 0, 0, 0.2);
+}
+
+.cm-badge.sm.sqlite {
+  box-shadow: 0 2px 6px -1px rgba(0, 59, 87, 0.35);
+}
+
+.cm-badge.sm.postgres {
+  box-shadow: 0 2px 6px -1px rgba(51, 103, 145, 0.35);
+}
+
+.cm-badge.sm.mysql {
+  box-shadow: 0 2px 6px -1px rgba(0, 117, 143, 0.35);
+}
+
+.cm-badge.sm.redis {
+  box-shadow: 0 2px 6px -1px rgba(220, 56, 45, 0.35);
 }
 
 .cm-badge.ghost {
   background: var(--win-bg-hover);
   color: var(--win-text-secondary);
+  border: 1px solid var(--win-border);
+  box-shadow: none;
+}
+
+.cm-badge.ghost::after {
+  display: none;
+}
+
+.cm-badge.ghost svg {
+  color: var(--win-text-secondary);
+  filter: none;
 }
 
 .cm-item-body {
@@ -4341,15 +6939,28 @@ input.rename-input {
 .cm-item-name {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   font-size: 12px;
+  font-weight: 500;
   color: var(--win-text-primary);
 }
 
+.cm-default-star {
+  fill: var(--st-warn);
+  color: var(--st-warn);
+  flex-shrink: 0;
+}
+
+.cm-star-active {
+  fill: var(--st-warn);
+  color: var(--st-warn);
+}
+
 .cm-item-sub {
-  margin-top: 1px;
+  margin-top: 2px;
   font-size: 10.5px;
-  color: var(--win-text-disabled);
+  color: var(--win-text-secondary);
+  opacity: 0.85;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4367,6 +6978,7 @@ input.rename-input {
   align-items: center;
   gap: 1px;
   flex-shrink: 0;
+  background: transparent;
 }
 
 .cm-item:hover .cm-item-actions,
@@ -4377,22 +6989,24 @@ input.rename-input {
 /* Chiều cao dùng chung cho footer sidebar và footer pane phải, để đường kẻ trên
    và nội dung hai bên thẳng đúng một hàng. Đổi ở đây là cả hai đổi theo. */
 .connection-manager-container {
-  --cm-foot-h: 57px;
+  --cm-foot-h: 48px;
 }
 
 .cm-side-foot {
   min-height: var(--cm-foot-h);
-  padding: 0 8px;
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 2px;
+  padding: 0 8px;
+  flex-shrink: 0;
+  background: var(--win-bg-sidebar);
 }
 
-/* Cao bằng .cm-btn (32px) để căn giữa trùng với nút bên phải. */
+/* Cao tương đương item và có bo góc, viền đồng bộ */
 .cm-side-foot .cm-ghost-row {
-  height: 32px;
-  padding: 0 8px;
+  height: 34px;
+  padding: 0 10px;
 }
 
 .cm-ghost-row {
@@ -4400,16 +7014,17 @@ input.rename-input {
   align-items: center;
   gap: 9px;
   width: 100%;
-  padding: 8px;
-  border: none;
+  padding: 8px 10px;
   border-radius: 8px;
+  border: 1px solid transparent;
   background: transparent;
   color: var(--win-text-secondary);
   font-family: var(--win-font-sans);
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 500;
   text-align: left;
   cursor: pointer;
+  transition: background 0.15s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.15s ease, box-shadow 0.15s ease, color 0.15s ease;
 }
 
 .cm-ghost-row:hover {
@@ -4419,7 +7034,8 @@ input.rename-input {
 
 .cm-ghost-row.active {
   background: var(--win-bg-active);
-  color: var(--win-accent);
+  border-color: var(--win-border-strong);
+  color: var(--win-text-primary);
   font-weight: 600;
 }
 
@@ -4436,12 +7052,27 @@ input.rename-input {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 0 24px 15px;
+  padding: 0 24px 12px;
   border-bottom: 1px solid var(--win-border);
   flex-shrink: 0;
 }
 
+.cm-head-info {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: 1;
+  min-width: 0;
+  margin-top: -24px;
+}
+
+.cm-head-text {
+  flex: 1;
+  min-width: 0;
+}
+
 .cm-avatar {
+  position: relative;
   width: 42px;
   height: 42px;
   border-radius: 11px;
@@ -4452,6 +7083,9 @@ input.rename-input {
   font-size: 12px;
   font-weight: 800;
   color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  box-shadow: 0 4px 14px -2px rgba(0, 0, 0, 0.28), inset 0 1.5px 1px rgba(255, 255, 255, 0.65), inset 0 -1.5px 2px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
 }
 
 .cm-head-name {
@@ -4548,15 +7182,15 @@ input.rename-input {
 .cm-tabs {
   display: flex;
   gap: 2px;
-  padding: 0 24px;
+  padding: 10px 24px;
   flex-shrink: 0;
 }
 
 .cm-tab {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 10px 14px;
+  gap: 6px;
+  padding: 8px 14px;
   margin-bottom: -1px;
   border: none;
   border-bottom: 2px solid transparent;
@@ -4589,7 +7223,7 @@ input.rename-input {
 .cm-pane {
   flex: 1;
   overflow-y: auto;
-  padding: 22px 24px 30px;
+  padding: 16px 24px 20px;
 }
 
 .cm-pane-inner {
@@ -4597,8 +7231,8 @@ input.rename-input {
 }
 
 .cm-section+.cm-section {
-  margin-top: 18px;
-  padding-top: 18px;
+  margin-top: 16px;
+  padding-top: 16px;
   border-top: 1px solid var(--win-border);
 }
 
@@ -4611,15 +7245,15 @@ input.rename-input {
 .cm-section-desc {
   margin-top: 3px;
   font-size: 11.5px;
-  line-height: 1.5;
+  line-height: 1.45;
   color: var(--win-text-secondary);
 }
 
 .cm-fields {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  margin-top: 14px;
+  gap: 12px;
+  margin-top: 12px;
 }
 
 .cm-grid {
@@ -4641,7 +7275,13 @@ input.rename-input {
 }
 
 .cm-grid.basic {
-  grid-template-columns: minmax(0, 1fr) 200px;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr);
+}
+
+@media (max-width: 680px) {
+  .cm-grid.basic {
+    grid-template-columns: 1fr;
+  }
 }
 
 .cm-label-row {
@@ -4696,8 +7336,10 @@ input.rename-input {
 }
 
 .cm-hint {
+  display: block;
+  margin-top: 4px;
   font-size: 11px;
-  line-height: 1.55;
+  line-height: 1.5;
   color: var(--win-text-disabled);
 }
 
@@ -4893,9 +7535,14 @@ input.rename-input {
   align-items: center;
 }
 
-.cm-file-row .form-input {
+.cm-file-row .form-input,
+.cm-file-row .input-icon-wrapper {
   flex: 1;
   min-width: 0;
+}
+
+.cm-hidden-file {
+  display: none;
 }
 
 .cm-file-row .cm-file-btn {
@@ -5183,7 +7830,7 @@ input.rename-input {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 12px 24px;
+  padding: 8px 24px;
   flex-shrink: 0;
   min-height: var(--cm-foot-h);
 }
@@ -5356,12 +8003,23 @@ input.rename-input {
    loang màu vừa bỏ. Nền của *ô nhập và nút* thì vẫn giữ (xem cuối khối),
    vì chúng là control chứ không phải nền.
 
-   Các biến --cm-* khai báo ở .cm-screen chứ không ở
-   .connection-manager-container như trước: thanh tiêu đề là anh em của
-   container nên không thừa kế được từ đó.
+   Các biến --cm-* khai báo ở .cm-screen vì thanh tiêu đề là anh em của
+   container nên không thừa kế được từ đó — NHƯNG cũng phải khai ở
+   .connection-manager-container, vì `ConnectionManager` còn được mount ở một
+   chỗ thứ hai: Modal "Thêm kết nối" (App.tsx), và ở đó không có .cm-screen nào
+   bọc ngoài. Thiếu chúng thì `.cm-side { width: var(--cm-side-w) }` mất giá trị
+   và sidebar giãn theo nội dung (danh sách rộng gấp đôi), `.cm-side-head
+   { height: var(--cm-tb-h) }` sập về 0 nên lệch hàng với .cm-main-head — đó là
+   lúc pill URL đè lên cụm chip bên cạnh tên kết nối.
+
+   Một khối, hai selector: giá trị vẫn chỉ tồn tại ở MỘT chỗ. Nhân đôi khối là
+   nhân đôi thứ sẽ lệch. --cm-tb-h nằm ở đây (không ở khối grid bên dưới) đúng vì
+   lý do đó: hai hàng tiêu đề phải cao bằng nhau ở cả hai chỗ mount.
    ===================================================================== */
-.cm-screen {
+.cm-screen,
+.connection-manager-container {
   --cm-side-w: 272px;
+  --cm-tb-h: 40px;
   --cm-surface: rgba(245, 247, 250, 0.78);
   --cm-glass-weak: rgba(255, 255, 255, 0.34);
   --cm-glass: rgba(255, 255, 255, 0.46);
@@ -5370,7 +8028,8 @@ input.rename-input {
   --cm-glass-shadow: rgba(15, 23, 42, 0.12);
 }
 
-[data-theme='dark'] .cm-screen {
+[data-theme='dark'] .cm-screen,
+[data-theme='dark'] .connection-manager-container {
   --cm-surface: rgba(18, 20, 26, 0.70);
   --cm-glass-weak: rgba(18, 22, 30, 0.40);
   --cm-glass: rgba(24, 28, 38, 0.50);
@@ -5394,8 +8053,9 @@ input.rename-input {
    còn thanh tiêu đề chỉ nằm ở ô trên-phải và *đè* lên container. Xếp thanh tiêu
    đề thành một hàng riêng phía trên như trước thì sidebar không thể cao hơn nó
    được — nó nằm sâu trong ConnectionManager, không phải con của khung này. */
+/* `--cm-tb-h` khai ở khối token phía trên, không ở đây: khi nó nằm ở đây thì bản mount trong Modal
+   không thấy nó, và hai hàng tiêu đề (`.cm-side-head` / `.cm-main-head`) cao khác nhau. */
 .cm-screen {
-  --cm-tb-h: 50px;
   position: relative;
   display: grid;
   grid-template-columns: var(--cm-side-w) 1fr;
@@ -5535,11 +8195,14 @@ input.rename-input {
    để vật liệu cửa sổ của hệ điều hành ăn qua nữa. Các panel vốn đã trong suốt
    nên không phải làm gì thêm. */
 @media (prefers-reduced-transparency: reduce) {
-  .cm-screen {
+
+  .cm-screen,
+  .connection-manager-container {
     --cm-surface: #f5f7fa;
   }
 
-  [data-theme='dark'] .cm-screen {
+  [data-theme='dark'] .cm-screen,
+  [data-theme='dark'] .connection-manager-container {
     --cm-surface: #12141a;
   }
 }
@@ -5588,6 +8251,7 @@ input.rename-input {
 
 .connection-manager-container .cm-ghost-row.active {
   background: var(--cm-item-active);
+  border-color: var(--cm-item-active-border);
   box-shadow: 0 2px 10px var(--cm-glass-shadow), inset 0 1px 0 var(--cm-hairline);
 }
 
@@ -6115,13 +8779,14 @@ input.rename-input {
 .workspace-container .segment-btn {
   height: 26px;
   padding: 0 12px;
-  border-radius: 8px;
+  border-radius: 0 !important;
   font-weight: 500;
   font-size: 12px;
   color: var(--win-text-secondary, #64748b);
-  border: 1px solid transparent;
+  border: none !important;
   background: transparent;
   transition: all 0.15s ease;
+  box-shadow: none !important;
 }
 
 .workspace-container .segment-btn:hover:not(.active) {
@@ -6137,17 +8802,19 @@ input.rename-input {
 .workspace-container .segment-btn.active {
   background: #ffffff !important;
   color: #0f172a !important;
-  border-radius: 8px !important;
+  border-radius: 0 !important;
+  border: none !important;
   font-weight: 600 !important;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08) !important;
+  box-shadow: none !important;
 }
 
 [data-theme='dark'] .workspace-container .segment-btn.active {
   background: rgba(255, 255, 255, 0.12) !important;
   color: #ffffff !important;
-  border-radius: 8px !important;
+  border-radius: 0 !important;
+  border: none !important;
   font-weight: 600 !important;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3) !important;
+  box-shadow: none !important;
 }
 
 /* ————— Nút trên thanh công cụ (Thêm cột / Thêm chỉ mục / Definition...) ————— */
@@ -7929,4 +10596,3423 @@ input.rename-input {
   background: var(--win-accent);
   color: #ffffff;
   border: none;
+}
+
+/* ==========================================================================
+   WhatsNewModal Styles (Navicat 17 Inspired Design System)
+   ========================================================================== */
+
+.whats-new-modal-body {
+  padding: 16px 24px 20px 24px;
+  gap: 14px;
+  background: var(--win-bg-card, #ffffff);
+  flex: 1;
+  min-height: 0;
+  justify-content: space-between;
+  overflow: hidden;
+}
+
+.whats-new-preview-wrapper {
+  height: 275px;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.whats-new-divider {
+  width: 100%;
+  height: 1px;
+  background: var(--win-border, #e5e7eb);
+  flex-shrink: 0;
+}
+
+.whats-new-cluster {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex: 1;
+  min-height: 0;
+}
+
+.whats-new-info-section {
+  text-align: center;
+  padding: 0 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.whats-new-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--win-text-primary, #111827);
+  letter-spacing: -0.01em;
+}
+
+.whats-new-desc {
+  margin: 0;
+  font-size: 13px;
+  color: var(--win-text-secondary, #6b7280);
+  max-width: 620px;
+  line-height: 1.45;
+}
+
+.whats-new-bottom-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.whats-new-startup-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--win-text-secondary, #4b5563);
+  cursor: pointer;
+  user-select: none;
+  min-width: 160px;
+}
+
+.whats-new-checkbox {
+  accent-color: #008ae6;
+  cursor: pointer;
+}
+
+.whats-new-nav-controls {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.whats-new-nav-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--win-border, #d1d5db);
+  background: #e5e7eb;
+  color: #4b5563;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.whats-new-dots-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.whats-new-dot-btn {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #d1d5db;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.whats-new-dot-btn.active {
+  background: #008ae6;
+}
+
+.whats-new-close-wrapper {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 160px;
+}
+
+.whats-new-close-btn {
+  background: #008ae6;
+  color: #ffffff;
+  border: none;
+  padding: 6px 24px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* Mock Window Container & Elements */
+.whats-new-window-container {
+  background: var(--win-bg-card, #ffffff);
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  height: 100%;
+}
+
+.whats-new-window-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 10px;
+  background: var(--win-bg-subtle, #eaeaec);
+  border-bottom: 1px solid var(--win-border, #d1d5db);
+  color: var(--win-text-primary, #374151);
+}
+
+.whats-new-window-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.whats-new-window-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  opacity: 0.6;
+}
+
+.whats-new-menu-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 3px 10px;
+  font-size: 11px;
+  color: var(--win-text-secondary, #4b5563);
+  background: var(--win-bg-card, #ffffff);
+  border-bottom: 1px solid var(--win-border, #e5e7eb);
+}
+
+.whats-new-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 10px;
+  background: var(--win-bg-subtle, #f9fafb);
+  border-bottom: 1px solid var(--win-border, #e5e7eb);
+}
+
+.whats-new-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.whats-new-tab-active {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 3px;
+  background: var(--win-bg-card, #ffffff);
+  border: 1px solid var(--win-border, #d1d5db);
+  color: var(--win-text-primary, #111827);
+}
+
+.whats-new-tab-inactive {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 3px 8px;
+  color: var(--win-text-secondary, #6b7280);
+}
+
+.whats-new-small-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 3px;
+  border: 1px solid var(--win-border, #d1d5db);
+  background: var(--win-bg-card, #ffffff);
+  color: var(--win-text-primary, #374151);
+  cursor: default;
+}
+
+.whats-new-ask-ai-btn {
+  background: rgba(2, 132, 199, 0.15);
+  color: #0284c7;
+  border-color: rgba(2, 132, 199, 0.3);
+}
+
+.whats-new-run-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 3px;
+  border: 1px solid #16a34a;
+  background: #22c55e;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.whats-new-editor-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 8px;
+  flex: 1;
+  min-height: 0;
+  background: var(--win-bg-subtle, #f5f6f8);
+}
+
+.whats-new-editor-box {
+  background: var(--win-bg-card, #ffffff);
+  border-radius: 4px;
+  border: 1px solid var(--win-border, #d1d5db);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.whats-new-editor-box.highlight {
+  border: 1px solid rgba(2, 132, 199, 0.4);
+}
+
+.whats-new-editor-header {
+  padding: 4px 8px;
+  font-size: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--win-bg-subtle, #f3f4f6);
+  border-bottom: 1px solid var(--win-border, #e5e7eb);
+}
+
+.whats-new-editor-header.ai {
+  background: rgba(2, 132, 199, 0.12);
+  color: #0284c7;
+}
+
+.whats-new-ai-badge {
+  font-size: 9px;
+  background: #0284c7;
+  color: #ffffff;
+  padding: 1px 5px;
+  border-radius: 8px;
+}
+
+.whats-new-code-body {
+  padding: 6px 8px;
+  font-size: 9.5px;
+  font-family: Consolas, Monaco, monospace;
+  line-height: 1.4;
+  flex: 1;
+  overflow: hidden;
+}
+
+.whats-new-code-line {
+  display: flex;
+  align-items: center;
+  padding: 1px 4px;
+  border-radius: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.whats-new-code-line.bg-blue {
+  background: rgba(2, 132, 199, 0.08);
+}
+
+.whats-new-code-line.bg-green {
+  background: rgba(34, 197, 94, 0.12);
+}
+
+.whats-new-line-num {
+  width: 18px;
+  opacity: 0.4;
+  user-select: none;
+  font-size: 9px;
+}
+
+.whats-new-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 4px 8px;
+  background: var(--win-bg-card);
+  border-top: 1px solid var(--win-border);
+  margin-top: auto;
+}
+
+.whats-new-action-btn-outline {
+  font-size: 9.5px;
+  padding: 2px 7px;
+  border-radius: 3px;
+  border: 1px solid var(--win-border, #d1d5db);
+  background: transparent;
+  color: var(--win-text-primary);
+}
+
+.whats-new-action-btn-primary {
+  font-size: 9.5px;
+  padding: 2px 9px;
+  border-radius: 3px;
+  border: none;
+  background: #008ae6;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.whats-new-explain-node {
+  background: var(--win-bg-card, #ffffff);
+  border-radius: 5px;
+  padding: 5px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 190px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+}
+
+.whats-new-data-row-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  background: var(--win-bg-card, #ffffff);
+  border-radius: 4px;
+  border: 1px solid var(--win-border, #e5e7eb);
+  font-size: 10.5px;
+}
+
+.whats-new-compare-col {
+  background: var(--win-bg-card, #ffffff);
+  border-radius: 4px;
+  border: 1px solid var(--win-border, #d1d5db);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.whats-new-compare-header {
+  font-size: 9.5px;
+  font-weight: 600;
+  padding-bottom: 3px;
+  border-bottom: 1px solid var(--win-border, #e5e7eb);
+  opacity: 0.8;
+}
+
+.whats-new-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10.5px;
+  text-align: left;
+}
+
+.whats-new-table th {
+  padding: 5px 12px;
+  font-weight: 600;
+}
+
+.whats-new-table td {
+  padding: 5px 12px;
+}
+
+/* Helper utility classes for DataGrid & SqlEditor to eliminate static inline styles */
+.info-bar-blue {
+  background: rgba(59, 130, 246, 0.1) !important;
+  border-left-color: var(--win-accent) !important;
+}
+
+.info-bar-success {
+  background: rgba(16, 185, 129, 0.1) !important;
+  border-left-color: var(--st-ok) !important;
+}
+
+.info-bar-error {
+  background: rgba(239, 68, 68, 0.1) !important;
+  border-left-color: var(--st-danger) !important;
+}
+
+.info-bar-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.info-bar-close {
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+.grid-loading-box {
+  padding: 40px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  color: var(--win-text-secondary);
+}
+
+.grid-loading-text {
+  font-size: 11px;
+}
+
+.grid-th-clickable {
+  cursor: pointer;
+}
+
+.grid-th-content {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.grid-sort-icon {
+  font-size: 10px;
+  color: var(--win-accent);
+}
+
+.grid-null-text {
+  color: var(--win-text-disabled);
+  font-style: italic;
+}
+
+.gp-container {
+  padding: 0 12px;
+}
+
+.gp-left-section,
+.gp-right-section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.gp-btn-group {
+  display: flex;
+  gap: 4px;
+  margin-left: 6px;
+}
+
+.gp-status-text {
+  font-size: 11px;
+  color: var(--win-text-secondary);
+}
+
+.gp-popover-wrap {
+  position: relative;
+}
+
+.gp-popover-heading {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--win-text-secondary);
+  margin-bottom: 4px;
+}
+
+.gp-popover-menu {
+  position: absolute;
+  bottom: 32px;
+  right: 0;
+  width: 320px;
+  z-index: 1000;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.gp-popover-footer {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+}
+
+.gp-popover-footer-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.vf-panel-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vf-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.vf-sql-input {
+  width: 100%;
+  padding-right: 24px;
+}
+
+.vf-clear-btn {
+  position: absolute;
+  right: 8px;
+  background: transparent;
+  border: none;
+  color: var(--win-text-secondary);
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.vf-actions-row {
+  display: flex;
+  gap: 6px;
+}
+
+.vf-col-select {
+  min-width: 130px;
+}
+
+.vf-val-input {
+  flex: 1;
+  min-width: 220px;
+}
+
+.vf-footer-wrap {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.vf-footer-info {
+  margin-left: 12px;
+}
+
+.sql-toolbar-wrap {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  flex-shrink: 0;
+}
+
+.sql-pane-action-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 2px 8px;
+  background: var(--win-bg-card, var(--win-bg-window));
+  border-top: none;
+  flex-shrink: 0;
+  font-size: 11px;
+  user-select: none;
+}
+
+.sql-sliders-btn {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 2px 4px;
+  font-size: 12px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--win-text-secondary);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.sql-sliders-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--win-text-primary);
+}
+
+[data-theme='dark'] .sql-sliders-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--win-text-primary);
+}
+
+.sql-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sql-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.sql-status-info {
+  font-size: 11px;
+  color: var(--win-text-secondary);
+  font-family: var(--win-font-mono);
+}
+
+.sql-menu-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+}
+
+.sql-menu-divider {
+  border-top: 1px solid var(--win-border);
+  margin: 3px 0;
+}
+
+.sql-item-check {
+  width: 14px;
+  font-weight: bold;
+  color: var(--win-accent);
+}
+
+.sql-item-icon {
+  flex-shrink: 0;
+}
+
+/* ==========================================================================
+   Explain Plan Diagram Connectors
+   ========================================================================== */
+.explain-flow-line-base {
+  stroke: var(--win-border-strong, var(--win-border));
+  stroke-width: 1.5px;
+}
+
+/* ==========================================================================
+   Database Documentation & Reference Viewer (3-Column Layout)
+   ========================================================================== */
+.doc-viewer-modal-body {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  padding: 0;
+  gap: 0;
+}
+
+/* Topbar: Search Bar + Segmented Engine Switcher */
+.doc-topbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--win-border);
+  background: var(--win-bg-window);
+  flex-shrink: 0;
+}
+
+.doc-search-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 260px;
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--win-border);
+  background: var(--win-bg-input, var(--win-bg-window));
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.doc-search-box:focus-within {
+  border-color: var(--win-accent);
+  box-shadow: 0 0 0 3px var(--win-accent-glow, rgba(59, 130, 246, 0.2));
+}
+
+.doc-search-icon {
+  color: var(--win-text-disabled);
+  flex-shrink: 0;
+}
+
+.doc-search-box input.doc-search-input,
+.doc-search-input {
+  flex: 1;
+  min-width: 0;
+  height: 100% !important;
+  padding: 0 !important;
+  margin: 0 0 0 8px !important;
+  border: none !important;
+  outline: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--win-text-primary) !important;
+  font-size: 13px !important;
+}
+
+.doc-search-box input.doc-search-input:focus,
+.doc-search-input:focus {
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+}
+
+.doc-clear-btn {
+  border: none;
+  background: transparent;
+  color: var(--win-text-disabled);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: 4px;
+}
+
+.doc-clear-btn:hover {
+  color: var(--win-text-primary);
+}
+
+.doc-engine-selector {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+.doc-engine-btn {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  font-family: var(--win-font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--win-text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.12s ease;
+}
+
+.doc-engine-btn:hover:not(.active) {
+  color: var(--win-text-primary);
+  background: var(--win-bg-hover, rgba(0, 0, 0, 0.04));
+}
+
+[data-theme='dark'] .doc-engine-btn:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.doc-engine-btn.active {
+  background: var(--win-bg-card, #ffffff);
+  color: var(--win-text-primary);
+  font-weight: 600;
+  border: 1px solid var(--win-border);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme='dark'] .doc-engine-btn.active {
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+  border: 1px solid var(--win-border);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+
+.doc-engine-btn svg {
+  color: var(--win-accent);
+}
+
+.doc-mini-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  transition: transform 0.12s ease;
+}
+
+.doc-engine-btn.active .doc-mini-dot {
+  transform: scale(1.15);
+}
+
+.doc-mini-dot.mysql {
+  background: #009abb;
+}
+
+.doc-mini-dot.postgres {
+  background: #3d7fb5;
+}
+
+.doc-mini-dot.sqlite {
+  background: #005a84;
+}
+
+.doc-mini-dot.redis {
+  background: #f03e33;
+}
+
+/* 3-Column Workspace (Tràn viền / Full bleed) */
+.doc-workspace {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 230px 310px 1fr;
+  min-height: 0;
+  border: none;
+  border-radius: 0;
+  overflow: hidden;
+  background: var(--win-bg-card);
+}
+
+/* Pane Header Shared */
+.doc-pane-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 34px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--win-border);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--win-text-secondary);
+  flex-shrink: 0;
+  background: var(--win-bg-tab-bar, rgba(0, 0, 0, 0.04));
+}
+
+.doc-header-count {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 1.5px 7px;
+  border-radius: 999px;
+  background: rgba(125, 130, 145, 0.15);
+  color: var(--win-text-secondary);
+}
+
+/* Column 1: Category Sidebar */
+.doc-category-sidebar {
+  border-right: 1px solid var(--win-border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--win-bg-sidebar);
+}
+
+.doc-category-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.doc-cat-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--win-text-secondary);
+  font-family: var(--win-font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.12s ease;
+}
+
+.doc-cat-item:hover {
+  background: var(--win-bg-hover);
+  color: var(--win-text-primary);
+}
+
+.doc-cat-item.active {
+  background: var(--win-accent-subtle, rgba(59, 130, 246, 0.15));
+  color: var(--win-accent);
+  font-weight: 600;
+}
+
+.doc-cat-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+
+.doc-cat-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-cat-badge {
+  font-size: 10.5px;
+  opacity: 0.7;
+  font-weight: 600;
+}
+
+/* Column 2: Commands List */
+.doc-list-sidebar {
+  border-right: 1px solid var(--win-border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--win-bg-tab-bar, rgba(0, 0, 0, 0.04));
+}
+
+.doc-list-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.doc-list-item {
+  position: relative;
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+  border: 1px solid transparent;
+}
+
+.doc-list-item:hover {
+  background: var(--win-bg-hover);
+}
+
+.doc-list-item.active {
+  background: var(--win-bg-active, rgba(59, 130, 246, 0.12));
+  border-color: var(--win-border-strong);
+}
+
+.doc-item-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+
+.doc-item-name {
+  font-family: var(--win-font-mono, 'JetBrains Mono', monospace);
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--win-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-item-summary {
+  font-size: 11.5px;
+  color: var(--win-text-secondary);
+  opacity: 0.85;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+/* Engine badge pills */
+.doc-badge-pill {
+  font-size: 9.5px;
+  font-weight: 700;
+  padding: 1.5px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  flex-shrink: 0;
+  color: #ffffff;
+}
+
+.doc-badge-pill.mysql {
+  background: #0087a3;
+}
+
+.doc-badge-pill.postgres {
+  background: #2e6896;
+}
+
+.doc-badge-pill.sqlite {
+  background: #005075;
+}
+
+.doc-badge-pill.redis {
+  background: #d9342b;
+}
+
+/* Column 3: Doc Detail Pane */
+.doc-detail-pane {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 32px;
+  background: var(--win-bg-window);
+  display: flex;
+  flex-direction: column;
+}
+
+.doc-detail-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 920px;
+  width: 100%;
+}
+
+.doc-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--win-border);
+}
+
+.doc-hero-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.doc-hero-tags {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.doc-category-pill {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2.5px 8px;
+  border-radius: 999px;
+  background: rgba(125, 130, 145, 0.15);
+  color: var(--win-text-secondary);
+}
+
+.doc-since-tag {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2.5px 8px;
+  border-radius: 5px;
+  background: var(--win-bg-tab-bar, rgba(0, 0, 0, 0.08));
+  color: var(--win-text-secondary);
+}
+
+.doc-title {
+  margin: 0 0 6px 0;
+  font-family: var(--win-font-mono, 'JetBrains Mono', monospace);
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--win-text-primary);
+  letter-spacing: -0.3px;
+}
+
+.doc-summary-lead {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--win-text-primary);
+  line-height: 1.55;
+}
+
+.doc-return-box {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.doc-return-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--win-text-disabled);
+}
+
+.doc-return-val {
+  font-family: var(--win-font-mono, 'JetBrains Mono', monospace);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--win-accent);
+  background: rgba(59, 130, 246, 0.12);
+  padding: 3px 8px;
+  border-radius: 5px;
+}
+
+/* Cards */
+.doc-card {
+  border: 1px solid var(--win-border);
+  border-radius: 8px;
+  background: var(--win-bg-card);
+  overflow: hidden;
+}
+
+.doc-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  background: var(--win-bg-tab-bar, rgba(0, 0, 0, 0.06));
+  border-bottom: 1px solid var(--win-border);
+}
+
+.doc-card-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--win-text-secondary);
+}
+
+.doc-code-block {
+  margin: 0;
+  padding: 14px 16px;
+  font-family: var(--win-font-mono, 'JetBrains Mono', monospace);
+  font-size: 13px;
+  line-height: 1.55;
+  background: var(--win-bg-code, #181a20);
+  color: #9cdcfe;
+  overflow-x: auto;
+}
+
+.doc-example-code {
+  color: #a5d6ff;
+}
+
+.doc-icon-action {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 5px;
+  border: 1px solid var(--win-border);
+  background: var(--win-bg-hover);
+  color: var(--win-text-primary);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.doc-icon-action:hover {
+  background: var(--win-bg-active);
+}
+
+.doc-ok-icon {
+  color: var(--st-ok, #10b981);
+}
+
+.doc-example-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.doc-insert-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 5px;
+  border: none;
+  background: var(--win-accent);
+  color: #ffffff;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.doc-insert-btn:hover {
+  background: var(--win-accent-secondary);
+}
+
+.doc-desc-card {
+  padding: 14px 16px;
+}
+
+.doc-full-desc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--win-text-secondary);
+  white-space: pre-wrap;
+}
+
+.doc-complexity-row {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--win-border);
+  font-size: 12px;
+  color: #f59e0b;
+  font-weight: 600;
+}
+
+/* Parameters Table */
+.doc-table-wrapper {
+  overflow-x: auto;
+}
+
+.doc-params-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  text-align: left;
+}
+
+.doc-params-table th {
+  padding: 8px 12px;
+  font-weight: 600;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  color: var(--win-text-disabled);
+  border-bottom: 1px solid var(--win-border);
+  background: var(--win-bg-tab-bar, rgba(0, 0, 0, 0.03));
+}
+
+.doc-params-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--win-border-subtle, rgba(255, 255, 255, 0.05));
+  vertical-align: top;
+}
+
+.doc-param-name code {
+  font-family: var(--win-font-mono, 'JetBrains Mono', monospace);
+  font-weight: 700;
+  color: var(--win-accent);
+}
+
+.doc-param-type code {
+  font-family: var(--win-font-mono, 'JetBrains Mono', monospace);
+  color: var(--win-text-secondary);
+  opacity: 0.85;
+  font-size: 11px;
+}
+
+.doc-opt-badge {
+  font-size: 10px;
+  padding: 1.5px 6px;
+  border-radius: 4px;
+  background: rgba(125, 130, 145, 0.15);
+  color: var(--win-text-secondary);
+}
+
+.doc-req-badge {
+  font-size: 10px;
+  padding: 1.5px 6px;
+  border-radius: 4px;
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  font-weight: 600;
+}
+
+.doc-param-desc {
+  color: var(--win-text-primary);
+  line-height: 1.5;
+}
+
+/* Footer Link */
+.doc-footer-link {
+  margin-top: auto;
+  padding-top: 10px;
+}
+
+.doc-external-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--win-accent);
+  text-decoration: none;
+}
+
+.doc-external-link:hover {
+  text-decoration: underline;
+}
+
+.doc-empty-state,
+.doc-empty-detail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 30px 16px;
+  text-align: center;
+  color: var(--win-text-disabled);
+  gap: 8px;
+  font-size: 12px;
+}
+
+.doc-empty-detail {
+  height: 100%;
+}
+
+/* ==========================================================================
+   Monaco Editor Context Menu (Right-Click Popup in SQL Editor)
+   ========================================================================== */
+.monaco-menu-container,
+.context-view .monaco-menu {
+  background: var(--win-bg-popup, #ffffff) !important;
+  color: var(--win-text-primary, #0f172a) !important;
+  border: 1px solid var(--win-border-strong, rgba(0, 0, 0, 0.12)) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.1) !important;
+  padding: 4px !important;
+}
+
+.monaco-menu .monaco-action-bar .action-item {
+  border-radius: 5px !important;
+  padding: 3px 8px !important;
+}
+
+.monaco-menu .monaco-action-bar .action-label {
+  color: var(--win-text-primary, #0f172a) !important;
+  font-size: 12.5px !important;
+  font-weight: 500 !important;
+}
+
+.monaco-menu .monaco-action-bar .keybinding {
+  color: var(--win-text-secondary, #64748b) !important;
+  font-size: 11.5px !important;
+  font-family: var(--win-font-mono, monospace) !important;
+}
+
+.monaco-menu .monaco-action-bar .action-item.focused,
+.monaco-menu .monaco-action-bar .action-item:hover {
+  background: var(--win-bg-hover, rgba(37, 99, 235, 0.08)) !important;
+}
+
+.monaco-menu .monaco-action-bar .action-item.focused .action-label,
+.monaco-menu .monaco-action-bar .action-item:hover .action-label {
+  color: var(--win-accent, #2563eb) !important;
+}
+
+.monaco-menu .monaco-action-bar .action-item.focused .keybinding,
+.monaco-menu .monaco-action-bar .action-item:hover .keybinding {
+  color: var(--win-accent, #2563eb) !important;
+}
+
+.monaco-menu .monaco-action-bar .action-item.separator {
+  border-bottom: 1px solid var(--win-border, rgba(0, 0, 0, 0.08)) !important;
+  margin: 4px 0 !important;
+  padding: 0 !important;
+}
+
+/* Dark Mode Monaco Context Menu */
+[data-theme='dark'] .monaco-menu-container,
+[data-theme='dark'] .context-view .monaco-menu {
+  background: #1c202a !important;
+  color: #f1f5f9 !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.5) !important;
+}
+
+[data-theme='dark'] .monaco-menu .monaco-action-bar .action-label {
+  color: #e2e8f0 !important;
+}
+
+[data-theme='dark'] .monaco-menu .monaco-action-bar .keybinding {
+  color: #94a3b8 !important;
+}
+
+[data-theme='dark'] .monaco-menu .monaco-action-bar .action-item.focused,
+[data-theme='dark'] .monaco-menu .monaco-action-bar .action-item:hover {
+  background: rgba(56, 189, 248, 0.15) !important;
+}
+
+[data-theme='dark'] .monaco-menu .monaco-action-bar .action-item.focused .action-label,
+[data-theme='dark'] .monaco-menu .monaco-action-bar .action-item:hover .action-label {
+  color: #38bdf8 !important;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Quick Switcher (QuickSwitcherPopover.tsx)
+
+   Thay khối popup inline cũ trong TitleBar, khối đó dựng bằng ~40 object style
+   rải trong JSX: đổi một khoảng cách phải sửa nhiều chỗ, và không chỗ nào theo
+   được theme (nền, viền, chữ đều là giá trị cứng).
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* ─── Safe Mode popover (SafeModeControl) ───
+   Cùng họ với `.qs-pop` bên dưới và cố ý dùng chung `--win-bg-popover`: nền `--win-bg-window`
+   trong suốt ở theme sáng nên nhãn tab phía sau lọt qua. Portal + backdrop cũng vì popover này
+   mở từ trong `.tb-capsule` (overflow: hidden) nên nằm trong cây sẽ bị cắt. */
+.sm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 99998;
+}
+
+.sm-pop {
+  position: fixed;
+  z-index: 99999;
+  width: 316px;
+  padding: 6px;
+  background: var(--win-bg-popover, var(--win-bg-card));
+  border: 1px solid var(--win-border-strong);
+  border-radius: 12px;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.28), 0 4px 14px rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  font-family: var(--win-font-sans);
+  animation: qsPopSlideDown 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.sm-pop-title {
+  padding: 6px 10px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--win-text-disabled);
+}
+
+.sm-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 10px;
+  text-align: left;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--win-text-primary);
+  cursor: pointer;
+}
+
+.sm-item:hover:not(:disabled) {
+  background: var(--win-bg-hover);
+}
+
+.sm-item.is-on {
+  border-color: var(--win-accent);
+  background: var(--win-accent-glow);
+}
+
+.sm-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.sm-item-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.sm-item.is-on .sm-item-label {
+  font-weight: 600;
+}
+
+.sm-item-desc {
+  display: block;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--win-text-secondary);
+}
+
+/* Chỉ đọc chặn hẳn thay vì hỏi, nên nó tách khỏi ba mức "hỏi" ở trên. */
+.sm-divider {
+  height: 1px;
+  margin: 5px 8px;
+  background: var(--win-border);
+}
+
+.qs-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 99998;
+}
+
+.qs-pop {
+  position: fixed;
+  z-index: 99999;
+  width: 368px;
+  display: flex;
+  flex-direction: column;
+  background: var(--win-bg-popover, var(--win-bg-card));
+  border: 1px solid var(--win-border-strong);
+  border-radius: 14px;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.28), 0 4px 14px rgba(0, 0, 0, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  overflow: hidden;
+  font-family: var(--win-font-sans);
+  animation: qsPopSlideDown 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+[data-theme='light'] .qs-pop {
+  box-shadow: 0 20px 48px rgba(15, 23, 42, 0.16), 0 4px 14px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+@keyframes qsPopSlideDown {
+  0% {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Header Segmented Tabs — đồng bộ với .sb-seg / .cm-seg trong toàn app */
+.qs-header {
+  padding: 8px 10px 4px;
+  background: transparent;
+}
+
+.qs-seg {
+  display: flex;
+  gap: 4px;
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+.qs-seg-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 7px;
+  border: none;
+  background: transparent;
+  color: var(--win-text-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.qs-seg-btn:hover:not(.is-on) {
+  color: var(--win-text-primary);
+  background: var(--win-bg-hover);
+}
+
+.qs-seg-btn.is-on {
+  font-weight: 600;
+  color: var(--win-text-primary);
+  background: var(--ws-sel, var(--win-bg-card));
+  box-shadow: 0 1px 4px var(--ws-shadow, rgba(0, 0, 0, 0.08));
+}
+
+[data-theme='dark'] .qs-seg-btn.is-on {
+  background: var(--ws-sel, rgba(255, 255, 255, 0.12));
+  color: var(--win-text-primary);
+  box-shadow: 0 1px 4px var(--ws-shadow, rgba(0, 0, 0, 0.35));
+}
+
+.qs-tab-count {
+  min-width: 17px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--win-bg-hover);
+  color: var(--win-text-secondary);
+  font-size: 10px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+  transition: all 0.15s ease;
+}
+
+.qs-seg-btn.is-on .qs-tab-count {
+  background: var(--win-accent-glow);
+  color: var(--win-accent);
+}
+
+/* Integrated Search Box */
+.qs-search {
+  padding: 2px 10px 8px;
+}
+
+.qs-search-box {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 10px;
+  background: var(--win-bg-hover, rgba(125, 130, 145, 0.08));
+  border: 1px solid var(--win-border);
+  border-radius: 8px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.qs-search-box:focus-within {
+  background: var(--win-bg-card, #ffffff);
+  border-color: var(--win-accent);
+  box-shadow: 0 0 0 3px var(--win-accent-glow);
+}
+
+.qs-search-icon {
+  color: var(--win-text-disabled);
+  flex-shrink: 0;
+}
+
+.qs-search-box input {
+  flex: 1;
+  min-width: 0;
+  height: 100% !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--win-text-primary) !important;
+}
+
+.qs-search-box input::placeholder {
+  color: var(--win-text-disabled);
+}
+
+.qs-search-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(125, 130, 145, 0.15);
+  color: var(--win-text-secondary);
+  cursor: pointer;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+
+.qs-search-clear:hover {
+  background: var(--win-bg-active);
+  color: var(--win-text-primary);
+}
+
+/* Danh sách kết nối / Databases */
+.qs-list {
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  scrollbar-width: thin;
+}
+
+.qs-group {
+  padding: 8px 8px 3px;
+  color: var(--win-text-disabled);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+}
+
+.qs-empty {
+  padding: 18px 10px;
+  text-align: center;
+  color: var(--win-text-disabled);
+  font-size: 11.5px;
+}
+
+.qs-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 6px 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--win-text-primary);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.12s ease, transform 0.12s ease;
+}
+
+.qs-row:hover:not(.is-on) {
+  background: var(--win-bg-hover);
+  transform: translateX(2px);
+}
+
+.qs-row.is-on {
+  background: var(--win-accent-glow);
+  border-color: rgba(96, 165, 250, 0.25);
+}
+
+.qs-row.is-on .qs-name {
+  font-weight: 600;
+  color: var(--win-accent);
+}
+
+/* Hàng database */
+.qs-row-db {
+  padding: 0;
+  cursor: default;
+}
+
+.qs-row-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 6px 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s cubic-bezier(0.4, 0, 0.2, 1), transform 0.12s ease;
+}
+
+.qs-row-main:hover {
+  background: var(--win-bg-hover);
+  transform: translateX(2px);
+}
+
+.qs-row-db.is-on .qs-row-main {
+  background: var(--win-accent-glow);
+  border-color: rgba(96, 165, 250, 0.25);
+  font-weight: 600;
+  color: var(--win-accent);
+}
+
+.qs-label {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.qs-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+}
+
+.qs-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--win-text-secondary);
+  opacity: 0.8;
+  font-size: 10.5px;
+  font-family: var(--win-font-mono, monospace);
+  font-weight: 400;
+}
+
+.qs-ro {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: rgba(125, 130, 145, 0.12);
+  color: var(--win-text-secondary);
+}
+
+.qs-group-chip {
+  flex: 0 0 auto;
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 7px;
+  border: 1px solid var(--win-border);
+  border-radius: 6px;
+  background: var(--win-bg-hover);
+  color: var(--win-text-secondary);
+  font-size: 9.5px;
+  font-weight: 500;
+}
+
+.qs-drop {
+  flex: 0 0 auto;
+  display: flex;
+  margin-right: 6px;
+  padding: 4px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--st-danger, #ef4444);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, background 0.12s ease;
+}
+
+.qs-row-db:hover .qs-drop,
+.qs-drop:focus-visible {
+  opacity: 0.75;
+}
+
+.qs-drop:hover {
+  background: rgba(239, 68, 68, 0.14);
+  opacity: 1;
+}
+
+/* Chip môi trường cao cấp */
+.qs-env-chip {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+.qs-env-chip.qs-env-production {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  color: #ef4444;
+}
+
+.qs-env-chip.qs-env-staging {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  color: #f59e0b;
+}
+
+.qs-env-chip.qs-env-development {
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  color: #10b981;
+}
+
+[data-theme='dark'] .qs-env-chip.qs-env-production {
+  color: #f87171;
+}
+
+[data-theme='dark'] .qs-env-chip.qs-env-staging {
+  color: #fbbf24;
+}
+
+[data-theme='dark'] .qs-env-chip.qs-env-development {
+  color: #34d399;
+}
+
+.qs-check-on {
+  flex: 0 0 auto;
+  color: var(--win-accent);
+}
+
+.qs-db-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  margin: 0 6px 0 3px;
+  border-radius: 50%;
+  background: var(--win-text-disabled);
+}
+
+.qs-row-db.is-on .qs-db-dot {
+  background: var(--win-accent);
+  box-shadow: 0 0 6px var(--win-accent);
+}
+
+/* Footer Action Bar */
+.qs-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border-top: 1px solid var(--win-border);
+  background: var(--win-bg-hover, rgba(125, 130, 145, 0.05));
+}
+
+.qs-foot-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--win-text-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.qs-foot-btn:hover {
+  background: var(--win-bg-hover);
+  color: var(--win-text-primary);
+}
+
+.qs-foot-btn.accent {
+  color: var(--win-accent);
+  font-weight: 600;
+}
+
+.qs-foot-btn.accent:hover {
+  background: var(--win-accent-glow);
+  color: var(--win-accent);
+}
+
+/* Latency của kết nối (QuickSwitcherPopover). Chữ số đều bề rộng: danh sách này thẳng cột, mà `1 ms`
+   và `188 ms` bằng font tỉ lệ sẽ làm mỗi dòng lệch một chút. */
+.qs-ping {
+  flex: 0 0 auto;
+  color: var(--win-text-disabled);
+  font-family: var(--win-font-mono);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Ping không thành công: kết nối còn trong registry nhưng server không trả lời. Đỏ vì đó là thứ đáng
+   biết TRƯỚC khi bấm vào, không phải sau. */
+.qs-ping.is-dead {
+  color: var(--st-danger, #ef4444);
+  font-weight: 700;
+}
+/* ============================================================
+   Redis workspace
+   ============================================================
+   Redis dùng chung khung với SQL (DbRail + Sidebar + TabManager + ActivePanel), nên phần lớn kiểu
+   dáng đã có sẵn. Nhóm này chỉ bù những chỗ Redis có mà SQL không:
+   sidebar rộng hơn (tên key dài hơn tên bảng), dòng thông báo trong tab, và trạng thái rỗng khi
+   key không còn — xem docs/redis-ui-unification-plan.md §2.4/§2.5.
+   Mọi màu đều lấy từ biến, nên Dark/Light theo cùng một bộ token với phần còn lại của app. */
+
+/* Sidebar: rộng hơn `.sidebar-navigation` mặc định vì key Redis (`app:user:1234:session`) dài hơn
+   hẳn tên bảng, và cây theo namespace còn thụt thêm mỗi cấp một mức. */
+.redis-sidebar {
+  width: 340px;
+  min-width: 260px;
+}
+
+.redis-keylist {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  /* Không có dòng này thì vùng cuộn bên trong đẩy cao cả cột thay vì tự cuộn. */
+  min-height: 0;
+}
+
+/* Footer hành động: mỗi nút mở một tab công cụ. Bọc dòng thay vì cuộn ngang — sáu nhãn ngắn, và
+   một thanh cuộn ngang ở đáy sidebar là chỗ không ai nghĩ tới việc cuộn. */
+.redis-sidebar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--win-border);
+  background: var(--win-bg-tab-bar);
+}
+
+.redis-sidebar-action {
+  flex: 1 1 auto;
+  min-width: 92px;
+  justify-content: center;
+}
+
+/* Thân một tab Redis: dòng thông báo trên cùng, nội dung cuộn bên dưới. */
+.redis-tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.redis-tab-body {
+  flex: 1;
+  overflow: auto;
+  padding: 12px;
+}
+
+/* Dòng thông báo ok/lỗi. Nền pha loãng thay vì nền đặc: nó nằm ngay trên nội dung của tab và một
+   dải màu đặc ngang toàn bộ chiều rộng đọc như một lỗi nghiêm trọng kể cả khi chỉ báo "đã lưu". */
+.redis-toast {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.redis-toast.ok {
+  background: color-mix(in srgb, var(--st-success, #10b981) 12%, transparent);
+  color: var(--st-success, #10b981);
+}
+
+.redis-toast.err {
+  background: color-mix(in srgb, var(--st-danger, #ef4444) 12%, transparent);
+  color: var(--st-danger, #ef4444);
+}
+
+/* Trạng thái rỗng của tab key: key đã hết TTL hoặc bị xoá từ nơi khác. Là chuyện bình thường của
+   Redis nên trình bày trung tính — không màu đỏ, không icon cảnh báo (§2.5). */
+.redis-empty {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--win-text-secondary);
+  text-align: center;
+  padding: 24px;
+}
+
+.redis-empty-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--win-text-primary);
+}
+
+.redis-empty-hint {
+  font-size: 11.5px;
+  color: var(--win-text-disabled);
+}
+
+.redis-empty-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+
+/* ---- Redis: danh sách key (KeyList) ----
+   Sáu `style={{}}` còn lại trong KeyList.tsx đều là giá trị động thật và cố ý giữ nguyên: chiều cao
+   hai spacer (do windowing tính), độ sâu + chiều cao mỗi dòng, màu badge tra theo TYPE_COLORS, và
+   toạ độ menu ngữ cảnh đo lúc chạy. Chiều cao dòng đặc biệt phải ở TS: nó phải bằng đúng ROW_HEIGHT
+   mà windowSlice dùng, và một bản sao trong CSS lệch đi thì danh sách cuộn sai chứ không báo lỗi. */
+
+.redis-keylist-header {
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-bottom: 1px solid var(--win-border);
+}
+
+.redis-keylist-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.redis-keylist-row.tight {
+  gap: 4px;
+}
+
+.redis-keylist-db-icon {
+  color: var(--win-accent);
+  flex-shrink: 0;
+}
+
+.redis-keylist-dbname {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--win-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Nút chỉ có icon. Không đặt `padding: 0` lên `.btn` chung — chiều cao 28px của .btn là thứ giữ
+   cho hàng nút thẳng hàng với ô select bên cạnh. */
+.redis-icon-btn {
+  width: 28px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.redis-icon-btn.danger,
+.redis-keylist-grow.danger {
+  color: var(--st-danger);
+}
+
+.redis-keylist-grow {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.redis-keylist-mode {
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.redis-keylist-step {
+  padding: 0 6px;
+  flex-shrink: 0;
+}
+
+.redis-keylist-spacer {
+  flex: 1;
+}
+
+/* Select trong header. Kiểu chung của app khớp `input[type="text"]`, không khớp `select`, nên nếu
+   không tả ở đây thì nó rơi về giao diện mặc định của trình duyệt (xem ghi chú .btn trong CLAUDE.md
+   — cùng một cái bẫy). */
+.redis-keylist-select {
+  background: var(--win-bg-window);
+  border: 1px solid var(--win-border);
+  color: var(--win-text-primary);
+  border-radius: 4px;
+  font-size: 10px;
+  padding: 2px 4px;
+  flex-shrink: 0;
+}
+
+.redis-keylist-search {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--win-bg-window);
+  border: 1px solid var(--win-border);
+  border-radius: 4px;
+  padding: 0 6px;
+  min-width: 0;
+}
+
+.redis-keylist-search-icon {
+  color: var(--win-text-disabled);
+  flex-shrink: 0;
+}
+
+/* Ô nhập nằm TRONG khung tìm kiếm nên tự nó phải trong suốt — viền và nền là của khung ngoài. */
+.redis-keylist-search input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  color: var(--win-text-primary);
+  font-size: 11px;
+  outline: none;
+  padding: 5px 0;
+}
+
+.redis-keylist-delim {
+  width: 34px;
+  text-align: center;
+  background: var(--win-bg-window);
+  border: 1px solid var(--win-border);
+  color: var(--win-text-primary);
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: var(--win-font-mono);
+  padding: 3px 0;
+  flex-shrink: 0;
+}
+
+/* Quét dừng ở KEY_CAP: nói ra chuyện đó và mời quét tiếp, không bao giờ cắt im lặng. */
+.redis-keylist-cap {
+  padding: 6px 10px;
+  font-size: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  background: color-mix(in srgb, var(--st-warning, #f59e0b) 12%, transparent);
+  color: var(--st-warning, #f59e0b);
+}
+
+.redis-keylist-cap-btn {
+  padding: 0 8px;
+  height: 20px;
+}
+
+.redis-keylist-scroll {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.redis-keylist-empty {
+  padding: 20px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--win-text-disabled);
+}
+
+.redis-keylist-scanning {
+  padding: 10px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--win-text-secondary);
+}
+
+.redis-keylist-footer {
+  padding: 6px 10px;
+  border-top: 1px solid var(--win-border);
+  font-size: 10px;
+  color: var(--win-text-disabled);
+}
+
+/* Một dòng của cây key. Độ thụt lấy từ biến `--redis-depth` mà TS đặt cho từng dòng — cách duy nhất
+   để giữ phần động (độ sâu) ở TS mà vẫn để công thức trình bày (10px + 12px mỗi cấp) ở CSS. */
+.redis-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px 0 calc(10px + var(--redis-depth, 0) * 12px);
+  cursor: pointer;
+  font-size: 11px;
+  box-sizing: border-box;
+}
+
+.redis-row-folder {
+  gap: 4px;
+}
+
+.redis-row.selected {
+  background: var(--win-bg-active);
+}
+
+.redis-row-chevron {
+  flex-shrink: 0;
+  color: var(--win-text-disabled);
+}
+
+.redis-row-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--win-text-primary);
+}
+
+.redis-row-label.folder {
+  font-weight: 600;
+}
+
+.redis-row-count {
+  font-size: 9px;
+  color: var(--win-text-disabled);
+}
+
+.redis-row-ttl {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 9px;
+  color: var(--win-text-disabled);
+  flex-shrink: 0;
+}
+
+.redis-row-type {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: #fff;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+/* Menu chuột phải trên một thư mục namespace. Dựng qua portal (xem KeyList.tsx) nên `position` và
+   `z-index` thuộc về nó, không thừa hưởng từ panel. */
+.redis-folder-menu {
+  position: fixed;
+  z-index: 99999;
+  min-width: 200px;
+}
+
+.redis-folder-menu-head {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--win-border);
+  margin-bottom: 4px;
+  max-width: 280px;
+}
+
+.redis-folder-menu-path {
+  font-size: 10px;
+  font-weight: 600;
+  font-family: var(--win-font-mono);
+  color: var(--win-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.redis-folder-menu-count {
+  font-size: 9px;
+  color: var(--win-text-disabled);
+}
+
+.redis-folder-menu-item {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--st-danger);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.redis-folder-menu-item.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+
+/* ---- Redis: bề mặt dùng chung ----
+   Năm class dưới đây thay cho năm object `CSSProperties` từng nằm trong `components/redis/shared.ts`.
+   Gom style vào một object và đặt tên cho nó không làm nó bớt là inline style: nó vẫn đi vào thuộc
+   tính `style` của thẻ, vẫn thắng mọi rule trong `index.css`, và vẫn không viết được :hover/:focus.
+   Đó là lý do chúng nằm ở đây. */
+
+/* Ô của bảng phần tử (hash/list/set/zset/stream), bảng slowlog và bảng phân tích. */
+.redis-cell {
+  font-family: var(--win-font-mono);
+  font-size: 11px;
+  word-break: break-all;
+  vertical-align: middle;
+}
+
+.redis-cell.nowrap {
+  white-space: nowrap;
+}
+
+/* Slow log: câu chạy quá 100ms. Ngưỡng nằm ở TS (nó là dữ liệu, không phải trình bày); ở đây chỉ
+   là màu tương ứng. */
+.redis-cell.slow {
+  color: var(--st-danger);
+}
+
+/* Ô sửa tại chỗ trong bảng: viền accent để phân biệt với ô chỉ đọc bên cạnh. */
+.redis-inline-input {
+  width: 100%;
+  background: var(--win-bg-card);
+  border: 1px solid var(--win-accent);
+  border-radius: 3px;
+  color: var(--win-text-primary);
+  font-family: var(--win-font-mono);
+  font-size: 11px;
+  padding: 2px 4px;
+  outline: none;
+}
+
+/* Biến thể trong form (thêm entry vào stream): viền thường, vì ở đó nó không phải là "ô đang sửa"
+   giữa những ô chỉ đọc — nó là một ô nhập bình thường. */
+.redis-inline-input.boxed {
+  border-color: var(--win-border);
+  padding: 4px 6px;
+}
+
+.redis-inline-input.field {
+  flex: 0 0 32%;
+  width: auto;
+}
+
+.redis-inline-input.grow {
+  flex: 1;
+  width: auto;
+}
+
+.redis-inline-input.fixed {
+  width: 140px;
+  padding: 3px 6px;
+}
+
+/* Vùng soạn giá trị string/JSON. */
+.redis-mono-box {
+  flex: 1;
+  width: 100%;
+  min-height: 260px;
+  background: var(--win-bg-window);
+  border: 1px solid var(--win-border);
+  color: var(--win-text-primary);
+  font-family: var(--win-font-mono);
+  font-size: 12px;
+  padding: 10px;
+  border-radius: 4px;
+  resize: vertical;
+  outline: none;
+}
+
+/* Vùng log cuộn được của Console, Pub/Sub và Profiler. */
+.redis-log-box {
+  flex: 1;
+  overflow: auto;
+  background: var(--win-bg-window);
+  border: 1px solid var(--win-border);
+  border-radius: 4px;
+  padding: 8px;
+  font-family: var(--win-font-mono);
+  font-size: 11px;
+}
+
+/* Pill: lệnh gợi ý trong Console (bấm được) và ghi chú trong StreamPanel (không bấm). */
+.redis-pill {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--win-border);
+  background: var(--win-bg-window);
+  color: var(--win-text-secondary);
+  cursor: pointer;
+  font-family: var(--win-font-mono);
+}
+
+/* Giờ mới viết được, hồi còn là object thì không. */
+.redis-pill:hover {
+  border-color: var(--win-accent);
+  color: var(--win-text-primary);
+}
+
+.redis-pill.static {
+  cursor: default;
+  align-self: flex-start;
+}
+
+.redis-pill.static:hover {
+  border-color: var(--win-border);
+  color: var(--win-text-secondary);
+}
+
+
+/* ---- Redis: trình xem giá trị (ValuePanel / CollectionTable / StreamPanel) ---- */
+
+.redis-value {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+}
+
+/* Thanh công cụ dùng lại ở cả ba file: header của key, toolbar string/JSON, toolbar bảng phần tử,
+   toolbar consumer group. Bọc dòng vì nội dung là một dãy nhãn + nút dài ngắn tuỳ dữ liệu. */
+.redis-value-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.redis-value-key {
+  font-family: var(--win-font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--win-text-primary);
+  word-break: break-all;
+}
+
+.redis-value-meta {
+  font-size: 10px;
+  color: var(--win-text-disabled);
+}
+
+.redis-value-label {
+  font-size: 10px;
+  color: var(--win-text-secondary);
+}
+
+.redis-value-warn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--st-warning, #f59e0b);
+}
+
+.redis-value-btn {
+  padding: 0 8px;
+  flex-shrink: 0;
+}
+
+.redis-value-btn.wide {
+  padding: 0 10px;
+}
+
+/* Tab Entries/Groups của StreamPanel: tab đang chọn. Hồi còn inline thì đây là hai thuộc tính màu
+   gán theo điều kiện; thành class thì điều kiện chỉ còn là có/không một tên. */
+.redis-value-btn.active {
+  border-color: var(--win-accent);
+  color: var(--win-accent);
+}
+
+.redis-value-btn.start {
+  align-self: flex-start;
+}
+
+.redis-value-btn.danger {
+  color: var(--st-danger);
+}
+
+.redis-value-save {
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* Nhãn định dạng đã nhận ra (utf8 / json / hex…). */
+.redis-format-pill {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--win-accent) 15%, transparent);
+  color: var(--win-accent);
+  font-weight: 600;
+}
+
+/* Dải cảnh báo trong thân tab (giá trị bị cắt bớt…). Cùng công thức pha loãng với .redis-toast. */
+.redis-value-notice {
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--st-warning, #f59e0b) 12%, transparent);
+  color: var(--st-warning, #f59e0b);
+  font-size: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.redis-json-path {
+  width: 180px;
+  background: var(--win-bg-window);
+  border: 1px solid var(--win-border);
+  color: var(--win-text-primary);
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: var(--win-font-mono);
+  padding: 3px 6px;
+}
+
+/* Kiểu key mà app chưa có trình xem riêng (vector set, TimeSeries…). */
+.redis-unsupported {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border: 1px dashed var(--win-border);
+  border-radius: 6px;
+  background: var(--win-bg-window);
+}
+
+.redis-unsupported-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--win-text-primary);
+}
+
+.redis-unsupported-icon {
+  color: var(--st-warning, #f59e0b);
+  flex-shrink: 0;
+}
+
+.redis-unsupported-hint {
+  font-size: 11px;
+  color: var(--win-text-secondary);
+  line-height: 1.6;
+}
+
+.redis-unsupported-console {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--win-text-disabled);
+}
+
+/* ---- Bảng phần tử ---- */
+
+.redis-coll {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+}
+
+.redis-coll-more {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.redis-table-wrap {
+  border: 1px solid var(--win-border);
+  border-radius: 4px;
+  overflow: auto;
+  background: var(--win-bg-window);
+}
+
+/* Bảng field-value bên trong một entry stream: đã nằm trong khung có nền của entry rồi, thêm nền
+   nữa thành hai lớp chồng nhau. */
+.redis-table-wrap.flat {
+  background: transparent;
+}
+
+.redis-table {
+  width: 100%;
+}
+
+.redis-table-empty {
+  text-align: center;
+  padding: 10px;
+  color: var(--win-text-disabled);
+}
+
+.redis-actions-col {
+  width: 58px;
+}
+
+.redis-actions-col.wide {
+  width: 80px;
+}
+
+.redis-cell-hint {
+  color: var(--win-text-disabled);
+}
+
+.redis-cell-actions {
+  display: flex;
+  gap: 2px;
+}
+
+/* Nút chỉ-icon trong một ô. Trạng thái bận đi qua thuộc tính `disabled` thay vì hai giá trị style
+   tính theo cờ `busy` — cùng một hành vi, nhưng trình duyệt lo phần con trỏ. */
+.redis-cell-btn {
+  background: transparent;
+  border: none;
+  padding: 2px;
+  cursor: pointer;
+  color: var(--win-text-secondary);
+  display: flex;
+  align-items: center;
+}
+
+.redis-cell-btn:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.redis-cell-btn.danger {
+  color: var(--st-danger);
+}
+
+.redis-cell-btn.accent {
+  color: var(--win-accent);
+}
+
+.redis-cell-btn.ok {
+  color: var(--st-ok, #10b981);
+}
+
+.redis-cell-locked {
+  color: var(--win-text-disabled);
+  display: flex;
+  align-items: center;
+  padding: 2px;
+}
+
+.redis-lock-inline {
+  margin-right: 4px;
+  vertical-align: middle;
+  color: var(--win-text-disabled);
+}
+
+/* Ô tìm kiếm hẹp trong toolbar bảng phần tử — cùng khung với ô pattern của sidebar, khác bề rộng. */
+.redis-keylist-search.narrow {
+  flex: 0 0 auto;
+}
+
+.redis-keylist-search.narrow input {
+  width: 150px;
+  flex: 0 0 auto;
+}
+
+.redis-keylist-select.wide {
+  font-size: 11px;
+  padding: 3px 6px;
+}
+
+/* ---- Stream ---- */
+
+.redis-stream {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+.redis-stream.groups {
+  min-height: auto;
+}
+
+.redis-stream-tabs {
+  display: flex;
+  gap: 6px;
+}
+
+.redis-stream-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.redis-stream-subtitle {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--win-text-primary);
+}
+
+.redis-stream-empty {
+  font-size: 11px;
+  color: var(--win-text-disabled);
+}
+
+/* Form thêm entry: viền accent để tách khỏi danh sách entry ngay bên dưới, vốn cùng bo góc. */
+.redis-stream-form {
+  border: 1px solid var(--win-accent);
+  border-radius: 4px;
+  padding: 8px;
+  background: var(--win-bg-window);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.redis-stream-field-row {
+  display: flex;
+  gap: 4px;
+}
+
+.redis-stream-form-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.redis-stream-entry {
+  border: 1px solid var(--win-border);
+  border-radius: 4px;
+  padding: 8px;
+  background: var(--win-bg-window);
+}
+
+.redis-stream-entry-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.redis-stream-entry-id {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--win-accent);
+  font-family: var(--win-font-mono);
+}
+
+
+/* ---- Redis: các tab công cụ (Console, Pub/Sub, Profiler, Dashboard, SlowLog, Analysis) ---- */
+
+/* Khung chung: Console/Pub/Sub/Profiler cao hết tab vì vùng log phải chiếm chỗ còn lại. */
+.redis-console {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+}
+
+/* Console dựng bố cục sát mép (đường kẻ ngang chạy hết chiều rộng như khung SQL), nên nó tự bỏ
+   padding mà .redis-tab-body áp cho các tab khác. */
+.redis-tab-body:has(> .redis-console) {
+  padding: 0;
+}
+
+/* Dashboard/Analysis/SlowLog cuộn theo nội dung thay vì ghim chiều cao — chúng là các khối xếp
+   chồng, không có vùng nào cần "phần còn lại". */
+.redis-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.redis-panel.tight {
+  gap: 10px;
+  min-height: 0;
+}
+
+.redis-panel-loading {
+  color: var(--win-text-disabled);
+  font-size: 12px;
+}
+
+.redis-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.redis-tool-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--win-text-primary);
+}
+
+.redis-tool-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.redis-tool-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--win-bg-window);
+  border: 1px solid var(--win-border);
+  color: var(--win-text-primary);
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: var(--win-font-mono);
+  padding: 5px 8px;
+  outline: none;
+}
+
+.redis-tool-input.fixed {
+  flex: 0 0 160px;
+  width: 160px;
+  padding: 4px 8px;
+}
+
+.redis-tool-input.narrow {
+  flex: 0 0 90px;
+  width: 90px;
+  padding: 3px 6px;
+}
+
+.redis-tool-btn {
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.redis-tool-btn.danger,
+.redis-value-save.danger {
+  color: var(--st-danger);
+}
+
+.redis-tool-check {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  cursor: pointer;
+  color: var(--win-text-secondary);
+}
+
+/* Nút phụ dạng viền mảnh (Xoá lịch sử, Xoá log…). Không dùng `.btn` vì cao 28px thì át hẳn hàng
+   nhãn 10px mà nó đứng cùng. */
+.redis-ghost-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--win-border);
+  background: transparent;
+  color: var(--win-text-secondary);
+  cursor: pointer;
+}
+
+.redis-ghost-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.redis-ghost-btn:hover:not(:disabled) {
+  border-color: var(--win-accent);
+  color: var(--win-text-primary);
+}
+
+.redis-value-bar.spread {
+  justify-content: space-between;
+}
+
+.redis-value-bar.config {
+  font-size: 10px;
+  color: var(--win-text-secondary);
+}
+
+/* ---- Console ---- */
+
+.redis-console-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.redis-console-entry {
+  margin-bottom: 8px;
+}
+
+.redis-console-echo {
+  color: var(--win-accent);
+}
+
+.redis-console-out {
+  margin: 2px 0 0;
+  white-space: pre-wrap;
+  color: var(--win-text-primary);
+}
+
+.redis-console-out.err {
+  color: var(--st-danger);
+}
+
+.redis-console-input-row {
+  position: relative;
+  display: flex;
+  gap: 6px;
+}
+
+.redis-console-prompt {
+  display: flex;
+  align-items: center;
+  color: var(--win-accent);
+  font-family: var(--win-font-mono);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.redis-console-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--win-bg-window);
+  border: 1px solid var(--win-border);
+  color: var(--win-text-primary);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-family: var(--win-font-mono);
+  font-size: 11px;
+  outline: none;
+}
+
+.redis-console-run {
+  padding: 0 14px;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+/* Gợi ý lệnh: nổi lên TRÊN ô nhập (bottom: 100%) vì ô nhập nằm sát đáy tab — thả xuống dưới thì
+   danh sách rơi ra ngoài vùng nhìn thấy. */
+.redis-suggest {
+  position: absolute;
+  bottom: 100%;
+  left: 18px;
+  margin-bottom: 4px;
+  z-index: 5;
+  background: var(--win-bg-card);
+  border: 1px solid var(--win-border-strong, var(--win-border));
+  border-radius: 4px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+  min-width: 320px;
+  overflow: hidden;
+}
+
+.redis-suggest-item {
+  padding: 4px 8px;
+  font-size: 11px;
+  font-family: var(--win-font-mono);
+  cursor: pointer;
+  display: flex;
+  gap: 8px;
+}
+
+.redis-suggest-item.active {
+  background: var(--win-bg-active);
+}
+
+.redis-suggest-args {
+  color: var(--win-text-disabled);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.redis-suggest-hint {
+  padding: 3px 8px;
+  font-size: 9px;
+  color: var(--win-text-disabled);
+  border-top: 1px solid var(--win-border);
+}
+
+/* Dòng cú pháp của lệnh đang gõ. */
+.redis-syntax {
+  font-size: 10px;
+  font-family: var(--win-font-mono);
+  color: var(--win-text-secondary);
+  background: var(--win-bg-subtle, rgba(0, 0, 0, 0.15));
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.redis-syntax-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.redis-syntax-name {
+  color: var(--win-accent);
+  font-weight: 700;
+}
+
+.redis-syntax-cost {
+  color: var(--st-warning, #f59e0b);
+  font-size: 9px;
+}
+
+.redis-syntax-since {
+  opacity: 0.7;
+  font-size: 9px;
+}
+
+.redis-syntax-desc {
+  font-size: 10px;
+  color: var(--win-text-disabled);
+  margin-top: 2px;
+}
+
+/* ---- Dòng log (Pub/Sub, Profiler) ---- */
+
+.redis-log-line {
+  margin-bottom: 4px;
+}
+
+.redis-log-dim {
+  color: var(--win-text-disabled);
+}
+
+.redis-log-payload {
+  color: var(--win-text-primary);
+}
+
+.redis-log-payload.wrap {
+  white-space: pre-wrap;
+}
+
+.redis-log-binary {
+  color: var(--st-warning, #f59e0b);
+}
+
+/* ---- Thẻ số liệu (Dashboard, Analysis) ---- */
+
+.redis-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+.redis-stat-grid.wide {
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+}
+
+.redis-stat-grid.narrow {
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.redis-stat {
+  border: 1px solid var(--win-border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: var(--win-bg-window);
+}
+
+.redis-stat.small {
+  border-radius: 4px;
+  padding: 8px;
+}
+
+.redis-stat-label {
+  font-size: 10px;
+  color: var(--win-text-secondary);
+}
+
+.redis-stat-value {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--win-text-primary);
+  margin-top: 2px;
+}
+
+.redis-stat-value.lg {
+  font-size: 16px;
+}
+
+.redis-stat-value.sm {
+  font-size: 13px;
+  margin-top: 0;
+}
+
+/* Thanh tỉ lệ bộ nhớ trong bảng phân tích. Bề rộng do dữ liệu quyết định nên vẫn ở inline. */
+.redis-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--win-accent);
+}
+
+/* Cột bảng có bề rộng cố định. Đặt tên theo số pixel: chúng là bề rộng cột thật, không phải một
+   khái niệm — gọi là `.redis-col-id` thì lần sau đổi 60px thành 70px sẽ phải đổi cả tên. */
+.redis-col-60 { width: 60px; }
+.redis-col-80 { width: 80px; }
+.redis-col-90 { width: 90px; }
+.redis-col-110 { width: 110px; }
+.redis-col-130 { width: 130px; }
+.redis-col-150 { width: 150px; }
+.redis-col-bar { width: 30%; }
+
+/* ---- Hộp thoại Redis (PromptDialog, BulkDeleteDialog) ----
+   `ModalBody style={{ gap }}` thì giữ nguyên: đó là API của `Modal.tsx` và style inline của nó cố ý
+   thắng mọi rule CSS — xem ghi chú trong CLAUDE.md. */
+
+.redis-dialog-label {
+  font-size: 11px;
+  color: var(--win-text-secondary);
+}
+
+.redis-dialog-label.block {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.redis-dialog-input {
+  height: 30px;
+  font-size: 11px;
+  width: 100%;
+  font-family: var(--win-font-mono);
+}
+
+.redis-dialog-select {
+  height: 30px;
+  font-size: 11px;
+  background: var(--win-bg-window);
+  border: 1px solid var(--win-border);
+  color: var(--win-text-primary);
+  border-radius: 4px;
+}
+
+.redis-dialog-note {
+  font-size: 10px;
+  color: var(--win-text-disabled);
+  line-height: 1.5;
+}
+
+.redis-dialog-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--st-warning, #f59e0b);
+  line-height: 1.5;
+}
+
+.redis-dialog-warn-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.redis-dialog-danger-icon {
+  color: var(--st-danger);
+}
+
+.redis-dialog-code {
+  color: var(--win-text-primary);
+  font-family: var(--win-font-mono);
+}
+
+.redis-dialog-status {
+  font-size: 11px;
+  color: var(--win-text-primary);
+}
+
+.redis-dialog-status.ok {
+  color: var(--st-ok, #10b981);
+}
+
+.redis-dialog-status.cancelled {
+  color: var(--st-warning, #f59e0b);
+}
+
+/* Nút xoá hàng loạt. Trạng thái "chưa gõ đủ điều kiện" đi qua `:disabled` thay vì bốn thuộc tính
+   tính theo cờ `ready` — cờ đó vốn đã điều khiển `disabled`, nên CSS suy ra được. */
+.redis-danger-btn {
+  background: var(--st-danger);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+}
+
+.redis-danger-btn:disabled {
+  background: var(--win-bg-hover);
+  color: var(--win-text-disabled);
+  cursor: not-allowed;
+}
+
+
+/* Khung soạn lệnh của CLI Console.
+   Cao cố định ~38% tab: log ở dưới mới là thứ đọc nhiều nhất, nhưng buffer cần đủ chỗ cho một nhúm
+   lệnh mà không phải cuộn. min-height để nó không bẹp lại khi tab bị thu nhỏ. */
+.redis-cli-editor {
+  flex: 1 1 45%;
+  min-height: 120px;
+  overflow: hidden;
+}
+
+/* Dòng do app tự thêm vào log (đã chuyển db, đã dừng…), không phải phản hồi của server. */
+.redis-console-out.note {
+  color: var(--win-text-secondary);
+  font-style: italic;
+}
+
+
+/* ---- CLI Console: thanh hành động, tab kết quả, dòng trạng thái ----
+   Ba khối này dựng lại đúng thứ tự của khung truy vấn SQL. Nút Chạy nằm DƯỚI editor chứ không phải
+   trên: mắt người dùng đang ở dòng lệnh vừa gõ, và đó là chỗ gần nó nhất. */
+
+.redis-cli-actionbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 6px 10px;
+  border-top: 1px solid var(--win-border);
+  border-bottom: 1px solid var(--win-border);
+  background: var(--win-bg-tab-bar);
+}
+
+/* Vị trí con trỏ: mono để con số không nhảy qua lại khi đổi từ 9 sang 10. */
+.redis-cli-pos {
+  font-family: var(--win-font-mono);
+  font-size: 10px;
+  color: var(--win-text-disabled);
+}
+
+.redis-cli-result-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--win-border);
+  background: var(--win-bg-tab-bar);
+}
+
+/* Nhãn "Kết quả" vẽ như một tab đang chọn, giống khung SQL — nó là thứ nói cho người dùng biết
+   vùng bên dưới là gì. Thiếu nó thì khung rỗng đọc y như một ô nhập thứ hai. */
+.redis-cli-result-tab {
+  padding: 7px 2px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--win-accent);
+  border-bottom: 2px solid var(--win-accent);
+  margin-bottom: -1px;
+}
+
+/* Vùng kết quả đã nằm trong khung có viền của chính nó, nên bỏ viền/bo góc của .redis-log-box. */
+.redis-log-box.flush {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 10px;
+}
+
+.redis-cli-result-empty {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--win-text-disabled);
+  font-size: 12px;
+  font-family: var(--win-font-sans);
+}
+
+.redis-cli-status {
+  padding: 4px 10px;
+  border-top: 1px solid var(--win-border);
+  background: var(--win-bg-tab-bar);
+  font-size: 10px;
+  color: var(--win-text-disabled);
+}
+
+
+/* Đường kẻ kéo giữa thanh hành động và vùng kết quả — cùng chỗ, cùng bề dày 4px với khung SQL.
+   `resize: vertical` của CSS từng đứng ở đây: nó chỉ hiện một tay nắm nhỏ ở góc phải dưới, không
+   phải một đường kẻ kéo được suốt chiều ngang, nên không khớp với phần còn lại của app. */
+.redis-cli-resizer {
+  height: 4px;
+  flex-shrink: 0;
+  cursor: row-resize;
+  background: var(--win-border-light, var(--win-border));
+  user-select: none;
+  transition: background 0.15s ease;
+  position: relative;
+  z-index: 10;
+}
+
+.redis-cli-resizer:hover,
+.redis-cli-resizer.dragging {
+  background: var(--win-accent);
 }

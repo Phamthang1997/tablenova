@@ -1,22 +1,74 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { Table, Terminal, TerminalSquare, X, Plus, Trash2, XCircle, ArrowRight, ChevronDown, Cog, Braces, Layers, Pencil } from 'lucide-react';
+import { Table, Terminal, TerminalSquare, X, Plus, Trash2, XCircle, ArrowRight, ChevronDown, Cog, Braces, Layers, Pencil, Key, Activity, Timer, Radio, BarChart3 } from 'lucide-react';
 import { TAB_GROUP_COLORS, type TabGroup } from '../utils/tabGroups';
 
 export interface TabInfo {
   id: string;
-  type: 'table' | 'query' | 'terminal' | 'routine' | 'view';
+  /**
+   * Kết nối mà tab này chạy trên.
+   *
+   * Trước đây ràng buộc tab↔kết nối là **ngoại tại**: cả danh sách tab nằm dưới một khoá
+   * localStorage của kết nối đang mở, và đổi kết nối là thay trọn danh sách. Giờ tab của nhiều kết
+   * nối cùng nằm trong state, nên mỗi tab phải tự mang kết nối của nó — thanh tab lọc theo đây, và
+   * mọi component bên trong tab nhận `connId` này chứ không phải "kết nối đang chọn".
+   *
+   * Không bắt buộc: bản lưu trong localStorage từ trước khi có trường này không có nó, và được gán
+   * lúc khôi phục (xem `restoreTabs`).
+   */
+  connId?: string;
+  /**
+   * Bảy loại `redis-*` là tab của một kết nối Redis — cùng thanh tab, cùng kéo thả, cùng nhóm màu
+   * với tab SQL (`docs/redis-ui-unification-plan.md` §2.2).
+   *
+   * Không loại nào mang `dbIndex`: một `conn_id` **là** một `(server, db index)` (§2.1), nên db
+   * index nằm ở `connId` ở trên. Thêm nó vào đây là dựng lại đúng cái trạng thái dùng chung mà
+   * Giai đoạn 0 vừa gỡ bỏ.
+   */
+  type:
+    | 'table'
+    | 'query'
+    | 'terminal'
+    | 'routine'
+    | 'view'
+    | 'redis-key'
+    | 'redis-console'
+    | 'redis-dashboard'
+    | 'redis-slowlog'
+    | 'redis-pubsub'
+    | 'redis-profiler'
+    | 'redis-analysis';
   name: string; // Table name or unique query title
   label: string;
   routineInfo?: { name: string; kind: 'procedure' | 'function'; sql: string };
   viewInfo?: { name: string; sql: string };
+  /**
+   * Tab `redis-key`. `keyType` chỉ để vẽ badge lúc chưa nạp xong giá trị — nguồn sự thật là lần
+   * đọc key thật sự, vì kiểu có thể đã đổi (key bị xoá rồi tạo lại) giữa hai phiên.
+   */
+  redisKeyInfo?: { keyName: string; keyType?: string };
   config?: any;       // cấu hình kết nối cho tab terminal
   floating?: boolean; // terminal: đang ở chế độ cửa sổ nổi
   /** Nhóm chứa tab này. Bỏ trống = tab rời. Xem TabGroup. */
   groupId?: string;
 }
 
+
+/**
+ * Icon cho từng loại tab Redis trong dropdown danh sách tab.
+ *
+ * Thanh tab cố ý KHÔNG vẽ icon (xem `renderTab`) — chỉ dropdown vẽ, nên bảng này chỉ dùng ở đó.
+ */
+const REDIS_TAB_ICON: Record<string, React.FC<{ size?: number; style?: React.CSSProperties }>> = {
+  'redis-key': Key,
+  'redis-console': Terminal,
+  'redis-dashboard': Activity,
+  'redis-slowlog': Timer,
+  'redis-pubsub': Radio,
+  'redis-profiler': Activity,
+  'redis-analysis': BarChart3,
+};
 
 interface TabManagerProps {
   tabs: TabInfo[];
@@ -514,6 +566,11 @@ export const TabManager: React.FC<TabManagerProps> = ({
                     )
                   ) : tab.type === 'view' ? (
                     <Layers size={12} style={{ color: '#8b5cf6', marginRight: '6px' }} />
+                  ) : tab.type.startsWith('redis-') ? (
+                    (() => {
+                      const RedisIcon = REDIS_TAB_ICON[tab.type] ?? Key;
+                      return <RedisIcon size={12} style={{ color: '#DC382D', marginRight: '6px' }} />;
+                    })()
                   ) : (
                     <Terminal size={12} style={{ color: 'var(--win-accent)', marginRight: '6px' }} />
                   )}

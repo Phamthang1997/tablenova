@@ -295,7 +295,7 @@ export function splitStatements(text: string): StatementRange[] {
 }
 
 /** Loại câu lệnh bị cảnh báo trước khi chạy. */
-export type UnsafeStatementKind = 'deleteNoWhere' | 'dropTable';
+export type UnsafeStatementKind = 'deleteNoWhere' | 'dropTable' | 'updateNoWhere' | 'truncate';
 
 export interface UnsafeStatement {
   kind: UnsafeStatementKind;
@@ -324,8 +324,16 @@ export function findUnsafeStatements(text: string): UnsafeStatement[] {
     // Bao cả dạng nhiều bảng của MySQL (`DELETE t1 FROM t1 JOIN t2 ...`) vì vẫn mở đầu bằng DELETE.
     if (/^\s*DELETE\b/i.test(masked)) {
       if (!/\bWHERE\b/i.test(masked)) out.push({ kind: 'deleteNoWhere', text: stmt.text });
+    } else if (/^\s*UPDATE\b/i.test(masked)) {
+      // Cùng lý do với DELETE: thiếu WHERE là ghi đè MỌI dòng, và cũng không rollback được nếu
+      // đang ở chế độ tự động commit.
+      if (!/\bWHERE\b/i.test(masked)) out.push({ kind: 'updateNoWhere', text: stmt.text });
     } else if (/^\s*DROP\s+(TEMPORARY\s+)?TABLE\b/i.test(masked)) {
       out.push({ kind: 'dropTable', text: stmt.text });
+    } else if (/^\s*TRUNCATE\b/i.test(masked)) {
+      // TRUNCATE xoá sạch bảng và trên MySQL còn commit ngầm, nên ngay cả transaction thủ công
+      // đang mở cũng không gỡ lại được — nguy hiểm hơn `DELETE` không WHERE chứ không kém.
+      out.push({ kind: 'truncate', text: stmt.text });
     }
   }
   return out;

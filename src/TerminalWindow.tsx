@@ -18,6 +18,9 @@ export const TerminalWindow: React.FC<{ raw: string }> = ({ raw }) => {
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#1c1c1e' }}>
       <TerminalPanel
+      // Cửa sổ terminal độc lập không có kết nối SQL nào của riêng nó; các lệnh log sẽ
+      // trả đúng lỗi "chưa kết nối" thay vì đi vào một kết nối tình cờ nào đó.
+      connId=""
         config={config}
         profileName={profileName}
         inOwnWindow

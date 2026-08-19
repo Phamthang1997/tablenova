@@ -1,9 +1,14 @@
 // Hỗ trợ Redis như một loại DB thứ 4 — TÁCH BIỆT khỏi enum DbConnection (SQL) để không phá vỡ
-// hàng loạt match sẵn có. Kết nối Redis lưu trong RedisState riêng của AppState.
+// hàng loạt match sẵn có, nhưng nằm CHUNG registry `conn_id` với SQL
+// (`docs/redis-ui-unification-plan.md` §2.3): một danh sách kết nối đang mở cho `DbRail`, một vòng
+// đời, một cờ read-only. `RedisState` — một connection và một db_index cho cả app — đã bị xoá.
+//
+// Một `conn_id` = một `(server, db index)` (§2.1). Đổi db index là MỞ MỘT KẾT NỐI KHÁC, không phải
+// đổi state dùng chung; đó là thứ giữ cho hai tab key mở trên hai db không đọc nhầm của nhau.
 // Dùng redis::aio::MultiplexedConnection (Clone rẻ) theo pattern: lock -> clone -> drop lock -> await.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use futures_util::StreamExt;
@@ -16,7 +21,6 @@ use crate::redis_cmds::{
     is_blocking_cmd, is_read_only_cmd, parse_version, select_db_arg, token_name, tokenize,
     version_at_least,
 };
-use crate::ssh_tunnel::SshTunnel;
 
 /// What the connected server can actually do. Probed once at connect instead of being
 /// discovered by trying a command and catching the error: the app must work against Redis
@@ -45,35 +49,10 @@ impl RedisCaps {
     }
 }
 
-pub struct RedisState {
-    pub conn: Mutex<Option<MultiplexedConnection>>,
-    /// Config used to reconnect (changing db index, opening a dedicated connection). This is
-    /// the **tunneled** config when SSH is on — host/port already rewritten to the forwarded
-    /// local port — so every reconnect reuses the tunnel that is alive in `ssh_tunnel`.
-    pub config: Mutex<Option<Value>>,
-    /// Live SSH tunnel of the current connection. It lives here because dropping it closes
-    /// the forwarded port, which would strand the connection and every reconnect after it.
-    pub ssh_tunnel: Mutex<Option<SshTunnel>>,
-    pub db_index: Mutex<i64>,
-    /// Read-only mode. Lives here — not only in the UI — because the CLI console sends
-    /// arbitrary command text, so a gate in the WebView is a gate on the wrong side of the
-    /// IPC boundary. Toggled after connect via `redis_set_read_only`.
-    pub read_only: AtomicBool,
-    pub caps: Mutex<RedisCaps>,
-}
-
-impl RedisState {
-    pub fn new() -> Self {
-        Self {
-            conn: Mutex::new(None),
-            config: Mutex::new(None),
-            ssh_tunnel: Mutex::new(None),
-            db_index: Mutex::new(0),
-            read_only: AtomicBool::new(false),
-            caps: Mutex::new(RedisCaps::default()),
-        }
-    }
-}
+// `RedisState` đã bị xoá. Năm trường của nó giờ nằm trong registry, mỗi kết nối một bản:
+// `conn`/`db_index`/`caps` trong `state::RedisConn`, `config`/`ssh_tunnel` trên
+// `state::ServerHandle` (dùng chung giữa các db index của cùng server), `read_only` là cờ của
+// `ConnEntry` — cùng một cờ mà SQL và thanh rail đọc, nên không còn hai nguồn sự thật.
 
 fn url_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
@@ -212,9 +191,8 @@ async fn make_conn(config: &Value, db_index: i64) -> Result<MultiplexedConnectio
 }
 
 // Lấy một handle connection đã clone (drop lock trước khi await).
-fn take_conn(state: &crate::AppState) -> Result<MultiplexedConnection, String> {
-    let g = state.redis.conn.lock().map_err(|e| e.to_string())?;
-    g.clone().ok_or_else(|| "Chưa kết nối Redis".to_string())
+fn take_conn(state: &crate::AppState, conn_id: &str) -> Result<MultiplexedConnection, String> {
+    Ok(state.connections.acquire_redis(conn_id)?.conn())
 }
 
 // redis::Value -> serde_json::Value (đệ quy), phục vụ redis_execute_cmd.
@@ -233,15 +211,19 @@ fn redis_value_to_json(v: &redis::Value) -> Value {
 // Refuses every write when read-only mode is on. Called by each mutating command rather
 // than by one wrapper, because there is no single funnel: the element editors talk to their
 // own Redis command directly (see the block comment above `redis_hash_set`).
-fn ensure_writable(state: &crate::AppState) -> Result<(), String> {
-    if state.redis.read_only.load(Ordering::Relaxed) {
+fn ensure_writable(state: &crate::AppState, conn_id: &str) -> Result<(), String> {
+    if state.connections.is_read_only(conn_id) {
         return Err("Chế độ chỉ đọc: không thể ghi vào Redis".to_string());
     }
     Ok(())
 }
 
-fn caps_of(state: &crate::AppState) -> RedisCaps {
-    state.redis.caps.lock().map(|c| c.clone()).unwrap_or_default()
+fn caps_of(state: &crate::AppState, conn_id: &str) -> RedisCaps {
+    state
+        .connections
+        .acquire_redis(conn_id)
+        .map(|c| c.caps())
+        .unwrap_or_default()
 }
 
 // A collection element is shipped as text so the UI can show it, but a value that is not
@@ -337,6 +319,12 @@ fn parse_info(text: &str) -> Value {
 
 // ---- Commands ----
 
+/// The name a Redis `(server, db index)` is filed under in the registry — the `db` field the rail
+/// draws, and what `find` matches on so opening the same index twice is idempotent.
+fn redis_db_name(index: i64) -> String {
+    format!("db{}", index)
+}
+
 #[tauri::command]
 pub async fn redis_connect(state: tauri::State<'_, crate::AppState>, config: Value) -> Result<Value, String> {
     let db_index = config.get("dbIndex").and_then(|v| v.as_i64()).unwrap_or(0);
@@ -352,59 +340,130 @@ pub async fn redis_connect(state: tauri::State<'_, crate::AppState>, config: Val
     let caps = probe_caps(&mut conn).await;
     let read_only = config.get("readOnly").and_then(|v| v.as_bool()).unwrap_or(false);
 
-    {
-        let mut g = state.redis.conn.lock().map_err(|e| e.to_string())?;
-        *g = Some(conn);
-    }
-    *state.redis.caps.lock().map_err(|e| e.to_string())? = caps.clone();
-    state.redis.read_only.store(read_only, Ordering::Relaxed);
-    // Thay tunnel cũ (drop tunnel cũ nếu có) — kết nối cũ đã bị thay ở trên nên không còn ai dùng.
-    *state.redis.ssh_tunnel.lock().map_err(|e| e.to_string())? = tunnel;
-    *state.redis.config.lock().map_err(|e| e.to_string())? = Some(conn_config);
-    *state.redis.db_index.lock().map_err(|e| e.to_string())? = db_index;
+    let conn_id = crate::state::mint_id();
+    // `ServerHandle` giữ config đã TUNNEL, khác với SQL (giữ config gốc rồi mở tunnel lại mỗi lần
+    // dựng pool). Redis reconnect nhiều hơn — đổi db index, Pub/Sub, Profiler đều mở socket mới —
+    // và tunnel đã sống sẵn ngay trên handle này, nên dựng lại là mở thừa một cổng chuyển tiếp.
+    let server = Arc::new(crate::state::ServerHandle::new(
+        crate::state::mint_id(),
+        "redis".to_string(),
+        conn_config,
+        tunnel,
+    ));
+    state.connections.insert(
+        conn_id.clone(),
+        crate::state::ConnEntry {
+            read_only,
+            server,
+            db: redis_db_name(db_index),
+            conn: crate::state::LiveConn::Redis(crate::state::RedisConn {
+                conn,
+                db_index,
+                caps: caps.clone(),
+            }),
+            // Redis không có schema. `None` chứ không phải `Some("")`: `pg_schema_of` mặc định
+            // `public`, và một chuỗi rỗng ở đây sẽ đi vào scopeKey của frontend.
+            current_schema: None,
+        },
+    )?;
 
-    Ok(json!({ "success": true, "dbIndex": db_index, "caps": caps.to_json(), "readOnly": read_only }))
+    Ok(json!({
+        "success": true,
+        "connId": &*conn_id,
+        "dbIndex": db_index,
+        "caps": caps.to_json(),
+        "readOnly": read_only,
+    }))
 }
 
 /// Mirrors the app's read-only toggle into the backend. The toggle can be flipped after
 /// connecting, so the value cannot be read from the connect config alone.
+///
+/// Writes the registry's own flag — there is no second Redis-only flag any more, so the rail, the
+/// SQL guard and the Redis guard can no longer disagree about one connection.
 #[tauri::command]
-pub async fn redis_set_read_only(state: tauri::State<'_, crate::AppState>, flag: bool) -> Result<Value, String> {
-    state.redis.read_only.store(flag, Ordering::Relaxed);
+pub async fn redis_set_read_only(
+    state: tauri::State<'_, crate::AppState>,
+    conn_id: String,
+    flag: bool,
+) -> Result<Value, String> {
+    state.connections.set_read_only(&conn_id, flag)?;
     Ok(json!({ "success": true, "readOnly": flag }))
 }
 
 #[tauri::command]
-pub async fn redis_disconnect(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
-    *state.redis.conn.lock().map_err(|e| e.to_string())? = None;
-    *state.redis.config.lock().map_err(|e| e.to_string())? = None;
-    // Đóng luôn tunnel: giữ lại thì cổng chuyển tiếp và phiên SSH vẫn sống dù đã ngắt Redis.
-    *state.redis.ssh_tunnel.lock().map_err(|e| e.to_string())? = None;
+pub async fn redis_disconnect(
+    state: tauri::State<'_, crate::AppState>,
+    conn_id: String,
+) -> Result<Value, String> {
+    // Dropping the entry releases its `Arc<ServerHandle>`; the SSH tunnel closes with the LAST
+    // entry of that server, not with this one — which is the point of putting it there. Ngắt `db3`
+    // trong khi `db0` của cùng server còn mở thì cổng chuyển tiếp phải sống tiếp.
+    let entry = state.connections.remove(&conn_id)?;
+    drop(entry);
     Ok(json!({ "success": true }))
 }
 
-// Đổi database index (0-15): reconnect với index mới (an toàn hơn SELECT trên connection multiplexed).
+/// Đổi database index (0-15).
+///
+/// Không còn đổi state dùng chung: nó **mở một kết nối khác** trên cùng server và trả về `conn_id`
+/// của kết nối đó (§2.1). Frontend chuyển workspace sang id mới, đúng như khi mở database thứ hai
+/// của một server Postgres. Idempotent — bấm `db3` hai lần trả về cùng một `conn_id`.
 #[tauri::command]
-pub async fn redis_select_db(state: tauri::State<'_, crate::AppState>, index: i64) -> Result<Value, String> {
-    select_db_inner(&state, index).await
+pub async fn redis_select_db(
+    state: tauri::State<'_, crate::AppState>,
+    conn_id: String,
+    index: i64,
+) -> Result<Value, String> {
+    select_db_inner(&state, &conn_id, index).await
 }
 
 // Shared by the command above and by the `SELECT n` interception in `redis_execute_cmd`, so
 // the console cannot switch database behind the UI's back.
-async fn select_db_inner(state: &crate::AppState, index: i64) -> Result<Value, String> {
-    let config = state.redis.config.lock().map_err(|e| e.to_string())?.clone()
-        .ok_or_else(|| "Chưa kết nối Redis".to_string())?;
+async fn select_db_inner(
+    state: &crate::AppState,
+    conn_id: &str,
+    index: i64,
+) -> Result<Value, String> {
+    let (server, read_only) = {
+        let ctx = state.connections.acquire_redis(conn_id)?;
+        (ctx.server_arc(), ctx.read_only())
+    };
+    let db = redis_db_name(index);
+
+    // Đã mở sẵn thì dùng lại, không mint pool thứ hai cho cùng một chỗ.
+    if let Some(existing) = state.connections.find(&server.id, &db)? {
+        return Ok(json!({ "success": true, "connId": &*existing, "dbIndex": index }));
+    }
+
+    let config = server.config();
     let mut conn = make_conn(&config, index).await?;
     let _: String = redis::cmd("PING").query_async(&mut conn).await.map_err(|e| e.to_string())?;
-    *state.redis.conn.lock().map_err(|e| e.to_string())? = Some(conn);
-    *state.redis.db_index.lock().map_err(|e| e.to_string())? = index;
-    Ok(json!({ "success": true, "dbIndex": index }))
+    let caps = probe_caps(&mut conn).await;
+
+    let new_id = crate::state::mint_id();
+    state.connections.insert(
+        new_id.clone(),
+        crate::state::ConnEntry {
+            // Kế thừa cờ read-only của kết nối mở ra nó: cùng một server, và ai đã đánh dấu
+            // production chỉ đọc thì có ý nói mọi db index của nó. Cùng lý lẽ với `open_database`.
+            read_only,
+            // CÙNG `Arc<ServerHandle>`: một `ServerHandle` khác sẽ mở tunnel riêng và đóng nó ngay
+            // khi kết nối đầu tiên biến mất.
+            server,
+            db,
+            conn: crate::state::LiveConn::Redis(crate::state::RedisConn { conn, db_index: index, caps }),
+            current_schema: None,
+        },
+    )?;
+    Ok(json!({ "success": true, "connId": &*new_id, "dbIndex": index }))
 }
 
 // Quét keys bằng SCAN (non-blocking) + TYPE + TTL cho từng key qua pipeline.
 #[tauri::command]
 pub async fn redis_scan_keys(
     state: tauri::State<'_, crate::AppState>,
+    conn_id: String,
     pattern: String,
     cursor: u64,
     count: usize,
@@ -413,7 +472,7 @@ pub async fn redis_scan_keys(
     // Không truyền TYPE cho SCAN: tham số này chỉ có ở Redis 6.0+ và nhiều bản tương thích
     // (KeyDB/Dragonfly) không hỗ trợ -> "syntax error". Lọc theo kiểu được xử lý phía client.
     let _ = &type_filter;
-    let mut c = take_conn(&state)?;
+    let mut c = take_conn(&state, &conn_id)?;
     let mut cmd = redis::cmd("SCAN");
     cmd.arg(cursor).arg("MATCH").arg(&pattern).arg("COUNT").arg(count);
     let (next, keys): (u64, Vec<String>) = cmd.query_async(&mut c).await.map_err(|e| e.to_string())?;
@@ -441,6 +500,7 @@ pub async fn redis_scan_keys(
 #[tauri::command]
 pub async fn redis_scan_stream(
     state: tauri::State<'_, crate::AppState>,
+    conn_id: String,
     pattern: String,
     count: usize,
     query_id: String,
@@ -453,7 +513,7 @@ pub async fn redis_scan_stream(
         flags.insert(query_id.clone(), cancel.clone());
     }
 
-    let mut c = take_conn(&state)?;
+    let mut c = take_conn(&state, &conn_id)?;
     // Resumable: the browser stops the scan when it hits its key cap and continues from the
     // cursor it was given, instead of restarting from the beginning.
     let mut cursor: u64 = start_cursor.unwrap_or(0);
@@ -707,9 +767,9 @@ async fn fetch_elements(
 }
 
 #[tauri::command]
-pub async fn redis_get_key(state: tauri::State<'_, crate::AppState>, key: String) -> Result<Value, String> {
-    let caps = caps_of(&state);
-    let mut c = take_conn(&state)?;
+pub async fn redis_get_key(state: tauri::State<'_, crate::AppState>, conn_id: String, key: String) -> Result<Value, String> {
+    let caps = caps_of(&state, &conn_id);
+    let mut c = take_conn(&state, &conn_id)?;
     let t: String = redis::cmd("TYPE").arg(&key).query_async(&mut c).await.map_err(|e| e.to_string())?;
     if t == "none" {
         return Err(format!("Key \"{}\" không tồn tại.", key));
@@ -765,14 +825,15 @@ pub async fn redis_get_key(state: tauri::State<'_, crate::AppState>, key: String
 #[tauri::command]
 pub async fn redis_get_elements(
     state: tauri::State<'_, crate::AppState>,
+    conn_id: String,
     key: String,
     kind: String,
     cursor: String,
     count: Option<usize>,
     filter: Option<String>,
 ) -> Result<Value, String> {
-    let caps = caps_of(&state);
-    let mut c = take_conn(&state)?;
+    let caps = caps_of(&state, &conn_id);
+    let mut c = take_conn(&state, &conn_id)?;
     let (elements, next_cursor, done) = fetch_elements(
         &mut c,
         &key,
@@ -794,10 +855,10 @@ pub async fn redis_get_elements(
 
 // Tạo/ghi đè một key theo kiểu. Ngữ nghĩa REPLACE: xóa key cũ rồi dựng lại theo payload.
 #[tauri::command]
-pub async fn redis_set_key(state: tauri::State<'_, crate::AppState>, payload: Value) -> Result<Value, String> {
-    ensure_writable(&state)?;
-    let caps = caps_of(&state);
-    let mut c = take_conn(&state)?;
+pub async fn redis_set_key(state: tauri::State<'_, crate::AppState>, conn_id: String, payload: Value) -> Result<Value, String> {
+    ensure_writable(&state, &conn_id)?;
+    let caps = caps_of(&state, &conn_id);
+    let mut c = take_conn(&state, &conn_id)?;
     let key = payload.get("key").and_then(|v| v.as_str()).ok_or("Thiếu key")?.to_string();
     let kind = payload.get("kind").and_then(|v| v.as_str()).unwrap_or("string").to_string();
     let ttl = payload.get("ttl").and_then(|v| v.as_i64()).unwrap_or(-1);
@@ -890,13 +951,14 @@ pub async fn redis_set_key(state: tauri::State<'_, crate::AppState>, payload: Va
 #[tauri::command]
 pub async fn redis_hash_set(
     state: tauri::State<'_, crate::AppState>,
+    conn_id: String,
     key: String,
     field: String,
     value: String,
     old_field: Option<String>,
 ) -> Result<Value, String> {
-    ensure_writable(&state)?;
-    let mut c = take_conn(&state)?;
+    ensure_writable(&state, &conn_id)?;
+    let mut c = take_conn(&state, &conn_id)?;
     let _: i64 = redis::cmd("HSET").arg(&key).arg(&field).arg(&value)
         .query_async(&mut c).await.map_err(|e| e.to_string())?;
     if let Some(old) = old_field.filter(|o| *o != field) {
@@ -907,27 +969,27 @@ pub async fn redis_hash_set(
 }
 
 #[tauri::command]
-pub async fn redis_hash_del(state: tauri::State<'_, crate::AppState>, key: String, field: String) -> Result<Value, String> {
-    ensure_writable(&state)?;
-    let mut c = take_conn(&state)?;
+pub async fn redis_hash_del(state: tauri::State<'_, crate::AppState>, conn_id: String, key: String, field: String) -> Result<Value, String> {
+    ensure_writable(&state, &conn_id)?;
+    let mut c = take_conn(&state, &conn_id)?;
     let removed: i64 = redis::cmd("HDEL").arg(&key).arg(&field)
         .query_async(&mut c).await.map_err(|e| e.to_string())?;
     Ok(json!({ "success": true, "removed": removed }))
 }
 
 #[tauri::command]
-pub async fn redis_list_set(state: tauri::State<'_, crate::AppState>, key: String, index: i64, value: String) -> Result<Value, String> {
-    ensure_writable(&state)?;
-    let mut c = take_conn(&state)?;
+pub async fn redis_list_set(state: tauri::State<'_, crate::AppState>, conn_id: String, key: String, index: i64, value: String) -> Result<Value, String> {
+    ensure_writable(&state, &conn_id)?;
+    let mut c = take_conn(&state, &conn_id)?;
     let _: String = redis::cmd("LSET").arg(&key).arg(index).arg(&value)
         .query_async(&mut c).await.map_err(|e| e.to_string())?;
     Ok(json!({ "success": true }))
 }
 
 #[tauri::command]
-pub async fn redis_list_push(state: tauri::State<'_, crate::AppState>, key: String, value: String, at_head: bool) -> Result<Value, String> {
-    ensure_writable(&state)?;
-    let mut c = take_conn(&state)?;
+pub async fn redis_list_push(state: tauri::State<'_, crate::AppState>, conn_id: String, key: String, value: String, at_head: bool) -> Result<Value, String> {
+    ensure_writable(&state, &conn_id)?;
+    let mut c = take_conn(&state, &conn_id)?;
     let len: i64 = redis::cmd(if at_head { "LPUSH" } else { "RPUSH" }).arg(&key).arg(&value)
         .query_async(&mut c).await.map_err(|e| e.to_string())?;
     Ok(json!({ "success": true, "length": len }))
@@ -937,9 +999,9 @@ pub async fn redis_list_push(state: tauri::State<'_, crate::AppState>, key: Stri
 // then LREM exactly that one occurrence. The timestamp keeps the sentinel unique so a
 // concurrent delete on the same list cannot remove the wrong element.
 #[tauri::command]
-pub async fn redis_list_del(state: tauri::State<'_, crate::AppState>, key: String, index: i64) -> Result<Value, String> {
-    ensure_writable(&state)?;
-    let mut c = take_conn(&state)?;
+pub async fn redis_list_del(state: tauri::State<'_, crate::AppState>, conn_id: String, key: String, index: i64) -> Result<Value, String> {
+    ensure_writable(&state, &conn_id)?;
+    let mut c = take_conn(&state, &conn_id)?;
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
@@ -955,12 +1017,13 @@ pub async fn redis_list_del(state: tauri::State<'_, crate::AppState>, key: Strin
 #[tauri::command]
 pub async fn redis_set_member(
     state: tauri::State<'_, crate::AppState>,
+    conn_id: String,
     key: String,
     member: String,
     old_member: Option<String>,
 ) -> Result<Value, String> {
-    ensure_writable(&state)?;
-    let mut c = take_conn(&state)?;
+    ensure_writable(&state, &conn_id)?;
+    let mut c = take_conn(&state, &conn_id)?;
     let added: i64 = redis::cmd("SADD").arg(&key).arg(&member)
         .query_async(&mut c).await.map_err(|e| e.to_string())?;
     if let Some(old) = old_member.filter(|o| *o != member) {
@@ -971,9 +1034,9 @@ pub async fn redis_set_member(
 }
 
 #[tauri::command]
-pub async fn redis_set_del_member(state: tauri::State<'_, crate::AppState>, key: String, member: String) -> Result<Value, String> {
-    ensure_writable(&state)?;
-    let mut c = take_conn(&state)?;
+pub async fn redis_set_del_member(state: tauri::State<'_, crate::AppState>, conn_id: String, key: String, member: String) -> Result<Value, String> {
+    ensure_writable(&state, &conn_id)?;
+    let mut c = take_conn(&state, &conn_id)?;
     let removed: i64 = redis::cmd("SREM").arg(&key).arg(&member)
         .query_async(&mut c).await.map_err(|e| e.to_string())?;
     Ok(json!({ "success": true, "removed": removed }))
@@ -982,13 +1045,14 @@ pub async fn redis_set_del_member(state: tauri::State<'_, crate::AppState>, key:
 #[tauri::command]
 pub async fn redis_zset_add(
     state: tauri::State<'_, crate::AppState>,
+    conn_id: String,
     key: String,
     member: String,
     score: f64,
     old_member: Option<String>,
 ) -> Result<Value, String> {
-    ensure_writable(&state)?;
-    let mut c = take_conn(&state)?;
+    ensure_writable(&state, &conn_id)?;
+    let mut c = take_conn(&state, &conn_id)?;
     // ZADD upserts, so changing only the score of an existing member needs nothing else.
     let _: i64 = redis::cmd("ZADD").arg(&key).arg(score).arg(&member)
         .query_async(&mut c).await.map_err(|e| e.to_string())?;
@@ -1000,9 +1064,9 @@ pub async fn redis_zset_add(
 }
 
 #[tauri::command]
-pub async fn redis_zset_del(state: tauri::State<'_, crate::AppState>, key: String, member: String) -> Result<Value, String> {
-    ensure_writable(&state)?;
-    let mut c = take_conn(&state)?;
+pub async fn redis_zset_del(state: tauri::State<'_, crate::AppState>, conn_id: String, key: String, member: String) -> Result<Value, String> {
+    ensure_writable(&state, &conn_id)?;
+    let mut c = take_conn(&state, &conn_id)?;
     let removed: i64 = redis::cmd("ZREM").arg(&key).arg(&member)
         .query_async(&mut c).await.map_err(|e| e.to_string())?;
     Ok(json!({ "success": true, "removed": removed }))
@@ -1013,6 +1077,7 @@ pub async fn redis_zset_del(state: tauri::State<'_, crate::AppState>, key: Strin
 #[tauri::command]
 pub async fn redis_stream_add(
     state: tauri::State<'_, crate::AppState>,
+    conn_id: String,
     key: String,
     id: String,
     fields: Vec<Value>,
@@ -1020,8 +1085,8 @@ pub async fn redis_stream_add(
     if fields.is_empty() {
         return Err("Stream cần ít nhất một field".to_string());
     }
-    ensure_writable(&state)?;
-    let mut c = take_conn(&state)?;
+    ensure_writable(&state, &conn_id)?;
+    let mut c = take_conn(&state, &conn_id)?;
     let id = id.trim();
     let mut cmd = redis::cmd("XADD");
     cmd.arg(&key).arg(if id.is_empty() { "*" } else { id });
@@ -1034,29 +1099,29 @@ pub async fn redis_stream_add(
 }
 
 #[tauri::command]
-pub async fn redis_stream_del(state: tauri::State<'_, crate::AppState>, key: String, id: String) -> Result<Value, String> {
-    ensure_writable(&state)?;
-    let mut c = take_conn(&state)?;
+pub async fn redis_stream_del(state: tauri::State<'_, crate::AppState>, conn_id: String, key: String, id: String) -> Result<Value, String> {
+    ensure_writable(&state, &conn_id)?;
+    let mut c = take_conn(&state, &conn_id)?;
     let removed: i64 = redis::cmd("XDEL").arg(&key).arg(&id)
         .query_async(&mut c).await.map_err(|e| e.to_string())?;
     Ok(json!({ "success": true, "removed": removed }))
 }
 
 #[tauri::command]
-pub async fn redis_delete_keys(state: tauri::State<'_, crate::AppState>, keys: Vec<String>) -> Result<Value, String> {
+pub async fn redis_delete_keys(state: tauri::State<'_, crate::AppState>, conn_id: String, keys: Vec<String>) -> Result<Value, String> {
     if keys.is_empty() {
         return Ok(json!({ "success": true, "deleted": 0 }));
     }
-    ensure_writable(&state)?;
-    let mut c = take_conn(&state)?;
+    ensure_writable(&state, &conn_id)?;
+    let mut c = take_conn(&state, &conn_id)?;
     let deleted: i64 = redis::cmd("UNLINK").arg(&keys).query_async(&mut c).await.map_err(|e| e.to_string())?;
     Ok(json!({ "success": true, "deleted": deleted }))
 }
 
 #[tauri::command]
-pub async fn redis_set_ttl(state: tauri::State<'_, crate::AppState>, key: String, ttl: i64) -> Result<Value, String> {
-    ensure_writable(&state)?;
-    let mut c = take_conn(&state)?;
+pub async fn redis_set_ttl(state: tauri::State<'_, crate::AppState>, conn_id: String, key: String, ttl: i64) -> Result<Value, String> {
+    ensure_writable(&state, &conn_id)?;
+    let mut c = take_conn(&state, &conn_id)?;
     if ttl < 0 {
         let _: i64 = redis::cmd("PERSIST").arg(&key).query_async(&mut c).await.map_err(|e| e.to_string())?;
     } else {
@@ -1066,30 +1131,30 @@ pub async fn redis_set_ttl(state: tauri::State<'_, crate::AppState>, key: String
 }
 
 #[tauri::command]
-pub async fn redis_rename_key(state: tauri::State<'_, crate::AppState>, old_key: String, new_key: String) -> Result<Value, String> {
-    ensure_writable(&state)?;
-    let mut c = take_conn(&state)?;
+pub async fn redis_rename_key(state: tauri::State<'_, crate::AppState>, conn_id: String, old_key: String, new_key: String) -> Result<Value, String> {
+    ensure_writable(&state, &conn_id)?;
+    let mut c = take_conn(&state, &conn_id)?;
     let _: String = redis::cmd("RENAME").arg(&old_key).arg(&new_key).query_async(&mut c).await.map_err(|e| e.to_string())?;
     Ok(json!({ "success": true }))
 }
 
 #[tauri::command]
-pub async fn redis_flush_db(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
-    ensure_writable(&state)?;
-    let mut c = take_conn(&state)?;
+pub async fn redis_flush_db(state: tauri::State<'_, crate::AppState>, conn_id: String) -> Result<Value, String> {
+    ensure_writable(&state, &conn_id)?;
+    let mut c = take_conn(&state, &conn_id)?;
     let _: String = redis::cmd("FLUSHDB").query_async(&mut c).await.map_err(|e| e.to_string())?;
     Ok(json!({ "success": true }))
 }
 
 #[tauri::command]
-pub async fn redis_info(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
-    let mut c = take_conn(&state)?;
+pub async fn redis_info(state: tauri::State<'_, crate::AppState>, conn_id: String) -> Result<Value, String> {
+    let mut c = take_conn(&state, &conn_id)?;
     let text: String = redis::cmd("INFO").query_async(&mut c).await.map_err(|e| e.to_string())?;
     Ok(json!({ "success": true, "info": parse_info(&text), "raw": text }))
 }
 
 #[tauri::command]
-pub async fn redis_execute_cmd(state: tauri::State<'_, crate::AppState>, command: String) -> Result<Value, String> {
+pub async fn redis_execute_cmd(state: tauri::State<'_, crate::AppState>, conn_id: String, command: String) -> Result<Value, String> {
     let tokens = tokenize(&command)?;
     if tokens.is_empty() {
         return Err("Lệnh rỗng".to_string());
@@ -1104,19 +1169,28 @@ pub async fn redis_execute_cmd(state: tauri::State<'_, crate::AppState>, command
             name
         ));
     }
-    // `SELECT n` is routed through the same path as the database dropdown: sent blind it would
-    // switch the connection's database while the UI still showed the old index.
+    // `SELECT n` is routed through the same path as the database picker: sent blind it would
+    // switch this connection's database while every other tab open on it still showed the old
+    // index — and with one `conn_id` per db index (§2.1) there is no longer any such thing as
+    // "this connection's database changed". It resolves to the connection FOR that index instead,
+    // and `switchDb` tells the frontend to move the workspace there. Nothing mutates behind the
+    // back of a tab that is still open on the old index.
     if let Some(idx) = select_db_arg(&tokens) {
-        select_db_inner(&state, idx).await?;
-        return Ok(json!({ "success": true, "result": "OK", "selectedDb": idx }));
+        let res = select_db_inner(&state, &conn_id, idx).await?;
+        return Ok(json!({
+            "success": true,
+            "result": "OK",
+            "selectedDb": idx,
+            "switchDb": { "dbIndex": idx, "connId": res.get("connId").cloned().unwrap_or(Value::Null) },
+        }));
     }
     // The read-only gate lives here, not in the UI: this command carries arbitrary text, which
     // is exactly how `FLUSHALL` used to get through while every button was disabled.
-    if state.redis.read_only.load(Ordering::Relaxed) && !is_read_only_cmd(&tokens) {
+    if state.connections.is_read_only(&conn_id) && !is_read_only_cmd(&tokens) {
         return Err(format!("Lệnh '{}' bị chặn ở chế độ chỉ đọc", name));
     }
 
-    let mut c = take_conn(&state)?;
+    let mut c = take_conn(&state, &conn_id)?;
     let cmd_name = String::from_utf8_lossy(&tokens[0]).to_string();
     let mut cmd = redis::cmd(&cmd_name);
     for a in &tokens[1..] {
@@ -1142,12 +1216,13 @@ const BULK_BATCH: usize = 500;
 #[tauri::command]
 pub async fn redis_delete_by_pattern(
     state: tauri::State<'_, crate::AppState>,
+    conn_id: String,
     pattern: String,
     type_filter: Option<String>,
     query_id: String,
     channel: Channel<Value>,
 ) -> Result<Value, String> {
-    ensure_writable(&state)?;
+    ensure_writable(&state, &conn_id)?;
     let pattern = pattern.trim().to_string();
     if pattern.is_empty() {
         return Err("Chưa có pattern để xoá".to_string());
@@ -1158,7 +1233,7 @@ pub async fn redis_delete_by_pattern(
         flags.insert(query_id.clone(), cancel.clone());
     }
     let type_filter = type_filter.filter(|t| !t.is_empty());
-    let mut c = take_conn(&state)?;
+    let mut c = take_conn(&state, &conn_id)?;
     let mut cursor: u64 = 0;
     let mut scanned = 0usize;
     let mut deleted = 0i64;
@@ -1269,9 +1344,10 @@ fn parse_slowlog_entry(v: &redis::Value) -> Option<Value> {
 #[tauri::command]
 pub async fn redis_slowlog_get(
     state: tauri::State<'_, crate::AppState>,
+    conn_id: String,
     count: Option<usize>,
 ) -> Result<Value, String> {
-    let mut c = take_conn(&state)?;
+    let mut c = take_conn(&state, &conn_id)?;
     let n = count.unwrap_or(128).clamp(1, 1024);
     let reply: redis::Value = redis::cmd("SLOWLOG")
         .arg("GET")
@@ -1309,9 +1385,9 @@ pub async fn redis_slowlog_get(
 
 /// `SLOWLOG RESET` discards the server's log — a mutation, so it obeys read-only mode.
 #[tauri::command]
-pub async fn redis_slowlog_reset(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
-    ensure_writable(&state)?;
-    let mut c = take_conn(&state)?;
+pub async fn redis_slowlog_reset(state: tauri::State<'_, crate::AppState>, conn_id: String) -> Result<Value, String> {
+    ensure_writable(&state, &conn_id)?;
+    let mut c = take_conn(&state, &conn_id)?;
     let _: String = redis::cmd("SLOWLOG").arg("RESET").query_async(&mut c).await.map_err(|e| e.to_string())?;
     Ok(json!({ "success": true }))
 }
@@ -1319,11 +1395,12 @@ pub async fn redis_slowlog_reset(state: tauri::State<'_, crate::AppState>) -> Re
 #[tauri::command]
 pub async fn redis_slowlog_config(
     state: tauri::State<'_, crate::AppState>,
+    conn_id: String,
     threshold_us: Option<i64>,
     max_len: Option<i64>,
 ) -> Result<Value, String> {
-    ensure_writable(&state)?;
-    let mut c = take_conn(&state)?;
+    ensure_writable(&state, &conn_id)?;
+    let mut c = take_conn(&state, &conn_id)?;
     if let Some(t) = threshold_us {
         let _: String = redis::cmd("CONFIG")
             .arg("SET")
@@ -1352,16 +1429,11 @@ pub async fn redis_slowlog_config(
 // Each session is stopped through the existing `cancel_query(query_id)` path.
 
 /// Opens a second connection to the same server/database as the active one.
-async fn dedicated_client(state: &crate::AppState) -> Result<redis::Client, String> {
-    let config = state
-        .redis
-        .config
-        .lock()
-        .map_err(|e| e.to_string())?
-        .clone()
-        .ok_or_else(|| "Chưa kết nối Redis".to_string())?;
-    let db_index = *state.redis.db_index.lock().map_err(|e| e.to_string())?;
-    make_client(&config, db_index)
+async fn dedicated_client(state: &crate::AppState, conn_id: &str) -> Result<redis::Client, String> {
+    let ctx = state.connections.acquire_redis(conn_id)?;
+    // Config + db index của CHÍNH kết nối này, không phải của một state toàn cục: Pub/Sub và
+    // Profiler mở socket riêng, và socket đó phải nằm trên đúng db mà tab của nó đang xem.
+    make_client(&ctx.config(), ctx.db_index())
         .map_err(|e| format!("Không mở được kết nối riêng cho Redis: {}", e))
 }
 
@@ -1384,6 +1456,7 @@ fn drop_cancel(app: &tauri::AppHandle, query_id: &str) {
 pub async fn redis_pubsub_start(
     app: tauri::AppHandle,
     state: tauri::State<'_, crate::AppState>,
+    conn_id: String,
     channels: Vec<String>,
     patterns: Vec<String>,
     query_id: String,
@@ -1392,7 +1465,7 @@ pub async fn redis_pubsub_start(
     if channels.is_empty() && patterns.is_empty() {
         return Err("Chưa chọn channel để nghe".to_string());
     }
-    let client = dedicated_client(&state).await?;
+    let client = dedicated_client(&state, &conn_id).await?;
     let mut ps = client
         .get_async_pubsub()
         .await
@@ -1444,11 +1517,12 @@ pub async fn redis_pubsub_start(
 #[tauri::command]
 pub async fn redis_publish(
     state: tauri::State<'_, crate::AppState>,
+    conn_id: String,
     channel_name: String,
     payload: String,
 ) -> Result<Value, String> {
-    ensure_writable(&state)?;
-    let mut c = take_conn(&state)?;
+    ensure_writable(&state, &conn_id)?;
+    let mut c = take_conn(&state, &conn_id)?;
     let receivers: i64 = redis::cmd("PUBLISH")
         .arg(&channel_name)
         .arg(&payload)
@@ -1468,10 +1542,11 @@ const MONITOR_MAX_SECS: u64 = 60;
 pub async fn redis_monitor_start(
     app: tauri::AppHandle,
     state: tauri::State<'_, crate::AppState>,
+    conn_id: String,
     query_id: String,
     channel: Channel<Value>,
 ) -> Result<Value, String> {
-    let client = dedicated_client(&state).await?;
+    let client = dedicated_client(&state, &conn_id).await?;
     let monitor = client
         .get_async_monitor()
         .await
@@ -1516,8 +1591,8 @@ pub async fn redis_monitor_start(
 
 // ---- RedisJSON ----
 
-fn ensure_json_module(state: &crate::AppState) -> Result<(), String> {
-    let caps = caps_of(state);
+fn ensure_json_module(state: &crate::AppState, conn_id: &str) -> Result<(), String> {
+    let caps = caps_of(state, conn_id);
     // An empty module list means MODULE LIST was refused (common on managed Redis), not that
     // there are no modules — in that case let the command itself decide.
     if caps.modules.is_empty() {
@@ -1532,11 +1607,12 @@ fn ensure_json_module(state: &crate::AppState) -> Result<(), String> {
 #[tauri::command]
 pub async fn redis_json_get(
     state: tauri::State<'_, crate::AppState>,
+    conn_id: String,
     key: String,
     path: Option<String>,
 ) -> Result<Value, String> {
-    ensure_json_module(&state)?;
-    let mut c = take_conn(&state)?;
+    ensure_json_module(&state, &conn_id)?;
+    let mut c = take_conn(&state, &conn_id)?;
     let path = path.filter(|p| !p.trim().is_empty()).unwrap_or_else(|| "$".to_string());
     let text: Option<String> = redis::cmd("JSON.GET")
         .arg(&key)
@@ -1554,13 +1630,14 @@ pub async fn redis_json_get(
 #[tauri::command]
 pub async fn redis_json_set(
     state: tauri::State<'_, crate::AppState>,
+    conn_id: String,
     key: String,
     path: String,
     value: String,
 ) -> Result<Value, String> {
-    ensure_writable(&state)?;
-    ensure_json_module(&state)?;
-    let mut c = take_conn(&state)?;
+    ensure_writable(&state, &conn_id)?;
+    ensure_json_module(&state, &conn_id)?;
+    let mut c = take_conn(&state, &conn_id)?;
     let path = if path.trim().is_empty() { "$".to_string() } else { path };
     let _: String = redis::cmd("JSON.SET")
         .arg(&key)
@@ -1575,12 +1652,13 @@ pub async fn redis_json_set(
 #[tauri::command]
 pub async fn redis_json_del(
     state: tauri::State<'_, crate::AppState>,
+    conn_id: String,
     key: String,
     path: String,
 ) -> Result<Value, String> {
-    ensure_writable(&state)?;
-    ensure_json_module(&state)?;
-    let mut c = take_conn(&state)?;
+    ensure_writable(&state, &conn_id)?;
+    ensure_json_module(&state, &conn_id)?;
+    let mut c = take_conn(&state, &conn_id)?;
     let removed: i64 = redis::cmd("JSON.DEL")
         .arg(&key)
         .arg(&path)
@@ -1600,12 +1678,13 @@ pub async fn redis_json_del(
 #[tauri::command]
 pub async fn redis_set_key_bytes(
     state: tauri::State<'_, crate::AppState>,
+    conn_id: String,
     key: String,
     bytes: Vec<u8>,
 ) -> Result<Value, String> {
-    ensure_writable(&state)?;
-    let caps = caps_of(&state);
-    let mut c = take_conn(&state)?;
+    ensure_writable(&state, &conn_id)?;
+    let caps = caps_of(&state, &conn_id);
+    let mut c = take_conn(&state, &conn_id)?;
     let mut cmd = redis::cmd("SET");
     cmd.arg(&key).arg(&bytes[..]);
     if version_at_least((caps.major, caps.minor), (6, 0)) {
@@ -1640,9 +1719,10 @@ fn pairs_to_json(v: &redis::Value) -> Value {
 #[tauri::command]
 pub async fn redis_stream_groups(
     state: tauri::State<'_, crate::AppState>,
+    conn_id: String,
     key: String,
 ) -> Result<Value, String> {
-    let mut c = take_conn(&state)?;
+    let mut c = take_conn(&state, &conn_id)?;
     let reply: redis::Value = redis::cmd("XINFO")
         .arg("GROUPS")
         .arg(&key)
@@ -1659,10 +1739,11 @@ pub async fn redis_stream_groups(
 #[tauri::command]
 pub async fn redis_stream_consumers(
     state: tauri::State<'_, crate::AppState>,
+    conn_id: String,
     key: String,
     group: String,
 ) -> Result<Value, String> {
-    let mut c = take_conn(&state)?;
+    let mut c = take_conn(&state, &conn_id)?;
     let reply: redis::Value = redis::cmd("XINFO")
         .arg("CONSUMERS")
         .arg(&key)
@@ -1680,11 +1761,12 @@ pub async fn redis_stream_consumers(
 #[tauri::command]
 pub async fn redis_stream_pending(
     state: tauri::State<'_, crate::AppState>,
+    conn_id: String,
     key: String,
     group: String,
     count: Option<usize>,
 ) -> Result<Value, String> {
-    let mut c = take_conn(&state)?;
+    let mut c = take_conn(&state, &conn_id)?;
     // Extended form: [[id, consumer, idle-ms, delivery-count], …]
     let reply: redis::Value = redis::cmd("XPENDING")
         .arg(&key)
@@ -1719,15 +1801,16 @@ pub async fn redis_stream_pending(
 #[tauri::command]
 pub async fn redis_stream_ack(
     state: tauri::State<'_, crate::AppState>,
+    conn_id: String,
     key: String,
     group: String,
     ids: Vec<String>,
 ) -> Result<Value, String> {
-    ensure_writable(&state)?;
+    ensure_writable(&state, &conn_id)?;
     if ids.is_empty() {
         return Ok(json!({ "success": true, "acked": 0 }));
     }
-    let mut c = take_conn(&state)?;
+    let mut c = take_conn(&state, &conn_id)?;
     let acked: i64 = redis::cmd("XACK")
         .arg(&key)
         .arg(&group)
@@ -1741,17 +1824,18 @@ pub async fn redis_stream_ack(
 #[tauri::command]
 pub async fn redis_stream_claim(
     state: tauri::State<'_, crate::AppState>,
+    conn_id: String,
     key: String,
     group: String,
     consumer: String,
     min_idle_ms: i64,
     ids: Vec<String>,
 ) -> Result<Value, String> {
-    ensure_writable(&state)?;
+    ensure_writable(&state, &conn_id)?;
     if ids.is_empty() {
         return Ok(json!({ "success": true, "claimed": 0 }));
     }
-    let mut c = take_conn(&state)?;
+    let mut c = take_conn(&state, &conn_id)?;
     let reply: redis::Value = redis::cmd("XCLAIM")
         .arg(&key)
         .arg(&group)
@@ -1787,13 +1871,14 @@ fn namespace_of(key: &str) -> String {
 #[tauri::command]
 pub async fn redis_analyze_db(
     state: tauri::State<'_, crate::AppState>,
+    conn_id: String,
     sample: Option<usize>,
     query_id: String,
     channel: Channel<Value>,
 ) -> Result<Value, String> {
     let cancel = register_cancel(&state, &query_id)?;
     let limit = sample.unwrap_or(ANALYZE_SAMPLE_MAX).clamp(100, 200_000);
-    let mut c = take_conn(&state)?;
+    let mut c = take_conn(&state, &conn_id)?;
     let dbsize: i64 = redis::cmd("DBSIZE").query_async(&mut c).await.unwrap_or(0);
 
     let mut by_type: HashMap<String, (i64, i64)> = HashMap::new();

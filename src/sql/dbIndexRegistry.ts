@@ -1,3 +1,4 @@
+import { editorConnId } from './editorScope';
 import { dbHelper } from '../utils/dbHelper';
 
 export interface ColumnIndexMeta {
@@ -21,15 +22,30 @@ export class DbIndexRegistry {
   private foreignKeys = new Map<string, any[]>();
   private isBuilding = false;
   private isPrimed = false;
+  /** Connection the current index was built from. `null` = nothing built yet. */
+  private builtFor: string | null = null;
 
   /**
-   * Builds or refreshes the in-memory index graph by fetching the catalog.
+   * Builds the in-memory index graph, **or returns immediately if it already holds this
+   * connection's**.
+   *
+   * The check is the point. Callers are many and repetitive: every mounted `SqlEditor` runs it on
+   * mount and whenever its connection changes, `inspection.ts` runs it per Monaco model, and two
+   * window listeners run it on schema changes. Without a memory of what it already has, each of
+   * those was a full `get_full_catalog` round trip — with three query tabs open, three fetches of
+   * the same catalog back to back, which is what made switching connections feel slow.
+   *
+   * A different connection still rebuilds: `builtFor` not matching is exactly that case, so callers
+   * do not need to `invalidate()` first. `invalidate()` stays for the real reason to discard —
+   * the schema changed under us.
    */
   async buildIndex(): Promise<void> {
+    const connId = editorConnId();
     if (this.isBuilding) return;
+    if (this.isPrimed && this.builtFor === connId) return;
     this.isBuilding = true;
     try {
-      const full = await dbHelper.getFullCatalog();
+      const full = await dbHelper.getFullCatalog(connId);
       this.tables.clear();
       this.columns.clear();
       this.foreignKeys.clear();
@@ -57,6 +73,7 @@ export class DbIndexRegistry {
       }
 
       this.isPrimed = true;
+      this.builtFor = connId;
     } catch {
       /* Keep existing index state if network/backend fails */
     } finally {
@@ -131,6 +148,7 @@ export class DbIndexRegistry {
 
   invalidate(): void {
     this.isPrimed = false;
+    this.builtFor = null;
     this.tables.clear();
     this.columns.clear();
     this.foreignKeys.clear();
@@ -139,14 +157,24 @@ export class DbIndexRegistry {
 
 export const dbIndexRegistry = new DbIndexRegistry();
 
+/**
+ * The index holds ONE connection's symbols — the one the focused editor belongs to.
+ *
+ * So a schema change somewhere else must not rebuild it: doing so would refill it from the focused
+ * editor's connection over and over for events that have nothing to do with it, and — while the
+ * event carried no id at all — could rebuild it at a moment when the focused editor and the changed
+ * database were different connections. An event with no id is treated as "mine", which is what
+ * every dispatch looked like before they carried one.
+ */
+function onSchemaChanged(e: Event): void {
+  const connId = (e as CustomEvent<{ connId?: string }>).detail?.connId;
+  if (connId && connId !== editorConnId()) return;
+  dbIndexRegistry.invalidate();
+  void dbIndexRegistry.buildIndex();
+}
+
 if (typeof window !== 'undefined' && !(window as any).__dbIndexListener) {
   (window as any).__dbIndexListener = true;
-  window.addEventListener('table-renamed', () => {
-    dbIndexRegistry.invalidate();
-    void dbIndexRegistry.buildIndex();
-  });
-  window.addEventListener('database-restored', () => {
-    dbIndexRegistry.invalidate();
-    void dbIndexRegistry.buildIndex();
-  });
+  window.addEventListener('table-renamed', onSchemaChanged);
+  window.addEventListener('database-restored', onSchemaChanged);
 }

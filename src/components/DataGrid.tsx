@@ -5,7 +5,7 @@ import { dbHelper } from '../utils/dbHelper';
 import type { SchemaInfo, ColumnInfo, GridChange } from '../utils/dbHelper';
 import {
   Save, RotateCcw, Plus, ChevronLeft, ChevronRight,
-  CheckCircle2, AlertTriangle, Minus, Copy
+  CheckCircle2, AlertTriangle, Minus, Copy, Calendar
 } from 'lucide-react';
 import { StructureViewer } from './StructureViewer';
 import { parseXlsx } from '../utils/xlsxReader';
@@ -56,7 +56,46 @@ const getInitialFilterClause = (filterObj?: { column: string; value: any }, type
   return `${col} = '${val}'`;
 };
 
+const isDateField = (colName: string, colType?: string, val?: any): boolean => {
+  const name = colName.toLowerCase();
+  const type = (colType || '').toLowerCase();
+  const strVal = String(val || '');
+
+  if (type.includes('date') || type.includes('timestamp') || type.includes('time')) return true;
+  if (name.endsWith('_at') || name.includes('date') || name.includes('time') || name.includes('updated') || name.includes('created')) return true;
+  if (/^\d{4}-\d{2}-\d{2}/.test(strVal)) return true;
+
+  return false;
+};
+
+const formatForPicker = (val: string): string => {
+  if (!val) {
+    const now = new Date();
+    return now.toISOString().slice(0, 19);
+  }
+  const str = String(val).trim().replace(' ', 'T');
+  const match = str.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?)/);
+  if (match) return match[1];
+
+  try {
+    const d = new Date(val);
+    if (!isNaN(d.getTime())) {
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      const hours = String(d.getHours()).padStart(2, '0');
+      const mins = String(d.getMinutes()).padStart(2, '0');
+      const secs = String(d.getSeconds()).padStart(2, '0');
+      return `${year}-${month}-${day}T${hours}:${mins}:${secs}`;
+    }
+  } catch {}
+
+  return '';
+};
+
 interface DataGridProps {
+  /** Kết nối mà component này thao tác lên. Truyền tường minh, không đọc id ambient (§4.1). */
+  connId: string;
   tableName: string;
   dbType: 'sqlite' | 'postgres' | 'mysql';
   initialViewMode?: 'data' | 'structure';
@@ -129,7 +168,7 @@ function parseCSV(text: string): string[][] {
   return result;
 }
 
-export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialViewMode = 'data', initialFilter, readOnly = false, onDirtyChange }) => {
+export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, initialViewMode = 'data', initialFilter, readOnly = false, onDirtyChange }) => {
   const { t, i18n } = useTranslation();
   // Thousands separators follow the active UI language instead of a hardcoded locale.
   const fmtNum = (n: number) => n.toLocaleString(i18n.language);
@@ -396,7 +435,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
     try {
       if (importFileType === 'sql') {
         // Xem ghi chú ở App.tsx: tệp .sql có nhiều câu lệnh nên phải qua executeQueryMulti.
-        const res = await dbHelper.executeQueryMulti(importSqlContent);
+        const res = await dbHelper.executeQueryMulti(connId, importSqlContent);
         setImportProgress(null);
         setLoading(false);
         if (res.success) {
@@ -411,7 +450,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
         let done = 0;
         for (let i = 0; i < total; i += IMPORT_BATCH_SIZE) {
           const batch = importPendingRows.slice(i, i + IMPORT_BATCH_SIZE);
-          const resData = await dbHelper.importTableData(tableName, batch);
+          const resData = await dbHelper.importTableData(connId, tableName, batch);
           if (!resData.success) {
             setImportProgress(null);
             setLoading(false);
@@ -459,7 +498,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
   // Fetch Table Schema (Metadata)
   const fetchSchema = useCallback(async () => {
     try {
-      const s = await dbHelper.getTableSchema(tableName);
+      const s = await dbHelper.getTableSchema(connId, tableName);
       if (s && Array.isArray(s.columns)) {
         setSchema(s);
         setColumns(s.columns);
@@ -484,7 +523,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
       setVisibleColumns([]);
       setPendingVisibleColumns([]);
     }
-  }, [tableName]);
+  }, [connId, tableName]);
 
   // Sync columns with filter builder
   useEffect(() => {
@@ -613,12 +652,12 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
   // Fetch Data Row
   const fetchData = useCallback(async () => {
     setLoading(true);
-    const data = await dbHelper.getTableData(tableName, page, pageSize, sortBy, sortDir, activeFilter);
+    const data = await dbHelper.getTableData(connId, tableName, page, pageSize, sortBy, sortDir, activeFilter);
     setRows(data.rows);
     setTotalCount(data.totalCount);
     if (data.primaryKey) setPrimaryKey(data.primaryKey);
     setLoading(false);
-  }, [tableName, page, pageSize, sortBy, sortDir, activeFilter]);
+  }, [connId, tableName, page, pageSize, sortBy, sortDir, activeFilter]);
 
   useEffect(() => {
     // Tôn trọng chế độ xem ban đầu (Data/Structure) khi mở tab, thay vì luôn ép về 'data'
@@ -670,7 +709,10 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
     setEditValue(currentValue === null ? '' : currentValue);
   };
 
-  const saveEdit = () => {
+  const saveEdit = (e?: React.FocusEvent) => {
+    if (e?.relatedTarget && (e.relatedTarget as HTMLElement).closest('.grid-edit-wrapper')) {
+      return;
+    }
     if (!editingCell) return;
     const { rowId, colName } = editingCell;
 
@@ -905,7 +947,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
 
     // Lấy trước danh sách SQL sẽ chạy để người dùng xem trước (transaction preview)
     setLoading(true);
-    const preview = await dbHelper.commitChanges(tableName, changesList, primaryKey, true);
+    const preview = await dbHelper.commitChanges(connId, tableName, changesList, primaryKey, true);
     setLoading(false);
 
     if (!preview.success) {
@@ -920,7 +962,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
   const handleConfirmCommit = async () => {
     setCommitPreview(null);
     setLoading(true);
-    const res = await dbHelper.commitChanges(tableName, pendingChanges, primaryKey);
+    const res = await dbHelper.commitChanges(connId, tableName, pendingChanges, primaryKey);
     setLoading(false);
     setPendingChanges([]);
 
@@ -1215,34 +1257,35 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
 
       {/* Tiến độ nhập dữ liệu — modal xem trước đã đóng nên báo ở dải thông báo của grid */}
       {importProgress && (
-        <div className="info-bar" style={{ background: 'rgba(59, 130, 246, 0.1)', borderLeftColor: 'var(--win-accent)' }}>
+        <div className="info-bar info-bar-blue">
           <ProgressBar progress={importProgress} />
         </div>
       )}
 
       {successMsg && (
-        <div className="info-bar" style={{ background: 'rgba(16, 185, 129, 0.1)', borderLeftColor: 'var(--st-ok)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <CheckCircle2 size={16} style={{ color: 'var(--st-ok)' }} />
+        <div className="info-bar info-bar-success">
+          <div className="info-bar-content">
+            <CheckCircle2 size={16} />
             <span>{successMsg}</span>
           </div>
           {/* Đóng tay được, không phải đợi hết 5 giây */}
-          <button onClick={() => setSuccessMsg(null)} style={{ background: 'transparent', border: 'none', color: 'inherit', cursor: 'pointer' }}>×</button>
+          <button className="info-bar-close" onClick={() => setSuccessMsg(null)}>×</button>
         </div>
       )}
 
       {errorMsg && (
-        <div className="info-bar" style={{ background: 'rgba(239, 68, 68, 0.1)', borderLeftColor: 'var(--st-danger)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <AlertTriangle size={16} style={{ color: 'var(--st-danger)' }} />
+        <div className="info-bar info-bar-error">
+          <div className="info-bar-content">
+            <AlertTriangle size={16} />
             <span>{errorMsg}</span>
           </div>
-          <button onClick={() => setErrorMsg(null)} style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer' }}>×</button>
+          <button className="info-bar-close" onClick={() => setErrorMsg(null)}>×</button>
         </div>
       )}
 
       {viewMode === 'structure' && schema ? (
         <StructureViewer
+          connId={connId}
           tableName={tableName}
           schema={schema}
           dbType={dbType}
@@ -1254,21 +1297,21 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
       ) : (
         <div className="grid-table-container">
           {loading && rows.length === 0 ? (
-            <div style={{ padding: '40px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', color: 'var(--win-text-secondary)' }}>
+            <div className="grid-loading-box">
               <LoadingSpinner size={32} />
-              <span style={{ fontSize: '11px' }}>{t('dataGrid.loadingData')}</span>
+              <span className="grid-loading-text">{t('dataGrid.loadingData')}</span>
             </div>
           ) : (
             <table className="grid-table">
               <thead>
                 <tr>
                   {activeColumns.map(col => (
-                    <th key={col.name} onClick={() => handleSort(col.name)} style={{ cursor: 'pointer' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyItems: 'center', gap: '6px' }}>
+                    <th key={col.name} className="grid-th-clickable" onClick={() => handleSort(col.name)}>
+                      <div className="grid-th-content">
                         <span>{col.name}</span>
                         {col.isPrimaryKey && <span className="key-badge">PK</span>}
                         {sortBy === col.name && (
-                          <span style={{ fontSize: '10px', color: 'var(--win-accent)' }}>
+                          <span className="grid-sort-icon">
                             {sortDir === 'asc' ? '▲' : '▼'}
                           </span>
                         )}
@@ -1310,7 +1353,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
                           <td
                             key={col.name}
                             data-col={col.name}
-                            className={isCellDirty ? 'grid-cell-dirty' : ''}
+                            className={`${isCellDirty ? 'grid-cell-dirty' : ''} ${isEditing ? 'is-editing' : ''}`.trim()}
                             onDoubleClick={() => startEdit(rowId, col.name, cellVal)}
                             onContextMenu={(e) => {
                               e.preventDefault();
@@ -1320,18 +1363,67 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
                             }}
                           >
                             {isEditing ? (
-                              <input
-                                type="text"
-                                className="grid-input-edit"
-                                value={editValue}
-                                onChange={(e) => setEditValue(e.target.value)}
-                                onBlur={saveEdit}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') saveEdit();
-                                  if (e.key === 'Escape') setEditingCell(null);
-                                }}
-                                autoFocus
-                              />
+                              <>
+                                <span className="grid-cell-ghost">{cellVal === null ? 'NULL' : String(cellVal)}</span>
+                                <div className="grid-edit-wrapper">
+                                <input
+                                  type="text"
+                                  className={`grid-input-edit ${isDateField(col.name, col.type, cellVal) ? 'has-date-picker' : ''}`}
+                                  value={editValue}
+                                  onChange={(e) => setEditValue(e.target.value)}
+                                  onBlur={saveEdit}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') saveEdit();
+                                    if (e.key === 'Escape') setEditingCell(null);
+                                  }}
+                                  autoFocus
+                                />
+                                {isDateField(col.name, col.type, cellVal) && (
+                                  <div
+                                    className="grid-date-picker-btn"
+                                    title={t('common.selectDate', 'Select Date & Time')}
+                                    onMouseDown={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      const pickerEl = e.currentTarget.querySelector('input[type="datetime-local"]') as HTMLInputElement;
+                                      if (pickerEl && typeof pickerEl.showPicker === 'function') {
+                                        try { pickerEl.showPicker(); } catch {}
+                                      }
+                                    }}
+                                  >
+                                    <Calendar size={13} style={{ pointerEvents: 'none' }} />
+                                    <input
+                                      type="datetime-local"
+                                      step="1"
+                                      className="grid-date-picker-input"
+                                      value={formatForPicker(editValue)}
+                                      onMouseDown={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        if (typeof e.currentTarget.showPicker === 'function') {
+                                          try { e.currentTarget.showPicker(); } catch {}
+                                        }
+                                      }}
+                                      onChange={(e) => {
+                                        if (e.target.value) {
+                                          const orig = String(cellVal || editValue || '');
+                                          if (orig.includes('+')) {
+                                            const tz = orig.slice(orig.indexOf('+'));
+                                            setEditValue(e.target.value + tz);
+                                          } else if (orig.includes('Z')) {
+                                            setEditValue(e.target.value + 'Z');
+                                          } else if (orig.includes(' ') && !orig.includes('T')) {
+                                            setEditValue(e.target.value.replace('T', ' '));
+                                          } else {
+                                            setEditValue(e.target.value);
+                                          }
+                                        }
+                                      }}
+                                    />
+                                  </div>
+                                )}
+                               </div>
+                              </>
                             ) : cellVal === null ? (
                               <span style={{ color: 'var(--win-text-disabled)', fontStyle: 'italic' }}>NULL</span>
                             ) : (
@@ -1368,6 +1460,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
                           <td
                             key={col.name}
                             data-col={col.name}
+                            className={isEditing ? 'is-editing' : ''}
                             onDoubleClick={() => startEdit(rowId, col.name, cellVal)}
                             onContextMenu={(e) => {
                               e.preventDefault();
@@ -1377,18 +1470,67 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
                             }}
                           >
                             {isEditing ? (
-                              <input
-                                type="text"
-                                className="grid-input-edit"
-                                value={editValue}
-                                onChange={(e) => setEditValue(e.target.value)}
-                                onBlur={saveEdit}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') saveEdit();
-                                  if (e.key === 'Escape') setEditingCell(null);
-                                }}
-                                autoFocus
-                              />
+                              <>
+                                <span className="grid-cell-ghost">{cellVal === null || cellVal === '' ? '—' : String(cellVal)}</span>
+                                <div className="grid-edit-wrapper">
+                                <input
+                                  type="text"
+                                  className={`grid-input-edit ${isDateField(col.name, col.type, cellVal) ? 'has-date-picker' : ''}`}
+                                  value={editValue}
+                                  onChange={(e) => setEditValue(e.target.value)}
+                                  onBlur={saveEdit}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') saveEdit();
+                                    if (e.key === 'Escape') setEditingCell(null);
+                                  }}
+                                  autoFocus
+                                />
+                                {isDateField(col.name, col.type, cellVal) && (
+                                  <div
+                                    className="grid-date-picker-btn"
+                                    title={t('common.selectDate', 'Select Date & Time')}
+                                    onMouseDown={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      const pickerEl = e.currentTarget.querySelector('input[type="datetime-local"]') as HTMLInputElement;
+                                      if (pickerEl && typeof pickerEl.showPicker === 'function') {
+                                        try { pickerEl.showPicker(); } catch {}
+                                      }
+                                    }}
+                                  >
+                                    <Calendar size={13} style={{ pointerEvents: 'none' }} />
+                                    <input
+                                      type="datetime-local"
+                                      step="1"
+                                      className="grid-date-picker-input"
+                                      value={formatForPicker(editValue)}
+                                      onMouseDown={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        if (typeof e.currentTarget.showPicker === 'function') {
+                                          try { e.currentTarget.showPicker(); } catch {}
+                                        }
+                                      }}
+                                      onChange={(e) => {
+                                        if (e.target.value) {
+                                          const orig = String(cellVal || editValue || '');
+                                          if (orig.includes('+')) {
+                                            const tz = orig.slice(orig.indexOf('+'));
+                                            setEditValue(e.target.value + tz);
+                                          } else if (orig.includes('Z')) {
+                                            setEditValue(e.target.value + 'Z');
+                                          } else if (orig.includes(' ') && !orig.includes('T')) {
+                                            setEditValue(e.target.value.replace('T', ' '));
+                                          } else {
+                                            setEditValue(e.target.value);
+                                          }
+                                        }
+                                      }}
+                                    />
+                                  </div>
+                                )}
+                               </div>
+                              </>
                             ) : cellVal === null || cellVal === '' ? (
                               /* Ô chưa có giá trị: hiện dấu gạch mờ để thấy được ô,
                                  thay vì chuỗi rỗng làm cả dòng trông như trống trơn. */
@@ -1410,9 +1552,9 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
 
       {/* Nền, viền trên và chiều cao lấy từ class .grid-pagination để thanh này
           cao đúng bằng chân sidebar (--ws-foot-h); đặt inline sẽ đè mất glass. */}
-      <div className="grid-pagination" style={{ padding: '0 12px' }}>
+      <div className="grid-pagination gp-container">
         {/* Left segment: Data | Structure & + Row */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <div className="gp-left-section">
           <div className="segmented-control">
             <button
               className={`segment-btn ${viewMode === 'data' ? 'active' : ''}`}
@@ -1497,7 +1639,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
 
           {/* Commit/Discard Actions */}
           {changeCount > 0 && (
-            <div style={{ display: 'flex', gap: '4px', marginLeft: '6px' }}>
+            <div className="gp-btn-group">
               <button className="gp-btn icon" onClick={handleDiscard} title={t('dataGrid.discardTitle')}>
                 <RotateCcw size={12} />
               </button>
@@ -1511,7 +1653,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
 
         {/* Middle section: Row Count */}
         {viewMode === 'data' && (
-          <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>
+          <div className="gp-status-text">
             <Trans
               i18nKey="dataGrid.rowsRange"
               values={{
@@ -1526,8 +1668,8 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
 
         {/* Right section: Columns | Filters | Navigation */}
         {viewMode === 'data' && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <div style={{ position: 'relative' }}>
+          <div className="gp-right-section">
+            <div className="gp-popover-wrap">
               <button
                 className={`gp-btn ${showColumnsPopover ? 'on' : ''}`}
                 onClick={() => {
@@ -1542,18 +1684,8 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
               </button>
 
               {showColumnsPopover && (
-                <div className="ws-menu" style={{
-                  position: 'absolute',
-                  bottom: '32px',
-                  right: '0',
-                  width: '320px',
-                  zIndex: 1000,
-                  padding: '12px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '10px'
-                }}>
-                  <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)', marginBottom: '4px' }}>
+                <div className="ws-menu gp-popover-menu">
+                  <div className="gp-popover-heading">
                     {t('dataGrid.columnsHeading')}
                   </div>
 
@@ -1773,6 +1905,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
 
       {/* Xuất bảng: popup tuỳ chọn + xem trước, dùng chung với menu chuột phải ở Sidebar */}
       <ExportTableDialog
+        connId={connId}
         open={showExportDialog}
         tableName={tableName}
         dbType={dbType}
@@ -1988,12 +2121,12 @@ export const DataGrid: React.FC<DataGridProps> = ({ tableName, dbType, initialVi
             left: cellMenuPos ? cellMenuPos.left : contextMenu.x,
             visibility: cellMenuPos ? 'visible' : 'hidden',
             zIndex: 99999,
-            background: 'var(--win-bg-card)',
-            border: '1px solid var(--win-border)',
+            background: 'var(--win-bg-popover, #ffffff)',
+            border: '1px solid var(--win-border-strong)',
             borderRadius: '8px',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+            boxShadow: '0 10px 30px rgba(0, 0, 0, 0.25), 0 2px 8px rgba(0, 0, 0, 0.15)',
             padding: '4px 0',
-            minWidth: '210px',
+            minWidth: '220px',
             fontSize: '12px',
           }}
         >

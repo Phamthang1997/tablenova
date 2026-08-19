@@ -100,10 +100,9 @@ interface ExplainDiagramViewProps {
 // The flow is laid out right-to-left: leaves on the right, the consuming SELECT on the left.
 // Every node occupies a cell of exactly ROW_H so the first child always lines up with its
 // parent — that is what keeps the top row of the diagram straight.
-const ROW_H = 128;
-const NODE_W = 140;
-const CONN_W = 88;
-const LINE = 'var(--win-border-strong, var(--win-border))';
+const ROW_H = 152;
+const NODE_W = 160;
+const CONN_W = 90;
 
 function operatorIcon(type: string) {
   const s = type.toLowerCase();
@@ -141,8 +140,8 @@ function operatorIconColor(type: string): string {
 function percentStyle(pct: number): { color: string; background: string } {
   if (pct >= 25) return { color: '#ef4444', background: 'rgba(239, 68, 68, 0.18)' };
   if (pct >= 15) return { color: '#f59e0b', background: 'rgba(245, 158, 11, 0.18)' };
-  if (pct >= 5) return { color: '#84cc16', background: 'rgba(132, 204, 22, 0.18)' };
-  return { color: 'var(--win-text-disabled)', background: 'transparent' };
+  if (pct >= 5) return { color: '#16a34a', background: 'rgba(22, 163, 74, 0.18)' };
+  return { color: 'var(--win-text-secondary)', background: 'rgba(128, 128, 128, 0.14)' };
 }
 
 function findNode(node: ExplainNode, id: string | null): ExplainNode | null {
@@ -173,15 +172,103 @@ interface SvgNodeLayout {
   children: SvgNodeLayout[];
 }
 
+function operatorSvgPath(type: string): string {
+  const s = type.toLowerCase();
+  if (s === 'select' || s.includes('plan') || s.includes('execute query')) {
+    // LayoutGrid
+    return '<rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/>';
+  }
+  if (s.includes('stream')) {
+    // Braces
+    return '<path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1"/><path d="M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"/>';
+  }
+  if (s.includes('nested loop') || s.includes('join')) {
+    // Repeat
+    return '<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>';
+  }
+  if (s.includes('fulltext')) {
+    // Search
+    return '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>';
+  }
+  if (s.includes('lookup') || s.includes('constant row') || s.includes('system row') || s.includes('key')) {
+    // KeyRound
+    return '<path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/>';
+  }
+  if (s.includes('hash')) {
+    // Hash
+    return '<line x1="4" x2="20" y1="9" y2="9"/><line x1="4" x2="20" y1="15" y2="15"/><line x1="10" x2="8" y1="3" y2="21"/><line x1="16" x2="14" y1="3" y2="21"/>';
+  }
+  if (s.includes('merge') || s.includes('combine')) {
+    // Combine
+    return '<rect width="8" height="8" x="2" y="2" rx="2"/><path d="M14 2c1.1 0 2 .9 2 2v4c0 1.1-.9 2-2 2"/><path d="M20 2c1.1 0 2 .9 2 2v4c0 1.1-.9 2-2 2"/><path d="M10 18H5c-1.7 0-3-1.3-3-3v-1"/><polyline points="7 21 10 18 7 15"/><rect width="8" height="8" x="14" y="14" rx="2"/>';
+  }
+  if (s.includes('sort') || s.includes('order')) {
+    // ArrowDownAZ
+    return '<path d="m3 16 4 4 4-4"/><path d="M7 20V4"/><path d="M20 8h-5"/><path d="M15 10V6.5a2.5 2.5 0 0 1 5 0V10"/><path d="M15 14h5l-5 6h5"/>';
+  }
+  if (s.includes('group') || s.includes('aggregate')) {
+    // Sigma
+    return '<path d="M18 7V4H6l6 8-6 8h12v-3"/>';
+  }
+  if (s.includes('distinct') || s.includes('layers')) {
+    // Layers
+    return '<path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/>';
+  }
+  if (s.includes('filter')) {
+    // Filter
+    return '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>';
+  }
+  if (s.includes('index')) {
+    // Rows3
+    return '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M21 9H3"/><path d="M21 15H3"/>';
+  }
+  if (s.includes('materiali') || s.includes('database')) {
+    // Database
+    return '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5V19A9 3 0 0 0 21 19V5"/><path d="M3 12A9 3 0 0 0 21 12"/>';
+  }
+  if (s.includes('scan') || s.includes('table')) {
+    // Table
+    return '<path d="M12 3v18"/><path d="M3 9h18"/><path d="M3 15h18"/><rect width="18" height="18" x="3" y="3" rx="2"/>';
+  }
+  // Box
+  return '<path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>';
+}
+
+function wrapNodeText(text: string, maxChars = 20, maxLines = 3): string[] {
+  if (!text) return [];
+  const words = text.split(/\s+/);
+  const lines: string[] = [];
+  let current = '';
+
+  for (const word of words) {
+    if ((current + (current ? ' ' : '') + word).length <= maxChars) {
+      current += (current ? ' ' : '') + word;
+    } else {
+      if (current) lines.push(current);
+      if (lines.length >= maxLines - 1) {
+        current = word;
+        break;
+      }
+      current = word;
+    }
+  }
+  if (current) lines.push(current);
+
+  if (lines.length > maxLines) {
+    lines.length = maxLines;
+  }
+  return lines;
+}
+
 function calculateSvgLayout(
   node: ExplainNode,
   depth = 0,
   rowCounter = { count: 0 }
 ): SvgNodeLayout {
-  const nodeW = 140;
-  const nodeH = 100;
-  const rowH = 128;
-  const connW = 88;
+  const nodeW = 160;
+  const nodeH = 120;
+  const rowH = 152;
+  const connW = 90;
 
   const children = (node.children || []).map(child =>
     calculateSvgLayout(child, depth + 1, rowCounter)
@@ -231,64 +318,81 @@ function escapeXml(str: string): string {
     .replace(/'/g, '&apos;');
 }
 
+function svgPercentStyle(pct: number): { color: string; background: string } {
+  if (pct >= 25) return { color: '#dc2626', background: 'rgba(220, 38, 38, 0.14)' };
+  if (pct >= 15) return { color: '#d97706', background: 'rgba(217, 119, 6, 0.14)' };
+  if (pct >= 5) return { color: '#16a34a', background: 'rgba(22, 163, 74, 0.14)' };
+  return {
+    color: '#475569',
+    background: 'rgba(100, 116, 139, 0.12)',
+  };
+}
+
 function buildExplainSvgDocument(
   rootNode: ExplainNode,
   totalSelfCost: number,
-  locale: string
+  locale: string,
+  costLabel = 'Cost'
 ): string {
-  const isLight = document.body.classList.contains('light-theme');
-
-  const colors = isLight
-    ? {
-        bg: '#f8fafc',
-        cardBg: '#ffffff',
-        border: '#cbd5e1',
-        textPrimary: '#0f172a',
-        textSecondary: '#475569',
-        textDisabled: '#94a3b8',
-        line: '#94a3b8',
-      }
-    : {
-        bg: '#0f172a',
-        cardBg: '#1e293b',
-        border: '#334155',
-        textPrimary: '#f8fafc',
-        textSecondary: '#94a3b8',
-        textDisabled: '#64748b',
-        line: '#475569',
-      };
+  // Pure White Background with High-Contrast Dark Text
+  const colors = {
+    bg: '#ffffff',
+    textPrimary: '#0f172a',
+    textSecondary: '#334155',
+    textDisabled: '#64748b',
+    line: '#94a3b8',
+    arrow: '#64748b',
+  };
 
   const layout = calculateSvgLayout(rootNode);
   const bounds = getSvgBounds(layout);
 
-  const padding = 32;
-  const svgWidth = bounds.maxX + padding * 2;
-  const svgHeight = bounds.maxY + padding * 2;
+  const paddingX = 36;
+  const paddingTop = 36;
+  const paddingBottom = 36;
+  const svgWidth = Math.ceil(bounds.maxX + paddingX * 2);
+  const svgHeight = Math.ceil(bounds.maxY + paddingTop + paddingBottom);
 
   let elementsSvg = '';
 
   const renderConnectors = (item: SvgNodeLayout) => {
     if (item.children.length === 0) return;
 
-    const parentRightX = item.x + item.width + padding;
-    const parentMidY = item.y + item.height / 2 + padding;
+    const parentRightX = item.x + item.width + paddingX;
+    const parentMidY = item.y + 39 + paddingTop;
 
     const connW = 88;
     const spineX = parentRightX + connW / 2;
 
-    const firstChildMidY = item.children[0].y + item.children[0].height / 2 + padding;
-    const lastChildMidY = item.children[item.children.length - 1].y + item.children[item.children.length - 1].height / 2 + padding;
+    if (item.children.length === 1) {
+      const child = item.children[0];
+      const childLeftX = child.x + paddingX;
+      const childMidY = child.y + 39 + paddingTop;
 
-    elementsSvg += `<line x1="${parentRightX}" y1="${parentMidY}" x2="${spineX}" y2="${parentMidY}" stroke="${colors.line}" stroke-width="1.5"/>`;
-    elementsSvg += `<polygon points="${parentRightX},${parentMidY} ${parentRightX + 6},${parentMidY - 4} ${parentRightX + 6},${parentMidY + 4}" fill="${colors.line}"/>`;
+      elementsSvg += `<line x1="${parentRightX}" y1="${parentMidY}" x2="${childLeftX}" y2="${childMidY}" stroke="${colors.line}" stroke-width="1.5"/>`;
+      elementsSvg += `<polygon points="${parentRightX},${parentMidY} ${parentRightX + 6},${parentMidY - 3.5} ${parentRightX + 6},${parentMidY + 3.5}" fill="${colors.arrow}"/>`;
 
-    if (item.children.length > 1) {
-      elementsSvg += `<line x1="${spineX}" y1="${firstChildMidY}" x2="${spineX}" y2="${lastChildMidY}" stroke="${colors.line}" stroke-width="1.5"/>`;
+      const rows = child.node.actualRows ?? child.node.rowsOut ?? child.node.rows;
+      if (rows !== undefined) {
+        const rowStr = rows.toLocaleString(locale);
+        const textX = (parentRightX + childLeftX) / 2;
+        elementsSvg += `<text x="${textX}" y="${childMidY - 7}" fill="${colors.textSecondary}" font-size="11" font-weight="600" font-family="system-ui, -apple-system, sans-serif" text-anchor="middle">${escapeXml(rowStr)}</text>`;
+      }
+
+      renderConnectors(child);
+      return;
     }
 
+    const firstChildMidY = item.children[0].y + 39 + paddingTop;
+    const lastChildMidY = item.children[item.children.length - 1].y + 39 + paddingTop;
+
+    elementsSvg += `<line x1="${parentRightX}" y1="${parentMidY}" x2="${spineX}" y2="${parentMidY}" stroke="${colors.line}" stroke-width="1.5"/>`;
+    elementsSvg += `<polygon points="${parentRightX},${parentMidY} ${parentRightX + 6},${parentMidY - 3.5} ${parentRightX + 6},${parentMidY + 3.5}" fill="${colors.arrow}"/>`;
+    elementsSvg += `<line x1="${spineX}" y1="${firstChildMidY}" x2="${spineX}" y2="${lastChildMidY}" stroke="${colors.line}" stroke-width="1.5"/>`;
+
     for (const child of item.children) {
-      const childLeftX = child.x + padding;
-      const childMidY = child.y + child.height / 2 + padding;
+      const childLeftX = child.x + paddingX;
+      const childMidY = child.y + 39 + paddingTop;
 
       elementsSvg += `<line x1="${spineX}" y1="${childMidY}" x2="${childLeftX}" y2="${childMidY}" stroke="${colors.line}" stroke-width="1.5"/>`;
 
@@ -296,7 +400,7 @@ function buildExplainSvgDocument(
       if (rows !== undefined) {
         const rowStr = rows.toLocaleString(locale);
         const textX = (spineX + childLeftX) / 2;
-        elementsSvg += `<text x="${textX}" y="${childMidY - 6}" fill="${colors.textSecondary}" font-size="11" font-family="sans-serif" text-anchor="middle">${escapeXml(rowStr)}</text>`;
+        elementsSvg += `<text x="${textX}" y="${childMidY - 7}" fill="${colors.textSecondary}" font-size="11" font-weight="600" font-family="system-ui, -apple-system, sans-serif" text-anchor="middle">${escapeXml(rowStr)}</text>`;
       }
 
       renderConnectors(child);
@@ -304,37 +408,59 @@ function buildExplainSvgDocument(
   };
 
   const renderNodes = (item: SvgNodeLayout) => {
-    const x = item.x + padding;
-    const y = item.y + padding;
+    const x = item.x + paddingX;
+    const y = item.y + paddingTop;
     const w = item.width;
-    const h = item.height;
+    const cx = x + w / 2;
 
     const opColor = operatorIconColor(item.node.type);
+    const iconPath = operatorSvgPath(item.node.type);
+
     const pct = totalSelfCost > 0 && item.node.selfCost !== undefined
       ? (item.node.selfCost / totalSelfCost) * 100
       : undefined;
 
-    elementsSvg += `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="8" fill="${colors.cardBg}" stroke="${colors.border}" stroke-width="1.5"/>`;
-
-    if (pct !== undefined && pct >= 0.005) {
-      const badgeStyle = percentStyle(pct);
+    // 1. Percentage badge
+    const hasBadge = pct !== undefined && pct >= 0.005;
+    if (hasBadge) {
+      const badgeStyle = svgPercentStyle(pct);
       const pctStr = `${pct.toFixed(2)}%`;
-      elementsSvg += `<rect x="${x + 8}" y="${y + 8}" width="46" height="16" rx="3" fill="${badgeStyle.background}"/>`;
-      elementsSvg += `<text x="${x + 31}" y="${y + 20}" fill="${badgeStyle.color}" font-size="10" font-weight="bold" font-family="sans-serif" text-anchor="middle">${pctStr}</text>`;
+      const badgeW = Math.max(42, pctStr.length * 6.5 + 10);
+      elementsSvg += `<rect x="${cx - badgeW / 2}" y="${y + 2}" width="${badgeW}" height="16" rx="3" fill="${badgeStyle.background}"/>`;
+      elementsSvg += `<text x="${cx}" y="${y + 13.5}" fill="${badgeStyle.color}" font-size="10" font-weight="700" font-family="system-ui, -apple-system, sans-serif" text-anchor="middle">${pctStr}</text>`;
+    } else if (item.node.flags && item.node.flags.length > 0) {
+      const severity = flagSeverity(item.node.flags);
+      const flagColor = severity === 'warn' ? '#ea580c' : severity === 'good' ? '#16a34a' : colors.textDisabled;
+      elementsSvg += `<circle cx="${cx}" cy="${y + 10}" r="4" fill="${flagColor}"/>`;
     }
 
-    const nodeTitle = escapeXml(item.node.type);
-    elementsSvg += `<text x="${x + w / 2}" y="${y + 46}" fill="${opColor}" font-size="12" font-weight="bold" font-family="sans-serif" text-anchor="middle">${nodeTitle}</text>`;
+    // 2. Icon box (34x34)
+    const iconBoxX = cx - 17;
+    const iconBoxY = y + 22;
+    elementsSvg += `<rect x="${iconBoxX}" y="${iconBoxY}" width="34" height="34" rx="8" fill="${opColor}" fill-opacity="0.12"/>`;
+    elementsSvg += `<g transform="translate(${iconBoxX + 7}, ${iconBoxY + 7}) scale(0.833)" stroke="${opColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none">${iconPath}</g>`;
 
+    // 3. Title lines (wrapped, centered)
+    const titleLines = wrapNodeText(item.node.type, 19, 3);
+    const titleStartY = iconBoxY + 46;
+    for (let i = 0; i < titleLines.length; i++) {
+      elementsSvg += `<text x="${cx}" y="${titleStartY + i * 14}" fill="${colors.textPrimary}" font-size="11.5" font-weight="700" font-family="system-ui, -apple-system, sans-serif" text-anchor="middle">${escapeXml(titleLines[i])}</text>`;
+    }
+
+    let nextY = titleStartY + titleLines.length * 14;
+
+    // 4. Subtext (table or join summary if not part of title)
     const subText = item.node.table || joinSummary(item.node, 2);
-    if (subText) {
-      const truncatedSub = subText.length > 18 ? subText.substring(0, 16) + '...' : subText;
-      elementsSvg += `<text x="${x + w / 2}" y="${y + 66}" fill="${colors.textSecondary}" font-size="10.5" font-family="sans-serif" text-anchor="middle">${escapeXml(truncatedSub)}</text>`;
+    if (subText && !item.node.type.includes(subText)) {
+      const truncatedSub = subText.length > 20 ? subText.substring(0, 18) + '…' : subText;
+      elementsSvg += `<text x="${cx}" y="${nextY}" fill="${colors.textSecondary}" font-size="10.5" font-weight="600" font-family="system-ui, -apple-system, sans-serif" text-anchor="middle">${escapeXml(truncatedSub)}</text>`;
+      nextY += 13;
     }
 
+    // 5. Cost
     if (item.node.selfCost !== undefined && item.node.selfCost > 0) {
-      const costStr = `Cost: ${formatCost(item.node.selfCost, locale)}`;
-      elementsSvg += `<text x="${x + w / 2}" y="${y + 84}" fill="${colors.textDisabled}" font-size="9.5" font-family="sans-serif" text-anchor="middle">${escapeXml(costStr)}</text>`;
+      const costStr = `${costLabel}: ${formatCost(item.node.selfCost, locale)}`;
+      elementsSvg += `<text x="${cx}" y="${nextY}" fill="${colors.textDisabled}" font-size="10" font-weight="500" font-family="system-ui, -apple-system, sans-serif" text-anchor="middle">${escapeXml(costStr)}</text>`;
     }
 
     for (const child of item.children) {
@@ -356,6 +482,7 @@ async function exportDiagramImage(
   totalSelfCost: number,
   locale: string,
   format: 'png' | 'jpeg' | 'svg',
+  costLabel = 'Cost',
   fileName = `explain_diagram_${Date.now()}`
 ) {
   const ext = format === 'jpeg' ? 'jpg' : format;
@@ -365,7 +492,7 @@ async function exportDiagramImage(
   const targetPath = await pickSaveFilePath(fileName, ext, filterName);
   if (!targetPath) return;
 
-  const svgString = buildExplainSvgDocument(rootNode, totalSelfCost, locale);
+  const svgString = buildExplainSvgDocument(rootNode, totalSelfCost, locale, costLabel);
 
   if (format === 'svg') {
     await saveExportFileAtPath(targetPath, svgString, 'image/svg+xml');
@@ -394,11 +521,9 @@ async function exportDiagramImage(
       }
 
       ctx.scale(dpr, dpr);
-      if (format === 'jpeg') {
-        const isLight = document.body.classList.contains('light-theme');
-        ctx.fillStyle = isLight ? '#f8fafc' : '#0f172a';
-        ctx.fillRect(0, 0, width, height);
-      }
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, width, height);
+
       ctx.drawImage(img, 0, 0, width, height);
       URL.revokeObjectURL(url);
 
@@ -432,7 +557,7 @@ export const ExplainDiagramView: React.FC<ExplainDiagramViewProps> = ({ result, 
     setShowExportDropdown(false);
     if (!flowRoot) return;
     try {
-      await exportDiagramImage(flowRoot, totalSelfCost, i18n.language, format);
+      await exportDiagramImage(flowRoot, totalSelfCost, i18n.language, format, t('explain.colCost'));
     } catch (err) {
       console.error('Failed to export diagram image:', err);
     }
@@ -631,7 +756,7 @@ export const ExplainDiagramView: React.FC<ExplainDiagramViewProps> = ({ result, 
         {/* Diagram canvas: width grows with plan depth, so it scrolls horizontally. Uses CSS
             `zoom` rather than `transform: scale` because zoom is layout-aware — the scroll
             extent follows the scaled content instead of staying at the unscaled size. */}
-        <div ref={canvasRef} style={{ flex: 1, overflow: 'auto', padding: '20px 16px' }}>
+        <div ref={canvasRef} style={{ flex: 1, overflow: 'auto', padding: '24px 24px 56px 24px' }}>
           <div ref={diagramTargetRef} style={{ minWidth: 'max-content', zoom }}>
             <SubTree node={flowRoot} ctx={ctx} />
           </div>
@@ -1020,54 +1145,63 @@ const Connector: React.FC<{
   isLast: boolean;
   single: boolean;
   locale: string;
-}> = ({ rows, isFirst, isLast, single, locale }) => (
-  <div style={{ position: 'relative', width: `${CONN_W}px`, minHeight: `${ROW_H}px`, flexShrink: 0 }}>
-    {/* Vertical spine: first child runs from its centreline down, the last one from the top to
-        its centreline, everything in between spans the full height. */}
-    {!single && (
-      <div style={{
-        position: 'absolute',
-        left: 0,
-        width: '1px',
-        background: LINE,
-        top: isFirst ? `${ROW_H / 2}px` : 0,
-        ...(isLast ? { height: `${ROW_H / 2}px` } : { bottom: 0 }),
-      }} />
-    )}
+}> = ({ rows, isFirst, isLast, single, locale }) => {
+  const midY = ROW_H / 2;
 
-    {/* Horizontal segment at this child's centreline */}
-    <div style={{ position: 'absolute', top: `${ROW_H / 2}px`, left: 0, right: 0, height: '1px', background: LINE }} />
+  return (
+    <div style={{ position: 'relative', width: `${CONN_W}px`, minHeight: `${ROW_H}px`, flexShrink: 0, alignSelf: 'stretch' }}>
+      <svg
+        width="100%"
+        height="100%"
+        style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', overflow: 'visible' }}
+      >
+        {/* Vertical spine line: spans 100% height of this child container to connect with next siblings */}
+        {!single && (
+          <line
+            x1={0}
+            y1={isFirst ? midY : 0}
+            x2={0}
+            y2={isLast ? midY : '100%'}
+            className="explain-flow-line-base"
+          />
+        )}
+        {/* Horizontal branch line */}
+        <line
+          x1={0}
+          y1={midY}
+          x2={CONN_W}
+          y2={midY}
+          className="explain-flow-line-base"
+        />
 
-    {/* Arrowhead only where the flow actually enters the parent operator */}
-    {isFirst && (
-      <div style={{
-        position: 'absolute',
-        top: `${ROW_H / 2 - 4}px`,
-        left: 0,
-        width: 0,
-        height: 0,
-        borderTop: '4px solid transparent',
-        borderBottom: '4px solid transparent',
-        borderRight: `6px solid ${LINE}`,
-      }} />
-    )}
+        {/* Arrowhead entering parent operator */}
+        {isFirst && (
+          <polygon
+            points={`0,${midY} 6,${midY - 4} 6,${midY + 4}`}
+            fill="var(--win-border-strong, var(--win-border))"
+          />
+        )}
+      </svg>
 
-    {/* Rows handed to the parent */}
-    {rows !== undefined && (
-      <div style={{
-        position: 'absolute',
-        top: `${ROW_H / 2 - 20}px`,
-        left: 0,
-        right: 0,
-        textAlign: 'center',
-        fontSize: '11px',
-        color: 'var(--win-text-secondary)',
-      }}>
-        {rows.toLocaleString(locale)}
-      </div>
-    )}
-  </div>
-);
+      {/* Rows handed to parent */}
+      {rows !== undefined && (
+        <div style={{
+          position: 'absolute',
+          top: `${midY - 20}px`,
+          left: 0,
+          right: 0,
+          textAlign: 'center',
+          fontSize: '11px',
+          fontWeight: 600,
+          color: 'var(--win-text-secondary)',
+          userSelect: 'none',
+        }}>
+          {rows.toLocaleString(locale)}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const ZoomButton: React.FC<{
   icon: typeof ZoomIn;
@@ -1130,7 +1264,7 @@ const NodeCell: React.FC<{ node: ExplainNode; ctx: FlowContext }> = ({ node, ctx
       onClick={() => ctx.onSelect(node)}
       style={{
         width: `${NODE_W}px`,
-        height: `${ROW_H}px`,
+        minHeight: `${ROW_H}px`,
         flexShrink: 0,
         cursor: 'pointer',
         borderRadius: '6px',
@@ -1141,11 +1275,8 @@ const NodeCell: React.FC<{ node: ExplainNode; ctx: FlowContext }> = ({ node, ctx
         alignItems: 'center',
         justifyContent: 'flex-start',
         gap: '3px',
-        padding: '4px 2px',
+        padding: '4px 4px',
         boxSizing: 'border-box',
-        // A very long operator name is clipped rather than allowed to bleed into the neighbour;
-        // the full text stays reachable through the title attribute and the detail panel.
-        overflow: 'hidden',
       }}
     >
       {/* Relative cost badge, reserved height so every icon stays on the same baseline */}

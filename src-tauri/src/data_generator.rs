@@ -41,10 +41,15 @@ use crate::database::{execute_raw_sql_generic, DbConnection, Exec};
 use crate::datasets as ds;
 use crate::AppState;
 
-/// Key under which the run registers its cancel flag in `AppState::cancel_flags`. A single
-/// generation runs at a time (it is a modal dialog), so one fixed key is enough and no new
-/// field on `AppState` is needed.
-const CANCEL_KEY: &str = "__data_generator__";
+/// Key under which a run registers its cancel flag in `AppState::cancel_flags`.
+///
+/// Scoped by `conn_id`, not fixed. One generation runs at a time **per connection** (it is a modal
+/// dialog), but with several connections open two runs can overlap — and a single fixed key made the
+/// second `insert` replace the first run.s flag, so that run became uncancellable and whichever run
+/// finished first orphaned the other.s flag on `remove`.
+fn cancel_key(conn_id: &str) -> String {
+    format!("__data_generator__:{conn_id}")
+}
 
 /// Used when the frontend sends no seed. Any constant works; it must not come from the clock.
 const DEFAULT_SEED: u64 = 20_260_806;
@@ -377,6 +382,19 @@ fn o_arr(options: &Option<Value>, key: &str) -> Vec<Value> {
 
 fn quote_char(dialect: &str) -> char {
     if dialect == "mysql" { '`' } else { '"' }
+}
+
+/// A table name as it must appear in generated SQL: `"sales"."film"` on Postgres.
+///
+/// Twin of `database.rs`'s `qualified()`. MySQL's schema is the open database and SQLite has
+/// none, so only Postgres qualifies; `None` leaves the bare quoted name.
+fn qualified(dialect: &str, schema: &Option<String>, table: &str) -> String {
+    match (dialect, schema.as_deref()) {
+        ("postgres", Some(s)) if !s.is_empty() => {
+            format!("{}.{}", quote_ident(dialect, s), quote_ident(dialect, table))
+        }
+        _ => quote_ident(dialect, table),
+    }
 }
 
 fn quote_ident(dialect: &str, name: &str) -> String {
@@ -1413,8 +1431,11 @@ async fn query_rows(conn: &DbConnection, sql: &str) -> Result<Vec<Value>, String
 pub async fn collect_meta(
     conn: &DbConnection,
     dialect: &str,
+    schema: &Option<String>,
     only: Option<&[String]>,
 ) -> Result<Vec<TableMeta>, String> {
+    // Postgres only; the MySQL branch below filters by DATABASE() and SQLite has no schema.
+    let sch = schema.clone().unwrap_or_else(|| "public".to_string()).replace('\'', "''");
     let mut metas: Vec<TableMeta> = Vec::new();
 
     match dialect {
@@ -1481,8 +1502,10 @@ pub async fn collect_meta(
         "postgres" => {
             let tables = query_rows(
                 conn,
-                "SELECT table_name AS tname FROM information_schema.tables \
-                 WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY table_name",
+                &format!(
+                    "SELECT table_name AS tname FROM information_schema.tables \
+                     WHERE table_schema = '{sch}' AND table_type = 'BASE TABLE' ORDER BY table_name"
+                ),
             )
             .await?;
             let mut order: Vec<String> = tables.iter().map(|r| s(r, "tname")).collect();
@@ -1506,11 +1529,13 @@ pub async fn collect_meta(
             let mut pks: HashMap<String, HashSet<String>> = HashMap::new();
             for r in query_rows(
                 conn,
-                "SELECT tc.table_name AS tname, kcu.column_name AS cname \
-                 FROM information_schema.table_constraints tc \
-                 JOIN information_schema.key_column_usage kcu \
-                   ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema \
-                 WHERE tc.constraint_type = 'PRIMARY KEY' AND tc.table_schema = 'public'",
+                &format!(
+                    "SELECT tc.table_name AS tname, kcu.column_name AS cname \
+                     FROM information_schema.table_constraints tc \
+                     JOIN information_schema.key_column_usage kcu \
+                       ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema \
+                     WHERE tc.constraint_type = 'PRIMARY KEY' AND tc.table_schema = '{sch}'"
+                ),
             )
             .await?
             {
@@ -1520,12 +1545,14 @@ pub async fn collect_meta(
             let mut cols: HashMap<String, Vec<ColMeta>> = HashMap::new();
             for r in query_rows(
                 conn,
-                "SELECT table_name AS tname, column_name AS cname, data_type AS dtype, \
-                        udt_name AS udt, is_nullable AS nullable, column_default AS cdefault, \
-                        is_identity AS identity, character_maximum_length AS maxlen, \
-                        numeric_scale AS nscale \
-                 FROM information_schema.columns WHERE table_schema = 'public' \
-                 ORDER BY table_name, ordinal_position",
+                &format!(
+                    "SELECT table_name AS tname, column_name AS cname, data_type AS dtype, \
+                            udt_name AS udt, is_nullable AS nullable, column_default AS cdefault, \
+                            is_identity AS identity, character_maximum_length AS maxlen, \
+                            numeric_scale AS nscale \
+                     FROM information_schema.columns WHERE table_schema = '{sch}' \
+                     ORDER BY table_name, ordinal_position"
+                ),
             )
             .await?
             {
@@ -1556,14 +1583,16 @@ pub async fn collect_meta(
             let mut fks: HashMap<String, Vec<FkMeta>> = HashMap::new();
             for r in query_rows(
                 conn,
-                "SELECT tc.table_name AS tname, kcu.column_name AS cname, \
-                        ccu.table_name AS rtable, ccu.column_name AS rcolumn \
-                 FROM information_schema.table_constraints tc \
-                 JOIN information_schema.key_column_usage kcu \
-                   ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema \
-                 JOIN information_schema.constraint_column_usage ccu \
-                   ON ccu.constraint_name = tc.constraint_name \
-                 WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = 'public'",
+                &format!(
+                    "SELECT tc.table_name AS tname, kcu.column_name AS cname, \
+                            ccu.table_name AS rtable, ccu.column_name AS rcolumn \
+                     FROM information_schema.table_constraints tc \
+                     JOIN information_schema.key_column_usage kcu \
+                       ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema \
+                     JOIN information_schema.constraint_column_usage ccu \
+                       ON ccu.constraint_name = tc.constraint_name \
+                     WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = '{sch}'"
+                ),
             )
             .await?
             {
@@ -1888,32 +1917,34 @@ pub fn suggest_generator(col: &ColMeta, fk: Option<&FkMeta>) -> (String, Value) 
 
 // ===================== Commands =====================
 
-fn active_conn(state: &State<'_, AppState>) -> Result<(DbConnection, String), String> {
-    let manager = state.db_manager.lock().map_err(|e| e.to_string())?;
-    let conn = match manager.connection.as_ref() {
-        Some(DbConnection::Sqlite(c)) => DbConnection::Sqlite(c.clone()),
-        Some(DbConnection::Postgres(p)) => DbConnection::Postgres(p.clone()),
-        Some(DbConnection::Mysql(p)) => DbConnection::Mysql(p.clone()),
-        None => return Err("Chưa kết nối CSDL".to_string()),
-    };
-    let dialect = if manager.db_type.is_empty() {
-        match &conn {
-            DbConnection::Sqlite(_) => "sqlite".to_string(),
-            DbConnection::Postgres(_) => "postgres".to_string(),
-            DbConnection::Mysql(_) => "mysql".to_string(),
-        }
-    } else {
-        manager.db_type.clone()
-    };
-    Ok((conn, dialect))
+/// Connection + dialect + the selected Postgres schema, all read under one lock.
+///
+/// The schema rides along here rather than being a parameter of every command because the five
+/// functions that need it (`collect_meta`, `fetch_fk_pool`, `estimate_fk_pool`, `insert_sql`,
+/// `run_generation`) are internal, not commands — see the plan §5.0.
+fn active_conn(
+    state: &State<'_, AppState>,
+    conn_id: &str,
+) -> Result<(DbConnection, String, Option<String>), String> {
+    // Same tuple as before so none of the five internal callers changes.
+    //
+    // The dialect always comes from the live connection. That deleted the old
+    // `if db_type.is_empty()` fallback rather than porting it: `ConnCtx::dialect()` derives it, so
+    // there is no second spelling of the dialect that could disagree with the connection.
+    let ctx = state.connections.acquire(conn_id)?;
+    Ok((
+        ctx.conn().clone(),
+        ctx.dialect().to_string(),
+        ctx.raw_schema().map(str::to_string),
+    ))
 }
 
 /// Tables/columns available for generation, with a suggested generator per column and the
 /// FK-safe insertion order.
 #[tauri::command]
-pub async fn get_generation_targets(state: State<'_, AppState>) -> Result<Value, String> {
-    let (conn, dialect) = active_conn(&state)?;
-    let metas = collect_meta(&conn, &dialect, None).await?;
+pub async fn get_generation_targets(state: State<'_, AppState>, conn_id: String) -> Result<Value, String> {
+    let (conn, dialect, schema) = active_conn(&state, &conn_id)?;
+    let metas = collect_meta(&conn, &dialect, &schema, None).await?;
 
     let names: Vec<String> = metas.iter().map(|m| m.name.clone()).collect();
     let fk_map: HashMap<String, Vec<FkMeta>> =
@@ -1966,13 +1997,14 @@ pub async fn get_generation_targets(state: State<'_, AppState>) -> Result<Value,
 async fn fetch_fk_pool(
     conn: &DbConnection,
     dialect: &str,
+    schema: &Option<String>,
     table: &str,
     column: &str,
 ) -> Result<Vec<Cell>, String> {
     let sql = format!(
         "SELECT DISTINCT {} AS fkval FROM {} WHERE {} IS NOT NULL LIMIT {}",
         quote_ident(dialect, column),
-        quote_ident(dialect, table),
+        qualified(dialect, schema, table),
         quote_ident(dialect, column),
         FK_FETCH_LIMIT
     );
@@ -1994,9 +2026,11 @@ async fn fetch_fk_pool(
 ///  - the parent's key is auto-increment (`skip`): only the database knows it, so continue from
 ///    `MAX(key)` the way the database will.
 /// Returns empty when the parent is not part of this run — then there really is nothing to sample.
+#[allow(clippy::too_many_arguments)]
 async fn estimate_fk_pool(
     conn: &DbConnection,
     dialect: &str,
+    schema: &Option<String>,
     seed: u64,
     all_tables: &[GenTableSpec],
     ref_table: &str,
@@ -2031,7 +2065,7 @@ async fn estimate_fk_pool(
     let sql = format!(
         "SELECT MAX({}) AS mx FROM {}",
         quote_ident(dialect, ref_column),
-        quote_ident(dialect, ref_table)
+        qualified(dialect, schema, ref_table)
     );
     let start = query_rows(conn, &sql)
         .await
@@ -2059,6 +2093,7 @@ struct PreparedTable {
 async fn prepare_table(
     conn: &DbConnection,
     dialect: &str,
+    schema: &Option<String>,
     seed: u64,
     tspec: &GenTableSpec,
     // Every table of the run — a preview needs the *parent's* spec to estimate FK values.
@@ -2084,7 +2119,7 @@ async fn prepare_table(
                     tspec.table, cspec.column
                 ));
             }
-            let mut pool = fetch_fk_pool(conn, dialect, &ref_table, &ref_column).await?;
+            let mut pool = fetch_fk_pool(conn, dialect, schema, &ref_table, &ref_column).await?;
             if let Some(extra) = generated.get(&(ref_table.clone(), ref_column.clone())) {
                 pool.extend(extra.iter().cloned());
             }
@@ -2098,7 +2133,7 @@ async fn prepare_table(
                 // Preview: the parent is still empty, but during the real run it will not be —
                 // it is generated first. Showing NULL here would make the feature look broken,
                 // so estimate the keys the parent is about to get and say so in a warning.
-                pool = estimate_fk_pool(conn, dialect, seed, all_tables, &ref_table, &ref_column).await;
+                pool = estimate_fk_pool(conn, dialect, schema, seed, all_tables, &ref_table, &ref_column).await;
                 warnings.push(if pool.is_empty() {
                     format!(
                         "Bảng cha '{}.{}' không có dòng nào để lấy khóa ngoại cho cột '{}.{}'",
@@ -2122,7 +2157,7 @@ async fn prepare_table(
     Ok(PreparedTable { columns, states })
 }
 
-fn insert_sql(dialect: &str, table: &str, columns: &[String], rows: &[Vec<Cell>]) -> String {
+fn insert_sql(dialect: &str, schema: &Option<String>, table: &str, columns: &[String], rows: &[Vec<Cell>]) -> String {
     let cols = columns
         .iter()
         .map(|c| quote_ident(dialect, c))
@@ -2142,7 +2177,7 @@ fn insert_sql(dialect: &str, table: &str, columns: &[String], rows: &[Vec<Cell>]
         .join(", ");
     format!(
         "INSERT INTO {} ({}) VALUES {};",
-        quote_ident(dialect, table),
+        qualified(dialect, schema, table),
         cols,
         values
     )
@@ -2164,12 +2199,12 @@ fn pick_batch_size(requested: usize, column_count: usize) -> usize {
 /// Preview rows for ONE table — same code path as the real run, no writes.
 #[tauri::command]
 pub async fn preview_generated_data(
-    state: State<'_, AppState>,
+    state: State<'_, AppState>, conn_id: String,
     spec: GenSpec,
     table: String,
     limit: Option<usize>,
 ) -> Result<Value, String> {
-    let (conn, dialect) = active_conn(&state)?;
+    let (conn, dialect, schema) = active_conn(&state, &conn_id)?;
     let tspec = spec
         .tables
         .iter()
@@ -2180,7 +2215,7 @@ pub async fn preview_generated_data(
     let mut warnings: Vec<String> = Vec::new();
     let generated: HashMap<(String, String), Vec<Cell>> = HashMap::new();
     let mut prepared =
-        prepare_table(&conn, &dialect, seed, tspec, &spec.tables, &generated, &mut warnings, false).await?;
+        prepare_table(&conn, &dialect, &schema, seed, tspec, &spec.tables, &generated, &mut warnings, false).await?;
 
     let count = limit.unwrap_or(100).clamp(1, 1000).min(tspec.rows.max(1));
     let mut data = Vec::with_capacity(count);
@@ -2203,9 +2238,12 @@ pub async fn preview_generated_data(
 
 /// Marks the running generation as cancelled. Safe to call when nothing is running.
 #[tauri::command]
-pub async fn cancel_data_generation(state: State<'_, AppState>) -> Result<Value, String> {
+pub async fn cancel_data_generation(
+    state: State<'_, AppState>,
+    conn_id: String,
+) -> Result<Value, String> {
     let flags = state.cancel_flags.lock().map_err(|e| e.to_string())?;
-    if let Some(flag) = flags.get(CANCEL_KEY) {
+    if let Some(flag) = flags.get(&cancel_key(&conn_id)) {
         flag.store(true, Ordering::Relaxed);
     }
     Ok(json!({ "success": true }))
@@ -2215,16 +2253,19 @@ pub async fn cancel_data_generation(state: State<'_, AppState>) -> Result<Value,
 /// `{type:'start'|'table'|'progress'|'done'|'error', ...}`.
 #[tauri::command]
 pub async fn generate_data(
-    state: State<'_, AppState>,
+    state: State<'_, AppState>, conn_id: String,
     spec: GenSpec,
     // Bắt buộc (không dùng Option): Channel không impl Deserialize nên `Option<Channel<_>>`
     // không thoả CommandArg — frontend luôn tạo kênh.
     on_progress: Channel<Value>,
 ) -> Result<Value, String> {
     // Same reason as restore_backup: this runs on its own connection and would block on the locks
-    // an open manual transaction holds. See tx_session::reject_if_open.
-    crate::tx_session::reject_if_manual_or_open("sinh dữ liệu")?;
-    let (conn, dialect) = active_conn(&state)?;
+    // an open manual transaction holds. See tx_session::reject_if_manual_or_open.
+    crate::tx_session::reject_if_manual_or_open(&conn_id, "sinh dữ liệu")?;
+    let (conn, dialect, schema) = active_conn(&state, &conn_id)?;
+    // Its INSERTs go through `Exec`, i.e. past the funnels that carry the read-only gate.
+    // `preview_generated_data` is deliberately not gated — it writes nothing.
+    crate::database::reject_conn_read_only(&conn)?;
     if spec.tables.is_empty() {
         return Err("Chưa chọn bảng nào để sinh dữ liệu".to_string());
     }
@@ -2237,7 +2278,7 @@ pub async fn generate_data(
 
     // FK-safe order + the parent keys that later tables will need in memory.
     let names: Vec<String> = spec.tables.iter().map(|t| t.table.clone()).collect();
-    let metas = collect_meta(&conn, &dialect, Some(&names)).await?;
+    let metas = collect_meta(&conn, &dialect, &schema, Some(&names)).await?;
     let fk_map: HashMap<String, Vec<FkMeta>> =
         metas.iter().map(|m| (m.name.clone(), m.fks.clone())).collect();
     let (order, cyclic) = topo_order(&names, &fk_map);
@@ -2278,12 +2319,13 @@ pub async fn generate_data(
     let cancel = Arc::new(AtomicBool::new(false));
     {
         let mut flags = state.cancel_flags.lock().map_err(|e| e.to_string())?;
-        flags.insert(CANCEL_KEY.to_string(), cancel.clone());
+        flags.insert(cancel_key(&conn_id), cancel.clone());
     }
 
     let outcome = run_generation(
         &conn,
         &dialect,
+        &schema,
         &spec,
         &order,
         seed,
@@ -2298,7 +2340,7 @@ pub async fn generate_data(
     .await;
 
     if let Ok(mut flags) = state.cancel_flags.lock() {
-        flags.remove(CANCEL_KEY);
+        flags.remove(&cancel_key(&conn_id));
     }
 
     match outcome {
@@ -2331,6 +2373,7 @@ pub async fn generate_data(
 async fn run_generation(
     conn: &DbConnection,
     dialect: &str,
+    schema: &Option<String>,
     spec: &GenSpec,
     order: &[String],
     seed: u64,
@@ -2386,7 +2429,7 @@ async fn run_generation(
         }
 
         let mut prepared =
-            match prepare_table(conn, dialect, seed, tspec, &spec.tables, &generated, warnings, true).await {
+            match prepare_table(conn, dialect, schema, seed, tspec, &spec.tables, &generated, warnings, true).await {
                 Ok(p) => p,
                 Err(e) => bail!(e),
             };
@@ -2394,7 +2437,7 @@ async fn run_generation(
         if tspec.mode.as_deref() == Some("truncate") {
             // DELETE, not TRUNCATE: MySQL implicitly COMMITs on TRUNCATE (DDL), which would
             // make the surrounding transaction unable to roll back what was already written.
-            let sql = format!("DELETE FROM {};", quote_ident(dialect, table));
+            let sql = format!("DELETE FROM {};", qualified(dialect, schema, table));
             if let Err(e) = exec.run(sql).await {
                 bail!(format!("Không xoá được dữ liệu cũ của bảng '{table}': {e}"));
             }
@@ -2449,7 +2492,7 @@ async fn run_generation(
                 rows.push(row);
             }
 
-            let sql = insert_sql(dialect, table, &prepared.columns, &rows);
+            let sql = insert_sql(dialect, schema, table, &prepared.columns, &rows);
             if let Err(e) = exec.run(sql).await {
                 bail!(format!("Lỗi khi chèn dữ liệu vào bảng '{table}': {e}"));
             }

@@ -77,32 +77,31 @@ export const BulkDeleteDialog: React.FC<BulkDeleteDialogProps> = ({
   return (
     <Modal
       title={t('redis.bulkDeleteTitle')}
-      icon={<Trash2 size={14} style={{ color: 'var(--st-danger)' }} />}
+      icon={<Trash2 size={14} className="redis-dialog-danger-icon" />}
       onClose={onClose}
       closeDisabled={running}
       width="480px"
       zIndex={10000}
     >
       <ModalBody style={{ gap: '10px' }}>
-        <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>{t('redis.bulkDeleteDesc')}</div>
+        <div className="redis-dialog-label">{t('redis.bulkDeleteDesc')}</div>
 
-        <label style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>{t('redis.bulkDeletePattern')}</label>
+        <label className="redis-dialog-label">{t('redis.bulkDeletePattern')}</label>
         <input
           type="text"
-          className="form-input"
+          className="form-input redis-dialog-input"
           value={pattern}
           disabled={running}
           onChange={(e) => setPattern(e.target.value)}
           spellCheck={false}
-          style={{ height: '30px', fontSize: '11px', fontFamily: 'var(--win-font-mono)' }}
         />
 
-        <label style={{ fontSize: '11px', color: 'var(--win-text-secondary)' }}>{t('redis.bulkDeleteType')}</label>
+        <label className="redis-dialog-label">{t('redis.bulkDeleteType')}</label>
         <select
           value={typeFilter}
           disabled={running}
           onChange={(e) => setTypeFilter(e.target.value)}
-          style={{ height: '30px', fontSize: '11px', background: 'var(--win-bg-window)', border: '1px solid var(--win-border)', color: 'var(--win-text-primary)', borderRadius: '4px' }}
+          className="redis-dialog-select"
         >
           <option value="">{t('redis.allTypes')}</option>
           <option value="string">string</option>
@@ -113,34 +112,33 @@ export const BulkDeleteDialog: React.FC<BulkDeleteDialogProps> = ({
           <option value="stream">stream</option>
         </select>
 
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '6px', fontSize: '10px', color: '#f59e0b', lineHeight: 1.5 }}>
-          <AlertTriangle size={12} style={{ flexShrink: 0, marginTop: '2px' }} />
+        <div className="redis-dialog-warn">
+          <AlertTriangle size={12} className="redis-dialog-warn-icon" />
           <span>{t('redis.bulkDeleteWarning')}</span>
         </div>
 
         {!running && !result && (
           <div>
-            <label style={{ fontSize: '11px', color: 'var(--win-text-secondary)', display: 'block', marginBottom: '6px' }}>
+            <label className="redis-dialog-label block">
               <Trans
                 i18nKey="redis.bulkDeleteTypeToConfirm"
                 values={{ text: pattern }}
-                components={{ code: <b style={{ color: 'var(--win-text-primary)', fontFamily: 'var(--win-font-mono)' }} /> }}
+                components={{ code: <b className="redis-dialog-code" /> }}
               />
             </label>
             <input
               type="text"
-              className="form-input"
+              className="form-input redis-dialog-input"
               autoFocus
               value={typed}
               onChange={(e) => setTyped(e.target.value)}
               spellCheck={false}
-              style={{ height: '30px', fontSize: '11px', width: '100%', fontFamily: 'var(--win-font-mono)' }}
             />
           </div>
         )}
 
         {running && (
-          <div style={{ fontSize: '11px', color: 'var(--win-text-primary)' }}>
+          <div className="redis-dialog-status">
             {t('redis.bulkDeleteProgress', {
               scanned: progress.scanned.toLocaleString(),
               deleted: progress.deleted.toLocaleString(),
@@ -149,7 +147,7 @@ export const BulkDeleteDialog: React.FC<BulkDeleteDialogProps> = ({
         )}
 
         {result && (
-          <div style={{ fontSize: '11px', color: result.cancelled ? '#f59e0b' : 'var(--st-ok, #10b981)' }}>
+          <div className={'redis-dialog-status ' + (result.cancelled ? 'cancelled' : 'ok')}>
             {result.cancelled
               ? t('redis.bulkDeleteCancelled', {
                   scanned: result.scanned.toLocaleString(),
@@ -165,7 +163,7 @@ export const BulkDeleteDialog: React.FC<BulkDeleteDialogProps> = ({
 
       <ModalFooter>
         {running ? (
-          <button className="btn btn-secondary" onClick={cancel} style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--st-danger)' }}>
+          <button className="btn btn-secondary redis-value-save danger" onClick={cancel}>
             <Square size={10} /> {t('common.cancel')}
           </button>
         ) : (
@@ -173,15 +171,11 @@ export const BulkDeleteDialog: React.FC<BulkDeleteDialogProps> = ({
             <button className="btn btn-secondary" onClick={onClose}>{t('common.close')}</button>
             {!result && (
               <button
-                className="btn btn-primary"
+                className="btn btn-primary redis-danger-btn"
                 onClick={start}
                 disabled={!ready}
-                style={{
-                  background: ready ? 'var(--st-danger)' : 'var(--win-bg-hover)',
-                  color: ready ? '#fff' : 'var(--win-text-disabled)',
-                  border: 'none',
-                  cursor: ready ? 'pointer' : 'not-allowed',
-                }}
+                // Bốn thuộc tính từng tính theo `ready` ở đây đã thành `.redis-danger-btn` +
+                // `:disabled` — `ready` vốn đã đi vào `disabled` ngay trên, nên CSS tự suy ra được.
               >
                 {t('redis.bulkDeleteRun')}
               </button>
