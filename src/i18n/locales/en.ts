@@ -1214,6 +1214,8 @@ const en = {
     inspectDidYouMean: ' (Did you mean: {{n}})',
     inspectColumnNotInScope: "Column '{{column}}' is not in any table of this query",
     inspectColumnAmbiguous: "Column '{{column}}' is ambiguous — it exists in {{n}}",
+    inspectTypeMismatch: "Column '{{column}}' is {{type}}, compared with the text '{{value}}'",
+    inspectNotGrouped: "Column '{{column}}' must appear in GROUP BY or inside an aggregate",
     // Hover popup built in src/sql/intellisense.ts.
     hoverKindTable: 'Table',
     hoverKindView: 'View',

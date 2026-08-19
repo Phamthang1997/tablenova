@@ -41,3 +41,43 @@ export function typeBase(raw: string | null | undefined): string {
   const { head, tail } = splitType(raw);
   return tail ? `${head} ${tail}` : head;
 }
+
+/** Nhóm kiểu, đủ thô để so sánh được giữa ba dialect. */
+export type TypeFamily = 'number' | 'string' | 'date' | 'bool' | 'binary' | 'json' | 'other';
+
+// Khớp theo TỪ trong `head`, không phải theo tiền tố chuỗi. `timestamp without time zone` và
+// `character varying` đều có nhiều từ, còn khớp tiền tố thì `int` sẽ nuốt luôn `interval`.
+const FAMILY_WORDS: [TypeFamily, Set<string>][] = [
+  ['number', new Set([
+    'int', 'int2', 'int4', 'int8', 'integer', 'tinyint', 'smallint', 'mediumint', 'bigint',
+    'decimal', 'numeric', 'dec', 'fixed', 'float', 'float4', 'float8', 'double', 'real',
+    'money', 'serial', 'smallserial', 'bigserial', 'number',
+  ])],
+  ['bool', new Set(['bool', 'boolean'])],
+  ['date', new Set([
+    'date', 'datetime', 'datetime2', 'timestamp', 'timestamptz', 'time', 'timetz', 'year',
+  ])],
+  ['binary', new Set([
+    'blob', 'tinyblob', 'mediumblob', 'longblob', 'bytea', 'binary', 'varbinary', 'bit',
+  ])],
+  ['json', new Set(['json', 'jsonb'])],
+  ['string', new Set([
+    'char', 'varchar', 'character', 'varying', 'nchar', 'nvarchar', 'text', 'tinytext',
+    'mediumtext', 'longtext', 'string', 'clob', 'enum', 'set', 'citext', 'uuid',
+  ])],
+];
+
+/**
+ * Nhóm của một kiểu cột, dùng cho những kiểm tra chỉ cần biết "số hay chữ hay ngày".
+ *
+ * Cố ý thô: mục đích duy nhất là bắt những so sánh sai rõ ràng (`int_col = 'abc'`), nên phân
+ * biệt `int` với `bigint` không giúp gì mà chỉ thêm chỗ để sai. Không nhận ra thì trả `other`,
+ * và mọi kiểm tra đọc giá trị này đều phải hiểu `other` là "không kết luận gì".
+ */
+export function typeFamily(raw: string | null | undefined): TypeFamily {
+  const words = typeBase(raw).toLowerCase().split(/[\s_]+/).filter(Boolean);
+  for (const [family, set] of FAMILY_WORDS) {
+    if (words.some((w) => set.has(w))) return family;
+  }
+  return 'other';
+}

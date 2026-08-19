@@ -1,9 +1,10 @@
 import type * as monaco from 'monaco-editor';
 import { dbIndexRegistry } from './dbIndexRegistry';
 import {
-  collectCteNames, collectSelectListRefs, collectTableRefs, resolveAliases, maskForSplit,
-  splitStatements,
+  collectCteNames, collectSelectListRefs, collectTableRefs, groupByRefs, hasAggregate,
+  resolveAliases, maskForSplit, selectListItems, splitStatements,
 } from './statements';
+import { typeBase, typeFamily } from '../utils/columnType';
 import i18n from '../i18n';
 
 /**
@@ -176,7 +177,8 @@ export function inspectSqlText(text: string, dialect?: SqlDialectId): Diagnostic
     // Truy vấn con trong FROM/JOIN: `collectTableRefs` chui vào trong ngoặc và báo về bảng của
     // truy vấn con, nên "phạm vi" thu được là của tầng khác — `SELECT x FROM (SELECT id FROM
     // users) t` trông như thể `x` phải là cột của `users`. Không đủ hiểu thì không nói gì.
-    if (/\b(?:from|join)\s*\(/i.test(maskForSplit(stmt.text))) continue;
+    const stmtMasked = maskForSplit(stmt.text);
+    if (/\b(?:from|join)\s*\(/i.test(stmtMasked)) continue;
 
     const scope = Array.from(new Set(refs.map((r) => r.table.replace(/[`"[\]]/g, ''))));
     if (!scope.every((tbl) => dbIndexRegistry.hasTable(tbl))) continue; // một bảng lạ -> bó tay
@@ -186,6 +188,8 @@ export function inspectSqlText(text: string, dialect?: SqlDialectId): Diagnostic
     // không có bí danh) nên `FROM users a JOIN users b` cho hai nguồn khác nhau — đúng như SQL
     // hiểu, và cũng đúng là lúc mọi cột đều mơ hồ.
     const ownersOf = new Map<string, string[]>();
+    /** `bí danh.cột` -> kiểu khai báo. Khoá theo nguồn vì hai bảng có thể khai hai kiểu khác nhau. */
+    const typeOfCol = new Map<string, string>();
     const seenQualifier = new Set<string>();
     for (const ref of refs) {
       const tbl = ref.table.replace(/[`"[\]]/g, '');
@@ -197,6 +201,7 @@ export function inspectSqlText(text: string, dialect?: SqlDialectId): Diagnostic
         const list = ownersOf.get(key);
         if (list) list.push(qualifier);
         else ownersOf.set(key, [qualifier]);
+        typeOfCol.set(`${qualifier.toLowerCase()}.${key}`, col.type);
       }
     }
     // Alias của bảng cũng hợp lệ ở vị trí này (`SELECT t FROM test t` hiếm nhưng đúng cú pháp).
@@ -261,6 +266,93 @@ export function inspectSqlText(text: string, dialect?: SqlDialectId): Diagnostic
         endLine: endPos.line,
         endColumn: endPos.col,
       });
+    }
+
+    // 4. So sánh cột với một giá trị không cùng nhóm kiểu — `WHERE int_col = 'abc'`.
+    //
+    // Chỉ bắt những ca sai rõ ràng ở CẢ BA dialect. Cố tình KHÔNG đụng tới:
+    //  - `int_col = '5'`: cả ba đều tự ép kiểu, đây là cách viết bình thường;
+    //  - `date_col = '2024-01-01'`: chuỗi là cách duy nhất để viết hằng ngày tháng;
+    //  - `text_col = 5`: MySQL/SQLite chạy được, chỉ Postgres từ chối — mà đúng/sai theo dialect
+    //    thì phải gắn cờ dialect, và giá trị nó mang lại không xứng với rủi ro báo nhầm.
+    const cmp = /([`"[]?[A-Za-z_]\w*[`"\]]?(?:\.[`"[]?[A-Za-z_]\w*[`"\]]?)?)\s*(?:=|<>|!=|>=|<=|<|>)\s*('(?:[^']|'')*')/g;
+    let cm: RegExpExecArray | null;
+    while ((cm = cmp.exec(stmt.text)) !== null) {
+      // Vế trái phải là code thật, không phải chữ nằm trong một chuỗi hay comment.
+      if (stmtMasked[cm.index] !== stmt.text[cm.index]) continue;
+
+      const parts = cm[1].replace(/[`"[\]]/g, '').split('.');
+      const colName = parts[parts.length - 1];
+      const qualifier = parts.length > 1 ? parts[0] : null;
+
+      let type: string | undefined;
+      if (qualifier) {
+        type = typeOfCol.get(`${qualifier.toLowerCase()}.${colName.toLowerCase()}`);
+      } else {
+        const owners = ownersOf.get(colName.toLowerCase());
+        // Cột mơ hồ thì hai bảng có thể khai hai kiểu khác nhau — không kết luận.
+        if (owners?.length === 1) type = typeOfCol.get(`${owners[0].toLowerCase()}.${colName.toLowerCase()}`);
+      }
+      if (!type) continue;
+
+      const family = typeFamily(type);
+      const inner = cm[2].slice(1, -1).replace(/''/g, "'");
+      const badNumber = family === 'number' && !/^\s*-?\d+(?:\.\d+)?\s*$/.test(inner);
+      // "Không giống ngày tháng" ở đây chỉ có nghĩa là **không có chữ số nào** — mỗi dialect
+      // nhận một tập định dạng khác nhau, nên chặt hơn thế là báo nhầm.
+      const badDate = family === 'date' && inner.length > 0 && !/\d/.test(inner);
+      if (!badNumber && !badDate) continue;
+
+      const startPos = getPosition(stmt.start + cm.index);
+      const endPos = getPosition(stmt.start + cm.index + cm[0].length);
+      issues.push({
+        severity: 'warning',
+        message: i18n.t('sqlEditor.inspectTypeMismatch', {
+          column: colName,
+          type: typeBase(type),
+          value: inner,
+        }),
+        startLine: startPos.line,
+        startColumn: startPos.col,
+        endLine: endPos.line,
+        endColumn: endPos.col,
+      });
+    }
+
+    // 5. Cột trong danh sách SELECT không được gom nhóm và cũng không nằm trong hàm tổng hợp.
+    //
+    // Postgres và MySQL (ONLY_FULL_GROUP_BY, mặc định từ 5.7) đều từ chối hẳn; SQLite thì chạy
+    // và trả về một giá trị bất kỳ trong nhóm, nên với dialect đó im lặng mới đúng.
+    const grouped = groupByRefs(stmt.text);
+    if (grouped && grouped.length && dialect && AMBIGUITY_IS_ERROR.has(dialect)) {
+      // Gom nhóm theo khoá chính thì cả hai đều cho chọn các cột phụ thuộc hàm vào nó
+      // (`GROUP BY u.id` rồi `SELECT u.name`) — hợp lệ, nên bỏ qua cả câu.
+      const groupsByKey = grouped.some((g) =>
+        scope.some((tbl) => dbIndexRegistry.getColumn(tbl, g.name)?.isPrimaryKey));
+
+      if (!groupsByKey) {
+        const groupedNames = new Set(grouped.map((g) => g.name.toLowerCase()));
+        const items = selectListItems(stmt.text);
+        for (const ref of collectSelectListRefs(stmt.text)) {
+          const lower = ref.name.toLowerCase();
+          if (groupedNames.has(lower) || aliasNames.has(lower)) continue;
+          if (!ownersOf.has(lower)) continue;   // không phải cột đã biết -> mục 3 lo rồi
+
+          const item = items.find((it) => ref.offset >= it.offset && ref.offset < it.offset + it.text.length);
+          if (!item || hasAggregate(item.text)) continue;
+
+          const startPos = getPosition(stmt.start + ref.offset);
+          const endPos = getPosition(stmt.start + ref.offset + ref.name.length);
+          issues.push({
+            severity: 'error',
+            message: i18n.t('sqlEditor.inspectNotGrouped', { column: ref.name }),
+            startLine: startPos.line,
+            startColumn: startPos.col,
+            endLine: endPos.line,
+            endColumn: endPos.col,
+          });
+        }
+      }
     }
   }
 

@@ -1200,6 +1200,8 @@ const ja: typeof en = {
     inspectDidYouMean: '（もしかして: {{n}}）',
     inspectColumnNotInScope: "列 '{{column}}' はこのクエリのどのテーブルにもありません",
     inspectColumnAmbiguous: "列 '{{column}}' は曖昧です — {{n}} に存在します",
+    inspectTypeMismatch: "列 '{{column}}' は {{type}} 型ですが、文字列 '{{value}}' と比較しています",
+    inspectNotGrouped: "列 '{{column}}' は GROUP BY か集計関数の中に必要です",
     hoverKindTable: 'テーブル',
     hoverKindView: 'ビュー',
     hoverKindColumn: '列',

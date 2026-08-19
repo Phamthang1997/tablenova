@@ -204,6 +204,67 @@ describe('DbIndexRegistry & SQL Inspection Tests', () => {
       });
     });
 
+    describe('type mismatch in a comparison', () => {
+      const msgs = (sql: string) => inspectSqlText(sql, 'mysql').map((i) => i.message);
+
+      it('flags a numeric column compared with non-numeric text', () => {
+        expect(msgs("SELECT id FROM users WHERE id = 'abc';")).toHaveLength(1);
+        expect(msgs("SELECT total FROM orders o WHERE o.total > 'x';")).toHaveLength(1);
+      });
+
+      // Mỗi ca dưới đây là một cách viết bình thường; báo ở đây là báo nhầm.
+      it('accepts the coercions every dialect performs', () => {
+        expect(msgs("SELECT id FROM users WHERE id = '5';")).toEqual([]);
+        expect(msgs("SELECT id FROM users WHERE name = 'abc';")).toEqual([]);
+        expect(msgs('SELECT id FROM users WHERE id = 5;')).toEqual([]);
+      });
+
+      it('ignores text inside a string or a comment', () => {
+        expect(msgs("SELECT id FROM users WHERE name = 'id = ''abc''';")).toEqual([]);
+        expect(msgs("SELECT id FROM users -- id = 'abc'\n;")).toEqual([]);
+      });
+
+      it('says nothing when the column is ambiguous, since the two types may differ', () => {
+        // `id` có ở cả users lẫn orders, nên không biết đang so với kiểu nào -> không kết luận.
+        const sql = "SELECT users.id FROM users JOIN orders ON users.id = orders.user_id WHERE id = 'abc';";
+        expect(inspectSqlText(sql, 'mysql')).toEqual([]);
+      });
+    });
+
+    describe('columns missing from GROUP BY', () => {
+      it('is an error on MySQL and Postgres', () => {
+        const sql = 'SELECT name, COUNT(*) FROM users GROUP BY email;';
+        for (const dialect of ['mysql', 'pgsql']) {
+          const issues = inspectSqlText(sql, dialect);
+          expect(issues).toHaveLength(1);
+          expect(issues[0].severity).toBe('error');
+          expect(issues[0].message).toContain('name');
+        }
+      });
+
+      it('stays silent on SQLite, which returns an arbitrary row instead', () => {
+        expect(inspectSqlText('SELECT name, COUNT(*) FROM users GROUP BY email;', 'genericsql'))
+          .toEqual([]);
+      });
+
+      it('accepts grouped columns and aggregates', () => {
+        expect(inspectSqlText('SELECT email, COUNT(*) FROM users GROUP BY email;', 'mysql'))
+          .toEqual([]);
+        expect(inspectSqlText('SELECT email, MAX(name) FROM users GROUP BY email;', 'mysql'))
+          .toEqual([]);
+      });
+
+      it('accepts anything when grouping by a primary key', () => {
+        // Cả Postgres lẫn MySQL đều cho chọn cột phụ thuộc hàm vào khoá chính đã gom nhóm.
+        expect(inspectSqlText('SELECT id, name, email FROM users GROUP BY id;', 'pgsql'))
+          .toEqual([]);
+      });
+
+      it('does not judge GROUP BY by ordinal, where names cannot be matched', () => {
+        expect(inspectSqlText('SELECT name, COUNT(*) FROM users GROUP BY 1;', 'mysql')).toEqual([]);
+      });
+    });
+
     it('scopes each statement separately', () => {
       // `total` là cột của orders, không phải của users -> chỉ câu thứ hai hợp lệ.
       const msgs = messages('SELECT total FROM users;\nSELECT total FROM orders;');

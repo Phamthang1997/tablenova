@@ -1203,6 +1203,8 @@ const vi: typeof en = {
     inspectDidYouMean: ' (Gợi ý: {{n}})',
     inspectColumnNotInScope: "Cột '{{column}}' không có trong bảng nào của truy vấn này",
     inspectColumnAmbiguous: "Cột '{{column}}' mơ hồ — có trong {{n}}",
+    inspectTypeMismatch: "Cột '{{column}}' kiểu {{type}}, đang so với chuỗi '{{value}}'",
+    inspectNotGrouped: "Cột '{{column}}' phải nằm trong GROUP BY hoặc trong một hàm tổng hợp",
     hoverKindTable: 'Bảng',
     hoverKindView: 'Khung nhìn (View)',
     hoverKindColumn: 'Cột',

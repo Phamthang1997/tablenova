@@ -252,7 +252,24 @@ export interface BareColumnRef {
  * Trả về mảng rỗng khi không khoanh được vùng — không có `SELECT`, hoặc không có `FROM` ở cấp
  * ngoài cùng. Im lặng ở đây là đúng: người gọi chỉ muốn biết những cái nó chắc chắn.
  */
-export function collectSelectListRefs(statement: string): BareColumnRef[] {
+/** Một mục của danh sách SELECT, kèm vị trí ký tự trong câu lệnh đã cho. */
+export interface SelectListItem {
+  text: string;
+  offset: number;
+}
+
+/**
+ * Cắt danh sách SELECT thành từng mục theo dấu phẩy ở tầng ngoặc 0.
+ *
+ * Tách riêng khỏi `collectSelectListRefs` vì kiểm tra GROUP BY phải nhìn theo **từng mục**: một
+ * mục có hàm tổng hợp là hợp lệ dù cột bên trong không được gom nhóm, và danh sách định danh
+ * phẳng thì không nói được điều đó.
+ *
+ * Văn bản trả về lấy từ bản đã mask: định danh còn nguyên, còn nội dung chuỗi và comment đã
+ * thành khoảng trắng — đúng thứ các bộ dò định danh cần. Trả mảng rỗng khi không khoanh được
+ * vùng (không có `SELECT`, hoặc không có `FROM` ở tầng ngoài cùng).
+ */
+export function selectListItems(statement: string): SelectListItem[] {
   const masked = maskForSplit(statement);
   const head = /^\s*select\s+(?:distinct\s+|all\s+)?/i.exec(masked);
   if (!head) return [];
@@ -270,24 +287,27 @@ export function collectSelectListRefs(statement: string): BareColumnRef[] {
   }
   if (fromAt < 0) return [];
 
-  const out: BareColumnRef[] = [];
   const list = masked.slice(head[0].length, fromAt);
   const base = head[0].length;
-
-  // Xử lý từng mục của danh sách để việc loại bí danh không lan sang mục kế bên.
+  const out: SelectListItem[] = [];
   let itemStart = 0;
   depth = 0;
-  const bounds: [number, number][] = [];
   for (let i = 0; i < list.length; i++) {
     if (list[i] === '(') depth++;
     else if (list[i] === ')') depth--;
-    else if (list[i] === ',' && depth === 0) { bounds.push([itemStart, i]); itemStart = i + 1; }
+    else if (list[i] === ',' && depth === 0) {
+      out.push({ text: list.slice(itemStart, i), offset: base + itemStart });
+      itemStart = i + 1;
+    }
   }
-  bounds.push([itemStart, list.length]);
+  out.push({ text: list.slice(itemStart), offset: base + itemStart });
+  return out;
+}
 
+export function collectSelectListRefs(statement: string): BareColumnRef[] {
+  const out: BareColumnRef[] = [];
   const ident = /[A-Za-z_]\w*/g;
-  for (const [from, to] of bounds) {
-    const item = list.slice(from, to);
+  for (const { text: item, offset: itemOffset } of selectListItems(statement)) {
     const toks: { name: string; at: number }[] = [];
     ident.lastIndex = 0;
     let m: RegExpExecArray | null;
@@ -312,8 +332,70 @@ export function collectSelectListRefs(statement: string): BareColumnRef[] {
 
     for (const tk of usable) {
       if (NON_COLUMN_WORDS.has(tk.name.toLowerCase())) continue;
-      out.push({ name: tk.name, offset: base + from + tk.at });
+      out.push({ name: tk.name, offset: itemOffset + tk.at });
     }
+  }
+  return out;
+}
+
+// Hàm tổng hợp: một mục SELECT chứa lời gọi loại này thì hợp lệ trong câu có GROUP BY dù cột
+// bên trong nó không được gom nhóm. Danh sách gộp cả ba dialect — nhận dư một cái tên chỉ làm
+// mất một cảnh báo, còn thiếu một cái tên là gạch đỏ một câu SQL đúng.
+const AGGREGATE_FUNCTIONS = new Set([
+  'count', 'sum', 'avg', 'min', 'max', 'total',
+  'group_concat', 'string_agg', 'array_agg', 'json_agg', 'jsonb_agg', 'json_arrayagg',
+  'json_objectagg', 'listagg', 'stddev', 'stddev_pop', 'stddev_samp', 'variance', 'var_pop',
+  'var_samp', 'bit_and', 'bit_or', 'bit_xor', 'bool_and', 'bool_or', 'every', 'percentile_cont',
+  'percentile_disc', 'corr', 'covar_pop', 'covar_samp',
+]);
+
+/** Mục của danh sách SELECT có chứa lời gọi hàm tổng hợp không? */
+export function hasAggregate(item: string): boolean {
+  const re = /([A-Za-z_]\w*)\s*\(/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(item)) !== null) {
+    if (AGGREGATE_FUNCTIONS.has(m[1].toLowerCase())) return true;
+  }
+  return false;
+}
+
+/**
+ * Các định danh liệt kê trong `GROUP BY`, hoặc `null` khi câu lệnh không có mệnh đề đó.
+ *
+ * Phân biệt `null` với mảng rỗng là có chủ đích: không có GROUP BY thì không có gì để kiểm tra,
+ * còn có GROUP BY mà không đọc ra định danh nào (`GROUP BY 1`) là trường hợp phải **bỏ qua** —
+ * gom nhóm theo số thứ tự thì không đối chiếu được với tên, và đoán ở đó là gạch đỏ oan.
+ */
+export function groupByRefs(statement: string): BareColumnRef[] | null {
+  const masked = maskForSplit(statement);
+
+  // `GROUP BY` ở tầng ngoặc 0 — trong truy vấn con thì không phải của câu này.
+  let depth = 0;
+  let at = -1;
+  const scan = /[()]|\bgroup\s+by\b/gi;
+  let s: RegExpExecArray | null;
+  while ((s = scan.exec(masked)) !== null) {
+    if (s[0] === '(') depth++;
+    else if (s[0] === ')') depth--;
+    else if (depth === 0) { at = s.index + s[0].length; break; }
+  }
+  if (at < 0) return null;
+
+  // Mệnh đề kết thúc ở từ khoá kế tiếp cùng tầng.
+  const tail = masked.slice(at);
+  const stop = /\b(having|order\s+by|limit|offset|window|union|except|intersect|fetch|for)\b/i.exec(tail);
+  const clause = tail.slice(0, stop ? stop.index : tail.length);
+
+  if (/(^|,)\s*\d+\s*(,|$)/.test(clause)) return []; // GROUP BY theo số thứ tự -> không kết luận
+
+  const out: BareColumnRef[] = [];
+  const ident = /[A-Za-z_]\w*/g;
+  let m: RegExpExecArray | null;
+  while ((m = ident.exec(clause)) !== null) {
+    const after = clause.slice(m.index + m[0].length);
+    if (/^\s*\(/.test(after)) continue;                       // lời gọi hàm
+    if (NON_COLUMN_WORDS.has(m[0].toLowerCase())) continue;
+    out.push({ name: m[0], offset: at + m.index });
   }
   return out;
 }
