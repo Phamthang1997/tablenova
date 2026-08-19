@@ -169,6 +169,41 @@ describe('DbIndexRegistry & SQL Inspection Tests', () => {
       expect(messages('SELECT anything FROM (SELECT id FROM users) t;')).toEqual([]);
     });
 
+    // `users` và `orders` đều có cột `id` -> `SELECT id FROM users JOIN orders` là lỗi thật
+    // trên MySQL/Postgres ("column 'id' is ambiguous"), nhưng SQLite thì chạy được.
+    describe('ambiguous columns', () => {
+      const ambiguous = 'SELECT id FROM users JOIN orders ON users.id = orders.user_id;';
+
+      it('is an error on MySQL and Postgres, with one fix per candidate table', () => {
+        for (const dialect of ['mysql', 'pgsql']) {
+          const issue = inspectSqlText(ambiguous, dialect)[0];
+          expect(issue.severity).toBe('error');
+          expect(issue.message).toContain('id');
+          expect(issue.fix?.candidates).toEqual(['users.id', 'orders.id']);
+        }
+      });
+
+      it('stays silent on SQLite and when the dialect is unknown', () => {
+        expect(inspectSqlText(ambiguous, 'genericsql')).toEqual([]);
+        expect(inspectSqlText(ambiguous)).toEqual([]);
+      });
+
+      it('uses the aliases actually written, so the fix compiles', () => {
+        const sql = 'SELECT id FROM users u JOIN orders o ON u.id = o.user_id;';
+        expect(inspectSqlText(sql, 'mysql')[0].fix?.candidates).toEqual(['u.id', 'o.id']);
+      });
+
+      it('treats a self-join as two sources', () => {
+        const sql = 'SELECT name FROM users a JOIN users b ON a.id = b.id;';
+        expect(inspectSqlText(sql, 'mysql')[0].fix?.candidates).toEqual(['a.name', 'b.name']);
+      });
+
+      it('leaves a column owned by only one of the joined tables alone', () => {
+        const sql = 'SELECT total, name FROM users JOIN orders ON users.id = orders.user_id;';
+        expect(inspectSqlText(sql, 'mysql')).toEqual([]);
+      });
+    });
+
     it('scopes each statement separately', () => {
       // `total` là cột của orders, không phải của users -> chỉ câu thứ hai hợp lệ.
       const msgs = messages('SELECT total FROM users;\nSELECT total FROM orders;');

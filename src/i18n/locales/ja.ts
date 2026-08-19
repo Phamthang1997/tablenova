@@ -1199,6 +1199,7 @@ const ja: typeof en = {
     inspectColumnNotExist: "列 '{{column}}' はテーブル '{{table}}' に存在しません",
     inspectDidYouMean: '（もしかして: {{n}}）',
     inspectColumnNotInScope: "列 '{{column}}' はこのクエリのどのテーブルにもありません",
+    inspectColumnAmbiguous: "列 '{{column}}' は曖昧です — {{n}} に存在します",
     hoverKindTable: 'テーブル',
     hoverKindView: 'ビュー',
     hoverKindColumn: '列',

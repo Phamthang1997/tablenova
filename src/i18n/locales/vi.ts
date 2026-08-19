@@ -1202,6 +1202,7 @@ const vi: typeof en = {
     inspectColumnNotExist: "Cột '{{column}}' không tồn tại trong bảng '{{table}}'",
     inspectDidYouMean: ' (Gợi ý: {{n}})',
     inspectColumnNotInScope: "Cột '{{column}}' không có trong bảng nào của truy vấn này",
+    inspectColumnAmbiguous: "Cột '{{column}}' mơ hồ — có trong {{n}}",
     hoverKindTable: 'Bảng',
     hoverKindView: 'Khung nhìn (View)',
     hoverKindColumn: 'Cột',

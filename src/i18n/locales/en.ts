@@ -1213,6 +1213,7 @@ const en = {
     inspectColumnNotExist: "Column '{{column}}' does not exist in table '{{table}}'",
     inspectDidYouMean: ' (Did you mean: {{n}})',
     inspectColumnNotInScope: "Column '{{column}}' is not in any table of this query",
+    inspectColumnAmbiguous: "Column '{{column}}' is ambiguous — it exists in {{n}}",
     // Hover popup built in src/sql/intellisense.ts.
     hoverKindTable: 'Table',
     hoverKindView: 'View',

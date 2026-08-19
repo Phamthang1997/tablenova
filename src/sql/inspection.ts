@@ -36,9 +36,21 @@ export interface DiagnosticIssue {
 const DUMMY_TABLES = new Set(['dual', 'generate_series', 'unnest', 'json_each', 'json_tree', 'information_schema', 'pg_catalog']);
 
 /**
+ * Id ngôn ngữ Monaco của khung đang soạn (`mysql` | `pgsql` | `genericsql`).
+ *
+ * Chỉ dùng cho những kiểm tra mà **kết quả phụ thuộc dialect**. Bỏ trống thì các kiểm tra đó
+ * không chạy, chứ không đoán một dialect mặc định — đoán sai nghĩa là gạch đỏ một câu SQL mà
+ * máy chủ thật sự chấp nhận.
+ */
+export type SqlDialectId = string | undefined;
+
+/** Dialect coi "cột mơ hồ" là lỗi. SQLite thì không: nó tự chọn cột đầu tiên và chạy tiếp. */
+const AMBIGUITY_IS_ERROR = new Set(['mysql', 'pgsql']);
+
+/**
  * Inspects a raw SQL string or Monaco editor text and returns diagnostic issues.
  */
-export function inspectSqlText(text: string): DiagnosticIssue[] {
+export function inspectSqlText(text: string, dialect?: SqlDialectId): DiagnosticIssue[] {
   if (!text || !dbIndexRegistry.isReady()) return [];
 
   const issues: DiagnosticIssue[] = [];
@@ -169,19 +181,65 @@ export function inspectSqlText(text: string): DiagnosticIssue[] {
     const scope = Array.from(new Set(refs.map((r) => r.table.replace(/[`"[\]]/g, ''))));
     if (!scope.every((tbl) => dbIndexRegistry.hasTable(tbl))) continue; // một bảng lạ -> bó tay
 
-    const known = new Set<string>();
-    for (const tbl of scope) {
-      for (const col of dbIndexRegistry.getTableColumns(tbl)) known.add(col.name.toLowerCase());
+    // Ai "sở hữu" một tên cột. Giữ theo TỪNG nguồn chứ không gộp thành một tập tên: chính số
+    // nguồn của một cột là thứ nói lên nó có mơ hồ hay không. Khoá là bí danh (hoặc tên bảng khi
+    // không có bí danh) nên `FROM users a JOIN users b` cho hai nguồn khác nhau — đúng như SQL
+    // hiểu, và cũng đúng là lúc mọi cột đều mơ hồ.
+    const ownersOf = new Map<string, string[]>();
+    const seenQualifier = new Set<string>();
+    for (const ref of refs) {
+      const tbl = ref.table.replace(/[`"[\]]/g, '');
+      const qualifier = ref.alias || tbl;
+      if (seenQualifier.has(qualifier.toLowerCase())) continue;
+      seenQualifier.add(qualifier.toLowerCase());
+      for (const col of dbIndexRegistry.getTableColumns(tbl)) {
+        const key = col.name.toLowerCase();
+        const list = ownersOf.get(key);
+        if (list) list.push(qualifier);
+        else ownersOf.set(key, [qualifier]);
+      }
     }
     // Alias của bảng cũng hợp lệ ở vị trí này (`SELECT t FROM test t` hiếm nhưng đúng cú pháp).
     const aliasNames = new Set(resolveAliases(stmt.text).keys());
 
     for (const ref of collectSelectListRefs(stmt.text)) {
       const lower = ref.name.toLowerCase();
-      if (known.has(lower) || aliasNames.has(lower)) continue;
+      if (aliasNames.has(lower)) continue;
+      const owners = ownersOf.get(lower);
 
       const startPos = getPosition(stmt.start + ref.offset);
       const endPos = getPosition(stmt.start + ref.offset + ref.name.length);
+
+      // 3a. Có ở nhiều nguồn -> mơ hồ. MySQL/Postgres từ chối hẳn câu lệnh; SQLite lặng lẽ lấy
+      // cột đầu tiên, nên với dialect đó im lặng mới đúng — cảnh báo một câu SQL chạy được là
+      // cách nhanh nhất khiến người dùng tắt hết gạch chân.
+      if (owners && owners.length > 1) {
+        if (!dialect || !AMBIGUITY_IS_ERROR.has(dialect)) continue;
+        issues.push({
+          severity: 'error',
+          message: i18n.t('sqlEditor.inspectColumnAmbiguous', {
+            column: ref.name,
+            n: owners.join(', '),
+          }),
+          // Sửa = định danh nó. Ứng viên là chính các nguồn đang tranh chấp, nên danh sách
+          // Quick Fix trùng khít với danh sách trong thông báo.
+          fix: {
+            startLine: startPos.line,
+            startColumn: startPos.col,
+            endLine: endPos.line,
+            endColumn: endPos.col,
+            candidates: owners.map((q) => `${q}.${ref.name}`),
+          },
+          startLine: startPos.line,
+          startColumn: startPos.col,
+          endLine: endPos.line,
+          endColumn: endPos.col,
+        });
+        continue;
+      }
+
+      if (owners) continue; // 3b. đúng một nguồn -> hợp lệ
+
       const similar = Array.from(
         new Set(scope.flatMap((tbl) => dbIndexRegistry.findSimilarColumns(ref.name, tbl))),
       ).slice(0, 3);
@@ -219,7 +277,8 @@ export function runMonacoInspection(
   if (!model || model.isDisposed()) return;
 
   const text = model.getValue();
-  const issues = inspectSqlText(text);
+  // Dialect lấy từ chính model — quyết định những kiểm tra chỉ đúng với một số dialect.
+  const issues = inspectSqlText(text, model.getLanguageId());
 
   const markers: monaco.editor.IMarkerData[] = issues.map((issue) => ({
     severity:
