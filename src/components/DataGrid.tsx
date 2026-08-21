@@ -18,7 +18,14 @@ import { ProgressBar, type ProgressState } from './ProgressBar';
 import { ImportFilePicker } from './ImportFilePicker';
 import { ExportTableDialog } from './ExportTableDialog';
 import { Modal, ModalBody, ModalFooter } from './Modal';
-import { RowDocumentModal } from './RowDocumentModal';
+import { LazyEditorFallback } from './LazyEditorFallback';
+
+// Lazy vì `RowDocumentModal` có tab JSON dựng bằng `@monaco-editor/react`: import tĩnh ở đây là
+// một đường tĩnh từ entry tới Monaco, và nó vô hiệu hoá luôn `React.lazy` của `SqlEditor` lẫn Redis
+// `Console` — chunk Monaco 4MB quay lại thành `modulepreload` lúc khởi động. Xem CLAUDE.md,
+// mục Build/config. Kiểm bằng `dist/index.html` sau `npm run build-frontend`.
+const RowDocumentModal = React.lazy(() =>
+  import('./RowDocumentModal').then((m) => ({ default: m.RowDocumentModal })));
 
 /** Số dòng mỗi lô khi nhập dữ liệu vào bảng (để báo được tiến độ). */
 const IMPORT_BATCH_SIZE = 500;
@@ -2742,17 +2749,19 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
 
       {/* ─── Studio 3T / TablePlus Style Document / Row Viewer Modal ─── */}
       {documentViewerIndex !== null && (
-        <RowDocumentModal
-          isOpen={documentViewerIndex !== null}
-          onClose={() => setDocumentViewerIndex(null)}
-          tableName={tableName}
-          primaryKey={primaryKey}
-          rowIndex={documentViewerIndex}
-          rows={rows}
-          columns={columns}
-          foreignKeys={schema?.foreignKeys}
-          onNavigateRow={(newIdx) => setDocumentViewerIndex(newIdx)}
-        />
+        <React.Suspense fallback={<LazyEditorFallback />}>
+          <RowDocumentModal
+            isOpen={documentViewerIndex !== null}
+            onClose={() => setDocumentViewerIndex(null)}
+            tableName={tableName}
+            primaryKey={primaryKey}
+            rowIndex={documentViewerIndex}
+            rows={rows}
+            columns={columns}
+            foreignKeys={schema?.foreignKeys}
+            onNavigateRow={(newIdx) => setDocumentViewerIndex(newIdx)}
+          />
+        </React.Suspense>
       )}
     </div>
   );

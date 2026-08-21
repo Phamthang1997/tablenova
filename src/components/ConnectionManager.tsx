@@ -1545,15 +1545,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
             throw new Error(addExistsHint(resData.error || t('connection.errRestore'), overwrite));
           }
 
-          if (resData.activeDatabase) {
-            if (targetType === 'postgres') {
-              setBrPgDatabase(resData.activeDatabase);
-              setPgDatabase(resData.activeDatabase);
-            } else if (targetType === 'mysql') {
-              setBrMyDatabase(resData.activeDatabase);
-              setMyDatabase(resData.activeDatabase);
-            }
-          }
+          // KHÔNG viết `resData.activeDatabase` (database mà một câu `USE` trong tệp dump chuyển
+          // tới) trở lại các ô của form nữa: job chạy nền, nên lúc nó xong người dùng có thể đang
+          // gõ cấu hình cho một máy chủ khác trong đúng cái form này — ghi vào đó là xoá thứ họ vừa
+          // gõ. Tên database đã nằm trong thông báo kết quả của job.
           // Có câu bị bỏ qua thì không được báo "thành công" trơn — database chưa đầy đủ.
           return resData.failedCount
             ? { message: t('app.importDbPartial', { n: resData.statementsCount || 0, failed: resData.failedCount }) }

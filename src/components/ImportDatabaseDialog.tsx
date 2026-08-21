@@ -115,13 +115,15 @@ interface ImportDatabaseDialogProps {
   /**
    * Trả về true nếu nhập xong (popup tự đóng), false để giữ popup lại.
    * targetDb: database đích — rỗng nghĩa là dùng database đang kết nối.
-   * onProgress: nhận tiến độ thật từ backend (số câu lệnh đã chạy / tổng).
+   *
+   * KHÔNG có tham số tiến độ: lần restore chạy như job nền (utils/jobs.ts), nên nó báo tiến độ
+   * vào JobsTray. Popup này đóng ngay khi job được xếp, và một callback vào component đã unmount
+   * chỉ là bản sao thứ hai của phần tính ETA đã nằm ở utils/restoreProgress.ts.
    */
   onSubmit: (
     sqlText: string,
     tables: string[],
     targetDb: string,
-    onProgress: (msg: { type: string; done?: number; total?: number }) => void,
     continueOnError: boolean
   ) => Promise<boolean>;
 }
@@ -385,7 +387,6 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
     setError(null);
     setSubmitting(true);
     setProgress({ label: t('importDialog.preparing') });
-    const startedAt = Date.now();
     try {
       // Ghi đè: chèn DROP ... IF EXISTS lên đầu và cho các tên đó qua bộ lọc theo bảng
       // (backend chỉ chạy câu lệnh có nhắc tên trong danh sách này). Dùng lại kết quả đã
@@ -397,27 +398,7 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
         ? [...new Set([...selected, ...objs.views, ...objs.triggers, ...objs.procedures, ...objs.functions])]
         : selected;
 
-      const ok = await onSubmit(finalSql, finalTables, targetDb.trim(), (msg) => {
-        const done = msg.done ?? 0;
-        const total = msg.total ?? 0;
-        if (msg.type === 'start') {
-          setProgress({ label: t('importDialog.runningStatements', { n: fmtNum(total) }), current: 0, total });
-          return;
-        }
-        // ETA tính từ tốc độ thật đang chạy, chính xác hơn ước lượng trước khi bấm.
-        const elapsed = (Date.now() - startedAt) / 1000;
-        const rate = done > 0 ? done / elapsed : 0;
-        const remain = rate > 0 && total > done ? Math.round((total - done) / rate) : 0;
-        const counts = { done: fmtNum(done), total: fmtNum(total) };
-        setProgress({
-          label: t('importDialog.runningOn', { db: targetDb.trim() || currentDb || 'database' }),
-          current: done,
-          total,
-          detail: remain > 0
-            ? t('importDialog.statementDetailEta', { ...counts, eta: formatDuration(t, remain) })
-            : t('importDialog.statementDetail', counts),
-        });
-      }, continueOnError);
+      const ok = await onSubmit(finalSql, finalTables, targetDb.trim(), continueOnError);
       if (ok) onClose();
     } finally {
       setProgress(null);

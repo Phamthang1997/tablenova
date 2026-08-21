@@ -684,16 +684,15 @@ export const App: React.FC = () => {
     sqlText: string,
     tables: string[],
     targetDb: string,
-    onProgress?: (msg: { type: string; done?: number; total?: number }) => void,
     continueOnError = false
   ): Promise<boolean> => {
     try {
       const wantDb = targetDb.trim();
       const canManageDb = !!connection && connection.dbType !== 'sqlite';
 
-      // The connection the restore actually runs on. `restoreBackup` carries no id — it goes through
-      // `dbHelper`'s ambient one — so this has to be a local, not `activeConnIdState`: that is React
-      // state and still holds the OLD id inside this closure, which would also mis-address the
+      // The connection the restore actually runs on, passed explicitly to `restoreBackup`. A local
+      // rather than `activeConnIdState`, which is React state and still holds the OLD id inside this
+      // closure when the import opens a database of its own — that would also mis-address the
       // `database-restored` event at the end.
       let targetConnId = activeConnIdState;
 
@@ -741,16 +740,17 @@ export const App: React.FC = () => {
           const resData = await dbHelper.restoreBackup(
             sqlText,
             tables,
-            (msg) => {
-              onProgress?.(msg);
-              ctx.report(toProgress(msg));
-            },
+            (msg) => ctx.report(toProgress(msg)),
             continueOnError,
             restoreConnId,
           );
           if (!resData.success) throw new Error(addExistsHint(resData.error || '', false));
 
-          if (resData.activeDatabase) {
+          // `USE <db>` trong tệp dump đổi database của kết nối này, nên nhãn trên thanh tiêu đề
+          // phải đổi theo — nhưng CHỈ khi người dùng vẫn đang xem đúng kết nối đó. Job chạy nền,
+          // nên lúc nó xong người dùng có thể đã sang kết nối khác, và ghi đè nhãn của kết nối ấy
+          // là hiện tên một database nó không hề mở.
+          if (resData.activeDatabase && activeConnIdRef.current === restoreConnId) {
             const activeDb = resData.activeDatabase;
             setConnection(prev => prev ? { ...prev, dbName: activeDb } : null);
           }

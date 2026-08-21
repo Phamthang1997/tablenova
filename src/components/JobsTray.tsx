@@ -53,23 +53,27 @@ export const JobsTray: React.FC = () => {
 
   return (
     <>
-      <button
-        className={`tb-capsule-btn ${active.length ? 'is-active-accent' : ''}`}
-        onClick={() => setOpen(true)}
-        title={capsuleTitle}
-        aria-label={capsuleTitle}
-      >
-        {active.length ? (
-          <Loader2 size={13} className="loading-spinner" />
-        ) : failed ? (
-          <AlertTriangle size={13} />
-        ) : (
-          <ListChecks size={13} />
-        )}
-        {active.length > 0 && (
-          <span style={{ fontSize: '10px', fontWeight: 600, marginLeft: '3px' }}>{active.length}</span>
-        )}
-      </button>
+      {/* Bọc `.tb-capsule` như `TxControl`: lớp đó giữ chiều cao 34px và canh giữa của thanh tiêu
+          đề, `.tb-capsule-btn` một mình chỉ có dáng của cái nút. */}
+      <div className="tb-capsule" style={{ flexShrink: 0 }}>
+        <button
+          className={`tb-capsule-btn ${active.length ? 'is-active-accent' : ''} ${!active.length && failed ? 'is-active-warn' : ''}`}
+          onClick={() => setOpen(true)}
+          title={capsuleTitle}
+          aria-label={capsuleTitle}
+        >
+          {active.length ? (
+            <Loader2 size={13} className="loading-spinner" />
+          ) : failed ? (
+            <AlertTriangle size={13} />
+          ) : (
+            <ListChecks size={13} />
+          )}
+          {active.length > 0 && (
+            <span style={{ fontSize: '10px', fontWeight: 600, marginLeft: '3px' }}>{active.length}</span>
+          )}
+        </button>
+      </div>
 
       {open && (
         <Modal title={t('jobs.panelTitle')} onClose={() => setOpen(false)} zIndex={100000} width="520px">
@@ -213,8 +217,11 @@ const JobRow: React.FC<{ job: JobRecord }> = ({ job }) => {
           <button
             type="button"
             className="btn btn-secondary"
+            // Mở THƯ MỤC, không mở tệp: `openInFileManager` gọi `open_url`, nên đưa đường dẫn tệp
+            // vào là hệ điều hành mở tệp .sql bằng ứng dụng mặc định — không phải điều người ta
+            // muốn khi bấm "mở thư mục". Đường dẫn tệp đi vào tooltip.
             title={job.result.path || job.result.dir}
-            onClick={() => void openInFileManager(job.result!.path || job.result!.dir!)}
+            onClick={() => void openInFileManager(job.result!.dir!)}
           >
             <FolderOpen size={12} />
           </button>

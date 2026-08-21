@@ -4,7 +4,6 @@ import { FolderOpen } from 'lucide-react';
 import { dbHelper } from '../utils/dbHelper';
 import { getLastExportDir, pickExportFolder } from '../utils/fileSave';
 import { fileStamp, missingViewDeps, safeFileBase } from '../utils/exportHelper';
-import { ProgressBar, type ProgressState } from './ProgressBar';
 import { Modal, ModalFooter } from './Modal';
 
 export type DatabaseExportFormat = 'sql' | 'json' | 'csv' | 'xlsx';
@@ -31,8 +30,8 @@ export interface DatabaseExportOptions {
   compressGzip: boolean;
   /** Thư mục lưu tệp; null = tải qua WebView về thư mục tải xuống của hệ thống. */
   dir: string | null;
-  /** Báo tiến độ ngược lại cho popup. */
-  onProgress: (p: ProgressState | null) => void;
+  // KHÔNG còn tham số tiến độ: lần xuất chạy như job nền (utils/jobs.ts) và báo tiến độ vào
+  // JobsTray. Popup đóng ngay khi job được xếp, nên một callback vào đây chỉ vẽ cho không ai xem.
 }
 
 interface ExportDatabaseDialogProps {
@@ -141,7 +140,6 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ conn
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dir, setDir] = useState(getLastExportDir());
-  const [progress, setProgress] = useState<ProgressState | null>(null);
   // DDL của từng view, nạp nền sau khi có danh sách — chỉ dùng để cảnh báo thiếu bảng nguồn.
   const [viewDefs, setViewDefs] = useState<{ name: string; sql: string }[]>([]);
 
@@ -303,11 +301,9 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ conn
         sqlOptions: { dropTable, includeStructure, includeContent },
         compressGzip,
         dir: dir || null,
-        onProgress: setProgress,
       });
       if (ok) onClose();
     } finally {
-      setProgress(null);
       setSubmitting(false);
     }
   };
@@ -586,9 +582,7 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ conn
       </div>
 
       <ModalFooter>
-        {progress ? (
-          <ProgressBar progress={progress} />
-        ) : error ? (
+        {error ? (
           <span style={{ marginRight: 'auto', fontSize: '11px', color: 'var(--win-error, #ff6b6b)' }}>
             {error}
           </span>
