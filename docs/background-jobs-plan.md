@@ -167,9 +167,13 @@ Mỗi phase ship được độc lập, và Phase 0 đã lấy được phần l
 1. ✅ [`src/utils/jobs.ts`](../src/utils/jobs.ts): store module-level, bản ghi **immutable** (không
    thì `useSyncExternalStore` thấy cùng một tham chiếu và tray đứng im), coalesce tiến độ 150ms,
    hàng đợi + cap 3, độc quyền theo database khi có job GHI, huỷ. Test: `__tests__/jobs.test.ts`.
-2. ✅ [`components/JobsTray.tsx`](../src/components/JobsTray.tsx): một `tb-capsule-btn` (spinner +
-   số job) mở `Modal` liệt kê job, kèm progress bar, huỷ, "mở thư mục", text lỗi. Không có job nào
-   thì nút **không hiện** — thanh title bar giữ nguyên như trước tới lần chạy đầu tiên.
+2. ✅ [`components/JobsTray.tsx`](../src/components/JobsTray.tsx): một **nút chuông** trên thanh
+   tiêu đề (badge = số việc đang chạy), mở một **popover neo ngay dưới nút** — không phải hộp thoại
+   giữa màn hình: việc chạy nền là thông báo, và xem nó không được che thứ đang làm. Trong popover:
+   progress bar, huỷ, "mở thư mục", text lỗi, xoá việc đã xong. Dùng lại đúng dáng popover của
+   `SafeModeControl` (`.sm-backdrop`/`.sm-pop`/`.sm-pop-title` — tiền tố `sm-` chỉ là dấu vết chỗ
+   dùng đầu tiên) thay vì chép ra bộ rule thứ hai. Không có job nào thì nút **không hiện** — thanh
+   tiêu đề giữ nguyên như trước tới lần chạy đầu tiên.
 3. ✅ Bốn luồng nặng chuyển sang submit-and-forget: Export Database, Import Database
    (`App.tsx`), Backup/Restore của Connection Manager, Data Generator. Ba cái đầu đóng dialog ngay;
    Data Generator vẫn vẽ progress của riêng nó **khi còn mở** (cùng một lần chạy, không phải hai)

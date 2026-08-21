@@ -1,6 +1,7 @@
-import React, { useEffect, useState, useSyncExternalStore } from 'react';
+import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, Ban, CheckCircle2, FolderOpen, Loader2, ListChecks } from 'lucide-react';
+import { AlertTriangle, Ban, Bell, CheckCircle2, FolderOpen, Loader2 } from 'lucide-react';
 import {
   activeJobs,
   cancelJob,
@@ -14,21 +15,26 @@ import { openInFileManager } from '../utils/fileSave';
 import { ProgressBar } from './ProgressBar';
 import { Modal, ModalBody, ModalFooter } from './Modal';
 
+/** Cùng chiều rộng với `.jobs-pop` trong index.css — dùng để neo popover cho khỏi tràn màn hình. */
+const POP_WIDTH = 380;
+
 /**
- * Việc chạy nền: MỘT nút trên thanh tiêu đề, danh sách nằm trong hộp thoại.
+ * Việc chạy nền: một nút **chuông** trên thanh tiêu đề, danh sách nằm trong popover **neo ngay dưới
+ * nút** — không phải hộp thoại giữa màn hình. Một việc đang chạy nền là thông báo, không phải một
+ * thao tác cần cả màn hình; và mở nó ra không được che thứ người dùng đang làm.
  *
- * Cùng lý do với `TxControl`: thanh tiêu đề không còn chỗ cho bốn thứ rời rạc, và một job đang chạy
- * thì thứ duy nhất cần thấy ngay là "có mấy cái đang chạy". Phần còn lại — tiến độ, huỷ, mở thư
- * mục, lỗi — mở ra khi cần.
+ * Cách neo (`top`/`left` + portal + backdrop) lấy đúng theo `SafeModeControl`, popover kia của thanh
+ * tiêu đề: `right` + `position: fixed` làm lớp blur bị lệch khỏi nội dung của chính nó.
  *
  * Component này **không** giữ tiến độ: nó đọc từ `utils/jobs.ts` qua `useSyncExternalStore`, nên
- * đóng hộp thoại (hay unmount cả nút) không làm mất job. Đó là toàn bộ mục đích của module kia.
+ * đóng popover (hay unmount cả nút) không làm mất job. Đó là toàn bộ mục đích của module kia.
  */
 export const JobsTray: React.FC = () => {
   const { t } = useTranslation();
   const jobs = useSyncExternalStore(subscribeJobs, listJobs);
-  const [open, setOpen] = useState(false);
+  const [anchor, setAnchor] = useState<{ top: number; left: number } | null>(null);
   const [askOnClose, setAskOnClose] = useState(false);
+  const btnRef = useRef<HTMLButtonElement>(null);
 
   const active = jobs.filter((j) => j.state === 'running' || j.state === 'queued');
   const finished = jobs.filter((j) => j.state !== 'running' && j.state !== 'queued');
@@ -41,6 +47,15 @@ export const JobsTray: React.FC = () => {
     return true;
   }), []);
 
+  useEffect(() => {
+    if (!anchor) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setAnchor(null);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [anchor]);
+
   // Chưa từng có job nào thì không chiếm chỗ trên thanh tiêu đề.
   if (jobs.length === 0) return null;
 
@@ -51,52 +66,76 @@ export const JobsTray: React.FC = () => {
       ? t('jobs.trayFailed')
       : t('jobs.trayIdle');
 
+  // Neo phải theo nút rồi kẹp lại, để nút sát mép nào cũng thấy trọn popover.
+  const open = () => {
+    const rect = btnRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const maxLeft = Math.max(10, window.innerWidth - POP_WIDTH - 10);
+    setAnchor({ top: rect.bottom + 6, left: Math.min(maxLeft, Math.max(10, rect.right - POP_WIDTH)) });
+  };
+
   return (
     <>
       {/* Bọc `.tb-capsule` như `TxControl`: lớp đó giữ chiều cao 34px và canh giữa của thanh tiêu
           đề, `.tb-capsule-btn` một mình chỉ có dáng của cái nút. */}
       <div className="tb-capsule" style={{ flexShrink: 0 }}>
         <button
+          ref={btnRef}
           className={`tb-capsule-btn ${active.length ? 'is-active-accent' : ''} ${!active.length && failed ? 'is-active-warn' : ''}`}
-          onClick={() => setOpen(true)}
+          onClick={() => (anchor ? setAnchor(null) : open())}
           title={capsuleTitle}
           aria-label={capsuleTitle}
         >
-          {active.length ? (
-            <Loader2 size={13} className="loading-spinner" />
-          ) : failed ? (
-            <AlertTriangle size={13} />
-          ) : (
-            <ListChecks size={13} />
-          )}
+          {/* Chuông là biểu tượng của thông báo; số việc đang chạy là cái badge cạnh nó — cùng
+              cách đọc với mọi khay thông báo, không phải một icon đổi hình theo trạng thái. */}
+          <Bell size={13} />
           {active.length > 0 && (
             <span style={{ fontSize: '10px', fontWeight: 600, marginLeft: '3px' }}>{active.length}</span>
           )}
         </button>
       </div>
 
-      {open && (
-        <Modal title={t('jobs.panelTitle')} onClose={() => setOpen(false)} zIndex={100000} width="520px">
-          <ModalBody>
-            {jobs.map((job) => (
-              <JobRow key={job.id} job={job} />
-            ))}
-          </ModalBody>
-          <ModalFooter>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              disabled={finished.length === 0}
-              onClick={clearFinishedJobs}
+      {anchor &&
+        createPortal(
+          <>
+            {/* `.sm-backdrop` / `.sm-pop` / `.sm-pop-title` là dáng popover CHUNG của thanh tiêu
+                đề (nền chặn, hộp bo góc + blur, tiêu đề in hoa nhỏ) — tiền tố `sm-` chỉ là dấu vết
+                của chỗ dùng đầu tiên (Safe Mode). Dùng lại thay vì chép ra bộ rule thứ hai, để sửa
+                một chỗ là hai popover vẫn giống nhau. */}
+            <div className="sm-backdrop" onClick={() => setAnchor(null)} />
+            <div
+              className="sm-pop"
+              style={{ top: anchor.top, left: anchor.left, width: POP_WIDTH }}
+              role="dialog"
             >
-              {t('jobs.clearFinished')}
-            </button>
-            <button type="button" className="btn btn-primary" onClick={() => setOpen(false)}>
-              {t('common.close')}
-            </button>
-          </ModalFooter>
-        </Modal>
-      )}
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px' }}>
+                <div className="sm-pop-title">{t('jobs.panelTitle')}</div>
+                <button
+                  type="button"
+                  disabled={finished.length === 0}
+                  onClick={clearFinishedJobs}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    padding: '0 10px 8px',
+                    fontSize: '11px',
+                    color: finished.length ? 'var(--win-accent)' : 'var(--win-text-disabled)',
+                    cursor: finished.length ? 'pointer' : 'default',
+                  }}
+                >
+                  {t('jobs.clearFinished')}
+                </button>
+              </div>
+              {/* Cao hơn nữa thì popover che gần hết cửa sổ; danh sách tự cuộn. */}
+              <div style={{ maxHeight: '320px', overflowY: 'auto' }}>
+                {jobs.map((job, i) => (
+                  <JobRow key={job.id} job={job} divider={i > 0} />
+                ))}
+              </div>
+            </div>
+          </>,
+          document.body,
+        )}
 
       {askOnClose && (
         <Modal title={t('jobs.closeTitle')} onClose={() => setAskOnClose(false)} zIndex={100001} width="440px">
@@ -135,7 +174,7 @@ const STATE_KEY: Record<JobRecord['state'], string> = {
   cancelled: 'jobs.stateCancelled',
 };
 
-const JobRow: React.FC<{ job: JobRecord }> = ({ job }) => {
+const JobRow: React.FC<{ job: JobRecord; divider: boolean }> = ({ job, divider }) => {
   const { t } = useTranslation();
   const running = job.state === 'running';
   const queued = job.state === 'queued';
@@ -153,7 +192,7 @@ const JobRow: React.FC<{ job: JobRecord }> = ({ job }) => {
   ) : job.state === 'cancelled' ? (
     <Ban size={13} style={{ color: 'var(--win-text-secondary)' }} />
   ) : (
-    <ListChecks size={13} style={{ color: 'var(--win-text-secondary)' }} />
+    <Bell size={13} style={{ color: 'var(--win-text-secondary)' }} />
   );
 
   return (
@@ -161,9 +200,9 @@ const JobRow: React.FC<{ job: JobRecord }> = ({ job }) => {
       style={{
         display: 'flex',
         gap: '8px',
-        padding: '8px 0',
-        borderBottom: '1px solid var(--win-border)',
         alignItems: 'flex-start',
+        padding: '8px 10px',
+        borderTop: divider ? '1px solid var(--win-border)' : undefined,
       }}
     >
       <div style={{ paddingTop: '1px' }}>{icon}</div>
