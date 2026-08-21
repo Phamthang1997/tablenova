@@ -53,8 +53,8 @@ export function dumpReaderFor(
     getTableSchema(connId: string, tableName: string): Promise<SchemaInfo>;
     getTableData(connId: string, tableName: string, page?: number, pageSize?: number): Promise<{ rows: any[]; totalCount: number | null }>;
     getObjectDefinition(connId: string, name: string, kind: 'view' | 'function' | 'procedure' | 'table' | 'event'): Promise<{ success: boolean; sql?: string; error?: string }>;
-    getAllTriggers(): Promise<{ name: string; table: string; statement: string }[]>;
-    getTableDdlExtras(tableName: string): Promise<{
+    getAllTriggers(connId: string): Promise<{ name: string; table: string; statement: string }[]>;
+    getTableDdlExtras(connId: string, tableName: string): Promise<{
       sequences: string[]; indexes: string[]; constraints: string[]; comments: string[]; sequenceValues: string[];
     }>;
   },
@@ -65,8 +65,8 @@ export function dumpReaderFor(
     getTableSchema: (t) => db.getTableSchema(connId, t),
     getTableData: (t, page, pageSize) => db.getTableData(connId, t, page, pageSize),
     getObjectDefinition: (name, kind) => db.getObjectDefinition(connId, name, kind),
-    getAllTriggers: () => db.getAllTriggers(),
-    getTableDdlExtras: (t) => db.getTableDdlExtras(t),
+    getAllTriggers: () => db.getAllTriggers(connId),
+    getTableDdlExtras: (t) => db.getTableDdlExtras(connId, t),
   };
 }
 

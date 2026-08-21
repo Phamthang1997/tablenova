@@ -159,7 +159,7 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ conn
       const [list, dbObjs, triggers] = await Promise.all([
         dbHelper.getTables(connId),
         dbHelper.getDatabaseObjects(connId),
-        dbHelper.getAllTriggers(),
+        dbHelper.getAllTriggers(connId),
       ]);
       if (cancelled) return;
       // Không đặt tên tham số là `t` — đó là hàm dịch.

@@ -11,6 +11,7 @@ import { SUPPORTED_LANGUAGES, currentLanguage } from '../i18n';
 import { DbConnectionStatusPill } from './DbConnectionStatusPill';
 import { TxControl } from './TxControl';
 import { SafeModeControl } from './SafeModeControl';
+import { JobsTray } from './JobsTray';
 import { ConnectionInfoPopover } from './ConnectionInfoPopover';
 import { QuickSwitcherPopover, type SwitcherConn } from './QuickSwitcherPopover';
 import type { SavedProfile } from './ConnectionManager';
@@ -716,6 +717,8 @@ export const TitleBar: React.FC<TitleBarProps> = ({
       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0, ...({ WebkitAppRegion: 'no-drag' } as any) }}>
         {/* Transaction thuộc về kết nối (một connection cho cả app) nên control nằm ở đây,
             không ở toolbar của từng tab. Xem TxControl.tsx. */}
+        {/* Việc chạy nền: cùng lý do đặt chỗ với TxControl. Xem JobsTray.tsx. */}
+        <JobsTray />
         <TxControl
           connected={hasConnection}
           connId={connId || ""}

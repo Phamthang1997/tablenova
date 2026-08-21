@@ -1,6 +1,6 @@
 # Kế hoạch: chạy Export / Generate Data / Import-Restore / Backup ở chế độ nền (background jobs)
 
-> Trạng thái: **đề xuất, chưa code gì.**
+> Trạng thái: **Phase 0 đã code** (xem §5). Phase 1–4 chưa.
 
 ## 1. Triệu chứng
 
@@ -163,15 +163,37 @@ setval → view → routine → trigger) giữ nguyên nghĩa.
 
 Mỗi phase ship được độc lập, và Phase 0 đã lấy được phần lớn giá trị.
 
-### Phase 0 — job store + tray + guard đóng cửa sổ *(không đổi cách thực thi)*
-1. `src/utils/jobs.ts`: store module-level, `subscribe`, coalesce tiến độ, phát `jobs-changed`.
-2. `components/JobsTray.tsx`: **một** `tb-capsule-btn` trên title bar (spinner + số job), click mở
-   `Modal` liệt kê job đang chạy / vừa xong, kèm progress bar, nút huỷ, "mở thư mục", text lỗi.
-   Đúng hình mẫu `TxControl`: một capsule mở một dialog, vì thanh title bar không còn chỗ.
-3. Bốn dialog chuyển sang submit-and-forget: bấm Start → tạo job → dialog đóng được ngay. Dialog vẫn
-   vẽ progress bar khi đang mở, nhưng **đọc từ store**, không giữ state riêng.
-4. Guard `onCloseRequested` + chỗ hiện kết quả thống nhất (thay `alert(msg)` ở
-   [App.tsx:2287](../src/App.tsx#L2287) và `setExportDone`).
+### Phase 0 — job store + tray + guard đóng cửa sổ *(không đổi cách thực thi)* — ✅ ĐÃ CODE
+1. ✅ [`src/utils/jobs.ts`](../src/utils/jobs.ts): store module-level, bản ghi **immutable** (không
+   thì `useSyncExternalStore` thấy cùng một tham chiếu và tray đứng im), coalesce tiến độ 150ms,
+   hàng đợi + cap 3, độc quyền theo database khi có job GHI, huỷ. Test: `__tests__/jobs.test.ts`.
+2. ✅ [`components/JobsTray.tsx`](../src/components/JobsTray.tsx): một `tb-capsule-btn` (spinner +
+   số job) mở `Modal` liệt kê job, kèm progress bar, huỷ, "mở thư mục", text lỗi. Không có job nào
+   thì nút **không hiện** — thanh title bar giữ nguyên như trước tới lần chạy đầu tiên.
+3. ✅ Bốn luồng nặng chuyển sang submit-and-forget: Export Database, Import Database
+   (`App.tsx`), Backup/Restore của Connection Manager, Data Generator. Ba cái đầu đóng dialog ngay;
+   Data Generator vẫn vẽ progress của riêng nó **khi còn mở** (cùng một lần chạy, không phải hai)
+   và đóng lúc nào cũng được.
+4. ✅ [`utils/closeGuard.ts`](../src/utils/closeGuard.ts): **một** listener `onCloseRequested` cho
+   cả app + danh sách blocker theo ưu tiên (transaction chưa commit trước, job đang chạy sau). Hai
+   listener độc lập không dùng được: cái nào resolve trước sẽ `destroy()` và giết hộp thoại của cái
+   kia. `TxControl` đổi sang blocker, không tự đăng ký listener nữa.
+5. ✅ Ba lệnh dài nhận `connId` **tường minh** (`restoreBackup`, `generateData`,
+   `cancelDataGeneration`), và `getAllTriggers`/`getTableDdlExtras` cũng vậy: một job có thể nằm
+   trong hàng đợi, tới lượt nó thì `currentConnId` (ambient) đã là kết nối khác — tức là restore
+   vào đúng database người dùng không chọn. `withConnId()` trong `dbHelper` là chỗ duy nhất biết
+   luật "chỉ đặt khoá khi có giá trị thật" (một `connId: undefined` tường minh sẽ ghi đè ambient).
+6. ✅ `utils/restoreProgress.ts`: nhãn + ETA của restore tính ở một chỗ, vì hai màn hình cùng chạy
+   restore (Import Database và Connection Manager) và cả hai giờ đều là job.
+
+**Còn lại của Phase 0** (làm sau, và biết vì sao chưa làm):
+- Export **một bảng** (`ExportTableDialog`) và **Redis transfer** vẫn chạy trong dialog. Cả hai đều
+  ngắn hơn hẳn (một bảng, hoặc một tiền tố key) và Redis transfer đã có nút Stop riêng; đổi chúng
+  kéo theo bỏ `done`/`onSuccess` của dialog và sửa cả chuỗi prop ở `App.tsx`/`DataGrid`/`Sidebar`.
+- Connection Manager: job **tự mở kết nối riêng rồi đóng**, nhưng `connect()` đổi ambient
+  `currentConnId` trong lúc chạy nên có một khe hẹp (từ lúc `connect()` tới lúc trả ambient về) mà
+  lệnh khác của người dùng có thể đi sai kết nối. `open_job_connection` của Phase 1 xoá khe đó.
+- Safe Mode vẫn hỏi **mỗi lệnh** trong một job (chưa có cửa mở theo job — §4.4).
 
 ### Phase 1 — kết nối riêng cho job
 `purpose: 'job'` trong `ConnRegistry`; `open_job_connection`; rail/switcher bỏ qua; cửa Safe Mode

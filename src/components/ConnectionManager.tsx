@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
-import type { TFunction } from 'i18next';
 import { activeConnId, dbHelper, setActiveConnId } from '../utils/dbHelper';
 import type { DbConnectionConfig } from '../utils/dbHelper';
 import { Database, Server, CheckCircle2, AlertTriangle, Plus, Trash2, Save, Copy, Download, Upload, Lock, Key, TerminalSquare, Hash, FolderOpen, User, Link, Star, Eye, EyeOff, ShieldAlert, Search, X, ChevronDown, ChevronRight, RefreshCw, ShieldCheck, Network, ArrowLeft, Check, Cloud, DatabaseBackup, LogIn } from 'lucide-react';
@@ -21,23 +20,10 @@ import { splitStatements } from '../sql/statements';
 import { buildDump, dumpReaderFor } from '../utils/dumpBuilder';
 import { gzipText, getLastExportDir, saveExportFile, pickOpenFile, pickSqliteDatabaseFile } from '../utils/fileSave';
 import { fileBaseFromPath, fileStamp, safeFileBase } from '../utils/exportHelper';
-import { ProgressBar, type ProgressState } from './ProgressBar';
+import { startJob } from '../utils/jobs';
+import { connKey } from '../utils/connKey';
+import { formatRestoreEta, makeRestoreReporter } from '../utils/restoreProgress';
 import { ConfirmDialog } from './ConfirmDialog';
-
-/**
- * Seconds -> "12 seconds" / "2 min 5 sec" for the restore ETA.
- * Takes `t` because it is module-level and cannot call the hook itself.
- */
-function formatRestoreEta(t: TFunction, totalSeconds: number): string {
-  const s = Math.max(1, Math.round(totalSeconds));
-  if (s < 60) return t('connection.etaSeconds', { s });
-  const m = Math.floor(s / 60);
-  const rest = s % 60;
-  if (m < 60) return rest ? t('connection.etaMinutesSeconds', { m, s: rest }) : t('connection.etaMinutes', { m });
-  const h = Math.floor(m / 60);
-  const restM = m % 60;
-  return restM ? t('connection.etaHoursMinutes', { h, m: restM }) : t('connection.etaHours', { h });
-}
 import {
   SECRET_FIELDS,
   hasInlineSecrets,
@@ -342,8 +328,6 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
   const [brContinueOnError, setBrContinueOnError] = useState(false);
   // Bản tóm tắt xác nhận + tiến độ thật của lần phục hồi
   const [brConfirm, setBrConfirm] = useState(false);
-  const [brProgress, setBrProgress] = useState<ProgressState | null>(null);
-  const [brLoading, setBrLoading] = useState(false);
   const [brParsedTables, setBrParsedTables] = useState<string[]>([]);
   const [brSelectedTables, setBrSelectedTables] = useState<string[]>([]);
   const [brParsing, setBrParsing] = useState(false);
@@ -1404,10 +1388,17 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
     handleBrSubmit();
   };
 
+  /**
+   * Chạy Sao lưu / Phục hồi như một **job nền**: hàm này chỉ chốt mọi thứ đang có trên form rồi
+   * xếp job, còn tiến độ và kết quả nằm ở `JobsTray`. Trước đây nó giữ cả màn hình lại — mà một
+   * bản restore sakila mất hàng chục phút. Xem docs/background-jobs-plan.md.
+   *
+   * Mọi giá trị lấy từ form đều được **copy ra biến cục bộ trước khi xếp job**: job có thể chạy
+   * sau đó (hàng đợi), và lúc ấy người dùng đã gõ sang máy chủ khác trong cùng cái form này.
+   */
   const handleBrSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
     setBrConfirm(false);
-    setBrLoading(true);
     setErrorMsg(null);
     setSuccessMsg(null);
 
@@ -1436,141 +1427,147 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
       };
     }
 
-    // Màn này mở kết nối RIÊNG của nó, nên mọi lệnh phải mang đúng id vừa mint — không phải
-    // `connId` của workspace (prop). Khi chưa kết nối gì, prop là chuỗi rỗng và `getTables` trả
-    // mảng rỗng, tức là báo "database không có bảng nào"; khi đang có kết nối, nó trỏ vào
-    // database KHÁC và bản sao lưu là của database đó. `prevConnId` được trả lại ở `finally`
-    // vì `connect()` đổi luôn kết nối active của cả app.
-    const prevConnId = activeConnId();
-    let brConnId = '';
-    try {
-      const connRes = await dbHelper.connect(config);
-      if (!connRes.success) {
-        throw new Error(t('connection.errConnectFailed', { message: connRes.message }));
-      }
-      brConnId = connRes.connId || activeConnId();
+    const isBackup = brAction === 'backup';
+    if (!isBackup && (!brFile || !brSqlText)) {
+      setErrorMsg(t('connection.errNoBackupFile'));
+      return;
+    }
 
-      if (brAction === 'backup') {
-        // Dump dựng bằng đúng code của popup "Xuất Cơ sở dữ liệu" (buildDump): trước đây chỗ
-        // này gọi lệnh Rust `export_multi_tables`, vốn coi view là bảng (sinh DROP TABLE và
-        // INSERT INTO cho view), ghi một INSERT cho mỗi dòng, và không hề có routine/trigger.
-        const list = await dbHelper.getTables(brConnId);
-        const tables = list.map(item => item.name);
-        if (tables.length === 0) {
-          throw new Error(t('connection.errNoTablesToBackup'));
-        }
-        const [dbObjs, triggers] = await Promise.all([
-          dbHelper.getDatabaseObjects(brConnId),
-          dbHelper.getAllTriggers(),
-        ]);
+    // Ảnh chụp của form — xem doc comment ở trên.
+    const targetType = brType;
+    const dbLabel = brDbLabel || (targetType === 'sqlite' ? brSqlitePath : '');
+    const fileName = (brEffectiveFilename.trim().replace(/\.(sql|sql\.gz|gz)$/i, '') || brSuggestedFilename)
+      + (brCompressGzip ? '.sql.gz' : '.sql');
+    const gzip = brCompressGzip;
+    const sqlOptions = {
+      dropTable: brDropTable,
+      includeStructure: brIncludeStructure,
+      includeContent: brIncludeContent,
+    };
+    const dumpText = brSqlText;
+    const overwrite = brOverwrite;
+    const dropStatements = brOverwrite ? [...brDropStatements] : [];
+    const selectedTables = [...brSelectedTables];
+    const continueOnError = brContinueOnError;
 
-        const sqlText = await buildDump({
-          dbType: config.type,
-          tables,
-          views: list.filter(item => item.type === 'view').map(item => item.name),
-          routines: [
-            ...dbObjs.functions.map((name) => ({ name, kind: 'function' as const })),
-            ...dbObjs.procedures.map((name) => ({ name, kind: 'procedure' as const })),
-          ],
-          triggers: triggers.map((tr) => tr.name),
-          events: dbObjs.events,
-          sqlOptions: {
-            dropTable: brDropTable,
-            includeStructure: brIncludeStructure,
-            includeContent: brIncludeContent,
-          },
-          // Schema mà `connect` vừa báo là đang dùng — cùng schema mà getTables() ở trên đọc ra.
-          // Không có ô chọn schema ở màn hình này, nên đây luôn là schema đầu search_path.
-          schema: connRes.schema,
-          onProgress: setBrProgress,
-        }, dumpReaderFor(dbHelper, brConnId));
-
-        const base = brEffectiveFilename.trim().replace(/\.(sql|sql\.gz|gz)$/i, '') || brSuggestedFilename;
-        const fileName = base + (brCompressGzip ? '.sql.gz' : '.sql');
-        setBrProgress({ label: t('app.exportWriting') });
-        const payload = brCompressGzip ? await gzipText(sqlText) : sqlText;
-        const saved = await saveExportFile(
-          getLastExportDir() || null,
-          fileName,
-          payload,
-          brCompressGzip ? 'application/gzip' : 'text/plain;charset=utf-8'
-        );
-        setBrProgress(null);
-        setSuccessMsg(`${t('connection.backupSuccess')} — ${saved.path || fileName}`);
-      } else {
-        if (!brFile || !brSqlText) {
-          throw new Error(t('connection.errNoBackupFile'));
-        }
-
-        // Ghi đè: chèn DROP ... IF EXISTS lên đầu, và cho các tên đó qua bộ lọc theo bảng
-        // của backend (nó chỉ chạy câu lệnh có nhắc tên trong danh sách truyền vào).
-        const objs = brOverwrite ? parseDumpObjects(brSqlText) : null;
-        const drops = brOverwrite ? brDropStatements : [];
-        const sqlToRun = drops.length ? `${drops.join('\n')}\n${brSqlText}` : brSqlText;
-        const tablesToRun = objs
-          ? [...new Set([...brSelectedTables, ...objs.views, ...objs.triggers, ...objs.procedures, ...objs.functions])]
-          : brSelectedTables;
-
-        const startedAt = Date.now();
-        setBrProgress({ label: t('connection.restorePreparing') });
-        const resData = await dbHelper.restoreBackup(sqlToRun, tablesToRun, (msg) => {
-          const done = msg.done ?? 0;
-          const total = msg.total ?? 0;
-          if (msg.type === 'start') {
-            setBrProgress({ label: t('connection.restoreRunning', { n: total.toLocaleString() }), current: 0, total });
-            return;
+    startJob({
+      kind: isBackup ? 'dump' : 'restore',
+      title: t(isBackup ? 'jobs.titleBackup' : 'jobs.titleRestore', { n: dbLabel }),
+      db: dbLabel,
+      write: !isBackup,
+      lockKey: `br|${connKey(config)}|${dbLabel}`,
+      run: async (ctx) => {
+        // Job này mở KẾT NỐI RIÊNG của nó rồi đóng lại — màn hình này vốn đã làm vậy ("không cần
+        // kết nối sẵn"), và đó cũng đúng hướng Phase 1 của plan: job không dùng chung kết nối với
+        // người dùng, nên nó không tắt kiểm tra khoá ngoại trên phiên người dùng đang browse.
+        const prevConnId = activeConnId();
+        let jobConnId = '';
+        try {
+          const connRes = await dbHelper.connect(config);
+          if (!connRes.success) {
+            throw new Error(t('connection.errConnectFailed', { message: connRes.message }));
           }
-          // ETA từ tốc độ thật đang chạy
-          const elapsed = (Date.now() - startedAt) / 1000;
-          const rate = done > 0 ? done / elapsed : 0;
-          const remain = rate > 0 && total > done ? Math.round((total - done) / rate) : 0;
-          const counts = { done: done.toLocaleString(), total: total.toLocaleString() };
-          setBrProgress({
-            label: t('connection.restoreInProgress'),
-            current: done,
-            total,
-            detail: remain > 0
-              ? t('connection.restoreDetailEta', { ...counts, eta: formatRestoreEta(t, remain) })
-              : t('connection.restoreDetail', counts),
-          });
-        }, brContinueOnError);
-        setBrProgress(null);
-        if (resData.success) {
-          // Có câu bị bỏ qua thì không được báo "thành công" trơn — database chưa đầy đủ.
-          setSuccessMsg(
-            resData.failedCount
-              ? t('app.importDbPartial', { n: resData.statementsCount || 0, failed: resData.failedCount })
-              : t('connection.restoreSuccess', { n: resData.statementsCount || 0 })
+          // Mọi lệnh mang đúng id vừa mint — không phải `connId` của workspace (prop): chưa kết
+          // nối gì thì prop là chuỗi rỗng và `getTables` trả mảng rỗng, tức là báo "database không
+          // có bảng nào"; đang có kết nối thì nó trỏ vào database KHÁC.
+          jobConnId = connRes.connId || activeConnId();
+          // `connect()` đổi luôn kết nối active của cả app. Trả lại NGAY, vì job chạy nền: để
+          // ambient trỏ vào kết nối riêng của job là mọi thao tác khác của người dùng đi sai chỗ.
+          setActiveConnId(prevConnId);
+
+          if (isBackup) {
+            // Dump dựng bằng đúng code của popup "Xuất Cơ sở dữ liệu" (buildDump): trước đây chỗ
+            // này gọi lệnh Rust `export_multi_tables`, vốn coi view là bảng (sinh DROP TABLE và
+            // INSERT INTO cho view), ghi một INSERT cho mỗi dòng, và không hề có routine/trigger.
+            const list = await dbHelper.getTables(jobConnId);
+            const tables = list.map(item => item.name);
+            if (tables.length === 0) {
+              throw new Error(t('connection.errNoTablesToBackup'));
+            }
+            const [dbObjs, triggers] = await Promise.all([
+              dbHelper.getDatabaseObjects(jobConnId),
+              dbHelper.getAllTriggers(jobConnId),
+            ]);
+            ctx.throwIfCancelled();
+
+            const sqlText = await buildDump({
+              dbType: config.type,
+              tables,
+              views: list.filter(item => item.type === 'view').map(item => item.name),
+              routines: [
+                ...dbObjs.functions.map((name) => ({ name, kind: 'function' as const })),
+                ...dbObjs.procedures.map((name) => ({ name, kind: 'procedure' as const })),
+              ],
+              triggers: triggers.map((tr) => tr.name),
+              events: dbObjs.events,
+              sqlOptions,
+              // Schema mà `connect` vừa báo là đang dùng — cùng schema mà getTables() ở trên đọc
+              // ra. Không có ô chọn schema ở màn này, nên đây luôn là schema đầu search_path.
+              schema: connRes.schema,
+              onProgress: (p) => ctx.report(p),
+            }, dumpReaderFor(dbHelper, jobConnId));
+            ctx.throwIfCancelled();
+
+            ctx.report({ label: t('app.exportWriting') });
+            const payload = gzip ? await gzipText(sqlText) : sqlText;
+            const saved = await saveExportFile(
+              getLastExportDir() || null,
+              fileName,
+              payload,
+              gzip ? 'application/gzip' : 'text/plain;charset=utf-8'
+            );
+            return {
+              message: `${t('connection.backupSuccess')} — ${saved.path || fileName}`,
+              path: saved.path,
+              dir: saved.dir,
+              viaDownload: saved.savedTo === 'download',
+            };
+          }
+
+          // Ghi đè: chèn DROP ... IF EXISTS lên đầu, và cho các tên đó qua bộ lọc theo bảng
+          // của backend (nó chỉ chạy câu lệnh có nhắc tên trong danh sách truyền vào).
+          const objs = overwrite ? parseDumpObjects(dumpText) : null;
+          const sqlToRun = dropStatements.length ? `${dropStatements.join('\n')}\n${dumpText}` : dumpText;
+          const tablesToRun = objs
+            ? [...new Set([...selectedTables, ...objs.views, ...objs.triggers, ...objs.procedures, ...objs.functions])]
+            : selectedTables;
+
+          const toProgress = makeRestoreReporter(t);
+          ctx.report({ label: t('connection.restorePreparing') });
+          const resData = await dbHelper.restoreBackup(
+            sqlToRun,
+            tablesToRun,
+            (msg) => ctx.report(toProgress(msg)),
+            continueOnError,
+            jobConnId,
           );
+          if (!resData.success) {
+            throw new Error(addExistsHint(resData.error || t('connection.errRestore'), overwrite));
+          }
+
           if (resData.activeDatabase) {
-            if (brType === 'postgres') {
+            if (targetType === 'postgres') {
               setBrPgDatabase(resData.activeDatabase);
               setPgDatabase(resData.activeDatabase);
-            } else if (brType === 'mysql') {
+            } else if (targetType === 'mysql') {
               setBrMyDatabase(resData.activeDatabase);
               setMyDatabase(resData.activeDatabase);
             }
-            setTimeout(() => {
-              setActiveType(brType);
-            }, 1200);
           }
-        } else {
-          throw new Error(addExistsHint(resData.error || t('connection.errRestore'), brOverwrite));
+          // Có câu bị bỏ qua thì không được báo "thành công" trơn — database chưa đầy đủ.
+          return resData.failedCount
+            ? { message: t('app.importDbPartial', { n: resData.statementsCount || 0, failed: resData.failedCount }) }
+            : { message: t('connection.restoreSuccess', { n: resData.statementsCount || 0 }) };
+        } finally {
+          // Chỉ đóng kết nối do job này mở. `disconnect()` không tham số đóng kết nối đang
+          // active — tức là kết nối người dùng đang dùng dở, khi `connect()` lỗi giữa đường.
+          if (jobConnId) await dbHelper.disconnect(jobConnId);
+          setActiveConnId(prevConnId);
         }
-      }
-    } catch (err: any) {
-      setErrorMsg(err.message);
-    } finally {
-      // Chỉ đóng kết nối do màn này mở. `disconnect()` không tham số đóng kết nối đang active —
-      // mà khi `connect()` thất bại thì cái đang active vẫn là kết nối của workspace, tức là nó
-      // đóng đúng kết nối người dùng đang dùng dở.
-      if (brConnId) await dbHelper.disconnect(brConnId);
-      setActiveConnId(prevConnId);
-      setBrLoading(false);
-      // Lỗi giữa chừng thì thanh tiến độ phải tắt, nếu không nó đứng lại ở % cuối cùng và
-      // che luôn chỗ hiện thông báo lỗi.
-      setBrProgress(null);
-    }
+      },
+    });
+
+    setSuccessMsg(t('jobs.startedInBackground'));
   };
 
   const _pq = profileSearch.trim().toLowerCase();
@@ -3015,27 +3012,21 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
             <footer className="cm-foot">
               {isBrMode ? (
                 <>
-                  {brProgress ? (
-                    <span className="cm-foot-msg" style={{ flex: 1, minWidth: 0, display: 'flex' }}>
-                      <ProgressBar progress={brProgress} />
-                    </span>
-                  ) : (
-                    <span className="cm-foot-msg cm-hint">
-                      {brAction === 'restore' && brFile && brParsedTables.length > 0
-                        ? t('connection.brFootSelected', { selected: brSelectedTables.length, total: brParsedTables.length })
-                        : ''}
-                    </span>
-                  )}
+                  {/* Không còn thanh tiến độ ở đây: sao lưu/phục hồi chạy nền, tiến độ nằm ở
+                      JobsTray trên thanh tiêu đề. Xem docs/background-jobs-plan.md. */}
+                  <span className="cm-foot-msg cm-hint">
+                    {brAction === 'restore' && brFile && brParsedTables.length > 0
+                      ? t('connection.brFootSelected', { selected: brSelectedTables.length, total: brParsedTables.length })
+                      : ''}
+                  </span>
                   <button
                     className="cm-btn primary"
                     onClick={handleBrClick}
-                    disabled={brLoading || (brAction === 'restore' && (!brFile || (brParsedTables.length > 0 && brSelectedTables.length === 0)))}
+                    disabled={brAction === 'restore' && (!brFile || (brParsedTables.length > 0 && brSelectedTables.length === 0))}
                   >
-                    {brLoading
-                      ? <><LoadingSpinner size={13} /> {brAction === 'backup' ? t('connection.brBackingUp') : t('connection.brRestoring')}</>
-                      : <>{brAction === 'backup'
-                        ? <><Download size={14} /> {t('connection.brStartBackup')}</>
-                        : <><Upload size={14} /> {t('connection.brStartRestore')}</>}</>}
+                    {brAction === 'backup'
+                      ? <><Download size={14} /> {t('connection.brStartBackup')}</>
+                      : <><Upload size={14} /> {t('connection.brStartRestore')}</>}
                   </button>
                 </>
               ) : hasProfile ? (

@@ -91,6 +91,17 @@ async function invoke<T = any>(cmd: string, args?: Record<string, unknown>): Pro
   }
 }
 
+/**
+ * Chỉ đặt `connId` khi có giá trị thật.
+ *
+ * Không viết thẳng `{ ...args, connId }` được: `invoke` ở trên merge `{ connId: currentConnId,
+ * ...args }`, nên một `connId: undefined` tường minh sẽ **ghi đè** id ambient bằng `undefined` và
+ * mọi lệnh mất kết nối. Đây là chỗ duy nhất biết luật đó.
+ */
+function withConnId(args: Record<string, unknown>, connId?: string): Record<string, unknown> {
+  return connId ? { ...args, connId } : args;
+}
+
 // Message do backend đẩy qua Channel khi stream kết quả SQL (execute_query_stream).
 export interface QueryStreamMessage {
   type: 'columns' | 'rows' | 'affected' | 'done' | 'error';
@@ -718,9 +729,9 @@ export const dbHelper = {
    * dump — một lần gọi cho cả database, và có tên bảng chủ vì Postgres không DROP được trigger
    * nếu thiếu `ON <table>`.
    */
-  async getAllTriggers(): Promise<{ name: string; table: string; statement: string }[]> {
+  async getAllTriggers(connId: string): Promise<{ name: string; table: string; statement: string }[]> {
     try {
-      const res: any = await invoke('get_all_triggers');
+      const res: any = await invoke('get_all_triggers', { connId });
       return res.triggers || [];
     } catch (err) {
       console.warn('[dbHelper] get_all_triggers failed:', err);
@@ -733,7 +744,7 @@ export const dbHelper = {
    * (index, FK/UNIQUE/CHECK, comment, sequence). Nhóm theo VỊ TRÍ phải chạy — xem
    * `get_table_ddl_extras` bên Rust.
    */
-  async getTableDdlExtras(tableName: string): Promise<{
+  async getTableDdlExtras(connId: string, tableName: string): Promise<{
     sequences: string[];
     indexes: string[];
     constraints: string[];
@@ -742,7 +753,7 @@ export const dbHelper = {
   }> {
     const empty = { sequences: [], indexes: [], constraints: [], comments: [], sequenceValues: [] };
     try {
-      const res: any = await invoke('get_table_ddl_extras', { tableName });
+      const res: any = await invoke('get_table_ddl_extras', { connId, tableName });
       return {
         sequences: res.sequences || [],
         indexes: res.indexes || [],
@@ -1451,7 +1462,9 @@ export const dbHelper = {
     tables: string[],
     onProgress?: (msg: { type: string; done?: number; total?: number; statementsCount?: number }) => void,
     /** Gặp lệnh lỗi thì bỏ qua và chạy tiếp thay vì rollback toàn bộ (xem `restore_backup`). */
-    continueOnError?: boolean
+    continueOnError?: boolean,
+    /** Kết nối đích, tường minh — cùng lý do với `generateData`: job nền có thể chờ trong hàng đợi. */
+    connId?: string,
   ): Promise<{
     success: boolean;
     statementsCount?: number;
@@ -1465,12 +1478,12 @@ export const dbHelper = {
       // Deserialize nên không dùng được Option<Channel>). Không có callback thì bỏ tin nhắn đi.
       const channel = new Channel<any>();
       if (onProgress) channel.onmessage = onProgress;
-      const res: any = await invoke('restore_backup', {
+      const res: any = await invoke('restore_backup', withConnId({
         sqlContent,
         tables,
         onProgress: channel,
         continueOnError: !!continueOnError,
-      });
+      }, connId));
       return {
         success: !!res.success,
         statementsCount: res.statementsCount,
@@ -2215,21 +2228,32 @@ export const dbHelper = {
     );
   },
 
-  /** Sinh và chèn thật. `onProgress` nhận {type:'start'|'table'|'progress'|'done'|'error', ...}. */
-  async generateData(spec: GenSpec, onProgress?: (msg: GenProgress) => void): Promise<GenResult> {
+  /**
+   * Sinh và chèn thật. `onProgress` nhận {type:'start'|'table'|'progress'|'done'|'error', ...}.
+   *
+   * `connId` là tường minh vì lệnh này chạy như một **job nền**: một job có thể nằm trong hàng đợi
+   * một lúc, và tới lượt nó thì `currentConnId` (ambient) đã là kết nối khác — nghĩa là sinh dữ
+   * liệu vào đúng database mà người dùng không chọn. Bỏ trống thì vẫn về ambient như trước.
+   */
+  async generateData(
+    spec: GenSpec,
+    onProgress?: (msg: GenProgress) => void,
+    connId?: string,
+  ): Promise<GenResult> {
     // Luôn tạo kênh: tham số onProgress ở Rust là Channel bắt buộc (Channel không impl
     // Deserialize nên không dùng được Option<Channel>). Không có callback thì bỏ tin nhắn đi.
     const channel = new Channel<GenProgress>();
     if (onProgress) channel.onmessage = onProgress;
     return translateWarnings(
-      await invoke<GenResult>('generate_data', { spec, onProgress: channel }),
+      await invoke<GenResult>('generate_data', withConnId({ spec, onProgress: channel }, connId)),
     );
   },
 
   /** Đánh dấu lần sinh dữ liệu đang chạy cần dừng. Không lỗi nếu không có gì đang chạy. */
-  async cancelDataGeneration(): Promise<void> {
+  async cancelDataGeneration(connId?: string): Promise<void> {
     try {
-      await invoke('cancel_data_generation');
+      // Cờ huỷ bên Rust khoá theo `conn_id`, nên huỷ phải nhắm đúng kết nối đang sinh dữ liệu.
+      await invoke('cancel_data_generation', withConnId({}, connId));
     } catch {
       // Huỷ là thao tác "best effort": lỗi ở đây không có gì để người dùng làm.
     }

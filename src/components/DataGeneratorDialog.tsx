@@ -31,8 +31,11 @@ import {
 import { Modal, ModalBody, ModalFooter } from './Modal';
 import { ConfirmDialog } from './ConfirmDialog';
 import { ProgressBar } from './ProgressBar';
+import { cancelJob, startJob } from '../utils/jobs';
 
 interface DataGeneratorDialogProps {
+  /** Kết nối đích. Tường minh vì lần sinh dữ liệu chạy như job nền — xem dbHelper.generateData. */
+  connId: string;
   /** Server + database the data will be written to — shown in the footer, since this writes. */
   dbName?: string;
   /** Preselect one table (opened from the table context menu). */
@@ -64,7 +67,7 @@ const Field: React.FC<{ text: string; children: React.ReactNode }> = ({ text, ch
   </div>
 );
 
-export const DataGeneratorDialog: React.FC<DataGeneratorDialogProps> = ({ dbName, initialTable, onClose }) => {
+export const DataGeneratorDialog: React.FC<DataGeneratorDialogProps> = ({ connId, dbName, initialTable, onClose }) => {
   const { t, i18n } = useTranslation();
 
   const [targets, setTargets] = useState<GenTargets | null>(null);
@@ -96,6 +99,8 @@ export const DataGeneratorDialog: React.FC<DataGeneratorDialogProps> = ({ dbName
   const [result, setResult] = useState<GenResult | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
   const startedAtRef = useRef(0);
+  /** Job của lần chạy hiện tại — nút Huỷ ở footer nhắm vào nó. */
+  const jobIdRef = useRef<string | null>(null);
 
   // ---- load targets ----
   useEffect(() => {
@@ -253,20 +258,66 @@ export const DataGeneratorDialog: React.FC<DataGeneratorDialogProps> = ({ dbName
   }, [previewKey, previewNonce, running]);
 
   // ---- run ----
-  const run = useCallback(async () => {
+  /**
+   * Sinh dữ liệu chạy như một **job nền** (xem utils/jobs.ts): người dùng đóng hộp thoại này rồi
+   * đi làm việc khác, tiến độ và nút huỷ vẫn còn ở `JobsTray`.
+   *
+   * Hộp thoại vẫn giữ `progress`/`result` của riêng nó để hiện đúng như trước **khi còn mở** — hai
+   * chỗ cùng đọc một lần chạy, không phải hai lần chạy. Sau khi đóng thì các `setState` này thành
+   * no-op, còn job thì không đụng tới.
+   */
+  const run = useCallback(() => {
     setRunning(true);
     setRunError(null);
     setResult(null);
     setProgress(null);
     startedAtRef.current = Date.now();
-    try {
-      setResult(await dbHelper.generateData(spec, (msg) => setProgress(msg)));
-    } catch (err) {
-      setRunError(String(err));
-    } finally {
-      setRunning(false);
-    }
-  }, [spec]);
+    const rows = totalRows;
+    jobIdRef.current = startJob({
+      kind: 'generate',
+      title: t('jobs.titleGenerate', { n: dbName ?? '' }),
+      db: dbName ?? '',
+      write: true,
+      lockKey: `${connId}|${dbName ?? ''}`,
+      // Cờ huỷ bên Rust khoá theo `conn_id`, nên phải nhắm đúng kết nối đang sinh dữ liệu.
+      onCancel: () => void dbHelper.cancelDataGeneration(connId),
+      run: async (ctx) => {
+        try {
+          const res = await dbHelper.generateData(spec, (msg) => {
+            setProgress(msg);
+            ctx.report({
+              label: t('dataGen.progress', {
+                table: msg.table ?? '',
+                done: formatCount(msg.totalDone ?? 0, i18n.language),
+                total: formatCount(rows, i18n.language),
+              }),
+              current: msg.totalDone ?? 0,
+              total: rows,
+            });
+          }, connId);
+          setResult(res);
+          // Số dòng đã đổi -> Sidebar/DataGrid nạp lại, kể cả khi hộp thoại đã đóng từ lâu.
+          // Schema không đổi nên KHÔNG gọi invalidateCatalog.
+          window.dispatchEvent(new CustomEvent('database-restored', { detail: { connId } }));
+          const inserted = res.inserted ? Object.values(res.inserted).reduce((a, b) => a + b, 0) : 0;
+          return {
+            message: res.cancelled
+              ? t('dataGen.resultCancelled', { n: formatCount(inserted, i18n.language) })
+              : t('dataGen.resultDone', {
+                  n: formatCount(inserted, i18n.language),
+                  time: formatDuration(res.elapsedMs ?? 0, t as never),
+                }),
+            warning: res.warnings?.length ? res.warnings.join(' · ') : undefined,
+          };
+        } catch (err) {
+          setRunError(String(err));
+          throw err;
+        } finally {
+          setRunning(false);
+        }
+      },
+    });
+  }, [spec, connId, dbName, totalRows, t, i18n.language]);
 
   const doneRows = progress?.totalDone ?? 0;
   const remainingMs = running ? estimateRemainingMs(doneRows, totalRows, Date.now() - startedAtRef.current) : null;
@@ -814,7 +865,10 @@ export const DataGeneratorDialog: React.FC<DataGeneratorDialogProps> = ({ dbName
           <Database size={12} /> {dbName ?? ''}
         </div>
         {running ? (
-          <button className="btn btn-secondary" onClick={() => void dbHelper.cancelDataGeneration()}>
+          <button
+            className="btn btn-secondary"
+            onClick={() => { if (jobIdRef.current) cancelJob(jobIdRef.current); }}
+          >
             {t('dataGen.cancelRun')}
           </button>
         ) : (
