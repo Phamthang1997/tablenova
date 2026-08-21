@@ -4,11 +4,10 @@ import { clampMenu, type MenuRect } from '../utils/menuPosition';
 import { dbHelper } from '../utils/dbHelper';
 import { isMariaDbVersion } from '../utils/serverFlavor';
 import type { TableItem, SchemaInfo, TriggerInfo, CheckConstraintInfo } from '../utils/dbHelper';
-import { Search, Table, Terminal, TerminalSquare, RefreshCw, Layers, Plus, ChevronDown, ChevronRight, Braces, Cog, Info, Key, Sliders, FileCode, Trash2, CheckCircle2, Copy, AlertTriangle, History, Bookmark, Columns3, ArrowDownAZ, Link2, Zap } from 'lucide-react';
+import { Search, Table, TerminalSquare, RefreshCw, Layers, Plus, ChevronDown, ChevronRight, Braces, Cog, Key, Sliders, FileCode, Trash2, CheckCircle2, Copy, AlertTriangle, History, Bookmark, Columns3, ArrowDownAZ, Link2, Zap, Code2, Database, Sparkles, GitCompare, ArrowLeftRight, HardDriveDownload, HardDriveUpload } from 'lucide-react';
 import { CreateTableModal } from './CreateTableModal';
 import { Modal, ModalBody, ModalFooter } from './Modal';
 import { ConfirmDialog } from './ConfirmDialog';
-import { GitCompare, ArrowLeftRight, HardDriveDownload, HardDriveUpload, Wand2 } from 'lucide-react';
 import { RoutineEditorModal } from './RoutineEditorModal';
 import { ViewEditorModal } from './ViewEditorModal';
 import { SequenceManagerModal } from './SequenceManagerModal';
@@ -1362,6 +1361,97 @@ export const Sidebar: React.FC<SidebarProps> = ({
     );
   };
 
+  // Grouped Tools Configuration
+  const toolGroups = useMemo(() => [
+    {
+      id: 'query',
+      title: t('sidebar.toolsGroupQuery'),
+      tools: [
+        {
+          id: 'sqlEditor',
+          label: t('sidebar.sqlEditor'),
+          icon: Code2,
+          colorClass: 'blue',
+          onClick: onNewQuery,
+          visible: true,
+        },
+        {
+          id: 'terminal',
+          label: t('sidebar.terminal'),
+          icon: TerminalSquare,
+          colorClass: 'emerald',
+          onClick: onOpenTerminal,
+          visible: true,
+        },
+      ],
+    },
+    {
+      id: 'schema',
+      title: t('sidebar.toolsGroupSchema'),
+      tools: [
+        {
+          id: 'dbInfo',
+          label: t('sidebar.databaseInfo'),
+          icon: Database,
+          colorClass: 'indigo',
+          onClick: onOpenDbInfo,
+          visible: !!onOpenDbInfo,
+        },
+        {
+          id: 'schemaMigration',
+          label: t('sidebar.schemaMigration'),
+          icon: GitCompare,
+          colorClass: 'violet',
+          onClick: onSchemaMigration,
+          visible: !!onSchemaMigration,
+        },
+        {
+          id: 'compareDatabases',
+          label: t('sidebar.compareDatabases'),
+          icon: ArrowLeftRight,
+          colorClass: 'amber',
+          onClick: onCompareDatabases,
+          visible: !!onCompareDatabases,
+        },
+      ],
+    },
+    {
+      id: 'data',
+      title: t('sidebar.toolsGroupData'),
+      tools: [
+        {
+          id: 'generateData',
+          label: t('sidebar.generateData'),
+          icon: Sparkles,
+          colorClass: 'rose',
+          onClick: () => {
+            // Qua ref: đọc thẳng thì memo này phụ thuộc một hàm đổi identity mỗi render, tức là
+            // dựng lại cả danh sách mỗi lần vẽ — xem chú thích ở blockedByReadOnlyRef.
+            if (blockedByReadOnlyRef.current()) return;
+            onGenerateData?.();
+          },
+          visible: !!onGenerateData,
+        },
+        {
+          id: 'exportDatabase',
+          label: t('sidebar.exportDatabase'),
+          icon: HardDriveDownload,
+          colorClass: 'cyan',
+          onClick: onExportDatabase,
+          visible: true,
+        },
+        {
+          id: 'importDatabase',
+          label: t('sidebar.importDatabase'),
+          icon: HardDriveUpload,
+          colorClass: 'teal',
+          onClick: onImportDatabase,
+          visible: true,
+        },
+      ],
+    },
+  ], [t, onNewQuery, onOpenTerminal, onOpenDbInfo, onSchemaMigration, onCompareDatabases, onGenerateData, onExportDatabase, onImportDatabase]);
+
   return (
     <div className="sidebar-navigation" ref={rootRef} style={{ width: `${width}px` }}>
       {/* Tay nắm kéo ở viền phải */}
@@ -2075,61 +2165,31 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         {/* TAB 4: TOOLS */}
         {activeTab === 'tools' && (
-          <div style={{ padding: '6px 8px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            <div className="sidebar-item" onClick={onNewQuery} style={{ padding: '8px 10px', borderRadius: '6px', cursor: 'pointer' }}>
-              <Terminal size={14} className="title-bar-logo" />
-              <span style={{ fontSize: '12px', fontWeight: 500 }}>{t('sidebar.sqlEditor')}</span>
-            </div>
-
-            <div className="sidebar-item" onClick={onOpenTerminal} style={{ padding: '8px 10px', borderRadius: '6px', cursor: 'pointer' }}>
-              <TerminalSquare size={14} className="title-bar-logo" />
-              <span style={{ fontSize: '12px', fontWeight: 500 }}>{t('sidebar.terminal')}</span>
-            </div>
-
-            {onOpenDbInfo && (
-              <div className="sidebar-item" onClick={onOpenDbInfo} style={{ padding: '8px 10px', borderRadius: '6px', cursor: 'pointer' }}>
-                <Info size={14} color="var(--win-accent)" />
-                <span style={{ fontSize: '12px', fontWeight: 500 }}>{t('sidebar.databaseInfo')}</span>
-              </div>
-            )}
-
-            {onSchemaMigration && (
-              <div className="sidebar-item" onClick={onSchemaMigration} style={{ padding: '8px 10px', borderRadius: '6px', cursor: 'pointer' }}>
-                <GitCompare size={14} color="var(--win-accent)" />
-                <span style={{ fontSize: '12px', fontWeight: 500 }}>{t('sidebar.schemaMigration')}</span>
-              </div>
-            )}
-
-            {onCompareDatabases && (
-              <div className="sidebar-item" onClick={onCompareDatabases} style={{ padding: '8px 10px', borderRadius: '6px', cursor: 'pointer' }}>
-                <ArrowLeftRight size={14} color="var(--win-accent)" />
-                <span style={{ fontSize: '12px', fontWeight: 500 }}>{t('sidebar.compareDatabases')}</span>
-              </div>
-            )}
-
-            {onGenerateData && (
-              <div
-                className="sidebar-item"
-                onClick={() => {
-                  if (blockedByReadOnly()) return;
-                  onGenerateData();
-                }}
-                style={{ padding: '8px 10px', borderRadius: '6px', cursor: 'pointer' }}
-              >
-                <Wand2 size={14} color="var(--win-accent)" />
-                <span style={{ fontSize: '12px', fontWeight: 500 }}>{t('sidebar.generateData')}</span>
-              </div>
-            )}
-
-            <div className="sidebar-item" onClick={onExportDatabase} style={{ padding: '8px 10px', borderRadius: '6px', cursor: 'pointer' }}>
-              <HardDriveDownload size={14} />
-              <span style={{ fontSize: '12px', fontWeight: 500 }}>{t('sidebar.exportDatabase')}</span>
-            </div>
-
-            <div className="sidebar-item" onClick={onImportDatabase} style={{ padding: '8px 10px', borderRadius: '6px', cursor: 'pointer' }}>
-              <HardDriveUpload size={14} />
-              <span style={{ fontSize: '12px', fontWeight: 500 }}>{t('sidebar.importDatabase')}</span>
-            </div>
+          <div className="sb-tools-container">
+            {toolGroups.map(group => {
+              const visibleTools = group.tools.filter(tool => tool.visible && matchesSearch(tool.label));
+              if (visibleTools.length === 0) return null;
+              return (
+                <div key={group.id} className="sb-tools-group">
+                  <div className="sb-tools-header">{group.title}</div>
+                  {visibleTools.map(tool => {
+                    const IconComponent = tool.icon;
+                    return (
+                      <div
+                        key={tool.id}
+                        className="sb-tool-card"
+                        onClick={tool.onClick}
+                      >
+                        <div className={`sb-tool-icon-wrap ${tool.colorClass}`}>
+                          <IconComponent size={14} />
+                        </div>
+                        <span className="sb-tool-label">{tool.label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
