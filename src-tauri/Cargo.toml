@@ -51,6 +51,11 @@ sha2 = "0.11"
 # at connect time. VERIFY_CA is also the only usable mode when Redis is reached over an SSH
 # tunnel, because the certificate is then presented for 127.0.0.1.
 redis = { version = "1.5.0", features = ["tokio-comp", "tokio-rustls-comp", "tls-rustls-insecure"] }
+# Payload DUMP của Redis là byte thô. Xuất/nhập keyspace ghi nó vào tệp NDJSON, nên cần base64:
+# mảng số như `redis_get_key` dùng cho `bytes` thì gấp ~3 lần kích thước và không ghi được ra tệp
+# text. Bản 0.22 đã có trong Cargo.lock từ trước (dependency gián tiếp) nên không thêm gì mới vào
+# cây phụ thuộc.
+base64 = "0.23.1"
 # Kho bí mật của HĐH (Windows Credential Manager / Keychain / Secret Service).
 # Tắt default-features rồi bật đúng backend theo từng nền tảng bên dưới, tránh kéo
 # zbus + secret-service vào bản build Windows.

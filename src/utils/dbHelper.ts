@@ -7,6 +7,7 @@ import {
   inheritConnection,
   registerConnection,
 } from './safeMode';
+import { getStmtTimeoutForConfig } from './stmtTimeout';
 import type {
   CompareSide,
   DataCompareResult,
@@ -165,6 +166,11 @@ export interface DbConnectionConfig {
   sslKeyPath?: string;
   sslCertPath?: string;
   sslCaPath?: string;
+  /**
+   * Số giây tối đa cho MỘT câu lệnh người dùng chạy (SQL editor + đọc trang ở grid). `0`/vắng =
+   * không giới hạn. Postgres/MySQL; SQLite bỏ qua (xem `stmt_timeout` trong `database.rs`).
+   */
+  statementTimeoutSecs?: number;
   // AWS IAM authentication (RDS/Aurora)
   authMethod?: 'password' | 'aws_iam';
   awsAuthType?: 'access_key' | 'profile';
@@ -460,6 +466,10 @@ export const dbHelper = {
         sslKeyPath: config.sslKeyPath,
         sslCertPath: config.sslCertPath,
         sslCaPath: config.sslCaPath,
+        // Giới hạn thời gian câu lệnh lưu theo server ở localStorage (popover Safe Mode), không
+        // nằm trong profile. Đọc ở đây để một kết nối vừa mở đã có đúng giới hạn ngay từ câu lệnh
+        // đầu — `setStatementTimeout` chỉ dùng cho lần người dùng đổi giữa phiên.
+        statementTimeoutSecs: getStmtTimeoutForConfig(config),
         authMethod: config.authMethod,
         awsAuthType: config.awsAuthType,
         awsAccessKeyId: config.awsAccessKeyId,
@@ -484,6 +494,11 @@ export const dbHelper = {
           message: i18n.t('db.connected'),
           database: config.database || config.sqlitePath,
           schema: res.schema ?? null,
+          // Handed back like the Redis branch does. A caller that opens a connection of its own
+          // (Connection Manager's Backup screen) must address it by this id: reading the ambient
+          // `currentConnId` instead is exactly the race §4.1 rules out, and passing the id of the
+          // connection the workspace has open would dump the wrong database.
+          connId: currentConnId,
         };
       }
       return { success: false, message: res.message || i18n.t('db.errConnect') };
@@ -567,14 +582,43 @@ export const dbHelper = {
     }
   },
 
-  async getTableData(connId: string, 
+  /**
+   * Một trang dữ liệu của bảng, kèm tổng số dòng.
+   *
+   * `countMode` mặc định `'exact'` — mọi lời gọi cũ giữ nguyên hành vi. Đừng đổi mặc định này: các
+   * đường xuất dữ liệu (`dumpBuilder`, `ExportTableDialog`) lặp cho tới khi `rows.length >=
+   * totalCount`, nên một con số **thiếu** ở đó sẽ kết thúc vòng lặp sớm và ghi ra bản dump bị cắt
+   * mà không báo lỗi. Chỉ có dòng trạng thái của grid — chỗ hiển thị được dấu `~` — mới xin
+   * `'auto'`/`'skip'`.
+   *
+   * `totalCount` là `null` khi không đếm (`'skip'`) hoặc đếm thất bại; `0` chỉ có nghĩa là bảng
+   * rỗng. `hasMore` tới từ một dòng đọc thừa ở backend nên đúng kể cả khi số đếm là ước lượng.
+   *
+   * `seekColumn` + `cursor` là keyset pagination: đưa `nextCursor` của trang trước vào `cursor` thì
+   * backend seek thay vì `OFFSET`. Bỏ trống cả hai là quay về phân trang theo số trang. `cursor`
+   * đối với frontend là **giá trị mờ** — đừng tự đọc khoá từ dòng dữ liệu để dựng nó: khoá i64 lớn
+   * hơn 2^53 mất chữ số khi qua `JSON.parse`, còn `nextCursor` thì backend viết ra chính xác.
+   */
+  async getTableData(connId: string,
     tableName: string,
     page: number = 1,
     pageSize: number = 100,
     sortBy?: string,
     sortDir?: 'asc' | 'desc',
-    filter?: string
-  ): Promise<{ rows: any[]; totalCount: number; primaryKey?: string }> {
+    filter?: string,
+    opts: {
+      countMode?: 'exact' | 'auto' | 'skip';
+      seekColumn?: string | null;
+      cursor?: string | null;
+    } = {}
+  ): Promise<{
+    rows: any[];
+    totalCount: number | null;
+    countExact: boolean;
+    hasMore: boolean;
+    nextCursor: string | null;
+    primaryKey?: string;
+  }> {
     try {
       const res: any = await invoke('get_table_data', {
         connId,
@@ -584,15 +628,41 @@ export const dbHelper = {
         sortBy: sortBy || null,
         sortDir: sortDir || null,
         filter: filter || null,
+        countMode: opts.countMode || 'exact',
+        seekColumn: opts.seekColumn || null,
+        cursor: opts.cursor || null,
       });
+      const rows = res.data || [];
       return {
-        rows: res.data || [],
-        totalCount: res.totalCount !== undefined ? res.totalCount : (res.data || []).length,
+        rows,
+        totalCount: typeof res.totalCount === 'number' ? res.totalCount : null,
+        // Một backend cũ không gửi trường này; coi như đếm chính xác, đúng như nó vẫn làm.
+        countExact: res.countExact !== false,
+        // Cũng vậy: không có `hasMore` thì suy ra từ việc trang có đầy hay không.
+        hasMore: typeof res.hasMore === 'boolean' ? res.hasMore : rows.length >= pageSize,
+        nextCursor: typeof res.nextCursor === 'string' ? res.nextCursor : null,
         primaryKey: res.primaryKey,
       };
     } catch (err) {
       console.error(err);
-      return { rows: [], totalCount: 0 };
+      return { rows: [], totalCount: null, countExact: true, hasMore: false, nextCursor: null };
+    }
+  },
+
+  /**
+   * Đổi giới hạn thời gian câu lệnh của một kết nối đang mở.
+   *
+   * Có hiệu lực từ câu lệnh kế tiếp, không cần kết nối lại: backend đọc lại config ở mỗi lần chạy
+   * (xem `stmt_timeout` trong `database.rs`). Nơi lưu lâu dài là localStorage theo server
+   * (`stmtTimeout.ts`); lệnh này chỉ đồng bộ giá trị đó sang phiên đang chạy.
+   */
+  async setStatementTimeout(connId: string, secs: number): Promise<boolean> {
+    try {
+      await invoke('set_statement_timeout', { connId, secs });
+      return true;
+    } catch (err) {
+      console.error(err);
+      return false;
     }
   },
 
@@ -1984,6 +2054,55 @@ export const dbHelper = {
         topKeys: [],
         error: err.toString(),
       };
+    }
+  },
+
+  // ---- Xuất / nhập keyspace (xem `utils/redisTransfer.ts`) ----
+  //
+  // Hai method này là `RedisExportReader.dump` và `RedisImportWriter.restore` — `redisTransfer`
+  // nhận chúng qua tham số nên nó không import `@tauri-apps/api` và test được. Chúng KHÔNG nhận
+  // `connId`: như mọi lệnh redis_* khác, `invoke` cục bộ đã ghép `currentConnId` vào.
+
+  /** DUMP + PTTL + TYPE cho một lô key. `payload` là base64. */
+  async redisDumpKeys(keys: string[]): Promise<{
+    success: boolean;
+    entries: { key: string; type: string; ttlMs: number; payload: string }[];
+    missing: string[];
+    error?: string;
+  }> {
+    try {
+      const res: any = await invoke('redis_dump_keys', { keys });
+      return { success: !!res.success, entries: res.entries || [], missing: res.missing || [] };
+    } catch (err: any) {
+      return { success: false, entries: [], missing: [], error: err.toString() };
+    }
+  },
+
+  /**
+   * RESTORE một lô bản ghi. `failed[].error` là câu chữ của chính Redis (tiếng Anh, ví dụ
+   * "DUMP payload version or checksum are wrong") nên không đi qua `backendErrors.ts` — hiện
+   * nguyên văn là đúng: đó là chẩn đoán của server, không phải câu của app.
+   */
+  async redisRestoreKeys(
+    entries: { key: string; type: string; ttlMs: number; payload: string }[],
+    replace: boolean,
+  ): Promise<{
+    success: boolean;
+    restored: number;
+    skipped: number;
+    failed: { key: string; error: string }[];
+    error?: string;
+  }> {
+    try {
+      const res: any = await invoke('redis_restore_keys', { entries, replace });
+      return {
+        success: !!res.success,
+        restored: res.restored ?? 0,
+        skipped: res.skipped ?? 0,
+        failed: res.failed || [],
+      };
+    } catch (err: any) {
+      return { success: false, restored: 0, skipped: 0, failed: [], error: err.toString() };
     }
   },
 

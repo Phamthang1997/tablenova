@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { FolderOpen } from 'lucide-react';
 import { dbHelper } from '../utils/dbHelper';
 import { getLastExportDir, pickExportFolder } from '../utils/fileSave';
-import { missingViewDeps } from '../utils/exportHelper';
+import { fileStamp, missingViewDeps, safeFileBase } from '../utils/exportHelper';
 import { ProgressBar, type ProgressState } from './ProgressBar';
 import { Modal, ModalFooter } from './Modal';
 
@@ -44,20 +44,6 @@ interface ExportDatabaseDialogProps {
   onSubmit: (options: DatabaseExportOptions) => Promise<boolean>;
   /** Database đang mở — dùng để gợi ý tên tệp khi xuất nhiều đối tượng. */
   dbName?: string;
-}
-
-/** `20260812_213045` — sắp xếp được theo thứ tự thời gian và không có ký tự Windows cấm. */
-function fileStamp(d = new Date()): string {
-  const p = (n: number) => String(n).padStart(2, '0');
-  return (
-    `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}` +
-    `_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
-  );
-}
-
-/** Bỏ ký tự không đặt được trong tên tệp (tên bảng/database có thể chứa khoảng trắng, dấu chấm…). */
-function safeFileBase(name: string): string {
-  return name.trim().replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, '_') || 'database';
 }
 
 const FORMAT_LABEL: Record<DatabaseExportFormat, string> = {

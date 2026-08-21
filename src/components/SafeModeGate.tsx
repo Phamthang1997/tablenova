@@ -64,33 +64,143 @@ export const SafeModeGate: React.FC = () => {
   const counts = Object.entries(req.sql?.counts ?? {}).sort((a, b) => b[1] - a[1]);
   const hidden = (req.sql?.total ?? 0) - (req.sql?.preview.length ?? 0);
 
+  // `commit_changes` không nói được gì với người dùng — đó là tên hàm ở Rust. Nhóm theo VIỆC mà
+  // lệnh làm, chứ không dịch từng tên: gom nhóm thì năm câu phủ hết ~40 lệnh ghi, còn dịch từng tên
+  // là ~40 chuỗi × 3 ngôn ngữ phải nhớ cập nhật mỗi lần thêm một command. Tên lệnh vẫn hiện ngay
+  // dưới, nên câu này không cần chính xác tuyệt đối — nó chỉ cần trả lời "cái này sắp làm gì".
+  const kind = ((): 'save' | 'destructive' | 'bulk' | 'schema' | 'redis' | 'other' => {
+    const c = req.command;
+    if (c === 'commit_changes') return 'save';
+    if (c.startsWith('drop_') || c === 'truncate_table' || c === 'redis_flush_db' || c.startsWith('redis_delete_')) {
+      return 'destructive';
+    }
+    if (c.startsWith('import_') || c === 'restore_backup' || c === 'generate_data' || c === 'redis_restore_keys') {
+      return 'bulk';
+    }
+    if (c.startsWith('create_') || c.startsWith('alter_') || c.startsWith('rename_') || c.startsWith('save_')) {
+      return 'schema';
+    }
+    if (c.startsWith('redis_')) return 'redis';
+    return 'other';
+  })();
+
+  // Khoá literal trong switch, không nội suy — xem ghi chú i18n ở CLAUDE.md.
+  const actionLabel = (): string => {
+    switch (kind) {
+      case 'save':
+        return t('safeMode.actionSave');
+      case 'destructive':
+        return t('safeMode.actionDestructive');
+      case 'bulk':
+        return t('safeMode.actionBulk');
+      case 'schema':
+        return t('safeMode.actionSchema');
+      case 'redis':
+        return t('safeMode.actionRedis');
+      case 'other':
+        return t('safeMode.confirmCommandIntro');
+    }
+  };
+
+  // Lệnh xoá dữ liệu/đối tượng dùng tông danh giống `ConfirmDialog`: nút xác nhận là chỗ cuối cùng
+  // còn cản được, nên nó phải trông khác với một nút "OK" bình thường.
+  const danger = kind === 'destructive';
+  const accent = danger ? 'var(--st-danger, #e5484d)' : 'var(--win-accent)';
+
+  // Nhãn nút xác nhận theo việc sắp làm. "Run" cho một lần lưu là mơ hồ đúng chỗ đáng lẽ phải rõ
+  // nhất: nút này là câu trả lời, nên nó phải nhắc lại chính động từ của câu hỏi.
+  const confirmLabel = (): string => {
+    switch (kind) {
+      case 'save':
+        return t('safeMode.confirmSave');
+      case 'destructive':
+        return t('safeMode.confirmDelete');
+      default:
+        return t('safeMode.confirmRun');
+    }
+  };
+
+  const c = req.target?.changes;
+  // Chỉ những loại thật sự có, và theo thứ tự "thêm → sửa → xoá" — một dòng "0 thêm, 0 xoá" bắt
+  // người đọc lọc lấy con số đáng đọc.
+  const changeParts = c
+    ? [
+        c.inserts > 0 ? t('safeMode.nInserts', { n: c.inserts }) : null,
+        c.updates > 0 ? t('safeMode.nUpdates', { n: c.updates }) : null,
+        c.deletes > 0 ? t('safeMode.nDeletes', { n: c.deletes }) : null,
+      ].filter(Boolean)
+    : [];
+
+  // Mức Safe Mode đang bật, để hộp thoại tự trả lời "sao lại hỏi tôi" — và nói luôn chỗ tắt.
+  const modeName = req.mode === 'all' ? t('safeMode.modeAll') : t('safeMode.modeWrites');
+
   return (
     <Modal
       title={t('safeMode.confirmTitle')}
-      icon={<ShieldAlert size={14} style={{ color: 'var(--win-accent)', flexShrink: 0 }} />}
+      icon={
+        danger
+          ? <AlertTriangle size={14} style={{ color: accent, flexShrink: 0 }} />
+          : <ShieldAlert size={14} style={{ color: accent, flexShrink: 0 }} />
+      }
       onClose={() => answer(false)}
-      width="620px"
+      // Hộp thoại rộng là để chứa khối SQL xem trước. Nhánh không có SQL chỉ có một câu và một tên
+      // lệnh, nên 620px ở đó là một ô chữ nhật gần như trống — về đúng 420px như `ConfirmDialog`.
+      width={req.sql ? '620px' : '420px'}
       maxWidth="92%"
       zIndex={100000}
     >
       <ModalBody>
-        <div style={{ fontSize: '12.5px', color: 'var(--win-text-secondary)', lineHeight: 1.6 }}>
-          {req.sql ? t('safeMode.confirmSqlIntro') : t('safeMode.confirmCommandIntro')}
+        <div
+          style={{
+            fontSize: '12.5px',
+            // Nhánh SQL: câu này là dẫn nhập cho khối SQL bên dưới nên nó là chữ phụ. Nhánh command:
+            // nó LÀ nội dung chính ("việc này sắp ghi vào CSDL"), nên không để màu chữ phụ.
+            color: req.sql ? 'var(--win-text-secondary)' : 'var(--win-text-primary)',
+            lineHeight: 1.6,
+          }}
+        >
+          {req.sql ? t('safeMode.confirmSqlIntro') : actionLabel()}
         </div>
 
+        {/* Câu mô tả của hành động, khi chỗ gọi `runApproved()` có gửi. Đứng TRÊN tên command chứ
+            không thay nó: tên command vẫn là nhãn chính xác nhất, còn dòng này là thứ trả lời được
+            câu "duyệt cái gì" cho một hành động chỉ được hỏi một lần. */}
+        {req.detail && (
+          <div style={{ fontSize: '12.5px', color: 'var(--win-text-primary)', lineHeight: 1.6 }}>
+            {req.detail}
+          </div>
+        )}
+
+        {/* Ngữ cảnh cụ thể: bảng nào, mấy thay đổi, loại gì. Đây là phần trả lời được câu hỏi thật
+            của người dùng — "Lưu 3 thay đổi vào bảng film (2 sửa, 1 xoá)" — thay cho một câu chung
+            chung cộng một tên hàm Rust. Mọi con số ở đây lấy từ chính tham số của lệnh. */}
+        {!req.sql && (req.target?.name || changeParts.length > 0 || req.target?.count) && (
+          <div style={{ fontSize: '12.5px', color: 'var(--win-text-primary)', lineHeight: 1.6 }}>
+            {req.target?.name && (
+              <div>
+                {t('safeMode.targetTable')} <span className="smg-target">{req.target.name}</span>
+              </div>
+            )}
+            {changeParts.length > 0 && (
+              <div style={{ color: 'var(--win-text-secondary)' }}>{changeParts.join(' · ')}</div>
+            )}
+            {!changeParts.length && !!req.target?.count && (
+              <div style={{ color: 'var(--win-text-secondary)' }}>
+                {t('safeMode.nItems', { n: req.target.count })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tên lệnh + mức đang bật, cỡ nhỏ, cuối cùng: tên lệnh là nhãn chính xác nhất khi cần đối
+            chiếu với log hay `COMMAND_KINDS`, nhưng nó là thứ người dùng cần SAU CÙNG, không phải
+            thứ duy nhất họ thấy. Dòng mức trả lời "sao lại hỏi tôi" và chỉ luôn chỗ tắt. */}
         {!req.sql && (
-          <div
-            style={{
-              fontFamily: 'var(--win-font-mono, monospace)',
-              fontSize: '12px',
-              color: 'var(--win-text-primary)',
-              background: 'var(--win-bg-tab-bar)',
-              border: '1px solid var(--win-border)',
-              borderRadius: '6px',
-              padding: '10px 12px',
-            }}
-          >
-            {req.command}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <span className="smg-cmd">{req.command}</span>
+            <span style={{ fontSize: '11px', color: 'var(--win-text-secondary)', lineHeight: 1.5 }}>
+              {t('safeMode.becauseMode', { mode: modeName })}
+            </span>
           </div>
         )}
 
@@ -172,8 +282,14 @@ export const SafeModeGate: React.FC = () => {
         <button className="btn btn-secondary" onClick={() => answer(false)}>
           {t('common.cancel')}
         </button>
-        <button className="btn btn-primary" onClick={() => answer(true)}>
-          {t('safeMode.confirmRun')}
+        <button
+          className="btn btn-primary"
+          onClick={() => answer(true)}
+          // Tông danh cho lệnh xoá, giống `ConfirmDialog`: nút này là chỗ cuối cùng còn cản được,
+          // nên nó không nên trông giống một nút "OK" thường.
+          style={danger ? { background: accent, borderColor: accent } : undefined}
+        >
+          {confirmLabel()}
         </button>
       </ModalFooter>
     </Modal>

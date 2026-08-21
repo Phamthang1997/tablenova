@@ -10,11 +10,13 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Activity, ChartPie, Gauge, Hourglass, Radio, Terminal, type LucideIcon } from 'lucide-react';
 import { dbHelper } from '../../utils/dbHelper';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { BulkDeleteDialog } from './BulkDeleteDialog';
 import { KeyList, type KeyListHandle } from './KeyList';
 import { PromptDialog } from './PromptDialog';
+import { RedisTransferDialog } from './RedisTransferDialog';
 import { useRedisToast } from './useRedisToast';
 import {
   REDIS_KEYS_CHANGED_EVENT,
@@ -23,6 +25,26 @@ import {
   type RedisKeysChangedDetail,
   type RedisTabType,
 } from './redisTabs';
+
+/**
+ * Icon per tool tab.
+ *
+ * Lives here and not in `redisTabs.ts`, which deliberately imports no React (see its header) —
+ * a lucide icon is a component. The `Record` over the same union is what makes a missing entry a
+ * compile error, so adding a seventh tool cannot silently render a blank button.
+ *
+ * `Hourglass` for Slow Log rather than `Timer`: `Timer` is already the auto-refresh control two
+ * rows up in `KeyList`, and the same glyph meaning two different things in one column is worse
+ * than a less obvious one.
+ */
+const TOOL_ICONS: Record<Exclude<RedisTabType, 'redis-key'>, LucideIcon> = {
+  'redis-console': Terminal,
+  'redis-dashboard': Gauge,
+  'redis-slowlog': Hourglass,
+  'redis-pubsub': Radio,
+  'redis-profiler': Activity,
+  'redis-analysis': ChartPie,
+};
 
 interface RedisSidebarViewProps {
   connId: string;
@@ -60,6 +82,7 @@ export const RedisSidebarView: React.FC<RedisSidebarViewProps> = ({
   const [creating, setCreating] = useState(false);
   const [confirmFlush, setConfirmFlush] = useState(false);
   const [bulk, setBulk] = useState<{ pattern: string; typeFilter: string } | null>(null);
+  const [transfer, setTransfer] = useState<{ prefix: string; typeFilter: string } | null>(null);
 
   /**
    * Một tab vừa ghi/xoá key. Lọc theo `connId` vì hai kết nối Redis có thể cùng mở và danh sách
@@ -99,6 +122,33 @@ export const RedisSidebarView: React.FC<RedisSidebarViewProps> = ({
     listRef.current?.refresh();
   }, [blocked, onError, onOk, t]);
 
+  /**
+   * Các nút mở tab công cụ, đưa vào thanh chân của `KeyList` (xem `footerActions`) thay cho một
+   * thanh riêng. Chỉ còn icon: sáu nhãn chữ bọc thành hai hàng, cộng dòng đếm key, ăn ~103px chiều
+   * cao cố định ở đáy sidebar và làm thanh chân này lệch hẳn so với ba thanh chân 34px còn lại.
+   * Nhãn vẫn tới được người dùng qua `title`, và `aria-label` để nút không phải là một icon vô danh
+   * với screen reader.
+   */
+  const toolButtons = (
+    <div className="redis-sidebar-actions">
+      {REDIS_TOOL_TABS.map((type) => {
+        const Icon = TOOL_ICONS[type];
+        const label = redisToolTabLabel(type, t);
+        return (
+          <button
+            key={type}
+            className="btn btn-secondary redis-sidebar-action"
+            onClick={() => onOpenTool(type)}
+            title={label}
+            aria-label={label}
+          >
+            <Icon size={13} />
+          </button>
+        );
+      })}
+    </div>
+  );
+
   return (
     <div className="sidebar-navigation redis-sidebar">
       <KeyList
@@ -113,24 +163,14 @@ export const RedisSidebarView: React.FC<RedisSidebarViewProps> = ({
         onNewKey={() => { if (!blocked()) setCreating(true); }}
         onFlush={() => { if (!blocked()) setConfirmFlush(true); }}
         onBulkDelete={(pattern, typeFilter) => { if (!blocked()) setBulk({ pattern, typeFilter }); }}
+        // Không qua `blocked()`: dialog này xuất được ở chế độ chỉ đọc, chỉ tab Nhập bị chặn (và
+        // chốt thật nằm ở `ensure_writable` trong Rust).
+        onTransfer={(prefix, typeFilter) => setTransfer({ prefix, typeFilter })}
         onError={onError}
+        footerActions={toolButtons}
       />
 
       {toast}
-
-      {/* Footer hành động: mỗi nút mở một tab công cụ trong `TabManager`, thay cho thanh tab nội bộ
-          mà `RedisBrowser` từng có. */}
-      <div className="redis-sidebar-actions">
-        {REDIS_TOOL_TABS.map((type) => (
-          <button
-            key={type}
-            className="btn btn-secondary redis-sidebar-action"
-            onClick={() => onOpenTool(type)}
-          >
-            {redisToolTabLabel(type, t)}
-          </button>
-        ))}
-      </div>
 
       <PromptDialog
         open={creating}
@@ -151,6 +191,16 @@ export const RedisSidebarView: React.FC<RedisSidebarViewProps> = ({
         confirmLabel={t('redis.flushDbRun')}
         onConfirm={doFlush}
         onCancel={() => setConfirmFlush(false)}
+      />
+      <RedisTransferDialog
+        open={transfer !== null}
+        initialPrefix={transfer?.prefix ?? ''}
+        initialTypeFilter={transfer?.typeFilter ?? ''}
+        dbIndex={dbIndex}
+        readOnly={readOnly}
+        onClose={() => setTransfer(null)}
+        onImported={() => listRef.current?.refresh()}
+        onError={onError}
       />
       <BulkDeleteDialog
         open={bulk !== null}

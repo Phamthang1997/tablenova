@@ -1864,7 +1864,8 @@ export const App: React.FC = () => {
       onShowShortcuts={() => setShowShortcuts(true)}
       onShowAbout={() => setShowAbout(true)}
       onShowWhatsNew={() => setShowWhatsNew(true)}
-      onToggleTerminal={() => { }}
+      onOpenCompare={() => setShowDbCompare(true)}
+      onToggleTerminal={handleOpenTerminal}
       aiOpen={showAi}
       onToggleAiAssistant={() => setShowAi(prev => !prev)}
       onDatabaseOpened={handleDatabaseOpened}

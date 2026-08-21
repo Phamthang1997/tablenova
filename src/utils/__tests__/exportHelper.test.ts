@@ -1,9 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildSql,
+  fileBaseFromPath,
+  fileStamp,
   isBinaryType,
   missingViewDeps,
   orderViewsByDependency,
+  safeFileBase,
   stripDefiner,
   wrapMysqlDelimiter,
 } from '../exportHelper';
@@ -293,5 +296,27 @@ describe('orderViewsByDependency', () => {
       v('sales_base', 'CREATE VIEW sales_base AS SELECT * FROM t;'),
     ]);
     expect(out.map((x) => x.name)).toEqual(['sales_base', 'Report']);
+  });
+});
+
+describe('tên tệp gợi ý', () => {
+  it('fileStamp: sắp được theo thời gian, không ký tự Windows cấm', () => {
+    expect(fileStamp(new Date(2026, 7, 21, 14, 35, 12))).toBe('20260821_143512');
+    expect(fileStamp(new Date(2026, 0, 2, 3, 4, 5))).toBe('20260102_030405');
+    expect(fileStamp(new Date(2026, 7, 21))).not.toMatch(/[\\/:*?"<>|]/);
+  });
+
+  it('safeFileBase: thay ký tự cấm, gộp khoảng trắng, rỗng thì có tên mặc định', () => {
+    expect(safeFileBase('my db')).toBe('my_db');
+    expect(safeFileBase(' sales:2026/Q1 ')).toBe('sales_2026_Q1');
+    expect(safeFileBase('C:\\data\\demo.db')).toBe('C__data_demo.db');
+    expect(safeFileBase('   ')).toBe('database');
+  });
+
+  it('fileBaseFromPath: lấy tên tệp, bỏ phần mở rộng, cả hai kiểu dấu phân cách', () => {
+    expect(fileBaseFromPath('C:\\data\\demo.db')).toBe('demo');
+    expect(fileBaseFromPath('/home/me/demo.sqlite')).toBe('demo');
+    expect(fileBaseFromPath('demo')).toBe('demo');
+    expect(fileBaseFromPath('')).toBe('');
   });
 });

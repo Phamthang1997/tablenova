@@ -3,12 +3,13 @@ import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import {
   Search, RefreshCw, Plus, Trash2, Key, Clock, Database, Square,
-  ChevronRight, ChevronDown, FolderTree, List as ListIcon, Timer,
+  ChevronRight, ChevronDown, FolderTree, List as ListIcon, Timer, ArrowDownUp,
 } from 'lucide-react';
 import { dbHelper, type RedisKeyItem } from '../../utils/dbHelper';
 import {
   buildKeyTree, flattenTree, allFolderPaths, folderMatchPattern, windowSlice, type TreeRow,
 } from '../../utils/redisKeyTree';
+import { patternToPrefix } from '../../utils/redisTransfer';
 import { clampMenu, type MenuRect } from '../../utils/menuPosition';
 import { KEY_CAP, ROW_HEIGHT, SCAN_COUNT, TYPE_COLORS, ttlText } from './shared';
 
@@ -31,7 +32,21 @@ interface KeyListProps {
   onNewKey: () => void;
   onFlush: () => void;
   onBulkDelete: (pattern: string, typeFilter: string) => void;
+  /**
+   * Mở dialog xuất/nhập. Nhận PREFIX (không phải pattern): ô tìm kiếm ở đây là một glob, còn dialog
+   * làm việc theo prefix, và `patternToPrefix` là chỗ chuyển giữa hai thứ.
+   */
+  onTransfer: (prefix: string, typeFilter: string) => void;
   onError: (msg: string) => void;
+  /**
+   * Rendered on the right of the key-count footer bar.
+   *
+   * A slot rather than a prop of its own because the two halves of that bar are owned by different
+   * components: the count is derived from state that only lives here (`keys.length`, `streaming`,
+   * `typeFilter`), while the tool buttons belong to the sidebar that opens the tabs. Reporting the
+   * count upward instead would mean a callback firing on every batch of a keyspace scan.
+   */
+  footerActions?: React.ReactNode;
 }
 
 const AUTO_REFRESH_OPTIONS = [0, 5, 10, 30, 60];
@@ -56,7 +71,9 @@ export const KeyList = React.forwardRef<KeyListHandle, KeyListProps>(function Ke
   onNewKey,
   onFlush,
   onBulkDelete,
+  onTransfer,
   onError,
+  footerActions,
 }, ref) {
   const { t } = useTranslation();
   const [pattern, setPattern] = useState('*');
@@ -335,6 +352,16 @@ export const KeyList = React.forwardRef<KeyListHandle, KeyListProps>(function Ke
           <button className="btn btn-secondary redis-keylist-grow" onClick={onNewKey} disabled={readOnly}>
             <Plus size={11} /> {t('redis.newKey')}
           </button>
+          {/* Xuất/nhập đứng cạnh xoá theo pattern vì cả hai đọc cùng một thứ: ô tìm kiếm phía
+              trên. Đây là đường vào cho một pattern bất kỳ; đường vào theo nhánh cây key nằm ở
+              menu chuột phải của nhánh. */}
+          <button
+            className="btn btn-secondary redis-icon-btn"
+            onClick={() => onTransfer(patternToPrefix(pattern), typeFilter)}
+            title={t('redis.transferBtnTitle')}
+          >
+            <ArrowDownUp size={11} />
+          </button>
           <button
             className="btn btn-secondary redis-icon-btn danger"
             onClick={() => onBulkDelete(pattern, typeFilter)}
@@ -478,6 +505,19 @@ export const KeyList = React.forwardRef<KeyListHandle, KeyListProps>(function Ke
               {t('redis.ctxFolderShown', { n: folderMenu.count.toLocaleString() })}
             </div>
           </div>
+          {/* Đường vào theo prefix: `folderMenu.path` ĐÃ là một prefix thật, không phải glob, nên
+              nó đi thẳng vào dialog mà không cần `patternToPrefix` đoán gì. Không bị `readOnly`
+              chặn — xuất là chỉ đọc. */}
+          <div
+            onClick={(e) => {
+              e.stopPropagation();
+              setFolderMenu(null);
+              onTransfer(folderMenu.path, typeFilter);
+            }}
+            className="sidebar-context-item redis-folder-menu-item"
+          >
+            <ArrowDownUp size={11} /> {t('redis.ctxExportGroup')}
+          </div>
           <div
             onClick={(e) => { e.stopPropagation(); deleteFolder(folderMenu.path); }}
             className={`sidebar-context-item redis-folder-menu-item${readOnly ? ' disabled' : ''}`}
@@ -489,14 +529,18 @@ export const KeyList = React.forwardRef<KeyListHandle, KeyListProps>(function Ke
         document.body,
       )}
 
-      {/* Chân panel giờ chỉ còn số lượng key: FLUSHDB chuyển lên cạnh bộ chọn db, còn
-          Disconnect bỏ hẳn vì TitleBar đã có sẵn ở menu Connection và nút capsule. */}
+      {/* Chân panel: số lượng key, cộng phần `footerActions` mà sidebar đưa vào (các nút mở tab
+          công cụ). FLUSHDB đã chuyển lên cạnh bộ chọn db, còn Disconnect bỏ hẳn vì TitleBar có sẵn
+          ở menu Connection và nút capsule. */}
       <div className="redis-keylist-footer">
-        {streaming
-          ? t('redis.keyCountScanning', { n: keys.length.toLocaleString() })
-          : typeFilter
-            ? t('redis.keyCountFiltered', { n: keys.length.toLocaleString() })
-            : t('redis.keyCount', { n: keys.length.toLocaleString() })}
+        <span className="redis-keylist-count">
+          {streaming
+            ? t('redis.keyCountScanning', { n: keys.length.toLocaleString() })
+            : typeFilter
+              ? t('redis.keyCountFiltered', { n: keys.length.toLocaleString() })
+              : t('redis.keyCount', { n: keys.length.toLocaleString() })}
+        </span>
+        {footerActions}
       </div>
     </div>
   );

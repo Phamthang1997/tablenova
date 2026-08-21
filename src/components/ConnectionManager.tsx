@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
-import { dbHelper } from '../utils/dbHelper';
+import { activeConnId, dbHelper, setActiveConnId } from '../utils/dbHelper';
 import type { DbConnectionConfig } from '../utils/dbHelper';
 import { Database, Server, CheckCircle2, AlertTriangle, Plus, Trash2, Save, Copy, Download, Upload, Lock, Key, TerminalSquare, Hash, FolderOpen, User, Link, Star, Eye, EyeOff, ShieldAlert, Search, X, ChevronDown, ChevronRight, RefreshCw, ShieldCheck, Network, ArrowLeft, Check, Cloud, DatabaseBackup, LogIn } from 'lucide-react';
 import { PostgresIcon, MySqlIcon, RedisIcon, SqliteIcon } from './DbIcons';
@@ -20,6 +20,7 @@ import {
 import { splitStatements } from '../sql/statements';
 import { buildDump, dumpReaderFor } from '../utils/dumpBuilder';
 import { gzipText, getLastExportDir, saveExportFile, pickOpenFile, pickSqliteDatabaseFile } from '../utils/fileSave';
+import { fileBaseFromPath, fileStamp, safeFileBase } from '../utils/exportHelper';
 import { ProgressBar, type ProgressState } from './ProgressBar';
 import { ConfirmDialog } from './ConfirmDialog';
 
@@ -323,7 +324,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
   const [brMyPassword, setBrMyPassword] = useState('');
   const [brMyDatabase, setBrMyDatabase] = useState('');
 
-  const [brFilename, setBrFilename] = useState('database_backup');
+  // Tên tệp gợi ý là `bk_<database>_<thời điểm>`, nhưng người dùng gõ tay là dừng gợi ý
+  // (`brFilenameTouched`) — không thì đổi database một cái là xoá mất tên họ vừa đặt.
+  const [brFilename, setBrFilename] = useState('');
+  const [brFilenameTouched, setBrFilenameTouched] = useState(false);
+  // Dấu thời gian chốt MỘT lần lúc mở màn hình: tính lại theo từng lần render thì con số trong ô
+  // nhảy liên tục trong lúc người dùng đang gõ máy chủ/database.
+  const [brStamp, setBrStamp] = useState(() => fileStamp());
   const [brCompressGzip, setBrCompressGzip] = useState(false);
   const [brDropTable, setBrDropTable] = useState(true);
   const [brIncludeStructure, setBrIncludeStructure] = useState(true);
@@ -344,6 +351,24 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
   const [brSqlText, setBrSqlText] = useState<string>('');
   const [availableDatabases, setAvailableDatabases] = useState<string[]>([]);
   const [loadingDbs, setLoadingDbs] = useState(false);
+
+  // Vào lại màn Sao lưu & Phục hồi thì gợi ý lại tên tệp với dấu thời gian mới.
+  useEffect(() => {
+    if (activeType !== 'backup_restore') return;
+    setBrFilenameTouched(false);
+    setBrStamp(fileStamp());
+  }, [activeType]);
+
+  /**
+   * `bk_<database>_<20260821_143512>`: sắp được theo thời gian, và hai lần sao lưu liên tiếp
+   * không ghi đè lên nhau. SQLite lấy tên tệp (không phần mở rộng) chứ không lấy cả đường dẫn —
+   * `safeFileBase` sẽ biến `C:\data\demo.db` thành `C__data_demo.db`.
+   */
+  const brDbLabel = brType === 'sqlite'
+    ? fileBaseFromPath(brSqlitePath)
+    : brType === 'postgres' ? brPgDatabase : brMyDatabase;
+  const brSuggestedFilename = `bk_${safeFileBase(brDbLabel)}_${brStamp}`;
+  const brEffectiveFilename = brFilenameTouched ? brFilename : brSuggestedFilename;
 
   // Cấu hình SSL đang chọn ở form — phải gửi kèm mọi lệnh phụ (liệt kê database,
   // sao lưu/phục hồi), nếu không backend sẽ hiểu là DISABLED và tắt hẳn TLS.
@@ -1411,23 +1436,31 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
       };
     }
 
+    // Màn này mở kết nối RIÊNG của nó, nên mọi lệnh phải mang đúng id vừa mint — không phải
+    // `connId` của workspace (prop). Khi chưa kết nối gì, prop là chuỗi rỗng và `getTables` trả
+    // mảng rỗng, tức là báo "database không có bảng nào"; khi đang có kết nối, nó trỏ vào
+    // database KHÁC và bản sao lưu là của database đó. `prevConnId` được trả lại ở `finally`
+    // vì `connect()` đổi luôn kết nối active của cả app.
+    const prevConnId = activeConnId();
+    let brConnId = '';
     try {
       const connRes = await dbHelper.connect(config);
       if (!connRes.success) {
         throw new Error(t('connection.errConnectFailed', { message: connRes.message }));
       }
+      brConnId = connRes.connId || activeConnId();
 
       if (brAction === 'backup') {
         // Dump dựng bằng đúng code của popup "Xuất Cơ sở dữ liệu" (buildDump): trước đây chỗ
         // này gọi lệnh Rust `export_multi_tables`, vốn coi view là bảng (sinh DROP TABLE và
         // INSERT INTO cho view), ghi một INSERT cho mỗi dòng, và không hề có routine/trigger.
-        const list = await dbHelper.getTables(connId);
+        const list = await dbHelper.getTables(brConnId);
         const tables = list.map(item => item.name);
         if (tables.length === 0) {
           throw new Error(t('connection.errNoTablesToBackup'));
         }
         const [dbObjs, triggers] = await Promise.all([
-          dbHelper.getDatabaseObjects(connId),
+          dbHelper.getDatabaseObjects(brConnId),
           dbHelper.getAllTriggers(),
         ]);
 
@@ -1450,9 +1483,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
           // Không có ô chọn schema ở màn hình này, nên đây luôn là schema đầu search_path.
           schema: connRes.schema,
           onProgress: setBrProgress,
-        }, dumpReaderFor(dbHelper, connId));
+        }, dumpReaderFor(dbHelper, brConnId));
 
-        const base = (brFilename.trim() || 'database_backup').replace(/\.(sql|sql\.gz|gz)$/i, '');
+        const base = brEffectiveFilename.trim().replace(/\.(sql|sql\.gz|gz)$/i, '') || brSuggestedFilename;
         const fileName = base + (brCompressGzip ? '.sql.gz' : '.sql');
         setBrProgress({ label: t('app.exportWriting') });
         const payload = brCompressGzip ? await gzipText(sqlText) : sqlText;
@@ -1528,7 +1561,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
     } catch (err: any) {
       setErrorMsg(err.message);
     } finally {
-      await dbHelper.disconnect();
+      // Chỉ đóng kết nối do màn này mở. `disconnect()` không tham số đóng kết nối đang active —
+      // mà khi `connect()` thất bại thì cái đang active vẫn là kết nối của workspace, tức là nó
+      // đóng đúng kết nối người dùng đang dùng dở.
+      if (brConnId) await dbHelper.disconnect(brConnId);
+      setActiveConnId(prevConnId);
       setBrLoading(false);
       // Lỗi giữa chừng thì thanh tiến độ phải tắt, nếu không nó đứng lại ở % cuối cùng và
       // che luôn chỗ hiện thông báo lỗi.
@@ -2548,7 +2585,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
             <div className="cm-fields">
               <div className="form-group" style={{ maxWidth: '340px' }}>
                 <label>{t('connection.brFilename')}</label>
-                <input type="text" className="form-input" value={brFilename} onChange={(e) => setBrFilename(e.target.value)} />
+                <input
+                  type="text"
+                  className="form-input"
+                  value={brEffectiveFilename}
+                  onChange={(e) => { setBrFilenameTouched(true); setBrFilename(e.target.value); }}
+                />
+                <div className="cm-hint">{brEffectiveFilename}{brCompressGzip ? '.sql.gz' : '.sql'}</div>
               </div>
               <div className="cm-check-grid">
                 <label className="cm-check"><input type="checkbox" checked={brDropTable} onChange={(e) => setBrDropTable(e.target.checked)} /><span>DROP TABLE IF EXISTS</span></label>

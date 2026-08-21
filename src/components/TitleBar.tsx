@@ -553,6 +553,8 @@ export const TitleBar: React.FC<TitleBarProps> = ({
             connKey={connKey}
             readOnly={readOnly}
             onToggleReadOnly={onToggleReadOnly}
+            connId={connId}
+            dbType={(connStatus?.dbType || activeConnectionInfo?.dbType || '').toLowerCase()}
           />
         ),
       },

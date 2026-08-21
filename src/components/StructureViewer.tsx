@@ -235,6 +235,13 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
   const [allTables, setAllTables] = useState<string[]>([]);
   const [refColumns, setRefColumns] = useState<string[]>([]);
 
+  // Tự động ẩn thông báo lỗi sau 6 giây
+  useEffect(() => {
+    if (!errorMsg) return;
+    const t = setTimeout(() => setErrorMsg(null), 6000);
+    return () => clearTimeout(t);
+  }, [errorMsg]);
+
   // Load all tables for foreign key referenced table dropdown selection
   useEffect(() => {
     const fetchAllTables = async () => {
