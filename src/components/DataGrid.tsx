@@ -18,7 +18,7 @@ import { ProgressBar, type ProgressState } from './ProgressBar';
 import { ImportFilePicker } from './ImportFilePicker';
 import { ExportTableDialog } from './ExportTableDialog';
 import { Modal, ModalBody, ModalFooter } from './Modal';
-import { LazyEditorFallback } from './LazyEditorFallback';
+import { LazyModalFallback } from './LazyEditorFallback';
 
 // Lazy vì `RowDocumentModal` có tab JSON dựng bằng `@monaco-editor/react`: import tĩnh ở đây là
 // một đường tĩnh từ entry tới Monaco, và nó vô hiệu hoá luôn `React.lazy` của `SqlEditor` lẫn Redis
@@ -2749,7 +2749,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
 
       {/* ─── Studio 3T / TablePlus Style Document / Row Viewer Modal ─── */}
       {documentViewerIndex !== null && (
-        <React.Suspense fallback={<LazyEditorFallback />}>
+        <React.Suspense fallback={<LazyModalFallback />}>
           <RowDocumentModal
             isOpen={documentViewerIndex !== null}
             onClose={() => setDocumentViewerIndex(null)}
