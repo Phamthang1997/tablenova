@@ -170,9 +170,9 @@ Mỗi phase ship được độc lập, và Phase 0 đã lấy được phần l
 2. ✅ [`components/JobsTray.tsx`](../src/components/JobsTray.tsx): một **nút chuông** trên thanh
    tiêu đề (badge = số việc đang chạy), mở một **popover neo ngay dưới nút** — không phải hộp thoại
    giữa màn hình: việc chạy nền là thông báo, và xem nó không được che thứ đang làm. Trong popover:
-   progress bar, huỷ, "mở thư mục", text lỗi, xoá việc đã xong. Dùng lại đúng dáng popover của
-   `SafeModeControl` (`.sm-backdrop`/`.sm-pop`/`.sm-pop-title` — tiền tố `sm-` chỉ là dấu vết chỗ
-   dùng đầu tiên) thay vì chép ra bộ rule thứ hai. Không có job nào thì nút **không hiện** — thanh
+   progress bar, huỷ, "mở thư mục", text lỗi, xoá việc đã xong. `.jobs-pop` dùng CHUNG rule với `.sm-pop`
+   của Safe Mode bằng một selector ghép trong `index.css` (không phải bản sao), nên dáng popover của
+   thanh tiêu đề sửa một chỗ là cả hai đổi theo. Không có job nào thì nút **không hiện** — thanh
    tiêu đề giữ nguyên như trước tới lần chạy đầu tiên.
 3. ✅ Bốn luồng nặng chuyển sang submit-and-forget: Export Database, Import Database
    (`App.tsx`), Backup/Restore của Connection Manager, Data Generator. Ba cái đầu đóng dialog ngay;

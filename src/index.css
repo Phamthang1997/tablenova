@@ -12626,13 +12626,17 @@ input.rename-input {
    Cùng họ với `.qs-pop` bên dưới và cố ý dùng chung `--win-bg-popover`: nền `--win-bg-window`
    trong suốt ở theme sáng nên nhãn tab phía sau lọt qua. Portal + backdrop cũng vì popover này
    mở từ trong `.tb-capsule` (overflow: hidden) nên nằm trong cây sẽ bị cắt. */
-.sm-backdrop {
+/* Popover neo dưới một nút trên thanh tiêu đề. Safe Mode và Việc chạy nền dùng CHUNG hai rule
+   này (nền chặn + hộp) để sửa một bên là bên kia không lệch. */
+.sm-backdrop,
+.jobs-backdrop {
   position: fixed;
   inset: 0;
   z-index: 99998;
 }
 
-.sm-pop {
+.sm-pop,
+.jobs-pop {
   position: fixed;
   z-index: 99999;
   width: 316px;
@@ -12769,6 +12773,128 @@ input.rename-input {
   height: 1px;
   margin: 5px 8px;
   background: var(--win-border);
+}
+
+/* Việc chạy nền (JobsTray). Dáng hộp lấy từ .sm-pop ở trên; đây chỉ là chiều rộng và danh sách. */
+.jobs-pop {
+  width: 380px;
+}
+
+.jobs-pop-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.jobs-pop-clear {
+  background: none;
+  border: none;
+  padding: 0 10px 8px;
+  font-size: 11px;
+  color: var(--win-accent);
+  cursor: pointer;
+}
+
+.jobs-pop-clear:disabled {
+  color: var(--win-text-disabled);
+  cursor: default;
+}
+
+/* Cao hơn nữa thì popover che gần hết cửa sổ; danh sách tự cuộn. */
+.jobs-list {
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.jobs-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 8px 10px;
+}
+
+.jobs-row + .jobs-row {
+  border-top: 1px solid var(--win-border);
+}
+
+.jobs-row-icon {
+  padding-top: 1px;
+  flex-shrink: 0;
+}
+
+.jobs-row-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.jobs-row-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.jobs-row-title {
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jobs-row-state,
+.jobs-row-note {
+  font-size: 10px;
+  color: var(--win-text-secondary);
+}
+
+.jobs-row-state {
+  flex-shrink: 0;
+}
+
+.jobs-row-error {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--win-danger, #ef4444);
+  word-break: break-word;
+}
+
+.jobs-row-result {
+  font-size: 11px;
+  color: var(--win-text-secondary);
+  word-break: break-word;
+}
+
+.jobs-row-warn {
+  color: var(--win-warning, #f59e0b);
+}
+
+.jobs-row-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* Số việc đang chạy, nằm cạnh cái chuông. */
+.jobs-badge {
+  font-size: 10px;
+  font-weight: 600;
+  margin-left: 3px;
+}
+
+.jobs-icon-ok {
+  color: var(--win-success, #22c55e);
+}
+
+.jobs-icon-error {
+  color: var(--win-danger, #ef4444);
+}
+
+.jobs-icon-muted {
+  color: var(--win-text-secondary);
 }
 
 .qs-backdrop {

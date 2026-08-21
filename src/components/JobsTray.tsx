@@ -89,47 +89,33 @@ export const JobsTray: React.FC = () => {
           {/* Chuông là biểu tượng của thông báo; số việc đang chạy là cái badge cạnh nó — cùng
               cách đọc với mọi khay thông báo, không phải một icon đổi hình theo trạng thái. */}
           <Bell size={13} />
-          {active.length > 0 && (
-            <span style={{ fontSize: '10px', fontWeight: 600, marginLeft: '3px' }}>{active.length}</span>
-          )}
+          {active.length > 0 && <span className="jobs-badge">{active.length}</span>}
         </button>
       </div>
 
       {anchor &&
         createPortal(
           <>
-            {/* `.sm-backdrop` / `.sm-pop` / `.sm-pop-title` là dáng popover CHUNG của thanh tiêu
-                đề (nền chặn, hộp bo góc + blur, tiêu đề in hoa nhỏ) — tiền tố `sm-` chỉ là dấu vết
-                của chỗ dùng đầu tiên (Safe Mode). Dùng lại thay vì chép ra bộ rule thứ hai, để sửa
-                một chỗ là hai popover vẫn giống nhau. */}
-            <div className="sm-backdrop" onClick={() => setAnchor(null)} />
-            <div
-              className="sm-pop"
-              style={{ top: anchor.top, left: anchor.left, width: POP_WIDTH }}
-              role="dialog"
-            >
-              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px' }}>
+            {/* `.jobs-backdrop`/`.jobs-pop` dùng CHUNG rule với `.sm-backdrop`/`.sm-pop` của Safe
+                Mode (một selector ghép trong index.css, không phải bản sao) — dáng popover của thanh
+                tiêu đề sửa một chỗ là cả hai đổi theo. `.sm-pop-title` là hàng tiêu đề của dáng đó. */}
+            <div className="jobs-backdrop" onClick={() => setAnchor(null)} />
+            {/* Chỉ `top`/`left` là inline — đó là giá trị đo lúc render; dáng nằm ở .jobs-pop. */}
+            <div className="jobs-pop" style={{ top: anchor.top, left: anchor.left }} role="dialog">
+              <div className="jobs-pop-head">
                 <div className="sm-pop-title">{t('jobs.panelTitle')}</div>
                 <button
                   type="button"
+                  className="jobs-pop-clear"
                   disabled={finished.length === 0}
                   onClick={clearFinishedJobs}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    padding: '0 10px 8px',
-                    fontSize: '11px',
-                    color: finished.length ? 'var(--win-accent)' : 'var(--win-text-disabled)',
-                    cursor: finished.length ? 'pointer' : 'default',
-                  }}
                 >
                   {t('jobs.clearFinished')}
                 </button>
               </div>
-              {/* Cao hơn nữa thì popover che gần hết cửa sổ; danh sách tự cuộn. */}
-              <div style={{ maxHeight: '320px', overflowY: 'auto' }}>
-                {jobs.map((job, i) => (
-                  <JobRow key={job.id} job={job} divider={i > 0} />
+              <div className="jobs-list">
+                {jobs.map((job) => (
+                  <JobRow key={job.id} job={job} />
                 ))}
               </div>
             </div>
@@ -174,7 +160,7 @@ const STATE_KEY: Record<JobRecord['state'], string> = {
   cancelled: 'jobs.stateCancelled',
 };
 
-const JobRow: React.FC<{ job: JobRecord; divider: boolean }> = ({ job, divider }) => {
+const JobRow: React.FC<{ job: JobRecord }> = ({ job }) => {
   const { t } = useTranslation();
   const running = job.state === 'running';
   const queued = job.state === 'queued';
@@ -186,62 +172,44 @@ const JobRow: React.FC<{ job: JobRecord; divider: boolean }> = ({ job, divider }
   const icon = running ? (
     <Loader2 size={13} className="loading-spinner" />
   ) : job.state === 'done' ? (
-    <CheckCircle2 size={13} style={{ color: 'var(--win-success, #22c55e)' }} />
+    <CheckCircle2 size={13} className="jobs-icon-ok" />
   ) : job.state === 'error' ? (
-    <AlertTriangle size={13} style={{ color: 'var(--win-danger, #ef4444)' }} />
+    <AlertTriangle size={13} className="jobs-icon-error" />
   ) : job.state === 'cancelled' ? (
-    <Ban size={13} style={{ color: 'var(--win-text-secondary)' }} />
+    <Ban size={13} className="jobs-icon-muted" />
   ) : (
-    <Bell size={13} style={{ color: 'var(--win-text-secondary)' }} />
+    <Bell size={13} className="jobs-icon-muted" />
   );
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        gap: '8px',
-        alignItems: 'flex-start',
-        padding: '8px 10px',
-        borderTop: divider ? '1px solid var(--win-border)' : undefined,
-      }}
-    >
-      <div style={{ paddingTop: '1px' }}>{icon}</div>
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '4px' }}>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'baseline' }}>
-          <span style={{ fontSize: '12px', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {job.title}
-          </span>
-          <span style={{ fontSize: '10px', color: 'var(--win-text-secondary)', flexShrink: 0 }}>
+    <div className="jobs-row">
+      <div className="jobs-row-icon">{icon}</div>
+      <div className="jobs-row-body">
+        <div className="jobs-row-head">
+          <span className="jobs-row-title">{job.title}</span>
+          <span className="jobs-row-state">
             {job.cancelRequested && running ? t('jobs.cancelling') : stateLabel}
           </span>
         </div>
 
         {/* Đang chờ vì có job khác đang ghi vào cùng database — nói ra, đừng để nó im ở 0%. */}
-        {queued && (
-          <div style={{ fontSize: '10px', color: 'var(--win-text-secondary)' }}>{t('jobs.waitingTurn')}</div>
-        )}
+        {queued && <div className="jobs-row-note">{t('jobs.waitingTurn')}</div>}
 
         {running && job.progress && (
           <ProgressBar progress={{ ...job.progress, label: job.progress.label || job.title }} />
         )}
 
-        {job.error && (
-          <div style={{ fontSize: '11px', lineHeight: 1.45, color: 'var(--win-danger, #ef4444)', wordBreak: 'break-word' }}>
-            {job.error}
-          </div>
-        )}
+        {job.error && <div className="jobs-row-error">{job.error}</div>}
 
         {job.result && (
-          <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)', wordBreak: 'break-word' }}>
+          <div className="jobs-row-result">
             {job.result.message}
-            {job.result.warning && (
-              <div style={{ color: 'var(--win-warning, #f59e0b)' }}>{job.result.warning}</div>
-            )}
+            {job.result.warning && <div className="jobs-row-warn">{job.result.warning}</div>}
           </div>
         )}
       </div>
 
-      <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+      <div className="jobs-row-actions">
         {(running || queued) && (
           <button
             type="button"
