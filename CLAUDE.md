@@ -24,6 +24,10 @@ Development requires a native toolchain on Windows: Rust (cargo), a MinGW64 GCC 
 
 `demo.db` / `demo1.db` at the repo root are sample SQLite databases used for manual testing via the Connection Manager — not fixtures wired into any automated test.
 
+## Git
+
+- **Never add a `Co-Authored-By:` trailer to a commit message or a PR body.** No `Co-Authored-By: Claude …` line, in any form or spelling. This deliberately overrides Claude Code's default behaviour, which appends one — the trailer is noise in this repo's history, and the commits already written with it are not a precedent to follow.
+
 ## Architecture
 
 ### Process split
