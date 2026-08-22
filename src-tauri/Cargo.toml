@@ -35,7 +35,7 @@ bigdecimal = "0.4"
 # `v4` cho `Uuid::new_v4()`: conn_id do backend sinh (multi-connection-plan §4.3 — opaque, không
 # dẫn xuất từ config vì config mang secret). sqlx chỉ cần uuid để decode nên không bật feature này.
 uuid = { version = "1", features = ["v4"] }
-russh = "0.62.5"
+russh = "0.63.0"
 portable-pty = "0.9"
 flate2 = "1.1.9"
 zip = "8.6.0"
@@ -50,7 +50,11 @@ sha2 = "0.11"
 # possible: without it redis-rs refuses both `#insecure` and `danger_accept_invalid_hostnames`
 # at connect time. VERIFY_CA is also the only usable mode when Redis is reached over an SSH
 # tunnel, because the certificate is then presented for 127.0.0.1.
-redis = { version = "1.5.0", features = ["tokio-comp", "tokio-rustls-comp", "tls-rustls-insecure"] }
+redis = { version = "1.5.0", features = [
+    "tokio-comp",
+    "tokio-rustls-comp",
+    "tls-rustls-insecure",
+] }
 # Payload DUMP của Redis là byte thô. Xuất/nhập keyspace ghi nó vào tệp NDJSON, nên cần base64:
 # mảng số như `redis_get_key` dùng cho `bytes` thì gấp ~3 lần kích thước và không ghi được ra tệp
 # text. Bản 0.22 đã có trong Cargo.lock từ trước (dependency gián tiếp) nên không thêm gì mới vào
@@ -71,7 +75,9 @@ keyring = { version = "4.1.6", features = ["windows-native-keyring-store"] }
 keyring = { version = "4.1.6", features = ["apple-native-keyring-store"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-keyring = { version = "4.1.6", features = ["zbus-secret-service-keyring-store"] }
+keyring = { version = "4.1.6", features = [
+    "zbus-secret-service-keyring-store",
+] }
 
 # Release-only tuning: `tauri build` (the installable app) uses this profile, while
 # `tauri dev` uses [profile.dev] and writes to a different target dir, so a running
@@ -82,6 +88,6 @@ keyring = { version = "4.1.6", features = ["zbus-secret-service-keyring-store"] 
 # open connection and every unsaved SQL draft), and release already implies
 # `overflow-checks = false`, so spelling it out changes nothing.
 [profile.release]
-lto = "fat"          # whole-program LTO; pairs with codegen-units = 1
-codegen-units = 1    # one unit lets LLVM optimize across the whole crate graph
-strip = true         # drop symbol names (release carries no debuginfo already)
+lto = "fat"       # whole-program LTO; pairs with codegen-units = 1
+codegen-units = 1 # one unit lets LLVM optimize across the whole crate graph
+strip = true      # drop symbol names (release carries no debuginfo already)
