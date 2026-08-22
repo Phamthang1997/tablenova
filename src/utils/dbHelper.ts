@@ -7,6 +7,7 @@ import {
   inheritConnection,
   registerConnection,
 } from './safeMode';
+import { getStmtTimeoutForConfig } from './stmtTimeout';
 import type {
   CompareSide,
   DataCompareResult,
@@ -90,6 +91,17 @@ async function invoke<T = any>(cmd: string, args?: Record<string, unknown>): Pro
   }
 }
 
+/**
+ * Chỉ đặt `connId` khi có giá trị thật.
+ *
+ * Không viết thẳng `{ ...args, connId }` được: `invoke` ở trên merge `{ connId: currentConnId,
+ * ...args }`, nên một `connId: undefined` tường minh sẽ **ghi đè** id ambient bằng `undefined` và
+ * mọi lệnh mất kết nối. Đây là chỗ duy nhất biết luật đó.
+ */
+function withConnId(args: Record<string, unknown>, connId?: string): Record<string, unknown> {
+  return connId ? { ...args, connId } : args;
+}
+
 // Message do backend đẩy qua Channel khi stream kết quả SQL (execute_query_stream).
 export interface QueryStreamMessage {
   type: 'columns' | 'rows' | 'affected' | 'done' | 'error';
@@ -165,6 +177,11 @@ export interface DbConnectionConfig {
   sslKeyPath?: string;
   sslCertPath?: string;
   sslCaPath?: string;
+  /**
+   * Số giây tối đa cho MỘT câu lệnh người dùng chạy (SQL editor + đọc trang ở grid). `0`/vắng =
+   * không giới hạn. Postgres/MySQL; SQLite bỏ qua (xem `stmt_timeout` trong `database.rs`).
+   */
+  statementTimeoutSecs?: number;
   // AWS IAM authentication (RDS/Aurora)
   authMethod?: 'password' | 'aws_iam';
   awsAuthType?: 'access_key' | 'profile';
@@ -460,6 +477,10 @@ export const dbHelper = {
         sslKeyPath: config.sslKeyPath,
         sslCertPath: config.sslCertPath,
         sslCaPath: config.sslCaPath,
+        // Giới hạn thời gian câu lệnh lưu theo server ở localStorage (popover Safe Mode), không
+        // nằm trong profile. Đọc ở đây để một kết nối vừa mở đã có đúng giới hạn ngay từ câu lệnh
+        // đầu — `setStatementTimeout` chỉ dùng cho lần người dùng đổi giữa phiên.
+        statementTimeoutSecs: getStmtTimeoutForConfig(config),
         authMethod: config.authMethod,
         awsAuthType: config.awsAuthType,
         awsAccessKeyId: config.awsAccessKeyId,
@@ -484,6 +505,11 @@ export const dbHelper = {
           message: i18n.t('db.connected'),
           database: config.database || config.sqlitePath,
           schema: res.schema ?? null,
+          // Handed back like the Redis branch does. A caller that opens a connection of its own
+          // (Connection Manager's Backup screen) must address it by this id: reading the ambient
+          // `currentConnId` instead is exactly the race §4.1 rules out, and passing the id of the
+          // connection the workspace has open would dump the wrong database.
+          connId: currentConnId,
         };
       }
       return { success: false, message: res.message || i18n.t('db.errConnect') };
@@ -567,14 +593,43 @@ export const dbHelper = {
     }
   },
 
-  async getTableData(connId: string, 
+  /**
+   * Một trang dữ liệu của bảng, kèm tổng số dòng.
+   *
+   * `countMode` mặc định `'exact'` — mọi lời gọi cũ giữ nguyên hành vi. Đừng đổi mặc định này: các
+   * đường xuất dữ liệu (`dumpBuilder`, `ExportTableDialog`) lặp cho tới khi `rows.length >=
+   * totalCount`, nên một con số **thiếu** ở đó sẽ kết thúc vòng lặp sớm và ghi ra bản dump bị cắt
+   * mà không báo lỗi. Chỉ có dòng trạng thái của grid — chỗ hiển thị được dấu `~` — mới xin
+   * `'auto'`/`'skip'`.
+   *
+   * `totalCount` là `null` khi không đếm (`'skip'`) hoặc đếm thất bại; `0` chỉ có nghĩa là bảng
+   * rỗng. `hasMore` tới từ một dòng đọc thừa ở backend nên đúng kể cả khi số đếm là ước lượng.
+   *
+   * `seekColumn` + `cursor` là keyset pagination: đưa `nextCursor` của trang trước vào `cursor` thì
+   * backend seek thay vì `OFFSET`. Bỏ trống cả hai là quay về phân trang theo số trang. `cursor`
+   * đối với frontend là **giá trị mờ** — đừng tự đọc khoá từ dòng dữ liệu để dựng nó: khoá i64 lớn
+   * hơn 2^53 mất chữ số khi qua `JSON.parse`, còn `nextCursor` thì backend viết ra chính xác.
+   */
+  async getTableData(connId: string,
     tableName: string,
     page: number = 1,
     pageSize: number = 100,
     sortBy?: string,
     sortDir?: 'asc' | 'desc',
-    filter?: string
-  ): Promise<{ rows: any[]; totalCount: number; primaryKey?: string }> {
+    filter?: string,
+    opts: {
+      countMode?: 'exact' | 'auto' | 'skip';
+      seekColumn?: string | null;
+      cursor?: string | null;
+    } = {}
+  ): Promise<{
+    rows: any[];
+    totalCount: number | null;
+    countExact: boolean;
+    hasMore: boolean;
+    nextCursor: string | null;
+    primaryKey?: string;
+  }> {
     try {
       const res: any = await invoke('get_table_data', {
         connId,
@@ -584,15 +639,41 @@ export const dbHelper = {
         sortBy: sortBy || null,
         sortDir: sortDir || null,
         filter: filter || null,
+        countMode: opts.countMode || 'exact',
+        seekColumn: opts.seekColumn || null,
+        cursor: opts.cursor || null,
       });
+      const rows = res.data || [];
       return {
-        rows: res.data || [],
-        totalCount: res.totalCount !== undefined ? res.totalCount : (res.data || []).length,
+        rows,
+        totalCount: typeof res.totalCount === 'number' ? res.totalCount : null,
+        // Một backend cũ không gửi trường này; coi như đếm chính xác, đúng như nó vẫn làm.
+        countExact: res.countExact !== false,
+        // Cũng vậy: không có `hasMore` thì suy ra từ việc trang có đầy hay không.
+        hasMore: typeof res.hasMore === 'boolean' ? res.hasMore : rows.length >= pageSize,
+        nextCursor: typeof res.nextCursor === 'string' ? res.nextCursor : null,
         primaryKey: res.primaryKey,
       };
     } catch (err) {
       console.error(err);
-      return { rows: [], totalCount: 0 };
+      return { rows: [], totalCount: null, countExact: true, hasMore: false, nextCursor: null };
+    }
+  },
+
+  /**
+   * Đổi giới hạn thời gian câu lệnh của một kết nối đang mở.
+   *
+   * Có hiệu lực từ câu lệnh kế tiếp, không cần kết nối lại: backend đọc lại config ở mỗi lần chạy
+   * (xem `stmt_timeout` trong `database.rs`). Nơi lưu lâu dài là localStorage theo server
+   * (`stmtTimeout.ts`); lệnh này chỉ đồng bộ giá trị đó sang phiên đang chạy.
+   */
+  async setStatementTimeout(connId: string, secs: number): Promise<boolean> {
+    try {
+      await invoke('set_statement_timeout', { connId, secs });
+      return true;
+    } catch (err) {
+      console.error(err);
+      return false;
     }
   },
 
@@ -648,9 +729,9 @@ export const dbHelper = {
    * dump — một lần gọi cho cả database, và có tên bảng chủ vì Postgres không DROP được trigger
    * nếu thiếu `ON <table>`.
    */
-  async getAllTriggers(): Promise<{ name: string; table: string; statement: string }[]> {
+  async getAllTriggers(connId: string): Promise<{ name: string; table: string; statement: string }[]> {
     try {
-      const res: any = await invoke('get_all_triggers');
+      const res: any = await invoke('get_all_triggers', { connId });
       return res.triggers || [];
     } catch (err) {
       console.warn('[dbHelper] get_all_triggers failed:', err);
@@ -663,7 +744,7 @@ export const dbHelper = {
    * (index, FK/UNIQUE/CHECK, comment, sequence). Nhóm theo VỊ TRÍ phải chạy — xem
    * `get_table_ddl_extras` bên Rust.
    */
-  async getTableDdlExtras(tableName: string): Promise<{
+  async getTableDdlExtras(connId: string, tableName: string): Promise<{
     sequences: string[];
     indexes: string[];
     constraints: string[];
@@ -672,7 +753,7 @@ export const dbHelper = {
   }> {
     const empty = { sequences: [], indexes: [], constraints: [], comments: [], sequenceValues: [] };
     try {
-      const res: any = await invoke('get_table_ddl_extras', { tableName });
+      const res: any = await invoke('get_table_ddl_extras', { connId, tableName });
       return {
         sequences: res.sequences || [],
         indexes: res.indexes || [],
@@ -1381,7 +1462,9 @@ export const dbHelper = {
     tables: string[],
     onProgress?: (msg: { type: string; done?: number; total?: number; statementsCount?: number }) => void,
     /** Gặp lệnh lỗi thì bỏ qua và chạy tiếp thay vì rollback toàn bộ (xem `restore_backup`). */
-    continueOnError?: boolean
+    continueOnError?: boolean,
+    /** Kết nối đích, tường minh — cùng lý do với `generateData`: job nền có thể chờ trong hàng đợi. */
+    connId?: string,
   ): Promise<{
     success: boolean;
     statementsCount?: number;
@@ -1395,12 +1478,12 @@ export const dbHelper = {
       // Deserialize nên không dùng được Option<Channel>). Không có callback thì bỏ tin nhắn đi.
       const channel = new Channel<any>();
       if (onProgress) channel.onmessage = onProgress;
-      const res: any = await invoke('restore_backup', {
+      const res: any = await invoke('restore_backup', withConnId({
         sqlContent,
         tables,
         onProgress: channel,
         continueOnError: !!continueOnError,
-      });
+      }, connId));
       return {
         success: !!res.success,
         statementsCount: res.statementsCount,
@@ -1987,6 +2070,55 @@ export const dbHelper = {
     }
   },
 
+  // ---- Xuất / nhập keyspace (xem `utils/redisTransfer.ts`) ----
+  //
+  // Hai method này là `RedisExportReader.dump` và `RedisImportWriter.restore` — `redisTransfer`
+  // nhận chúng qua tham số nên nó không import `@tauri-apps/api` và test được. Chúng KHÔNG nhận
+  // `connId`: như mọi lệnh redis_* khác, `invoke` cục bộ đã ghép `currentConnId` vào.
+
+  /** DUMP + PTTL + TYPE cho một lô key. `payload` là base64. */
+  async redisDumpKeys(keys: string[]): Promise<{
+    success: boolean;
+    entries: { key: string; type: string; ttlMs: number; payload: string }[];
+    missing: string[];
+    error?: string;
+  }> {
+    try {
+      const res: any = await invoke('redis_dump_keys', { keys });
+      return { success: !!res.success, entries: res.entries || [], missing: res.missing || [] };
+    } catch (err: any) {
+      return { success: false, entries: [], missing: [], error: err.toString() };
+    }
+  },
+
+  /**
+   * RESTORE một lô bản ghi. `failed[].error` là câu chữ của chính Redis (tiếng Anh, ví dụ
+   * "DUMP payload version or checksum are wrong") nên không đi qua `backendErrors.ts` — hiện
+   * nguyên văn là đúng: đó là chẩn đoán của server, không phải câu của app.
+   */
+  async redisRestoreKeys(
+    entries: { key: string; type: string; ttlMs: number; payload: string }[],
+    replace: boolean,
+  ): Promise<{
+    success: boolean;
+    restored: number;
+    skipped: number;
+    failed: { key: string; error: string }[];
+    error?: string;
+  }> {
+    try {
+      const res: any = await invoke('redis_restore_keys', { entries, replace });
+      return {
+        success: !!res.success,
+        restored: res.restored ?? 0,
+        skipped: res.skipped ?? 0,
+        failed: res.failed || [],
+      };
+    } catch (err: any) {
+      return { success: false, restored: 0, skipped: 0, failed: [], error: err.toString() };
+    }
+  },
+
   // Explicit connId (§4.1): the statistics modal receives its connection as a prop, so it
   // has to ask about that one — not whichever is active — or the figures belong to another tab.
   async getDatabaseStats(connId: string): Promise<{ success: boolean; stats?: DatabaseStats; error?: string }> {
@@ -2096,21 +2228,32 @@ export const dbHelper = {
     );
   },
 
-  /** Sinh và chèn thật. `onProgress` nhận {type:'start'|'table'|'progress'|'done'|'error', ...}. */
-  async generateData(spec: GenSpec, onProgress?: (msg: GenProgress) => void): Promise<GenResult> {
+  /**
+   * Sinh và chèn thật. `onProgress` nhận {type:'start'|'table'|'progress'|'done'|'error', ...}.
+   *
+   * `connId` là tường minh vì lệnh này chạy như một **job nền**: một job có thể nằm trong hàng đợi
+   * một lúc, và tới lượt nó thì `currentConnId` (ambient) đã là kết nối khác — nghĩa là sinh dữ
+   * liệu vào đúng database mà người dùng không chọn. Bỏ trống thì vẫn về ambient như trước.
+   */
+  async generateData(
+    spec: GenSpec,
+    onProgress?: (msg: GenProgress) => void,
+    connId?: string,
+  ): Promise<GenResult> {
     // Luôn tạo kênh: tham số onProgress ở Rust là Channel bắt buộc (Channel không impl
     // Deserialize nên không dùng được Option<Channel>). Không có callback thì bỏ tin nhắn đi.
     const channel = new Channel<GenProgress>();
     if (onProgress) channel.onmessage = onProgress;
     return translateWarnings(
-      await invoke<GenResult>('generate_data', { spec, onProgress: channel }),
+      await invoke<GenResult>('generate_data', withConnId({ spec, onProgress: channel }, connId)),
     );
   },
 
   /** Đánh dấu lần sinh dữ liệu đang chạy cần dừng. Không lỗi nếu không có gì đang chạy. */
-  async cancelDataGeneration(): Promise<void> {
+  async cancelDataGeneration(connId?: string): Promise<void> {
     try {
-      await invoke('cancel_data_generation');
+      // Cờ huỷ bên Rust khoá theo `conn_id`, nên huỷ phải nhắm đúng kết nối đang sinh dữ liệu.
+      await invoke('cancel_data_generation', withConnId({}, connId));
     } catch {
       // Huỷ là thao tác "best effort": lỗi ở đây không có gì để người dùng làm.
     }

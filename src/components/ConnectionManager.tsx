@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
-import type { TFunction } from 'i18next';
-import { dbHelper } from '../utils/dbHelper';
+import { activeConnId, dbHelper, setActiveConnId } from '../utils/dbHelper';
 import type { DbConnectionConfig } from '../utils/dbHelper';
 import { Database, Server, CheckCircle2, AlertTriangle, Plus, Trash2, Save, Copy, Download, Upload, Lock, Key, TerminalSquare, Hash, FolderOpen, User, Link, Star, Eye, EyeOff, ShieldAlert, Search, X, ChevronDown, ChevronRight, RefreshCw, ShieldCheck, Network, ArrowLeft, Check, Cloud, DatabaseBackup, LogIn } from 'lucide-react';
 import { PostgresIcon, MySqlIcon, RedisIcon, SqliteIcon } from './DbIcons';
@@ -20,23 +19,11 @@ import {
 import { splitStatements } from '../sql/statements';
 import { buildDump, dumpReaderFor } from '../utils/dumpBuilder';
 import { gzipText, getLastExportDir, saveExportFile, pickOpenFile, pickSqliteDatabaseFile } from '../utils/fileSave';
-import { ProgressBar, type ProgressState } from './ProgressBar';
+import { fileBaseFromPath, fileStamp, safeFileBase } from '../utils/exportHelper';
+import { startJob } from '../utils/jobs';
+import { connKey } from '../utils/connKey';
+import { formatRestoreEta, makeRestoreReporter } from '../utils/restoreProgress';
 import { ConfirmDialog } from './ConfirmDialog';
-
-/**
- * Seconds -> "12 seconds" / "2 min 5 sec" for the restore ETA.
- * Takes `t` because it is module-level and cannot call the hook itself.
- */
-function formatRestoreEta(t: TFunction, totalSeconds: number): string {
-  const s = Math.max(1, Math.round(totalSeconds));
-  if (s < 60) return t('connection.etaSeconds', { s });
-  const m = Math.floor(s / 60);
-  const rest = s % 60;
-  if (m < 60) return rest ? t('connection.etaMinutesSeconds', { m, s: rest }) : t('connection.etaMinutes', { m });
-  const h = Math.floor(m / 60);
-  const restM = m % 60;
-  return restM ? t('connection.etaHoursMinutes', { h, m: restM }) : t('connection.etaHours', { h });
-}
 import {
   SECRET_FIELDS,
   hasInlineSecrets,
@@ -323,7 +310,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
   const [brMyPassword, setBrMyPassword] = useState('');
   const [brMyDatabase, setBrMyDatabase] = useState('');
 
-  const [brFilename, setBrFilename] = useState('database_backup');
+  // Tên tệp gợi ý là `bk_<database>_<thời điểm>`, nhưng người dùng gõ tay là dừng gợi ý
+  // (`brFilenameTouched`) — không thì đổi database một cái là xoá mất tên họ vừa đặt.
+  const [brFilename, setBrFilename] = useState('');
+  const [brFilenameTouched, setBrFilenameTouched] = useState(false);
+  // Dấu thời gian chốt MỘT lần lúc mở màn hình: tính lại theo từng lần render thì con số trong ô
+  // nhảy liên tục trong lúc người dùng đang gõ máy chủ/database.
+  const [brStamp, setBrStamp] = useState(() => fileStamp());
   const [brCompressGzip, setBrCompressGzip] = useState(false);
   const [brDropTable, setBrDropTable] = useState(true);
   const [brIncludeStructure, setBrIncludeStructure] = useState(true);
@@ -335,8 +328,6 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
   const [brContinueOnError, setBrContinueOnError] = useState(false);
   // Bản tóm tắt xác nhận + tiến độ thật của lần phục hồi
   const [brConfirm, setBrConfirm] = useState(false);
-  const [brProgress, setBrProgress] = useState<ProgressState | null>(null);
-  const [brLoading, setBrLoading] = useState(false);
   const [brParsedTables, setBrParsedTables] = useState<string[]>([]);
   const [brSelectedTables, setBrSelectedTables] = useState<string[]>([]);
   const [brParsing, setBrParsing] = useState(false);
@@ -344,6 +335,24 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
   const [brSqlText, setBrSqlText] = useState<string>('');
   const [availableDatabases, setAvailableDatabases] = useState<string[]>([]);
   const [loadingDbs, setLoadingDbs] = useState(false);
+
+  // Vào lại màn Sao lưu & Phục hồi thì gợi ý lại tên tệp với dấu thời gian mới.
+  useEffect(() => {
+    if (activeType !== 'backup_restore') return;
+    setBrFilenameTouched(false);
+    setBrStamp(fileStamp());
+  }, [activeType]);
+
+  /**
+   * `bk_<database>_<20260821_143512>`: sắp được theo thời gian, và hai lần sao lưu liên tiếp
+   * không ghi đè lên nhau. SQLite lấy tên tệp (không phần mở rộng) chứ không lấy cả đường dẫn —
+   * `safeFileBase` sẽ biến `C:\data\demo.db` thành `C__data_demo.db`.
+   */
+  const brDbLabel = brType === 'sqlite'
+    ? fileBaseFromPath(brSqlitePath)
+    : brType === 'postgres' ? brPgDatabase : brMyDatabase;
+  const brSuggestedFilename = `bk_${safeFileBase(brDbLabel)}_${brStamp}`;
+  const brEffectiveFilename = brFilenameTouched ? brFilename : brSuggestedFilename;
 
   // Cấu hình SSL đang chọn ở form — phải gửi kèm mọi lệnh phụ (liệt kê database,
   // sao lưu/phục hồi), nếu không backend sẽ hiểu là DISABLED và tắt hẳn TLS.
@@ -1379,10 +1388,17 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
     handleBrSubmit();
   };
 
+  /**
+   * Chạy Sao lưu / Phục hồi như một **job nền**: hàm này chỉ chốt mọi thứ đang có trên form rồi
+   * xếp job, còn tiến độ và kết quả nằm ở `JobsTray`. Trước đây nó giữ cả màn hình lại — mà một
+   * bản restore sakila mất hàng chục phút. Xem docs/background-jobs-plan.md.
+   *
+   * Mọi giá trị lấy từ form đều được **copy ra biến cục bộ trước khi xếp job**: job có thể chạy
+   * sau đó (hàng đợi), và lúc ấy người dùng đã gõ sang máy chủ khác trong cùng cái form này.
+   */
   const handleBrSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
     setBrConfirm(false);
-    setBrLoading(true);
     setErrorMsg(null);
     setSuccessMsg(null);
 
@@ -1411,129 +1427,142 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
       };
     }
 
-    try {
-      const connRes = await dbHelper.connect(config);
-      if (!connRes.success) {
-        throw new Error(t('connection.errConnectFailed', { message: connRes.message }));
-      }
-
-      if (brAction === 'backup') {
-        // Dump dựng bằng đúng code của popup "Xuất Cơ sở dữ liệu" (buildDump): trước đây chỗ
-        // này gọi lệnh Rust `export_multi_tables`, vốn coi view là bảng (sinh DROP TABLE và
-        // INSERT INTO cho view), ghi một INSERT cho mỗi dòng, và không hề có routine/trigger.
-        const list = await dbHelper.getTables(connId);
-        const tables = list.map(item => item.name);
-        if (tables.length === 0) {
-          throw new Error(t('connection.errNoTablesToBackup'));
-        }
-        const [dbObjs, triggers] = await Promise.all([
-          dbHelper.getDatabaseObjects(connId),
-          dbHelper.getAllTriggers(),
-        ]);
-
-        const sqlText = await buildDump({
-          dbType: config.type,
-          tables,
-          views: list.filter(item => item.type === 'view').map(item => item.name),
-          routines: [
-            ...dbObjs.functions.map((name) => ({ name, kind: 'function' as const })),
-            ...dbObjs.procedures.map((name) => ({ name, kind: 'procedure' as const })),
-          ],
-          triggers: triggers.map((tr) => tr.name),
-          events: dbObjs.events,
-          sqlOptions: {
-            dropTable: brDropTable,
-            includeStructure: brIncludeStructure,
-            includeContent: brIncludeContent,
-          },
-          // Schema mà `connect` vừa báo là đang dùng — cùng schema mà getTables() ở trên đọc ra.
-          // Không có ô chọn schema ở màn hình này, nên đây luôn là schema đầu search_path.
-          schema: connRes.schema,
-          onProgress: setBrProgress,
-        }, dumpReaderFor(dbHelper, connId));
-
-        const base = (brFilename.trim() || 'database_backup').replace(/\.(sql|sql\.gz|gz)$/i, '');
-        const fileName = base + (brCompressGzip ? '.sql.gz' : '.sql');
-        setBrProgress({ label: t('app.exportWriting') });
-        const payload = brCompressGzip ? await gzipText(sqlText) : sqlText;
-        const saved = await saveExportFile(
-          getLastExportDir() || null,
-          fileName,
-          payload,
-          brCompressGzip ? 'application/gzip' : 'text/plain;charset=utf-8'
-        );
-        setBrProgress(null);
-        setSuccessMsg(`${t('connection.backupSuccess')} — ${saved.path || fileName}`);
-      } else {
-        if (!brFile || !brSqlText) {
-          throw new Error(t('connection.errNoBackupFile'));
-        }
-
-        // Ghi đè: chèn DROP ... IF EXISTS lên đầu, và cho các tên đó qua bộ lọc theo bảng
-        // của backend (nó chỉ chạy câu lệnh có nhắc tên trong danh sách truyền vào).
-        const objs = brOverwrite ? parseDumpObjects(brSqlText) : null;
-        const drops = brOverwrite ? brDropStatements : [];
-        const sqlToRun = drops.length ? `${drops.join('\n')}\n${brSqlText}` : brSqlText;
-        const tablesToRun = objs
-          ? [...new Set([...brSelectedTables, ...objs.views, ...objs.triggers, ...objs.procedures, ...objs.functions])]
-          : brSelectedTables;
-
-        const startedAt = Date.now();
-        setBrProgress({ label: t('connection.restorePreparing') });
-        const resData = await dbHelper.restoreBackup(sqlToRun, tablesToRun, (msg) => {
-          const done = msg.done ?? 0;
-          const total = msg.total ?? 0;
-          if (msg.type === 'start') {
-            setBrProgress({ label: t('connection.restoreRunning', { n: total.toLocaleString() }), current: 0, total });
-            return;
-          }
-          // ETA từ tốc độ thật đang chạy
-          const elapsed = (Date.now() - startedAt) / 1000;
-          const rate = done > 0 ? done / elapsed : 0;
-          const remain = rate > 0 && total > done ? Math.round((total - done) / rate) : 0;
-          const counts = { done: done.toLocaleString(), total: total.toLocaleString() };
-          setBrProgress({
-            label: t('connection.restoreInProgress'),
-            current: done,
-            total,
-            detail: remain > 0
-              ? t('connection.restoreDetailEta', { ...counts, eta: formatRestoreEta(t, remain) })
-              : t('connection.restoreDetail', counts),
-          });
-        }, brContinueOnError);
-        setBrProgress(null);
-        if (resData.success) {
-          // Có câu bị bỏ qua thì không được báo "thành công" trơn — database chưa đầy đủ.
-          setSuccessMsg(
-            resData.failedCount
-              ? t('app.importDbPartial', { n: resData.statementsCount || 0, failed: resData.failedCount })
-              : t('connection.restoreSuccess', { n: resData.statementsCount || 0 })
-          );
-          if (resData.activeDatabase) {
-            if (brType === 'postgres') {
-              setBrPgDatabase(resData.activeDatabase);
-              setPgDatabase(resData.activeDatabase);
-            } else if (brType === 'mysql') {
-              setBrMyDatabase(resData.activeDatabase);
-              setMyDatabase(resData.activeDatabase);
-            }
-            setTimeout(() => {
-              setActiveType(brType);
-            }, 1200);
-          }
-        } else {
-          throw new Error(addExistsHint(resData.error || t('connection.errRestore'), brOverwrite));
-        }
-      }
-    } catch (err: any) {
-      setErrorMsg(err.message);
-    } finally {
-      await dbHelper.disconnect();
-      setBrLoading(false);
-      // Lỗi giữa chừng thì thanh tiến độ phải tắt, nếu không nó đứng lại ở % cuối cùng và
-      // che luôn chỗ hiện thông báo lỗi.
-      setBrProgress(null);
+    const isBackup = brAction === 'backup';
+    if (!isBackup && (!brFile || !brSqlText)) {
+      setErrorMsg(t('connection.errNoBackupFile'));
+      return;
     }
+
+    // Ảnh chụp của form — xem doc comment ở trên.
+    const targetType = brType;
+    const dbLabel = brDbLabel || (targetType === 'sqlite' ? brSqlitePath : '');
+    const fileName = (brEffectiveFilename.trim().replace(/\.(sql|sql\.gz|gz)$/i, '') || brSuggestedFilename)
+      + (brCompressGzip ? '.sql.gz' : '.sql');
+    const gzip = brCompressGzip;
+    const sqlOptions = {
+      dropTable: brDropTable,
+      includeStructure: brIncludeStructure,
+      includeContent: brIncludeContent,
+    };
+    const dumpText = brSqlText;
+    const overwrite = brOverwrite;
+    const dropStatements = brOverwrite ? [...brDropStatements] : [];
+    const selectedTables = [...brSelectedTables];
+    const continueOnError = brContinueOnError;
+
+    startJob({
+      kind: isBackup ? 'dump' : 'restore',
+      title: t(isBackup ? 'jobs.titleBackup' : 'jobs.titleRestore', { n: dbLabel }),
+      db: dbLabel,
+      write: !isBackup,
+      lockKey: `br|${connKey(config)}|${dbLabel}`,
+      run: async (ctx) => {
+        // Job này mở KẾT NỐI RIÊNG của nó rồi đóng lại — màn hình này vốn đã làm vậy ("không cần
+        // kết nối sẵn"), và đó cũng đúng hướng Phase 1 của plan: job không dùng chung kết nối với
+        // người dùng, nên nó không tắt kiểm tra khoá ngoại trên phiên người dùng đang browse.
+        const prevConnId = activeConnId();
+        let jobConnId = '';
+        try {
+          const connRes = await dbHelper.connect(config);
+          if (!connRes.success) {
+            throw new Error(t('connection.errConnectFailed', { message: connRes.message }));
+          }
+          // Mọi lệnh mang đúng id vừa mint — không phải `connId` của workspace (prop): chưa kết
+          // nối gì thì prop là chuỗi rỗng và `getTables` trả mảng rỗng, tức là báo "database không
+          // có bảng nào"; đang có kết nối thì nó trỏ vào database KHÁC.
+          jobConnId = connRes.connId || activeConnId();
+          // `connect()` đổi luôn kết nối active của cả app. Trả lại NGAY, vì job chạy nền: để
+          // ambient trỏ vào kết nối riêng của job là mọi thao tác khác của người dùng đi sai chỗ.
+          setActiveConnId(prevConnId);
+
+          if (isBackup) {
+            // Dump dựng bằng đúng code của popup "Xuất Cơ sở dữ liệu" (buildDump): trước đây chỗ
+            // này gọi lệnh Rust `export_multi_tables`, vốn coi view là bảng (sinh DROP TABLE và
+            // INSERT INTO cho view), ghi một INSERT cho mỗi dòng, và không hề có routine/trigger.
+            const list = await dbHelper.getTables(jobConnId);
+            const tables = list.map(item => item.name);
+            if (tables.length === 0) {
+              throw new Error(t('connection.errNoTablesToBackup'));
+            }
+            const [dbObjs, triggers] = await Promise.all([
+              dbHelper.getDatabaseObjects(jobConnId),
+              dbHelper.getAllTriggers(jobConnId),
+            ]);
+            ctx.throwIfCancelled();
+
+            const sqlText = await buildDump({
+              dbType: config.type,
+              tables,
+              views: list.filter(item => item.type === 'view').map(item => item.name),
+              routines: [
+                ...dbObjs.functions.map((name) => ({ name, kind: 'function' as const })),
+                ...dbObjs.procedures.map((name) => ({ name, kind: 'procedure' as const })),
+              ],
+              triggers: triggers.map((tr) => tr.name),
+              events: dbObjs.events,
+              sqlOptions,
+              // Schema mà `connect` vừa báo là đang dùng — cùng schema mà getTables() ở trên đọc
+              // ra. Không có ô chọn schema ở màn này, nên đây luôn là schema đầu search_path.
+              schema: connRes.schema,
+              onProgress: (p) => ctx.report(p),
+            }, dumpReaderFor(dbHelper, jobConnId));
+            ctx.throwIfCancelled();
+
+            ctx.report({ label: t('app.exportWriting') });
+            const payload = gzip ? await gzipText(sqlText) : sqlText;
+            const saved = await saveExportFile(
+              getLastExportDir() || null,
+              fileName,
+              payload,
+              gzip ? 'application/gzip' : 'text/plain;charset=utf-8'
+            );
+            return {
+              message: `${t('connection.backupSuccess')} — ${saved.path || fileName}`,
+              path: saved.path,
+              dir: saved.dir,
+              viaDownload: saved.savedTo === 'download',
+            };
+          }
+
+          // Ghi đè: chèn DROP ... IF EXISTS lên đầu, và cho các tên đó qua bộ lọc theo bảng
+          // của backend (nó chỉ chạy câu lệnh có nhắc tên trong danh sách truyền vào).
+          const objs = overwrite ? parseDumpObjects(dumpText) : null;
+          const sqlToRun = dropStatements.length ? `${dropStatements.join('\n')}\n${dumpText}` : dumpText;
+          const tablesToRun = objs
+            ? [...new Set([...selectedTables, ...objs.views, ...objs.triggers, ...objs.procedures, ...objs.functions])]
+            : selectedTables;
+
+          const toProgress = makeRestoreReporter(t);
+          ctx.report({ label: t('connection.restorePreparing') });
+          const resData = await dbHelper.restoreBackup(
+            sqlToRun,
+            tablesToRun,
+            (msg) => ctx.report(toProgress(msg)),
+            continueOnError,
+            jobConnId,
+          );
+          if (!resData.success) {
+            throw new Error(addExistsHint(resData.error || t('connection.errRestore'), overwrite));
+          }
+
+          // KHÔNG viết `resData.activeDatabase` (database mà một câu `USE` trong tệp dump chuyển
+          // tới) trở lại các ô của form nữa: job chạy nền, nên lúc nó xong người dùng có thể đang
+          // gõ cấu hình cho một máy chủ khác trong đúng cái form này — ghi vào đó là xoá thứ họ vừa
+          // gõ. Tên database đã nằm trong thông báo kết quả của job.
+          // Có câu bị bỏ qua thì không được báo "thành công" trơn — database chưa đầy đủ.
+          return resData.failedCount
+            ? { message: t('app.importDbPartial', { n: resData.statementsCount || 0, failed: resData.failedCount }) }
+            : { message: t('connection.restoreSuccess', { n: resData.statementsCount || 0 }) };
+        } finally {
+          // Chỉ đóng kết nối do job này mở. `disconnect()` không tham số đóng kết nối đang
+          // active — tức là kết nối người dùng đang dùng dở, khi `connect()` lỗi giữa đường.
+          if (jobConnId) await dbHelper.disconnect(jobConnId);
+          setActiveConnId(prevConnId);
+        }
+      },
+    });
+
+    setSuccessMsg(t('jobs.startedInBackground'));
   };
 
   const _pq = profileSearch.trim().toLowerCase();
@@ -2548,7 +2577,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
             <div className="cm-fields">
               <div className="form-group" style={{ maxWidth: '340px' }}>
                 <label>{t('connection.brFilename')}</label>
-                <input type="text" className="form-input" value={brFilename} onChange={(e) => setBrFilename(e.target.value)} />
+                <input
+                  type="text"
+                  className="form-input"
+                  value={brEffectiveFilename}
+                  onChange={(e) => { setBrFilenameTouched(true); setBrFilename(e.target.value); }}
+                />
+                <div className="cm-hint">{brEffectiveFilename}{brCompressGzip ? '.sql.gz' : '.sql'}</div>
               </div>
               <div className="cm-check-grid">
                 <label className="cm-check"><input type="checkbox" checked={brDropTable} onChange={(e) => setBrDropTable(e.target.checked)} /><span>DROP TABLE IF EXISTS</span></label>
@@ -2972,27 +3007,21 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
             <footer className="cm-foot">
               {isBrMode ? (
                 <>
-                  {brProgress ? (
-                    <span className="cm-foot-msg" style={{ flex: 1, minWidth: 0, display: 'flex' }}>
-                      <ProgressBar progress={brProgress} />
-                    </span>
-                  ) : (
-                    <span className="cm-foot-msg cm-hint">
-                      {brAction === 'restore' && brFile && brParsedTables.length > 0
-                        ? t('connection.brFootSelected', { selected: brSelectedTables.length, total: brParsedTables.length })
-                        : ''}
-                    </span>
-                  )}
+                  {/* Không còn thanh tiến độ ở đây: sao lưu/phục hồi chạy nền, tiến độ nằm ở
+                      JobsTray trên thanh tiêu đề. Xem docs/background-jobs-plan.md. */}
+                  <span className="cm-foot-msg cm-hint">
+                    {brAction === 'restore' && brFile && brParsedTables.length > 0
+                      ? t('connection.brFootSelected', { selected: brSelectedTables.length, total: brParsedTables.length })
+                      : ''}
+                  </span>
                   <button
                     className="cm-btn primary"
                     onClick={handleBrClick}
-                    disabled={brLoading || (brAction === 'restore' && (!brFile || (brParsedTables.length > 0 && brSelectedTables.length === 0)))}
+                    disabled={brAction === 'restore' && (!brFile || (brParsedTables.length > 0 && brSelectedTables.length === 0))}
                   >
-                    {brLoading
-                      ? <><LoadingSpinner size={13} /> {brAction === 'backup' ? t('connection.brBackingUp') : t('connection.brRestoring')}</>
-                      : <>{brAction === 'backup'
-                        ? <><Download size={14} /> {t('connection.brStartBackup')}</>
-                        : <><Upload size={14} /> {t('connection.brStartRestore')}</>}</>}
+                    {brAction === 'backup'
+                      ? <><Download size={14} /> {t('connection.brStartBackup')}</>
+                      : <><Upload size={14} /> {t('connection.brStartRestore')}</>}
                   </button>
                 </>
               ) : hasProfile ? (

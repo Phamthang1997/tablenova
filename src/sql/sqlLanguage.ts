@@ -10,11 +10,17 @@ import 'monaco-sql-languages/esm/languages/generic/generic.contribution';
 import * as catalog from './catalog';
 import { editorConnId } from './editorScope';
 import { buildJoinConditions } from './joinConditions';
-import { collectTableRefs, statementAt } from './statements';
+import { collectTableRefs, statementAt, valuePosition } from './statements';
 import { bumpUsage, rankSort } from './usageStats';
 import { getDoc, formatDocMarkdown } from '../utils/docsService';
+import { enumValues, typeFamily } from '../utils/columnType';
+import i18n from '../i18n';
 
 const BUMP_CMD = 'tablenova.bumpUsage';
+
+/** Nhãn loại đối tượng trong popup gợi ý — dùng chung khoá với hover để hai nơi không lệch chữ. */
+const tableKind = (type: string) =>
+  i18n.t(type === 'view' ? 'sqlEditor.hoverKindView' : 'sqlEditor.hoverKindTable');
 
 // Từ khoá dùng thường xuyên nhất -> ưu tiên hiển thị trước các từ khoá lạ.
 const COMMON_KEYWORDS = new Set([
@@ -74,7 +80,9 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
     items.push({
       label: kw,
       kind: docEntry ? monaco.languages.CompletionItemKind.Function : monaco.languages.CompletionItemKind.Keyword,
-      detail: docEntry ? `Hàm SQL (${docEntry.engine})` : 'Từ khoá',
+      detail: docEntry
+        ? i18n.t('sqlEditor.cmplSqlFunction', { engine: docEntry.engine })
+        : i18n.t('sqlEditor.cmplKeyword'),
       documentation: docEntry ? { value: formatDocMarkdown(docEntry) } : undefined,
       insertText: kw,
       sortText: rankSort(COMMON_KEYWORDS.has(kw.toUpperCase()) ? '4' : '5', kw),
@@ -92,7 +100,7 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
     items.push({
       label: sn.prefix,
       kind: monaco.languages.CompletionItemKind.Snippet,
-      detail: 'Mẫu câu',
+      detail: i18n.t('sqlEditor.cmplSnippet'),
       documentation: { value: ['```sql', body.replace(/\$\{\d+:?([^}]*)\}/g, '$1').replace(/\$\d+/g, ''), '```'].join('\n') },
       insertText: sn.insertText || body,
       insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
@@ -154,7 +162,7 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
     joinConds.forEach((c, i) => items.push({
       label: c,
       kind: monaco.languages.CompletionItemKind.Snippet,
-      detail: 'Điều kiện JOIN (FK)',
+      detail: i18n.t('sqlEditor.cmplJoinCondition'),
       insertText: c,
       sortText: '0_' + i, // ưu tiên cao nhất
     }));
@@ -183,13 +191,59 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
     );
   }
 
+  // 2b) Chỗ điền giá trị (`WHERE status = `, `IN (`, `LIKE `) -> gợi ý chính các giá trị hợp lệ.
+  //
+  // **Không hỏi database câu nào.** Nguồn duy nhất là chuỗi kiểu đã có sẵn trong catalog: MySQL
+  // trả `COLUMN_TYPE` nên `enum('active','banned')` mang theo luôn danh sách giá trị, và cột
+  // BOOLEAN thì chỉ có hai. Đó cũng là lý do `WHERE id = ` không gợi ý gì — `int` không có tập
+  // giá trị nào để liệt kê, nên nó tự rơi ra ngoài mà không cần luật riêng.
+  //
+  // Cố ý dừng ở đây, không mở rộng sang `SELECT DISTINCT col FROM t`: câu đó là một lần quét
+  // toàn bảng do một phím gõ kích hoạt, và trên một kết nối production thì đó không phải gợi ý
+  // nữa mà là sự cố.
+  const valueAt = valuePosition(textBefore);
+  if (valueAt) {
+    const dot = valueAt.column.lastIndexOf('.');
+    const colName = dot >= 0 ? valueAt.column.slice(dot + 1) : valueAt.column;
+    const prefix = dot >= 0 ? valueAt.column.slice(0, dot).toLowerCase() : null;
+    // Có tiền tố thì chỉ tra đúng bảng của tiền tố đó; không thì tra mọi bảng trong scope.
+    const owners = prefix
+      ? scopeTables.filter(tb => tb.toLowerCase() === prefix || aliasByTable.get(tb)?.toLowerCase() === prefix)
+      : Array.from(new Set(scopeTables));
+
+    for (const tbl of owners) {
+      const schema = await catalog.getSchema(editorConnId(), tbl);
+      const col = (schema?.columns || []).find(c => c.name.toLowerCase() === colName.toLowerCase());
+      if (!col) continue;
+
+      const family = typeFamily(col.type);
+      const values = family === 'bool' ? ['TRUE', 'FALSE'] : enumValues(col.type);
+      if (!values.length) continue;
+
+      values.forEach((v, i) => {
+        // Giá trị boolean là từ khoá, không phải chuỗi -> không bọc nháy.
+        const literal = family === 'bool' ? v : `'${v.replace(/'/g, "''")}'`;
+        items.push({
+          label: v,
+          kind: monaco.languages.CompletionItemKind.Value,
+          detail: i18n.t('sqlEditor.cmplColumnValue', { table: tbl }),
+          // Đã gõ nháy mở thì chèn phần ruột thôi, nếu không sẽ thành `''active''`.
+          insertText: valueAt.quoted && family !== 'bool' ? `${v.replace(/'/g, "''")}'` : literal,
+          filterText: v,
+          sortText: '00_value_' + String(i).padStart(3, '0'),
+        });
+      });
+      break; // cột đầu tiên khớp là đủ; hai bảng cùng tên cột thì đã là chuyện của kiểm tra mơ hồ
+    }
+  }
+
   // 2c) Ngay sau SELECT (chưa gõ gì) -> '*' là gợi ý ưu tiên số 1, rồi mới tới cột/bảng.
   // Nếu đã biết bảng trong scope thì thêm luôn phương án liệt kê tường minh các cột.
   if (/\bselect\s+(distinct\s+|all\s+)?$/i.test(textBefore)) {
     items.push({
       label: '*',
       kind: monaco.languages.CompletionItemKind.Field,
-      detail: 'Tất cả các cột',
+      detail: i18n.t('sqlEditor.cmplAllColumns'),
       insertText: '*',
       filterText: '*',
       sortText: '00_star', // trên cả điều kiện JOIN ('0_...')
@@ -203,9 +257,9 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
       const multi = new Set(scopeTables).size > 1;
       const list = cols.map(c => (multi ? `${pfx}.${c.name}` : c.name)).join(', ');
       items.push({
-        label: multi ? `${pfx}.* → liệt kê ${cols.length} cột` : `* → liệt kê ${cols.length} cột`,
+        label: `${multi ? `${pfx}.` : ''}* → ${i18n.t('sqlEditor.cmplListColumns', { n: cols.length })}`,
         kind: monaco.languages.CompletionItemKind.Snippet,
-        detail: `Tất cả cột của ${tbl}`,
+        detail: i18n.t('sqlEditor.cmplAllColumnsOf', { table: tbl }),
         documentation: { value: ['```sql', list, '```'].join('\n') },
         insertText: list,
         filterText: '*',
@@ -247,7 +301,7 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
         kind: tb.type === 'view'
           ? monaco.languages.CompletionItemKind.Interface
           : monaco.languages.CompletionItemKind.Class,
-        detail: alias ? `${tb.type === 'view' ? 'View' : 'Bảng'} · alias ${alias}` : (tb.type === 'view' ? 'View' : 'Bảng'),
+        detail: tableKind(tb.type) + (alias ? ` · alias ${alias}` : ''),
         insertText,
         sortText: rankSort('2', tb.name),
         command: bumpCommand(tb.name),
@@ -303,7 +357,7 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
         items.push({
           label: p,
           kind: monaco.languages.CompletionItemKind.Class,
-          detail: `Bảng${aliasByTable.get(tb) ? ` (${tb})` : ''}`,
+          detail: i18n.t('sqlEditor.hoverKindTable') + (aliasByTable.get(tb) ? ` (${tb})` : ''),
           insertText: p,
           sortText: rankSort('3', p),
           command: bumpCommand(tb),

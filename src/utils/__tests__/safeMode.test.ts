@@ -11,10 +11,15 @@ import {
   sqlHasWrite,
   statementHead,
   summarizeSql,
+  describeCommand,
   getSafeMode,
   getSafeModeForKey,
   setSafeModeForKey,
   STATEMENT_PREVIEW_CAP,
+  approveCommand,
+  runApproved,
+  setSafeModeConfirmer,
+  type SafeModeRequest,
 } from '../safeMode';
 import { connKey } from '../connKey';
 import type { DbConnectionConfig } from '../dbHelper';
@@ -192,5 +197,152 @@ describe('mode storage', () => {
     // The second Redis server keeps its own policy — impossible with one global Redis key.
     expect(getSafeMode('r2')).toBe('silent');
     expect(getSafeMode('c1')).toBe('all');
+  });
+});
+
+describe('runApproved asks once for a whole action', () => {
+  const redisConfig = { type: 'redis', host: 'cache.local', port: 6379 } as unknown as DbConnectionConfig;
+  let asked: SafeModeRequest[];
+
+  beforeEach(() => {
+    memory.clear();
+    resetSafeModeState();
+    asked = [];
+    setSafeModeConfirmer(async (req) => { asked.push(req); return true; });
+    registerConnection('r1', redisConfig);
+    setSafeModeForKey(connKey(redisConfig), 'writes');
+  });
+
+  // Lý do hàm này tồn tại: nhập 10.000 key là 50 lô, và 50 hộp thoại thì người dùng tắt Safe Mode.
+  it('prompts once even though the action runs the command many times', async () => {
+    await runApproved('redis_restore_keys', 'r1', 'nhập 10.000 key', async () => {
+      for (let i = 0; i < 50; i += 1) {
+        expect(await approveCommand('redis_restore_keys', { connId: 'r1' })).toBe(true);
+      }
+    });
+    expect(asked).toHaveLength(1);
+    expect(asked[0].detail).toBe('nhập 10.000 key');
+    expect(asked[0].command).toBe('redis_restore_keys');
+  });
+
+  // Cửa hẹp: một lần nhập đã duyệt không được kéo theo lệnh khác, hay cùng lệnh trên connection khác.
+  it('opens the door for that command on that connection only', async () => {
+    registerConnection('r2', { type: 'redis', host: 'other.local', port: 6379 } as unknown as DbConnectionConfig);
+    setSafeModeForKey(connKey({ type: 'redis', host: 'other.local', port: 6379 } as unknown as DbConnectionConfig), 'writes');
+
+    await runApproved('redis_restore_keys', 'r1', 'nhập', async () => {
+      await approveCommand('redis_flush_db', { connId: 'r1' });
+      await approveCommand('redis_restore_keys', { connId: 'r2' });
+    });
+    // Một lần cho hành động, cộng hai lần cho hai lệnh KHÔNG nằm trong phạm vi đã duyệt.
+    expect(asked.map((r) => r.command)).toEqual([
+      'redis_restore_keys', 'redis_flush_db', 'redis_restore_keys',
+    ]);
+  });
+
+  it('closes the door when the action throws', async () => {
+    await expect(
+      runApproved('redis_restore_keys', 'r1', 'nhập', async () => { throw new Error('boom'); }),
+    ).rejects.toThrow('boom');
+    expect(await approveCommand('redis_restore_keys', { connId: 'r1' })).toBe(true);
+    expect(asked).toHaveLength(2); // một cho hành động, một cho lệnh lẻ sau đó
+  });
+
+  it('keeps the door open for the outer action when a nested one ends', async () => {
+    await runApproved('redis_restore_keys', 'r1', 'ngoài', async () => {
+      await runApproved('redis_restore_keys', 'r1', 'trong', async () => {});
+      // Cửa của lần ngoài vẫn phải còn — đây là lý do đếm theo tầng thay vì một cờ bật/tắt.
+      expect(await approveCommand('redis_restore_keys', { connId: 'r1' })).toBe(true);
+    });
+    expect(asked).toHaveLength(1);
+  });
+
+  it('declining throws and runs nothing', async () => {
+    setSafeModeConfirmer(async () => false);
+    let ran = false;
+    await expect(
+      runApproved('redis_restore_keys', 'r1', 'nhập', async () => { ran = true; }),
+    ).rejects.toBeDefined();
+    expect(ran).toBe(false);
+  });
+
+  it('does not prompt at all when the server is on silent', async () => {
+    setSafeModeForKey(connKey(redisConfig), 'silent');
+    let ran = false;
+    await runApproved('redis_restore_keys', 'r1', 'nhập', async () => { ran = true; });
+    expect(ran).toBe(true);
+    expect(asked).toEqual([]);
+  });
+});
+
+// Grid Save gọi `commit_changes` hai lần: một lần `preview: true` để hiện danh sách xem trước, một
+// lần để ghi. Hỏi cả hai thì người dùng thấy hộp thoại "không chịu đóng", và cái thứ nhất còn hỏi
+// về một việc không ghi gì cả.
+describe('a dry-run commit does not prompt', () => {
+  const pgConfig = { type: 'postgres', host: 'db.local', port: 5432 } as unknown as DbConnectionConfig;
+  let asked: SafeModeRequest[];
+
+  beforeEach(() => {
+    memory.clear();
+    resetSafeModeState();
+    asked = [];
+    setSafeModeConfirmer(async (req) => { asked.push(req); return true; });
+    registerConnection('c1', pgConfig);
+    setSafeModeForKey(connKey(pgConfig), 'writes');
+  });
+
+  it('passes a preview through and still asks about the real write', async () => {
+    const changes = { tableName: 't', changes: [], primaryKey: 'id' };
+    expect(await approveCommand('commit_changes', { connId: 'c1', payload: { ...changes, preview: true } })).toBe(true);
+    expect(asked).toEqual([]);
+
+    expect(await approveCommand('commit_changes', { connId: 'c1', payload: { ...changes, preview: false } })).toBe(true);
+    expect(asked).toHaveLength(1);
+  });
+
+  it('asks when the flag is missing or not a real true', async () => {
+    await approveCommand('commit_changes', { connId: 'c1', payload: { tableName: 't' } });
+    await approveCommand('commit_changes', { connId: 'c1', payload: { preview: 'true' } });
+    await approveCommand('commit_changes', { connId: 'c1' });
+    expect(asked).toHaveLength(3);
+  });
+});
+
+// Hộp thoại từng chỉ nói "việc này ghi vào CSDL" + tên hàm Rust — đúng mà không trả lời được, vì
+// câu hỏi thật là "ghi mấy dòng, vào bảng nào". Mọi con số dưới đây tới từ chính args của lệnh.
+describe('describeCommand', () => {
+  it('counts the grid changes by kind and names the table', () => {
+    const t = describeCommand('commit_changes', {
+      connId: 'c1',
+      payload: {
+        tableName: 'film',
+        changes: [
+          { type: 'update', rowId: 1 },
+          { type: 'update', rowId: 2 },
+          { type: 'delete', rowId: 3 },
+        ],
+      },
+    });
+    expect(t.name).toBe('film');
+    expect(t.changes).toEqual({ inserts: 0, updates: 2, deletes: 1 });
+    // Số đếm chung không được đặt cùng lúc: hàng "3 phần tử" bên cạnh "2 sửa · 1 xoá" là nói hai lần.
+    expect(t.count).toBeUndefined();
+  });
+
+  it('reads the target name by convention, whatever the argument is called', () => {
+    expect(describeCommand('drop_table', { name: 'actor' }).name).toBe('actor');
+    expect(describeCommand('rename_table', { tableName: 'city' }).name).toBe('city');
+    expect(describeCommand('redis_delete_by_pattern', { pattern: 'session:*' }).name).toBe('session:*');
+  });
+
+  it('counts a list of items for the commands that take one', () => {
+    expect(describeCommand('redis_delete_keys', { keys: ['a', 'b', 'c'] }).count).toBe(3);
+    expect(describeCommand('import_table_data', { rows: [{}, {}] }).count).toBe(2);
+  });
+
+  it('returns nothing rather than inventing a name', () => {
+    expect(describeCommand('restore_backup', { connId: 'c1' })).toEqual({ name: undefined });
+    // Chuỗi rỗng/khoảng trắng không phải một cái tên.
+    expect(describeCommand('drop_table', { name: '   ' }).name).toBeUndefined();
   });
 });

@@ -446,3 +446,33 @@ export function exportTablesToCsv(sheets: XlsxSheet[], filename: string): void {
   });
   downloadBlob(new Blob([buildZip(entries).slice().buffer], { type: 'application/zip' }), `${base}.zip`);
 }
+
+// ---- Tên tệp gợi ý ----
+
+/**
+ * `20260812_213045` — sortable in time order, and no character Windows forbids in a file name.
+ *
+ * Lives here rather than next to a dialog because both the Export dialog and Connection Manager's
+ * Backup screen suggest a name; two copies would drift the moment one of them changes format.
+ */
+export function fileStamp(d = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return (
+    `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}` +
+    `_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
+  );
+}
+
+/** Bỏ ký tự không đặt được trong tên tệp (tên bảng/database có thể chứa khoảng trắng, dấu chấm…). */
+export function safeFileBase(name: string): string {
+  return name.trim().replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, '_') || 'database';
+}
+
+/**
+ * Basename without extension — the label a SQLite path contributes to a suggested file name.
+ * `C:\data\demo.db` -> `demo`, so the suggestion is `bk_demo_…` and not the whole escaped path.
+ */
+export function fileBaseFromPath(path: string): string {
+  const leaf = path.trim().split(/[\\/]/).pop() || '';
+  return leaf.replace(/\.[^.]+$/, '');
+}

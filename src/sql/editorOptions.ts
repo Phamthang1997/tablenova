@@ -68,7 +68,17 @@ export const SQL_EDITOR_OPTIONS: monaco.editor.IStandaloneEditorConstructionOpti
   },
   inlineSuggest: { enabled: false },
   parameterHints: { enabled: true },
-  hover: { enabled: true, delay: 250 },
+  // `above: false` là bắt buộc, không phải tinh chỉnh cho đẹp. Monaco mặc định `above: true`
+  // (đo trong editorOptions.js của gói — comment trong editor.api.d.ts ghi "Defaults to false"
+  // là SAI), tức luôn thử vẽ hover phía trên dòng trước. Ở dòng 1 thì phía trên là ngoài khung
+  // editor, và vì `fixedOverflowWidgets` cho widget tràn ra ngoài nên nó đè lên thanh tab.
+  hover: { enabled: true, delay: 250, above: false },
+
+  // Bóng đèn Quick Fix TẮT. Monaco vẽ nó ở lề glyph, mà lề đó đã bị mũi tên "chạy câu lệnh này"
+  // chiếm (`glyphMargin: true` ở trên) nên hai thứ chồng lên nhau và bóng đèn tràn cả sang chữ.
+  // Quick Fix vẫn dùng được bằng Alt+Enter và mục "Sửa nhanh" trong menu chuột phải — cả hai đều
+  // dễ thấy hơn một icon 16px, nên ở đây không mất chức năng nào.
+  lightbulb: { enabled: 'off' as monaco.editor.ShowLightbulbIconMode },
 
   // Khung editor chỉ cao ~220px nên hover/suggest/find bị CẮT khi render bên trong nó.
   // fixedOverflowWidgets đưa các widget đó ra container position:fixed -> tràn ra ngoài

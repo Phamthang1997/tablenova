@@ -1618,9 +1618,10 @@ select.form-input {
    từng theme và là cùng "chip sáng nổi lên" mà dòng bảng đang chọn dùng. */
 .sb-seg {
   display: flex;
-  padding: 2px 0;
+  padding: 0;
   margin: 6px 8px 4px;
   gap: 4px;
+  background: transparent;
 }
 
 /* Ô chọn schema (chỉ Postgres) — nằm giữa dải tab và ô tìm kiếm của thanh bên.
@@ -1646,27 +1647,187 @@ select.form-input {
 
 .sb-seg-tab {
   flex: 1;
-  padding: 5px 0;
+  height: 26px;
+  padding: 0 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-size: 11.5px;
-  font-weight: 400;
-  border-radius: 6px;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--win-text-secondary);
+  font-weight: 500;
+  font-family: var(--win-font-sans);
+  border-radius: 8px;
+  border: 0 solid var(--win-border);
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.70);
+  color: var(--win-text-primary);
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  white-space: nowrap;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 }
 
-.sb-seg-tab:hover {
+.sb-seg-tab:hover:not(.is-on) {
+  background: rgba(255, 255, 255, 0.88);
   color: var(--win-text-primary);
+}
+
+[data-theme='dark'] .sb-seg-tab {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  color: var(--win-text-primary);
+}
+
+[data-theme='dark'] .sb-seg-tab:hover:not(.is-on) {
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
 }
 
 .sb-seg-tab.is-on {
   font-weight: 600;
+  background: var(--win-accent-glow);
+  border-color: var(--win-accent);
+  color: var(--win-accent);
+  box-shadow: none;
+}
+
+/* ————— Sidebar Tools Section (Phân vùng & Icon đẹp mắt) ————— */
+.sb-tools-container {
+  padding: 6px 8px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sb-tools-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sb-tools-header {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--win-text-disabled);
+  padding: 4px 6px 2px;
+  user-select: none;
+}
+
+.sb-tool-card {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  user-select: none;
+}
+
+.sb-tool-card:hover {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme='dark'] .sb-tool-card:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.05);
+}
+
+.sb-tool-icon-wrap {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: transform 0.12s ease;
+}
+
+.sb-tool-card:hover .sb-tool-icon-wrap {
+  transform: scale(1.06);
+}
+
+/* Biến thể màu pastel tươi tắn cho từng Tool */
+.sb-tool-icon-wrap.blue {
+  background: rgba(2, 132, 199, 0.12);
+  color: #0284c7;
+}
+.sb-tool-icon-wrap.emerald {
+  background: rgba(16, 185, 129, 0.12);
+  color: #10b981;
+}
+.sb-tool-icon-wrap.indigo {
+  background: rgba(99, 102, 241, 0.12);
+  color: #6366f1;
+}
+.sb-tool-icon-wrap.violet {
+  background: rgba(139, 92, 246, 0.12);
+  color: #8b5cf6;
+}
+.sb-tool-icon-wrap.amber {
+  background: rgba(245, 158, 11, 0.12);
+  color: #f59e0b;
+}
+.sb-tool-icon-wrap.rose {
+  background: rgba(244, 63, 94, 0.12);
+  color: #f43f5e;
+}
+.sb-tool-icon-wrap.cyan {
+  background: rgba(6, 182, 212, 0.12);
+  color: #06b6d4;
+}
+.sb-tool-icon-wrap.teal {
+  background: rgba(20, 184, 166, 0.12);
+  color: #14b8a6;
+}
+
+[data-theme='dark'] .sb-tool-icon-wrap.blue {
+  background: rgba(56, 189, 248, 0.18);
+  color: #38bdf8;
+}
+[data-theme='dark'] .sb-tool-icon-wrap.emerald {
+  background: rgba(52, 211, 153, 0.18);
+  color: #34d399;
+}
+[data-theme='dark'] .sb-tool-icon-wrap.indigo {
+  background: rgba(129, 140, 248, 0.18);
+  color: #818cf8;
+}
+[data-theme='dark'] .sb-tool-icon-wrap.violet {
+  background: rgba(167, 139, 250, 0.18);
+  color: #a78bfa;
+}
+[data-theme='dark'] .sb-tool-icon-wrap.amber {
+  background: rgba(251, 191, 36, 0.18);
+  color: #fbbf24;
+}
+[data-theme='dark'] .sb-tool-icon-wrap.rose {
+  background: rgba(251, 113, 133, 0.18);
+  color: #fb7185;
+}
+[data-theme='dark'] .sb-tool-icon-wrap.cyan {
+  background: rgba(34, 211, 238, 0.18);
+  color: #22d3ee;
+}
+[data-theme='dark'] .sb-tool-icon-wrap.teal {
+  background: rgba(45, 212, 191, 0.18);
+  color: #2dd4bf;
+}
+
+.sb-tool-label {
+  font-size: 12px;
+  font-weight: 500;
   color: var(--win-text-primary);
-  background: var(--ws-sel);
-  border-color: var(--ws-sel-border);
-  box-shadow: 0 1px 4px var(--ws-shadow), inset 0 1px 0 var(--ws-hairline);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Vạch chia các nhóm trong mục CÔNG CỤ (chạy lệnh / xem cấu trúc / chuyển dữ liệu).
@@ -2865,6 +3026,80 @@ select.form-input {
   border-radius: 3px;
   font-size: 8px;
   font-weight: 700;
+}
+
+.fk-badge {
+  background: rgba(59, 130, 246, 0.12);
+  color: var(--win-accent, #3b82f6);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+/* Foreign Key cell link in DataGrid */
+.grid-cell-null {
+  color: var(--win-text-disabled);
+  font-style: italic;
+}
+
+.grid-cell-fk {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  width: 100%;
+  max-width: 100%;
+  cursor: pointer;
+  position: relative;
+}
+
+.grid-cell-fk-val {
+  color: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color 0.12s ease;
+}
+
+.grid-cell-fk-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 4px;
+  background: rgba(59, 130, 246, 0.1);
+  color: var(--win-accent, #3b82f6);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  opacity: 0;
+  transform: scale(0.9) translateX(-2px);
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  flex-shrink: 0;
+}
+
+.grid-table tr:hover .grid-cell-fk-btn {
+  opacity: 0.65;
+  transform: scale(1) translateX(0);
+}
+
+.grid-cell-fk:hover .grid-cell-fk-val {
+  color: var(--win-accent, #3b82f6);
+  text-decoration: underline;
+  text-decoration-style: solid;
+  text-underline-offset: 3px;
+}
+
+.grid-cell-fk:hover .grid-cell-fk-btn {
+  opacity: 1;
+  background: var(--win-accent, #3b82f6);
+  border-color: var(--win-accent, #3b82f6);
+  color: #ffffff;
+  transform: scale(1.08) translate(1px, -1px);
+  box-shadow: 0 2px 5px rgba(59, 130, 246, 0.35);
 }
 
 /* ==========================================================================
@@ -8504,6 +8739,8 @@ input.rename-input {
 }
 
 /* ————— Ba thanh chân cùng chiều cao ————— */
+/* Bốn, kể từ khi sidebar Redis gộp số key + nút công cụ vào một thanh duy nhất. */
+.workspace-container .redis-keylist-footer,
 .workspace-container .sidebar-footer {
   height: var(--ws-foot-h);
   padding: 0 8px;
@@ -8878,19 +9115,19 @@ input.rename-input {
    nhau vừa đè mất glass (inline luôn thắng CSS). Gom về một họ class.
    ===================================================================== */
 .gp-btn {
-  height: 26px;
-  padding: 0 10px;
+  height: 24px;
+  padding: 0 8px;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   flex-shrink: 0;
-  border-radius: 8px;
+  border-radius: 6px;
   border: 0 solid var(--win-border);
   background: rgba(255, 255, 255, 0.55);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.70);
   color: var(--win-text-primary);
   font-family: var(--win-font-sans);
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
@@ -8907,7 +9144,7 @@ input.rename-input {
 }
 
 .gp-btn.icon {
-  padding: 0 7px;
+  padding: 0 6px;
 }
 
 /* Đang bật (Columns / Export / Filters đang mở): tô accent nhạt + chữ accent
@@ -8958,12 +9195,13 @@ input.rename-input {
 .gp-pager {
   display: inline-flex;
   align-items: center;
-  height: 26px;
-  border-radius: 8px;
+  height: 24px;
+  border-radius: 6px;
   border: 0 solid var(--win-border);
   background: rgba(255, 255, 255, 0.55);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.70);
   overflow: hidden;
+  flex-shrink: 0;
 }
 
 [data-theme='dark'] .gp-pager {
@@ -9072,10 +9310,12 @@ input.rename-input {
 }
 
 .about-version {
-  margin-top: 3px;
-  font-size: 11.5px;
-  color: var(--win-text-disabled);
-  font-family: var(--win-font-mono);
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--win-text-secondary);
+  font-family: var(--win-font-sans);
+  letter-spacing: -0.1px;
 }
 
 .about-desc {
@@ -11087,18 +11327,328 @@ input.rename-input {
 }
 
 .gp-container {
-  padding: 0 12px;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  white-space: nowrap;
+  overflow: visible;
+  position: relative;
+  min-width: 0;
 }
 
-.gp-left-section,
+/* ————— Cụm Segmented Data | Structure (đồng bộ với .gp-btn) ————— */
+.gp-segmented {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 2px;
+  gap: 2px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.05);
+  border: 0 solid var(--win-border);
+  flex-shrink: 0;
+}
+
+[data-theme='dark'] .gp-segmented {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.gp-segment-btn {
+  height: 22px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--win-text-secondary);
+  font-family: var(--win-font-sans);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.gp-segment-btn:hover:not(.active) {
+  color: var(--win-text-primary);
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme='dark'] .gp-segment-btn:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.06);
+  color: #f1f5f9;
+}
+
+.gp-segment-btn.active {
+  background: rgba(255, 255, 255, 0.88);
+  color: var(--win-text-primary);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+[data-theme='dark'] .gp-segment-btn.active {
+  background: rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+/* ————— Popover menu gom cho Import / Export ————— */
+.gp-io-popover {
+  position: absolute;
+  bottom: 32px;
+  right: 0;
+  min-width: 190px;
+  z-index: 9999;
+  padding: 4px 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: 8px;
+  background: var(--win-bg-window, #ffffff);
+  border: 1px solid var(--win-border-strong);
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2), 0 2px 6px rgba(0, 0, 0, 0.1);
+}
+
+[data-theme='dark'] .gp-io-popover {
+  background: var(--win-bg-popover, #1e1e1e);
+  border-color: var(--win-border-strong);
+}
+
+.gp-io-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--win-text-primary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+
+.gp-io-item:hover {
+  background: var(--win-bg-hover, rgba(0, 0, 0, 0.05));
+  color: var(--win-accent);
+}
+
+.gp-left-section {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
 .gp-right-section {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.gp-btn-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 2px;
+}
+
+.gp-status-text {
+  font-size: 11px;
+  color: var(--win-text-secondary);
+  white-space: nowrap;
+  flex-shrink: 1;
+  margin: 0 4px;
+}
+
+/* ————— Quick Search Bar (Search Anything) ————— */
+.grid-quick-search-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: var(--win-bg-hover, rgba(255, 255, 255, 0.65));
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--win-border);
+  gap: 10px;
+  animation: slideDown 0.15s ease-out;
+  flex-shrink: 0;
+}
+
+[data-theme='dark'] .grid-quick-search-bar {
+  background: rgba(26, 26, 26, 0.85);
+}
+
+.grid-quick-search-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  max-width: 560px;
+}
+
+.grid-quick-search-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.grid-quick-search-icon {
+  position: absolute;
+  left: 10px;
+  color: var(--win-text-secondary);
+  pointer-events: none;
+  opacity: 0.7;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.grid-quick-search-input {
+  width: 100%;
+  height: 28px;
+  padding-left: 36px !important;
+  padding-right: 70px !important;
+  font-size: 12px;
+  font-family: var(--win-font-sans);
+  color: var(--win-text-primary);
+  background: var(--win-bg-window, #ffffff);
+  border: 1px solid var(--win-border);
+  border-radius: 6px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.grid-quick-search-input:focus {
+  border-color: var(--win-accent);
+  box-shadow: 0 0 0 2px var(--win-accent-glow);
+}
+
+.grid-quick-search-actions {
+  position: absolute;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.grid-quick-search-btn-clear {
+  background: transparent;
+  border: none;
+  color: var(--win-text-disabled);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  line-height: 1;
+}
+
+.grid-quick-search-btn-clear:hover {
+  color: var(--win-text-primary);
+  background: var(--win-bg-hover);
+}
+
+.grid-quick-search-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--win-accent-glow);
+  color: var(--win-accent);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.grid-quick-search-badge.empty {
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
+}
+
+.grid-quick-search-right {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
+.grid-quick-search-kbd {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--win-bg-hover, rgba(0, 0, 0, 0.05));
+  border: 1px solid var(--win-border);
+  color: var(--win-text-secondary);
+  font-family: var(--win-font-mono);
+}
+
+.grid-quick-search-btn-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--win-text-secondary);
+  cursor: pointer;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+
+.grid-quick-search-btn-close:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--win-text-primary);
+}
+
+[data-theme='dark'] .grid-quick-search-btn-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+}
+
+.grid-search-mark {
+  background: rgba(255, 210, 0, 0.4);
+  color: inherit;
+  padding: 0 1px;
+  border-radius: 2px;
+  font-weight: 600;
+}
+
+[data-theme='dark'] .grid-search-mark {
+  background: rgba(255, 200, 0, 0.45);
+  color: #ffffff;
+}
+
+.gp-left-section {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.gp-right-section {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
 .gp-btn-group {
   display: flex;
+  align-items: center;
   gap: 4px;
   margin-left: 6px;
 }
@@ -11106,6 +11656,27 @@ input.rename-input {
 .gp-status-text {
   font-size: 11px;
   color: var(--win-text-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin: 0 8px;
+}
+
+/* Nút "đếm chính xác" cạnh số dòng ước lượng. Là một liên kết trong câu chứ không phải `.btn`:
+   nó nằm giữa dòng trạng thái 11px, và một nút cao 28px sẽ đội cả thanh dưới grid lên. */
+.gp-count-exact {
+  margin-left: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--win-accent);
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.gp-count-exact:hover {
+  text-decoration-style: solid;
 }
 
 .gp-popover-wrap {
@@ -12055,13 +12626,17 @@ input.rename-input {
    Cùng họ với `.qs-pop` bên dưới và cố ý dùng chung `--win-bg-popover`: nền `--win-bg-window`
    trong suốt ở theme sáng nên nhãn tab phía sau lọt qua. Portal + backdrop cũng vì popover này
    mở từ trong `.tb-capsule` (overflow: hidden) nên nằm trong cây sẽ bị cắt. */
-.sm-backdrop {
+/* Popover neo dưới một nút trên thanh tiêu đề. Safe Mode và Việc chạy nền dùng CHUNG hai rule
+   này (nền chặn + hộp) để sửa một bên là bên kia không lệch. */
+.sm-backdrop,
+.jobs-backdrop {
   position: fixed;
   inset: 0;
   z-index: 99998;
 }
 
-.sm-pop {
+.sm-pop,
+.jobs-pop {
   position: fixed;
   z-index: 99999;
   width: 316px;
@@ -12130,11 +12705,196 @@ input.rename-input {
   color: var(--win-text-secondary);
 }
 
+/* Tên command trong hộp thoại Safe Mode. Là một chip vừa đúng nội dung, không phải một khung rộng
+   hết dòng — khung đó đọc ra như một input bị disable. */
+.smg-cmd {
+  display: inline-block;
+  padding: 3px 9px;
+  border: 1px solid var(--win-border);
+  border-radius: 6px;
+  background: var(--win-bg-tab-bar);
+  color: var(--win-text-secondary);
+  font-family: var(--win-font-mono, monospace);
+  font-size: 11.5px;
+}
+
+/* Tên bảng/key mà lệnh nhắm vào, trong hộp thoại Safe Mode: mono + đậm để nó bật ra khỏi câu, vì
+   đó là từ người dùng cần đọc kỹ nhất trước khi bấm. */
+.smg-target {
+  font-family: var(--win-font-mono, monospace);
+  font-weight: 600;
+  color: var(--win-text-primary);
+}
+
+/* Hàng chọn mức giới hạn thời gian câu lệnh. Sáu ô ngang, không phải sáu `.sm-item` xếp dọc:
+   chúng là sáu giá trị của MỘT thiết lập, còn danh sách dọc ở trên là sáu lựa chọn khác nhau —
+   trông giống nhau thì phải đọc chữ mới biết đang chọn cái gì. */
+.sm-seg {
+  display: flex;
+  gap: 4px;
+  padding: 0 8px 2px;
+}
+
+.sm-seg button {
+  flex: 1;
+  padding: 5px 0;
+  border: 1px solid var(--win-border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--win-text-secondary);
+  font-family: var(--win-font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sm-seg button:hover:not(:disabled) {
+  background: var(--win-bg-hover);
+  color: var(--win-text-primary);
+}
+
+.sm-seg button.is-on {
+  border-color: var(--win-accent);
+  background: var(--win-accent-glow);
+  color: var(--win-text-primary);
+}
+
+.sm-seg button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.sm-pop-note {
+  padding: 6px 10px 4px;
+}
+
 /* Chỉ đọc chặn hẳn thay vì hỏi, nên nó tách khỏi ba mức "hỏi" ở trên. */
 .sm-divider {
   height: 1px;
   margin: 5px 8px;
   background: var(--win-border);
+}
+
+/* Việc chạy nền (JobsTray). Dáng hộp lấy từ .sm-pop ở trên; đây chỉ là chiều rộng và danh sách. */
+.jobs-pop {
+  width: 380px;
+}
+
+.jobs-pop-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.jobs-pop-clear {
+  background: none;
+  border: none;
+  padding: 0 10px 8px;
+  font-size: 11px;
+  color: var(--win-accent);
+  cursor: pointer;
+}
+
+.jobs-pop-clear:disabled {
+  color: var(--win-text-disabled);
+  cursor: default;
+}
+
+/* Cao hơn nữa thì popover che gần hết cửa sổ; danh sách tự cuộn. */
+.jobs-list {
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.jobs-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 8px 10px;
+}
+
+.jobs-row + .jobs-row {
+  border-top: 1px solid var(--win-border);
+}
+
+.jobs-row-icon {
+  padding-top: 1px;
+  flex-shrink: 0;
+}
+
+.jobs-row-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.jobs-row-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.jobs-row-title {
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jobs-row-state,
+.jobs-row-note {
+  font-size: 10px;
+  color: var(--win-text-secondary);
+}
+
+.jobs-row-state {
+  flex-shrink: 0;
+}
+
+.jobs-row-error {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--win-danger, #ef4444);
+  word-break: break-word;
+}
+
+.jobs-row-result {
+  font-size: 11px;
+  color: var(--win-text-secondary);
+  word-break: break-word;
+}
+
+.jobs-row-warn {
+  color: var(--win-warning, #f59e0b);
+}
+
+.jobs-row-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* Số việc đang chạy, nằm cạnh cái chuông. */
+.jobs-badge {
+  font-size: 10px;
+  font-weight: 600;
+  margin-left: 3px;
+}
+
+.jobs-icon-ok {
+  color: var(--win-success, #22c55e);
+}
+
+.jobs-icon-error {
+  color: var(--win-danger, #ef4444);
+}
+
+.jobs-icon-muted {
+  color: var(--win-text-secondary);
 }
 
 .qs-backdrop {
@@ -12378,8 +13138,8 @@ input.rename-input {
 
 /* Hàng database */
 .qs-row-db {
-  padding: 0;
-  cursor: default;
+  padding: 0 4px 0 0;
+  cursor: pointer;
 }
 
 .qs-row-main {
@@ -12389,24 +13149,18 @@ input.rename-input {
   flex: 1;
   min-width: 0;
   padding: 6px 9px;
-  border: 1px solid transparent;
+  border: none;
   border-radius: 8px;
   background: transparent;
   color: inherit;
   font: inherit;
   text-align: left;
   cursor: pointer;
-  transition: background 0.12s cubic-bezier(0.4, 0, 0.2, 1), transform 0.12s ease;
-}
-
-.qs-row-main:hover {
-  background: var(--win-bg-hover);
-  transform: translateX(2px);
 }
 
 .qs-row-db.is-on .qs-row-main {
-  background: var(--win-accent-glow);
-  border-color: rgba(96, 165, 250, 0.25);
+  background: transparent;
+  border: none;
   font-weight: 600;
   color: var(--win-accent);
 }
@@ -12630,20 +13384,24 @@ input.rename-input {
   min-height: 0;
 }
 
-/* Footer hành động: mỗi nút mở một tab công cụ. Bọc dòng thay vì cuộn ngang — sáu nhãn ngắn, và
-   một thanh cuộn ngang ở đáy sidebar là chỗ không ai nghĩ tới việc cuộn. */
+/* Tool buttons, living inside `.redis-keylist-footer` rather than in a bar of their own.
+   Six wrapped text buttons plus the key count made ~103px of permanent chrome at the bottom of the
+   sidebar, and broke the rule that every footer bar is `--ws-foot-h` tall and lines up (see the
+   "Ba thanh chân cùng chiều cao" group). Icon-only keeps one click per tool without the wrap; the
+   label stays reachable as the tooltip. */
 .redis-sidebar-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 8px 10px;
-  border-top: 1px solid var(--win-border);
-  background: var(--win-bg-tab-bar);
+  gap: 4px;
+  flex-shrink: 0;
 }
 
 .redis-sidebar-action {
-  flex: 1 1 auto;
-  min-width: 92px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
   justify-content: center;
 }
 
@@ -12887,11 +13645,31 @@ input.rename-input {
   color: var(--win-text-secondary);
 }
 
+/* The sidebar's one and only footer bar: key count on the left, tool buttons on the right.
+   `flex-shrink: 0` is load-bearing — `.redis-keylist-scroll` above it is `flex: 1`, i.e. basis 0%,
+   so its scaled shrink factor is 0 and it never gives a pixel back. Without this the whole height
+   deficit of a short window landed on the header and this bar, which is the wrong way round: the
+   list scrolls, the chrome must not move. */
 .redis-keylist-footer {
-  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  min-height: var(--ws-foot-h, 34px);
+  padding: 0 8px;
   border-top: 1px solid var(--win-border);
   font-size: 10px;
   color: var(--win-text-disabled);
+}
+
+/* Takes the slack so the buttons stay pinned right, and ellipsises instead of pushing them out —
+   "Đang quét 12.345 key…" is longer than the idle text. */
+.redis-keylist-count {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Một dòng của cây key. Độ thụt lấy từ biến `--redis-depth` mà TS đặt cho từng dòng — cách duy nhất
@@ -13214,6 +13992,23 @@ input.rename-input {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+/* Value box of a string / RedisJSON key. Without this it kept the browser's default two-row
+   height, so the value showed clipped at the top of the tab with the rest of the panel left
+   empty -- `.redis-value` is a flex column and a textarea does not grow on its own. min-height
+   keeps it usable in a very short pane (`.redis-tab-body` scrolls). */
+.redis-value-text {
+  flex: 1;
+  min-height: 120px;
+  width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  font-family: var(--win-font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow: auto;
 }
 
 .redis-json-path {
@@ -13897,6 +14692,42 @@ input.rename-input {
   color: var(--st-warning, #f59e0b);
 }
 
+/* ---- Dialog xuất / nhập keyspace (RedisTransferDialog) ---- */
+
+/* Hai tab Xuất/Nhập. Dùng lại `.redis-value-btn.active` của tab Entries/Groups bên StreamPanel —
+   cùng hình dạng "hai nút, một cái đang chọn", nên không cần một bộ class thứ hai. */
+.redis-transfer-tabs {
+  display: flex;
+  gap: 6px;
+}
+
+.redis-transfer-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* `<input type="file">` gốc bị ẩn sau một `<label class="btn">`: nút chọn tệp của trình duyệt
+   không style được, và ở đây nó phải trông như mọi nút khác trong dialog. Không dùng
+   `display: none` — Firefox bỏ luôn phần tử khỏi luồng và nhãn không còn kích hoạt được nó. */
+.redis-transfer-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Danh sách key lỗi. Cuộn thay vì giãn: một tệp lệch phiên bản thì MỌI key đều lỗi, và một dialog
+   dài 10.000 dòng thì không còn thấy nút nào. */
+.redis-transfer-failed {
+  margin-top: 6px;
+  max-height: 120px;
+  overflow: auto;
+  word-break: break-all;
+}
+
 /* Nút xoá hàng loạt. Trạng thái "chưa gõ đủ điều kiện" đi qua `:disabled` thay vì bốn thuộc tính
    tính theo cờ `ready` — cờ đó vốn đã điều khiển `disabled`, nên CSS suy ra được. */
 .redis-danger-btn {
@@ -14015,4 +14846,489 @@ input.rename-input {
 .redis-cli-resizer:hover,
 .redis-cli-resizer.dragging {
   background: var(--win-accent);
+}
+
+/* ==========================================================================
+   Studio 3T / TablePlus Style Document & Row Viewer Modal
+   ========================================================================== */
+
+.doc-modal-body {
+  padding: 0 !important;
+  gap: 0 !important;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 460px;
+  height: 100%;
+  overflow: hidden;
+  background: var(--win-bg-window);
+}
+
+/* Navigation & Sub-Header */
+.doc-nav-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  background: var(--win-bg-tab-bar);
+  border-bottom: 1px solid var(--win-border);
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.doc-nav-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.doc-table-pill {
+  font-family: var(--win-font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--win-accent);
+  background: rgba(59, 130, 246, 0.12);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.doc-nav-counter {
+  font-size: 12px;
+  color: var(--win-text-secondary);
+}
+
+.doc-nav-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.doc-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--win-text-primary);
+  background: var(--win-bg-card);
+  border: 1px solid var(--win-border);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.doc-nav-btn:hover:not(:disabled) {
+  background: var(--win-bg-hover);
+  border-color: var(--win-border-strong);
+  color: var(--win-accent);
+}
+
+.doc-nav-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Tabs switcher */
+.doc-tabs-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 14px;
+  background: var(--win-bg-sidebar);
+  border-bottom: 1px solid var(--win-border);
+  flex-shrink: 0;
+}
+
+.doc-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--win-text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.doc-tab-btn:hover:not(.is-active) {
+  color: var(--win-text-primary);
+  background: var(--win-bg-hover);
+}
+
+.doc-tab-btn.is-active {
+  color: var(--win-accent);
+  background: var(--win-accent-glow);
+  border-color: rgba(96, 165, 250, 0.25);
+  font-weight: 600;
+}
+
+/* 1. Table / Form View */
+.doc-table-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.doc-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: var(--win-bg-window);
+  border-bottom: 1px solid var(--win-border);
+  flex-shrink: 0;
+}
+
+.doc-search-input-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  max-width: 380px;
+}
+
+.doc-search-input-box .doc-search-icon {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--win-text-disabled);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.doc-search-input-box .doc-search-input {
+  width: 100%;
+  padding: 5px 10px 5px 30px !important;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--win-text-primary);
+  background: var(--win-bg-card);
+  border: 1px solid var(--win-border);
+  outline: none;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+[data-theme='light'] .doc-search-input-box .doc-search-input {
+  background: #ffffff;
+  border: 1px solid var(--win-border-strong, #cbd5e1);
+  color: #0f172a;
+}
+
+.doc-search-input-box .doc-search-input:focus {
+  border-color: var(--win-accent);
+}
+
+.doc-table-scroll {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: auto;
+}
+
+.doc-field-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  text-align: left;
+}
+
+.doc-field-th {
+  padding: 8px 14px;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--win-text-disabled);
+  background: var(--win-bg-tab-bar);
+  border-bottom: 1px solid var(--win-border);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.doc-field-tr {
+  border-bottom: 1px solid var(--win-border-light, var(--win-border));
+  transition: background 0.1s ease;
+}
+
+.doc-field-tr:hover {
+  background: var(--win-bg-hover);
+}
+
+.doc-field-td-key {
+  padding: 8px 14px;
+  width: 220px;
+  min-width: 180px;
+  vertical-align: top;
+  font-family: var(--win-font-mono);
+}
+
+.doc-field-key-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.doc-field-name {
+  font-weight: 600;
+  color: var(--win-text-primary);
+  word-break: break-all;
+}
+
+.doc-field-td-type {
+  padding: 8px 14px;
+  width: 130px;
+  min-width: 110px;
+  vertical-align: top;
+  font-family: var(--win-font-mono);
+  font-size: 11px;
+  color: var(--win-text-secondary);
+}
+
+.doc-field-td-val {
+  padding: 8px 14px;
+  vertical-align: top;
+  position: relative;
+}
+
+.doc-field-val-container {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+}
+
+.doc-field-val-text {
+  font-family: var(--win-font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--win-text-primary);
+  white-space: pre-wrap;
+  word-break: break-all;
+  flex: 1;
+}
+
+.doc-field-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  background: transparent;
+  border: none;
+  color: var(--win-text-disabled);
+  cursor: pointer;
+  opacity: 0;
+  transition: all 0.12s ease;
+  flex-shrink: 0;
+}
+
+.doc-field-tr:hover .doc-field-copy-btn {
+  opacity: 0.8;
+}
+
+.doc-field-copy-btn:hover {
+  opacity: 1 !important;
+  background: var(--win-bg-card);
+  color: var(--win-accent);
+}
+
+.doc-empty-hint {
+  padding: 36px 14px;
+  text-align: center;
+  color: var(--win-text-disabled);
+  font-size: 13px;
+}
+
+/* 2. Tree View */
+.doc-tree-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.doc-tree-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  background: var(--win-bg-tab-bar);
+  border-bottom: 1px solid var(--win-border);
+  flex-shrink: 0;
+}
+
+.doc-tree-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px;
+  font-family: var(--win-font-mono);
+  font-size: 12px;
+}
+
+.doc-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  transition: background 0.1s ease;
+}
+
+.doc-tree-row:hover {
+  background: var(--win-bg-hover);
+}
+
+.doc-tree-indent {
+  display: inline-block;
+  width: 18px;
+  flex-shrink: 0;
+}
+
+.doc-tree-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  border: none;
+  background: transparent;
+  color: var(--win-text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: transform 0.12s ease;
+}
+
+.doc-tree-toggle:hover {
+  background: var(--win-bg-card);
+  color: var(--win-accent);
+}
+
+.doc-tree-key {
+  font-weight: 600;
+  color: var(--win-text-primary);
+  flex-shrink: 0;
+}
+
+.doc-type-badge {
+  font-size: 9.5px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.doc-type-string {
+  background: rgba(16, 185, 129, 0.12);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.25);
+}
+
+.doc-type-number {
+  background: rgba(59, 130, 246, 0.12);
+  color: #3b82f6;
+  border: 1px solid rgba(59, 130, 246, 0.25);
+}
+
+.doc-type-boolean {
+  background: rgba(245, 158, 11, 0.12);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.25);
+}
+
+.doc-type-object,
+.doc-type-array {
+  background: rgba(168, 85, 247, 0.12);
+  color: #a855f7;
+  border: 1px solid rgba(168, 85, 247, 0.25);
+}
+
+.doc-type-null {
+  background: rgba(148, 163, 184, 0.12);
+  color: #94a3b8;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+.doc-tree-val {
+  color: var(--win-text-secondary);
+  word-break: break-all;
+  flex: 1;
+}
+
+.doc-tree-val.is-string {
+  color: #10b981;
+}
+
+.doc-tree-val.is-number {
+  color: #3b82f6;
+}
+
+.doc-tree-val.is-boolean {
+  color: #f59e0b;
+}
+
+.doc-tree-val.is-null {
+  color: var(--win-text-disabled);
+  font-style: italic;
+}
+
+/* 3. JSON View */
+.doc-json-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 420px;
+  height: 100%;
+  overflow: hidden;
+}
+
+.doc-json-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  background: var(--win-bg-tab-bar);
+  border-bottom: 1px solid var(--win-border);
+  flex-shrink: 0;
+}
+
+.doc-json-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.doc-json-editor-container {
+  flex: 1;
+  min-height: 380px;
+  height: calc(100% - 42px);
+  position: relative;
+  overflow: hidden;
+}
+
+.doc-json-error-banner {
+  padding: 6px 14px;
+  background: rgba(239, 68, 68, 0.12);
+  border-bottom: 1px solid rgba(239, 68, 68, 0.25);
+  color: #ef4444;
+  font-size: 11.5px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }

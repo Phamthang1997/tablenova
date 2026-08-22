@@ -15,7 +15,14 @@ export interface ExportGridContext {
   sortBy?: string;
   sortDir?: 'asc' | 'desc';
   filter?: string;
-  totalCount?: number;
+  /**
+   * Số dòng ĐẾM CHÍNH XÁC của grid, hoặc `null` khi grid chỉ có số ước lượng.
+   *
+   * `fetchAllRows` dừng khi `all.length >= total`, nên một số thiếu ở đây là một tệp xuất bị cắt
+   * mà không có lỗi nào. `null` thì vòng lặp lấy tổng từ lần đọc trang đầu của chính nó — lần đó
+   * luôn đếm chính xác (`countMode` mặc định của `dbHelper.getTableData`).
+   */
+  totalCount?: number | null;
 }
 
 interface ExportTableDialogProps {

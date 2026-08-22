@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { Suspense, useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { TitleBar } from './components/TitleBar';
@@ -11,7 +11,15 @@ import { TabManager } from './components/TabManager';
 import type { TabInfo } from './components/TabManager';
 import { TAB_GROUP_COLORS, moveGroup, moveTabIntoGroup, reorderTabs, type TabGroup } from './utils/tabGroups';
 import { DataGrid } from './components/DataGrid';
-import { SqlEditor } from './components/SqlEditor';
+// Lazy: `SqlEditor` is the app's only static edge to `monaco-editor`, and pulling it into the
+// entry chunk made the webview parse ~4.5MB (Monaco + the SQL vendor bundle) and run the
+// completion/hover/theme registrations before the first frame — even for a session that never
+// opens a query tab. Fetched on the first query tab instead; later mounts resolve synchronously.
+// The Redis console is lazied the same way in `RedisToolTab`; both edges have to stay lazy or
+// Monaco is back in the entry chunk and neither one buys anything.
+const SqlEditor = React.lazy(() =>
+  import('./components/SqlEditor').then((m) => ({ default: m.SqlEditor })));
+import { LazyEditorFallback } from './components/LazyEditorFallback';
 import { AiAssistant } from './components/AiAssistant';
 import { TerminalPanel } from './components/TerminalPanel';
 import { RoutineEditorModal } from './components/RoutineEditorModal';
@@ -43,6 +51,9 @@ import { X } from 'lucide-react';
 import { getVersion } from '@tauri-apps/api/app';
 import { PostgresIcon, MySqlIcon, RedisIcon, SqliteIcon } from './components/DbIcons';
 import { dbHelper, activeConnId, setActiveConnId } from './utils/dbHelper';
+import { installCloseGuard } from './utils/closeGuard';
+import { startJob } from './utils/jobs';
+import { makeRestoreReporter } from './utils/restoreProgress';
 import { isProduction, normalizeEnv, type ConnEnv } from './utils/connEnv';
 import type { DbConnectionConfig } from './utils/dbHelper';
 import { invalidateCatalog } from './sql/catalog';
@@ -58,7 +69,7 @@ import { addExistsHint } from './utils/dumpPreview';
 import { ProgressBar, type ProgressState } from './components/ProgressBar';
 import { buildDatabaseFile } from './utils/exportHelper';
 import { buildDump, readTableRows, dumpReaderFor } from './utils/dumpBuilder';
-import { gzipText, openInFileManager, saveExportFile } from './utils/fileSave';
+import { gzipText, saveExportFile } from './utils/fileSave';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { Modal, ModalBody, ModalFooter } from './components/Modal';
 import type { XlsxSheet } from './utils/xlsxWriter';
@@ -113,24 +124,26 @@ const QueryTabPanel = React.memo(function QueryTabPanel(props: QueryTabPanelProp
           }
       }
     >
-      <SqlEditor
-        connId={props.connId}
-        isProdConn={props.isProdConn}
-        connReadOnly={props.connReadOnly}
-        dbType={props.dbType}
-        connKey={props.connKey}
-        dbName={props.dbName}
-        initialSql={(tab as any).sql || ''}
-        initialSql2={(tab as any).sql2 || ''}
-        initialSplitMode={(tab as any).splitMode || 'none'}
-        initialEditorHeight={(tab as any).customEditorHeight}
-        theme={props.theme}
-        readOnly={props.readOnly}
-        onSqlChange={(val) => onPatch(tab.id, { sql: val } as any)}
-        onSql2Change={(val) => onPatch(tab.id, { sql2: val } as any)}
-        onSplitModeChange={(val) => onPatch(tab.id, { splitMode: val } as any)}
-        onEditorHeightChange={(val) => onPatch(tab.id, { customEditorHeight: val } as any)}
-      />
+      <Suspense fallback={<LazyEditorFallback />}>
+        <SqlEditor
+          connId={props.connId}
+          isProdConn={props.isProdConn}
+          connReadOnly={props.connReadOnly}
+          dbType={props.dbType}
+          connKey={props.connKey}
+          dbName={props.dbName}
+          initialSql={(tab as any).sql || ''}
+          initialSql2={(tab as any).sql2 || ''}
+          initialSplitMode={(tab as any).splitMode || 'none'}
+          initialEditorHeight={(tab as any).customEditorHeight}
+          theme={props.theme}
+          readOnly={props.readOnly}
+          onSqlChange={(val) => onPatch(tab.id, { sql: val } as any)}
+          onSql2Change={(val) => onPatch(tab.id, { sql2: val } as any)}
+          onSplitModeChange={(val) => onPatch(tab.id, { splitMode: val } as any)}
+          onEditorHeightChange={(val) => onPatch(tab.id, { customEditorHeight: val } as any)}
+        />
+      </Suspense>
     </div>
   );
 });
@@ -310,10 +323,6 @@ export const App: React.FC = () => {
   const [globalImportTargetTable, setGlobalImportTargetTable] = useState<string | null>(null);
   const [globalImportTab, setGlobalImportTab] = useState<'structure' | 'data'>('structure');
   const [globalImportProgress, setGlobalImportProgress] = useState<ProgressState | null>(null);
-  // Kết quả xuất tệp: hiện hộp thoại có nút mở thư mục chứa tệp
-  const [exportDone, setExportDone] = useState<
-    { message: string; path?: string; dir?: string; viaDownload: boolean } | null
-  >(null);
   // Cột có trong tệp (gộp key của mọi dòng vì CSV/JSON có thể thiếu cột ở một số dòng)
   const globalImportCols = React.useMemo(() => collectColumns(globalImportPendingRows), [globalImportPendingRows]);
   const [showDbInfoModal, setShowDbInfoModal] = useState(false);
@@ -333,6 +342,11 @@ export const App: React.FC = () => {
   React.useEffect(() => {
     getVersion().then(setAppVersion).catch(() => { });
   }, []);
+
+  // MỘT listener `onCloseRequested` cho cả app; ai muốn chặn thì đăng ký blocker (transaction chưa
+  // commit, việc chạy nền). Hai listener độc lập thì cái nào resolve trước sẽ `destroy()` và giết
+  // luôn hộp thoại của cái kia — xem utils/closeGuard.ts.
+  React.useEffect(() => installCloseGuard(), []);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showDocModal, setShowDocModal] = useState(false);
   const [docQuery] = useState('');
@@ -447,77 +461,94 @@ export const App: React.FC = () => {
     reader.readAsText(file);
   };
 
-  // Trả về true nếu xuất xong -> ExportDatabaseDialog tự đóng.
+  /**
+   * Xuất cả database. Chạy **nền**: hàm này chỉ xếp một job rồi trả `true` để dialog đóng ngay,
+   * còn tiến độ / kết quả / lỗi nằm ở `JobsTray`. Trước đây tiến độ là state của dialog, nên
+   * đóng dialog là mất tiến độ và app đứng chờ suốt lần xuất — xem docs/background-jobs-plan.md.
+   *
+   * Kết quả đi qua `JobResult` chứ không bật thêm một hộp thoại: một modal tự nhảy ra sau mười phút,
+   * lúc người dùng đang gõ query khác, đúng là thứ chế độ nền này sinh ra để bỏ.
+   */
   const handleExportDatabase = async (opts: DatabaseExportOptions): Promise<boolean> => {
-    const { onProgress } = opts;
-    try {
-      const totalTables = opts.tables.length;
+    // Chốt ngay lúc submit: người dùng đổi kết nối trong lúc job chạy thì job vẫn đọc đúng chỗ nó
+    // được giao. `connId` đã là (server, database) nên nó cũng là khoá độc quyền — xem jobs.ts.
+    const jobConnId = activeConnIdState;
+    const dbType = connection?.dbType || 'sqlite';
+    const schema = connection?.schema;
+    const dbLabel = connection?.dbName || opts.filename;
 
-      // Dữ liệu (XLSX/JSON/CSV): dựng file client-side.
-      if (opts.format !== 'sql') {
-        const sheets: XlsxSheet[] = [];
-        for (let i = 0; i < opts.tables.length; i++) {
-          const table = opts.tables[i];
-          const schema = await dbHelper.getTableSchema(activeConnIdState, table);
-          const rows = await readTableRows(dumpReaderFor(dbHelper, activeConnIdState), table, i, totalTables, onProgress);
-          const colNames = (schema.columns || []).map(c => c.name);
-          const finalCols = colNames.length ? colNames : (rows[0] ? Object.keys(rows[0]) : []);
-          sheets.push({ name: table, colNames: finalCols, rows });
+    startJob({
+      kind: 'dump',
+      title: t('jobs.titleExport', { n: dbLabel }),
+      db: connection?.dbName || '',
+      lockKey: `${jobConnId}|${connection?.dbName || ''}`,
+      run: async (ctx) => {
+        const report = (p: ProgressState | null) => ctx.report(p);
+        const totalTables = opts.tables.length;
+
+        // Dữ liệu (XLSX/JSON/CSV): dựng file client-side.
+        if (opts.format !== 'sql') {
+          const sheets: XlsxSheet[] = [];
+          for (let i = 0; i < opts.tables.length; i++) {
+            ctx.throwIfCancelled();
+            const table = opts.tables[i];
+            const schemaInfo = await dbHelper.getTableSchema(jobConnId, table);
+            const rows = await readTableRows(dumpReaderFor(dbHelper, jobConnId), table, i, totalTables, report);
+            const colNames = (schemaInfo.columns || []).map(c => c.name);
+            const finalCols = colNames.length ? colNames : (rows[0] ? Object.keys(rows[0]) : []);
+            sheets.push({ name: table, colNames: finalCols, rows });
+          }
+          report({ label: t('app.exportBuilding', { format: opts.format.toUpperCase() }) });
+          const file = buildDatabaseFile(sheets, opts.format, opts.filename);
+          report({ label: t('app.exportWriting') });
+          const saved = await saveExportFile(opts.dir, file.name, file.data, file.mime);
+          return {
+            message: t('app.exportedSheets', { n: sheets.length, format: opts.format.toUpperCase(), file: file.name }),
+            path: saved.path,
+            dir: saved.dir,
+            viaDownload: saved.savedTo === 'download',
+          };
         }
-        onProgress({ label: t('app.exportBuilding', { format: opts.format.toUpperCase() }) });
-        const file = buildDatabaseFile(sheets, opts.format, opts.filename);
-        onProgress({ label: t('app.exportWriting') });
-        const saved = await saveExportFile(opts.dir, file.name, file.data, file.mime);
-        onProgress(null);
-        setExportDone({
-          message: t('app.exportedSheets', { n: sheets.length, format: opts.format.toUpperCase(), file: file.name }),
+
+        // SQL: dump được dựng ở dumpBuilder.ts — dùng chung với nút Backup của Connection
+        // Manager, để mọi thay đổi về thứ tự câu lệnh chỉ phải sửa ở MỘT chỗ.
+        const sqlText = await buildDump({
+          dbType,
+          tables: opts.tables,
+          views: opts.views,
+          routines: opts.routines,
+          triggers: opts.triggers,
+          sqlOptions: opts.sqlOptions,
+          // Dump được đọc ra từ schema đang chọn, nên header phải nói ra schema đó — nếu không,
+          // nhập lại ở máy khác thì mọi thứ chui vào schema đầu search_path của máy đó.
+          schema,
+          onProgress: report,
+        }, dumpReaderFor(dbHelper, jobConnId));
+        ctx.throwIfCancelled();
+
+        const ext = opts.compressGzip ? '.sql.gz' : '.sql';
+        const base = opts.filename.replace(/\.(sql|sql\.gz|gz)$/i, '');
+        const fileName = base + ext;
+
+        report({ label: opts.compressGzip ? t('app.exportCompressing') : t('app.exportWriting') });
+        const payload = opts.compressGzip ? await gzipText(sqlText) : sqlText;
+        const saved = await saveExportFile(
+          opts.dir,
+          fileName,
+          payload,
+          opts.compressGzip ? 'application/gzip' : 'text/plain;charset=utf-8'
+        );
+
+        return {
+          message: t('app.exportedSql', { n: opts.tables.length, file: fileName }),
           path: saved.path,
           dir: saved.dir,
           viaDownload: saved.savedTo === 'download',
-        });
-        return true;
-      }
+        };
+      },
+    });
 
-      // SQL: dump được dựng ở dumpBuilder.ts — dùng chung với nút Backup của Connection
-      // Manager, để mọi thay đổi về thứ tự câu lệnh chỉ phải sửa ở MỘT chỗ.
-      const sqlText = await buildDump({
-        dbType: connection?.dbType || 'sqlite',
-        tables: opts.tables,
-        views: opts.views,
-        routines: opts.routines,
-        triggers: opts.triggers,
-        sqlOptions: opts.sqlOptions,
-        // Dump được đọc ra từ schema đang chọn, nên header phải nói ra schema đó — nếu không,
-        // nhập lại ở máy khác thì mọi thứ chui vào schema đầu search_path của máy đó.
-        schema: connection?.schema,
-        onProgress,
-      }, dumpReaderFor(dbHelper, activeConnIdState));
-      const ext = opts.compressGzip ? '.sql.gz' : '.sql';
-      const base = opts.filename.replace(/\.(sql|sql\.gz|gz)$/i, '');
-      const fileName = base + ext;
-
-      onProgress({ label: opts.compressGzip ? t('app.exportCompressing') : t('app.exportWriting') });
-      const payload = opts.compressGzip ? await gzipText(sqlText) : sqlText;
-      const saved = await saveExportFile(
-        opts.dir,
-        fileName,
-        payload,
-        opts.compressGzip ? 'application/gzip' : 'text/plain;charset=utf-8'
-      );
-      onProgress(null);
-
-      setExportDone({
-        message: t('app.exportedSql', { n: opts.tables.length, file: fileName }),
-        path: saved.path,
-        dir: saved.dir,
-        viaDownload: saved.savedTo === 'download',
-      });
-      return true;
-    } catch (err: any) {
-      onProgress(null);
-      alert(t('app.errExport', { message: err.message }));
-      return false;
-    }
+    return true;
   };
 
   const extractTableNameFromSql = (sql: string): string | null => {
@@ -653,16 +684,15 @@ export const App: React.FC = () => {
     sqlText: string,
     tables: string[],
     targetDb: string,
-    onProgress?: (msg: { type: string; done?: number; total?: number }) => void,
     continueOnError = false
   ): Promise<boolean> => {
     try {
       const wantDb = targetDb.trim();
       const canManageDb = !!connection && connection.dbType !== 'sqlite';
 
-      // The connection the restore actually runs on. `restoreBackup` carries no id — it goes through
-      // `dbHelper`'s ambient one — so this has to be a local, not `activeConnIdState`: that is React
-      // state and still holds the OLD id inside this closure, which would also mis-address the
+      // The connection the restore actually runs on, passed explicitly to `restoreBackup`. A local
+      // rather than `activeConnIdState`, which is React state and still holds the OLD id inside this
+      // closure when the import opens a database of its own — that would also mis-address the
       // `database-restored` event at the end.
       let targetConnId = activeConnIdState;
 
@@ -695,33 +725,53 @@ export const App: React.FC = () => {
         invalidateCatalog();
       }
 
-      const resData = await dbHelper.restoreBackup(sqlText, tables, onProgress, continueOnError);
-      if (resData.success) {
-        // Có câu lệnh bị bỏ qua thì PHẢI nói ra: báo "thành công" trơn trong khi thiếu vài chục
-        // câu là để người dùng tin nhầm rằng database đã đầy đủ.
-        if (resData.failedCount) {
-          const detail = (resData.failedSamples || [])
-            .map((f) => `• ${f.error}\n  ${f.sql}`)
-            .join('\n\n');
-          alert(
-            t('app.importDbPartial', {
-              n: resData.statementsCount || 0,
-              failed: resData.failedCount,
-            }) + (detail ? `\n\n${detail}` : '')
+      // Phần chuẩn bị ở trên (tạo/mở database đích) chạy **trong** dialog: nó cần trả lời được
+      // "không tạo được database" ngay lúc người dùng còn đứng đó. Chỉ bản thân lần restore mới
+      // chạy nền — nó là phần dài, và là phần không cần ai ngồi nhìn.
+      const restoreConnId = targetConnId;
+      startJob({
+        kind: 'restore',
+        title: t('jobs.titleRestore', { n: wantDb || connection?.dbName || '' }),
+        db: wantDb || connection?.dbName || '',
+        write: true,
+        lockKey: `${restoreConnId}|${wantDb || connection?.dbName || ''}`,
+        run: async (ctx) => {
+          const toProgress = makeRestoreReporter(t);
+          const resData = await dbHelper.restoreBackup(
+            sqlText,
+            tables,
+            (msg) => ctx.report(toProgress(msg)),
+            continueOnError,
+            restoreConnId,
           );
-        } else {
-          alert(t('app.importDbSuccess', { n: resData.statementsCount || 0 }));
-        }
-        if (resData.activeDatabase) {
-          const activeDb = resData.activeDatabase;
-          setConnection(prev => prev ? { ...prev, dbName: activeDb } : null);
-        }
-        invalidateCatalog();
-        window.dispatchEvent(new CustomEvent('database-restored', { detail: { connId: targetConnId } }));
-        return true;
-      }
-      alert(t('app.errImport', { message: addExistsHint(resData.error || '', false) }));
-      return false;
+          if (!resData.success) throw new Error(addExistsHint(resData.error || '', false));
+
+          // `USE <db>` trong tệp dump đổi database của kết nối này, nên nhãn trên thanh tiêu đề
+          // phải đổi theo — nhưng CHỈ khi người dùng vẫn đang xem đúng kết nối đó. Job chạy nền,
+          // nên lúc nó xong người dùng có thể đã sang kết nối khác, và ghi đè nhãn của kết nối ấy
+          // là hiện tên một database nó không hề mở.
+          if (resData.activeDatabase && activeConnIdRef.current === restoreConnId) {
+            const activeDb = resData.activeDatabase;
+            setConnection(prev => prev ? { ...prev, dbName: activeDb } : null);
+          }
+          invalidateCatalog();
+          window.dispatchEvent(new CustomEvent('database-restored', { detail: { connId: restoreConnId } }));
+
+          // Có câu lệnh bị bỏ qua thì PHẢI nói ra: báo "thành công" trơn trong khi thiếu vài chục
+          // câu là để người dùng tin nhầm rằng database đã đầy đủ.
+          if (resData.failedCount) {
+            return {
+              message: t('app.importDbPartial', {
+                n: resData.statementsCount || 0,
+                failed: resData.failedCount,
+              }),
+              warning: (resData.failedSamples || []).map((f) => `• ${f.error}`).join('\n'),
+            };
+          }
+          return { message: t('app.importDbSuccess', { n: resData.statementsCount || 0 }) };
+        },
+      });
+      return true;
     } catch (e: any) {
       alert(t('app.errImport', { message: e.message }));
       return false;
@@ -1854,7 +1904,8 @@ export const App: React.FC = () => {
       onShowShortcuts={() => setShowShortcuts(true)}
       onShowAbout={() => setShowAbout(true)}
       onShowWhatsNew={() => setShowWhatsNew(true)}
-      onToggleTerminal={() => { }}
+      onOpenCompare={() => setShowDbCompare(true)}
+      onToggleTerminal={handleOpenTerminal}
       aiOpen={showAi}
       onToggleAiAssistant={() => setShowAi(prev => !prev)}
       onDatabaseOpened={handleDatabaseOpened}
@@ -2197,34 +2248,6 @@ export const App: React.FC = () => {
         onConfirm={handleGlobalFileImport}
       />
 
-      {/* Kết quả xuất tệp — cho mở luôn thư mục chứa tệp */}
-      <ConfirmDialog
-        open={!!exportDone}
-        tone="success"
-        title={t('app.exportDoneTitle')}
-        message={
-          exportDone ? (
-            <>
-              {exportDone.message}
-              {exportDone.path && (
-                <div style={{ marginTop: '6px', fontFamily: 'monospace', wordBreak: 'break-all', color: 'var(--win-text-secondary)' }}>
-                  {exportDone.path}
-                </div>
-              )}
-            </>
-          ) : null
-        }
-        note={exportDone?.viaDownload ? t('app.exportDoneNoteWebView') : undefined}
-        confirmLabel={exportDone?.dir ? t('app.openFolder') : t('common.close')}
-        cancelLabel={t('common.close')}
-        onCancel={() => setExportDone(null)}
-        onConfirm={() => {
-          const dir = exportDone?.dir;
-          setExportDone(null);
-          if (dir) openInFileManager(dir);
-        }}
-      />
-
       {/* Tiến độ nhập dữ liệu vào bảng (modal xem trước đã đóng) */}
       {globalImportProgress && (
         <div style={{
@@ -2519,6 +2542,7 @@ export const App: React.FC = () => {
       {/* Sinh dữ liệu test hàng loạt */}
       {showDataGen && connection && (
         <DataGeneratorDialog
+          connId={activeConnIdState}
           dbName={connection.dbName}
           initialTable={dataGenTable}
           onClose={() => {
@@ -2542,7 +2566,9 @@ export const App: React.FC = () => {
 
             <img className="about-logo" src={appIcon} alt="" />
             <div className="about-name">TableNova</div>
-            <div className="about-version">{t('app.aboutVersion', { version: appVersion })}</div>
+            <div className="about-version">
+              {t('app.aboutVersion', { version: appVersion })} (Build 2608)
+            </div>
 
             <p className="about-desc">{t('app.aboutDesc')}</p>
 

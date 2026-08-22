@@ -109,6 +109,7 @@ pub fn run() {
             database::get_tables,
             database::get_full_catalog,
             database::get_table_data,
+            database::set_statement_timeout,
             database::get_table_schema,
             database::alter_table_schema,
             database::preview_alter_schema,
@@ -229,7 +230,9 @@ pub fn run() {
             redis_db::redis_stream_pending,
             redis_db::redis_stream_ack,
             redis_db::redis_stream_claim,
-            redis_db::redis_analyze_db
+            redis_db::redis_analyze_db,
+            redis_db::redis_dump_keys,
+            redis_db::redis_restore_keys
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

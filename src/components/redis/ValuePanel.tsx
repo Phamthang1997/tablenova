@@ -366,6 +366,7 @@ const StringValue: React.FC<StringValueProps> = ({
       )}
 
       <textarea
+        className="redis-value-text"
         value={draft}
         readOnly={!editableText && !editableHex}
         onChange={(e) => setDraft(e.target.value)}
@@ -443,6 +444,7 @@ const JsonValue: React.FC<JsonValueProps> = ({ keyName, readOnly, onError, onOk,
         )}
       </div>
       <textarea
+        className="redis-value-text"
         value={text}
         readOnly={readOnly}
         onChange={(e) => setText(e.target.value)}

@@ -1,11 +1,15 @@
 import React, { useState, useEffect, useCallback, useLayoutEffect, useRef } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { clampMenu, type MenuRect } from '../utils/menuPosition';
+import { countKey, nextCountMode, seekColumn, seekViewKey } from '../utils/gridPaging';
+import { getCommitPreviewForKey, setCommitPreviewForKey } from '../utils/commitPreview';
+import { connKeyOfConn } from '../utils/safeMode';
 import { dbHelper } from '../utils/dbHelper';
 import type { SchemaInfo, ColumnInfo, GridChange } from '../utils/dbHelper';
 import {
   Save, RotateCcw, Plus, ChevronLeft, ChevronRight,
-  CheckCircle2, AlertTriangle, Minus, Copy, Calendar
+  CheckCircle2, AlertTriangle, Minus, Copy, Calendar, ArrowUpRight,
+  Search, X, ChevronDown, FileUp, FileDown
 } from 'lucide-react';
 import { StructureViewer } from './StructureViewer';
 import { parseXlsx } from '../utils/xlsxReader';
@@ -14,6 +18,14 @@ import { ProgressBar, type ProgressState } from './ProgressBar';
 import { ImportFilePicker } from './ImportFilePicker';
 import { ExportTableDialog } from './ExportTableDialog';
 import { Modal, ModalBody, ModalFooter } from './Modal';
+import { LazyModalFallback } from './LazyEditorFallback';
+
+// Lazy vì `RowDocumentModal` có tab JSON dựng bằng `@monaco-editor/react`: import tĩnh ở đây là
+// một đường tĩnh từ entry tới Monaco, và nó vô hiệu hoá luôn `React.lazy` của `SqlEditor` lẫn Redis
+// `Console` — chunk Monaco 4MB quay lại thành `modulepreload` lúc khởi động. Xem CLAUDE.md,
+// mục Build/config. Kiểm bằng `dist/index.html` sau `npm run build-frontend`.
+const RowDocumentModal = React.lazy(() =>
+  import('./RowDocumentModal').then((m) => ({ default: m.RowDocumentModal })));
 
 /** Số dòng mỗi lô khi nhập dữ liệu vào bảng (để báo được tiến độ). */
 const IMPORT_BATCH_SIZE = 500;
@@ -190,14 +202,37 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
 
   // Data State
   const [rows, setRows] = useState<any[]>([]);
-  const [totalCount, setTotalCount] = useState(0);
+  /** `null` = chưa/không đếm được. Khác hẳn `0`, nghĩa là bảng rỗng — xem `gridPaging.ts`. */
+  const [totalCount, setTotalCount] = useState<number | null>(null);
+  /** `false` khi số dòng là ước lượng của planner; UI phải nói ra bằng dấu `~`. */
+  const [countExact, setCountExact] = useState(true);
+  /** Còn trang sau hay không, do backend đọc thừa một dòng — đúng cả khi số đếm là ước lượng. */
+  const [hasMore, setHasMore] = useState(false);
   const [primaryKey, setPrimaryKey] = useState('id');
 
   // Pagination & Filtering
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
-
-  const totalPages = Math.ceil(totalCount / pageSize) || 1;
+  /**
+   * Tăng lên sau mỗi lần grid tự ghi vào bảng (commit, import) và khi người dùng bấm Refresh —
+   * ba cách duy nhất làm tổng số dòng đổi mà tên bảng lẫn filter đều không đổi. Nó là phần thứ ba
+   * của `countKey`, tức là thứ buộc lần đọc kế tiếp phải đếm lại.
+   */
+  const [dataVersion, setDataVersion] = useState(0);
+  /** Key của lần đếm gần nhất **có kết quả trở về** (không phải lần gửi gần nhất). */
+  const lastCountedKeyRef = useRef<string | null>(null);
+  /** Bật một lần khi người dùng bấm "đếm chính xác", tắt ngay sau lần đọc đó. */
+  const forceExactCountRef = useRef(false);
+  /**
+   * Con trỏ keyset của từng trang: `cursors[i]` là con trỏ mở ra trang `i + 1`, nên `cursors[0]`
+   * luôn là `null` (trang 1 không cần con trỏ).
+   *
+   * Nằm trong ref chứ không phải state vì không có gì render từ nó, và đi kèm `key` của chuỗi thứ
+   * tự (`seekViewKey`) để tự bỏ khi người dùng đổi filter/sort/cỡ trang — xem `gridPaging.ts`.
+   * Điều hướng ở grid chỉ có Prev/Next nên ngăn xếp này luôn liền mạch: tới trang N thì trang
+   * N − 1 vừa mới đọc xong ngay trước đó.
+   */
+  const cursorsRef = useRef<{ key: string; cursors: (string | null)[] }>({ key: '', cursors: [null] });
   const [sortBy, setSortBy] = useState<string | undefined>(undefined);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [filterText, setFilterText] = useState<string>(() =>
@@ -279,10 +314,18 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
 
   // Transaction preview trước khi commit
   const [commitPreview, setCommitPreview] = useState<string[] | null>(null);
+  /**
+   * Chỉ để ép render lại cái ô "đừng hiện lại": giá trị thật nằm ở localStorage theo server
+   * (`commitPreview.ts`), ngoài React, nên tick vào ô mà không có state này thì ô không đổi hình.
+   */
+  const [, setPreviewOptOutTick] = useState(0);
   const [pendingChanges, setPendingChanges] = useState<GridChange[]>([]);
 
   // Selected row for highlighting
   const [selectedRowId, setSelectedRowId] = useState<any | null>(null);
+
+  // Studio 3T-style Document / Row Viewer Modal
+  const [documentViewerIndex, setDocumentViewerIndex] = useState<number | null>(null);
 
   // Context Menu State
   const [contextMenu, setContextMenu] = useState<{
@@ -320,6 +363,15 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
   const [visibleColumns, setVisibleColumns] = useState<string[]>([]);
   const [pendingVisibleColumns, setPendingVisibleColumns] = useState<string[]>([]);
   const [showColumnsPopover, setShowColumnsPopover] = useState(false);
+
+  // Quick Search State (Search Anything on loaded rows)
+  const [quickSearchQuery, setQuickSearchQuery] = useState('');
+  const [showQuickSearch, setShowQuickSearch] = useState(false);
+  const quickSearchInputRef = useRef<HTMLInputElement>(null);
+
+  // Import & Export Combined Popover State
+  const [showIoPopover, setShowIoPopover] = useState(false);
+  const ioPopoverRef = useRef<HTMLDivElement>(null);
 
   // Export State — toàn bộ tuỳ chọn/preview nằm trong ExportTableDialog
   const [showExportDialog, setShowExportDialog] = useState(false);
@@ -440,7 +492,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
         setLoading(false);
         if (res.success) {
           setSuccessMsg(t('dataGrid.importSqlSuccess'));
-          fetchData();
+          refetchAfterWrite();
         } else {
           setErrorMsg(t('dataGrid.errImportSql', { message: res.error }));
         }
@@ -458,7 +510,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
             setErrorMsg(
               done > 0 ? t('dataGrid.errImportWithProgress', { message: failure, done, total }) : failure
             );
-            fetchData();
+            refetchAfterWrite();
             return;
           }
           done += batch.length;
@@ -472,7 +524,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
         setImportProgress(null);
         setLoading(false);
         setSuccessMsg(t('dataGrid.importDone', { n: done, table: tableName }));
-        fetchData();
+        refetchAfterWrite();
       }
     } catch (err: any) {
       setImportProgress(null);
@@ -491,9 +543,16 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
   // onSuccess từ dialog nên trước đây dải xanh treo lại mãi.
   useEffect(() => {
     if (!successMsg) return;
-    const t = setTimeout(() => setSuccessMsg(null), 5000);
+    const t = setTimeout(() => setSuccessMsg(null), 4000);
     return () => clearTimeout(t);
   }, [successMsg]);
+
+  // Thông báo lỗi tự ẩn sau 6 giây
+  useEffect(() => {
+    if (!errorMsg) return;
+    const t = setTimeout(() => setErrorMsg(null), 6000);
+    return () => clearTimeout(t);
+  }, [errorMsg]);
 
   // Fetch Table Schema (Metadata)
   const fetchSchema = useCallback(async () => {
@@ -591,10 +650,21 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
         return;
       }
 
-      // 1. Toggle filter bar (Ctrl/Cmd + F)
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') {
+      // 1a. Toggle SQL Filter bar (Ctrl/Cmd + Shift + F)
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'f') {
         e.preventDefault();
         setShowFilterBar(prev => !prev);
+        return;
+      }
+
+      // 1b. Open Quick Search (Search Anything) (Ctrl/Cmd + F)
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        setShowQuickSearch(true);
+        setTimeout(() => {
+          quickSearchInputRef.current?.focus();
+          quickSearchInputRef.current?.select();
+        }, 30);
         return;
       }
 
@@ -638,6 +708,23 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
           handleDeleteRow();
         }
       }
+
+      // 5. Open Document Viewer (Space key when a row is selected and not editing)
+      if (e.key === ' ' && !editingCell && selectedRowId !== null) {
+        const activeEl = document.activeElement;
+        const isEditingText = activeEl && (
+          activeEl.tagName === 'INPUT' ||
+          activeEl.tagName === 'TEXTAREA' ||
+          activeEl.getAttribute('contenteditable') === 'true'
+        );
+        if (!isEditingText) {
+          e.preventDefault();
+          const rowIdx = rows.findIndex((r, idx) => (r[primaryKey] !== undefined && r[primaryKey] !== null ? r[primaryKey] : `__idx_${idx}`) === selectedRowId);
+          if (rowIdx >= 0) {
+            setDocumentViewerIndex(rowIdx);
+          }
+        }
+      }
     }
   };
 
@@ -652,12 +739,65 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
   // Fetch Data Row
   const fetchData = useCallback(async () => {
     setLoading(true);
-    const data = await dbHelper.getTableData(connId, tableName, page, pageSize, sortBy, sortDir, activeFilter);
+    // Chỉ đếm khi thứ được đếm đổi (bảng/filter/dữ liệu). Lật trang, đổi sort hay đổi cỡ trang
+    // không đổi được con số đó, mà `COUNT(*)` thì quét lại cả bảng — xem `gridPaging.ts`.
+    const key = countKey(tableName, activeFilter, dataVersion);
+    const forceExact = forceExactCountRef.current;
+    forceExactCountRef.current = false;
+    const mode = nextCountMode(lastCountedKeyRef.current, key, forceExact);
+
+    // Keyset: trang sâu đọc theo `WHERE pk > <con trỏ>` thay cho `OFFSET n`, thứ mà server phải
+    // đọc rồi bỏ đi n dòng đầu. Không seek được (khoá phức hợp, sort theo cột khác, hay chưa có
+    // con trỏ cho trang này) thì `cursor` là `null` và backend lại phân trang theo số trang.
+    const seekCol = seekColumn(
+      columns.filter((c) => c.isPrimaryKey).map((c) => c.name), sortBy, activeFilter
+    );
+    const viewKey = seekViewKey(tableName, activeFilter, sortBy, sortDir, pageSize);
+    if (cursorsRef.current.key !== viewKey) {
+      cursorsRef.current = { key: viewKey, cursors: [null] };
+    }
+    const cursor = seekCol ? cursorsRef.current.cursors[page - 1] ?? null : null;
+
+    const data = await dbHelper.getTableData(
+      connId, tableName, page, pageSize, sortBy, sortDir, activeFilter,
+      { countMode: mode, seekColumn: seekCol, cursor }
+    );
     setRows(data.rows);
-    setTotalCount(data.totalCount);
+    setHasMore(data.hasMore);
+    // Ghi con trỏ mở ra trang sau. Chỉ khi key chưa đổi trong lúc chờ phản hồi — nếu đổi rồi thì
+    // con trỏ này thuộc một chuỗi thứ tự khác và dùng nó là đọc sai dòng.
+    if (seekCol && data.nextCursor && cursorsRef.current.key === viewKey) {
+      cursorsRef.current.cursors[page] = data.nextCursor;
+    }
+    if (data.totalCount !== null) {
+      setTotalCount(data.totalCount);
+      setCountExact(data.countExact);
+      // Đánh dấu là đã đếm chỉ khi có số thật trở về: đếm lỗi thì lần sau phải thử lại, chứ không
+      // được ngồi mãi trên một `null`. Số ước lượng thì cũng đã trả lời xong cho key này rồi.
+      lastCountedKeyRef.current = key;
+    } else if (mode !== 'skip') {
+      // Đã xin đếm mà không có số: xoá tổng cũ đi thay vì hiển thị con số của bảng/filter khác.
+      setTotalCount(null);
+      setCountExact(true);
+    }
     if (data.primaryKey) setPrimaryKey(data.primaryKey);
     setLoading(false);
-  }, [connId, tableName, page, pageSize, sortBy, sortDir, activeFilter]);
+  }, [connId, tableName, page, pageSize, sortBy, sortDir, activeFilter, dataVersion, columns]);
+
+  /** Đọc lại trang hiện tại và đếm CHÍNH XÁC, sau khi người dùng bấm vào con số ước lượng. */
+  const recountExact = useCallback(() => {
+    forceExactCountRef.current = true;
+    fetchData();
+  }, [fetchData]);
+
+  /**
+   * Grid vừa ghi vào bảng (commit/import) nên phải đọc lại VÀ đếm lại.
+   *
+   * Tăng `dataVersion` chứ không gọi `fetchData()`: `dataVersion` nằm trong deps của `fetchData`,
+   * nên gọi thẳng sẽ chạy với closure cũ (bỏ qua việc đếm) rồi effect chạy lại lần nữa — hai lần
+   * đọc trang cho một lần ghi.
+   */
+  const refetchAfterWrite = useCallback(() => setDataVersion((v) => v + 1), []);
 
   useEffect(() => {
     // Tôn trọng chế độ xem ban đầu (Data/Structure) khi mở tab, thay vì luôn ép về 'data'
@@ -670,6 +810,10 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
       setSelectedRowId(null);
       setPage(1);
       setSortBy(undefined);
+      // Chiều sort phải về ASC cùng với cột: bỏ cột mà giữ 'desc' thì bảng mới mở ra sẽ được sắp
+      // giảm dần theo khoá chính (chiều này giờ có tác dụng cả khi chưa sort cột nào — xem
+      // `seekColumn`), tức là thứ tự lạ mà không có mũi tên nào giải thích.
+      setSortDir('asc');
       const clause = getInitialFilterClause(initialFilter, dbType);
       setActiveFilter(clause);
       setFilterText(clause);
@@ -820,6 +964,51 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
     setSelectedRowId(null);
   };
 
+  // Foreign Key Helper (chỉ lấy khóa ngoại thật, loại trừ khóa chính của bảng hiện tại)
+  const getFkInfo = useCallback((colName: string) => {
+    if (!colName) return null;
+
+    // 1. Kiểm tra trong metadata foreignKeys chính xác của schema
+    if (schema?.foreignKeys && Array.isArray(schema.foreignKeys)) {
+      const fk = schema.foreignKeys.find(
+        f => (f.column || '').toLowerCase() === colName.toLowerCase()
+      );
+      if (fk?.refTable) {
+        return { refTable: fk.refTable, refColumn: fk.refColumn || colName };
+      }
+    }
+
+    // 2. Dự phòng Heuristic: Chỉ áp dụng khi cột KHÔNG phải là Khóa chính (PK)
+    // và tên bảng dự đoán KHÔNG trùng với bảng hiện tại
+    const isPk = colName === primaryKey || columns.some(c => c.name === colName && c.isPrimaryKey);
+    if (!isPk) {
+      const lower = colName.toLowerCase();
+      if (lower.endsWith('_id') && lower !== 'id') {
+        const guessed = colName.slice(0, -3);
+        if (guessed.toLowerCase() !== tableName.toLowerCase()) {
+          return { refTable: guessed, refColumn: colName };
+        }
+      }
+    }
+    return null;
+  }, [schema, primaryKey, columns, tableName]);
+
+  const handleFkClick = useCallback((colName: string, cellVal: any, e?: React.MouseEvent) => {
+    if (e) {
+      e.stopPropagation();
+    }
+    if (cellVal === null || cellVal === undefined || String(cellVal).trim() === '') return;
+    const fk = getFkInfo(colName);
+    if (!fk) return;
+    window.dispatchEvent(new CustomEvent('open-table-tab', {
+      detail: {
+        table: fk.refTable,
+        viewMode: 'data',
+        initialFilter: { column: fk.refColumn || colName, value: cellVal }
+      }
+    }));
+  }, [getFkInfo]);
+
   // Duplicate selected row (append as new insert)
   const handleDuplicateRow = (row: any) => {
     const tempId = `temp_${nextTempId}`;
@@ -945,6 +1134,14 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
       return;
     }
 
+    // Tắt xem trước (công tắc trong popover Safe Mode) thì lưu thẳng. Không gọi luôn cả lượt
+    // `preview: true`: nó là một vòng nữa xuống backend chỉ để dựng thứ không ai đọc.
+    if (!getCommitPreviewForKey(connKeyOfConn(connId))) {
+      setPendingChanges(changesList);
+      await commitNow(changesList);
+      return;
+    }
+
     // Lấy trước danh sách SQL sẽ chạy để người dùng xem trước (transaction preview)
     setLoading(true);
     const preview = await dbHelper.commitChanges(connId, tableName, changesList, primaryKey, true);
@@ -958,11 +1155,15 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
     setCommitPreview(preview.sqls || []);
   };
 
-  // Thực thi commit thật sau khi người dùng xác nhận ở modal xem trước
-  const handleConfirmCommit = async () => {
+  /**
+   * Ghi thật. Tách khỏi `handleConfirmCommit` vì giờ có hai đường tới đây: qua hộp thoại xem trước,
+   * và đi thẳng khi hộp thoại đó bị tắt. Nhận `changes` qua tham số chứ không đọc `pendingChanges`:
+   * đường đi thẳng vừa `setPendingChanges` xong nên state chưa kịp cập nhật ở nhịp render này.
+   */
+  const commitNow = async (changes: GridChange[]) => {
     setCommitPreview(null);
     setLoading(true);
-    const res = await dbHelper.commitChanges(connId, tableName, pendingChanges, primaryKey);
+    const res = await dbHelper.commitChanges(connId, tableName, changes, primaryKey);
     setLoading(false);
     setPendingChanges([]);
 
@@ -972,12 +1173,15 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
       setDeletes(new Set());
       setInserts([]);
       resetGridHistory(); // buffer đã ghi DB -> xoá undo/redo
-      fetchData();
+      refetchAfterWrite();
       setTimeout(() => setSuccessMsg(null), 4000);
     } else {
       setErrorMsg(t('dataGrid.errCommit', { message: res.message }));
     }
   };
+
+  /** Nút xác nhận của hộp thoại xem trước. */
+  const handleConfirmCommit = () => commitNow(pendingChanges);
 
   // Helper to build SQL WHERE clause from visual filters
   const buildWhereFromVisual = (rowsToBuild: FilterRow[]) => {
@@ -1016,12 +1220,17 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
 
   const removeFilterRow = (id: string) => {
     if (filterRows.length <= 1) {
-      setFilterRows([
-        { id: '1', active: true, column: columns[0]?.name || '', operator: 'Contains', value: '' }
-      ]);
+      // Khi trừ hết dòng filter cuối cùng -> Tự động đóng thanh filter và xoá điều kiện lọc
+      setShowFilterBar(false);
+      clearFilter();
       return;
     }
-    setFilterRows(filterRows.filter(r => r.id !== id));
+    const remaining = filterRows.filter(r => r.id !== id);
+    setFilterRows(remaining);
+    if (activeFilter) {
+      setActiveFilter(buildWhereFromVisual(remaining));
+      setPage(1);
+    }
   };
 
   const updateFilterRow = (id: string, fieldUpdates: Partial<FilterRow>) => {
@@ -1103,7 +1312,90 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
     };
   }, [changeCount]);
 
+  // Click outside listener for Import/Export combined popover
+  useEffect(() => {
+    if (!showIoPopover) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (ioPopoverRef.current && !ioPopoverRef.current.contains(e.target as Node)) {
+        setShowIoPopover(false);
+      }
+    };
+    const timer = setTimeout(() => {
+      window.addEventListener('click', handleClickOutside);
+    }, 10);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('click', handleClickOutside);
+    };
+  }, [showIoPopover]);
+
+  // Auto focus input when Quick Search opens
+  useEffect(() => {
+    if (showQuickSearch) {
+      setTimeout(() => {
+        quickSearchInputRef.current?.focus();
+        quickSearchInputRef.current?.select();
+      }, 50);
+    }
+  }, [showQuickSearch]);
+
   const activeColumns = columns.filter(c => visibleColumns.includes(c.name));
+
+  // ————— Quick Search (Search Anything) Helpers —————
+  const normalizeSearch = (val: any): string => {
+    if (val === null || val === undefined) return '';
+    return String(val)
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase();
+  };
+
+  const rowMatchesSearch = useCallback((row: any, query: string, rowUpdates: any = {}) => {
+    const trimmed = query.trim();
+    if (!trimmed) return true;
+    const q = normalizeSearch(trimmed);
+    return activeColumns.some(col => {
+      const cellVal = col.name in rowUpdates ? rowUpdates[col.name] : row[col.name];
+      return normalizeSearch(cellVal).includes(q);
+    });
+  }, [activeColumns]);
+
+  const renderCellWithHighlight = (cellVal: any, query: string): React.ReactNode => {
+    if (cellVal === null || cellVal === undefined || cellVal === '') return cellVal;
+    const trimmed = query.trim();
+    if (!trimmed) return String(cellVal);
+    const str = String(cellVal);
+    const normStr = normalizeSearch(str);
+    const normQ = normalizeSearch(trimmed);
+    const matchIdx = normStr.indexOf(normQ);
+    if (matchIdx === -1) return str;
+
+    const before = str.slice(0, matchIdx);
+    const matched = str.slice(matchIdx, matchIdx + trimmed.length);
+    const after = str.slice(matchIdx + trimmed.length);
+    return (
+      <>
+        {before}
+        <mark className="grid-search-mark">{matched}</mark>
+        {renderCellWithHighlight(after, query)}
+      </>
+    );
+  };
+
+  const displayedRows = React.useMemo(() => {
+    if (!quickSearchQuery.trim()) return rows;
+    return rows.filter((row) => {
+      const rowId = row[primaryKey];
+      const hasPK = rowId !== undefined && rowId !== null;
+      const rowUpdates = hasPK ? (updates[rowId] || {}) : {};
+      return rowMatchesSearch(row, quickSearchQuery, rowUpdates);
+    });
+  }, [rows, quickSearchQuery, primaryKey, updates, rowMatchesSearch]);
+
+  const displayedInserts = React.useMemo(() => {
+    if (!quickSearchQuery.trim()) return inserts;
+    return inserts.filter(row => rowMatchesSearch(row, quickSearchQuery, {}));
+  }, [inserts, quickSearchQuery, rowMatchesSearch]);
 
   return (
     <div className="table-data-view">
@@ -1283,6 +1575,62 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
         </div>
       )}
 
+      {viewMode === 'data' && showQuickSearch && (
+        <div className="grid-quick-search-bar">
+          <div className="grid-quick-search-left">
+            <div className="grid-quick-search-wrap">
+              <Search size={14} className="grid-quick-search-icon" />
+              <input
+                ref={quickSearchInputRef}
+                type="text"
+                className="grid-quick-search-input"
+                placeholder={t('dataGrid.quickSearchPlaceholder', 'Search anything across all visible columns... (Esc to close)')}
+                value={quickSearchQuery}
+                onChange={(e) => setQuickSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    if (quickSearchQuery) {
+                      setQuickSearchQuery('');
+                    } else {
+                      setShowQuickSearch(false);
+                    }
+                  }
+                }}
+              />
+              <div className="grid-quick-search-actions">
+                {quickSearchQuery && (
+                  <button
+                    className="grid-quick-search-btn-clear"
+                    onClick={() => setQuickSearchQuery('')}
+                    title={t('dataGrid.quickSearchClear', 'Clear search')}
+                    aria-label={t('dataGrid.quickSearchClear', 'Clear search')}
+                  >
+                    <X size={13} />
+                  </button>
+                )}
+                {quickSearchQuery.trim() && (
+                  <span className={`grid-quick-search-badge ${displayedRows.length + displayedInserts.length === 0 ? 'empty' : ''}`}>
+                    {displayedRows.length + displayedInserts.length === 0
+                      ? t('dataGrid.quickSearchNoMatches', '0 results')
+                      : t('dataGrid.quickSearchMatches', { matched: displayedRows.length + displayedInserts.length, total: rows.length + inserts.length, defaultValue: `${displayedRows.length + displayedInserts.length}/${rows.length + inserts.length}` })}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+          <div className="grid-quick-search-right">
+            <span className="grid-quick-search-kbd">Esc</span>
+            <button
+              className="grid-quick-search-btn-close"
+              onClick={() => { setShowQuickSearch(false); setQuickSearchQuery(''); }}
+              title={t('dataGrid.quickSearchClose', 'Close quick search')}
+            >
+              <X size={14} />
+            </button>
+          </div>
+        </div>
+      )}
+
       {viewMode === 'structure' && schema ? (
         <StructureViewer
           connId={connId}
@@ -1305,24 +1653,28 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
             <table className="grid-table">
               <thead>
                 <tr>
-                  {activeColumns.map(col => (
-                    <th key={col.name} className="grid-th-clickable" onClick={() => handleSort(col.name)}>
-                      <div className="grid-th-content">
-                        <span>{col.name}</span>
-                        {col.isPrimaryKey && <span className="key-badge">PK</span>}
-                        {sortBy === col.name && (
-                          <span className="grid-sort-icon">
-                            {sortDir === 'asc' ? '▲' : '▼'}
-                          </span>
-                        )}
-                      </div>
-                    </th>
-                  ))}
+                  {activeColumns.map(col => {
+                    const fkInfo = getFkInfo(col.name);
+                    return (
+                      <th key={col.name} className="grid-th-clickable" onClick={() => handleSort(col.name)}>
+                        <div className="grid-th-content">
+                          <span>{col.name}</span>
+                          {col.isPrimaryKey && <span className="key-badge">PK</span>}
+                          {fkInfo && <span className="fk-badge" title={`Foreign Key ➔ ${fkInfo.refTable}.${fkInfo.refColumn}`}>FK</span>}
+                          {sortBy === col.name && (
+                            <span className="grid-sort-icon">
+                              {sortDir === 'asc' ? '▲' : '▼'}
+                            </span>
+                          )}
+                        </div>
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody>
                 {/* 1. Render database rows */}
-                {rows.map((row, index) => {
+                {displayedRows.map((row, index) => {
                   const rowId = row[primaryKey];
                   // Guard: if PK is missing, use index-based fallback to prevent shared state across rows
                   const hasPK = rowId !== undefined && rowId !== null;
@@ -1348,6 +1700,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
                         const isCellDirty = col.name in rowUpdates;
                         const cellVal = isCellDirty ? rowUpdates[col.name] : row[col.name];
                         const isEditing = editingCell?.rowId === rowId && editingCell?.colName === col.name;
+                        const fkInfo = getFkInfo(col.name);
 
                         return (
                           <td
@@ -1425,9 +1778,20 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
                                </div>
                               </>
                             ) : cellVal === null ? (
-                              <span style={{ color: 'var(--win-text-disabled)', fontStyle: 'italic' }}>NULL</span>
+                              <span className="grid-cell-null">NULL</span>
+                            ) : fkInfo && cellVal !== '' && cellVal !== undefined ? (
+                              <div
+                                className="grid-cell-fk"
+                                onClick={(e) => handleFkClick(col.name, cellVal, e)}
+                                title={`FK ➔ ${fkInfo.refTable}.${fkInfo.refColumn} = ${cellVal}`}
+                              >
+                                <span className="grid-cell-fk-val">{renderCellWithHighlight(cellVal, quickSearchQuery)}</span>
+                                <span className="grid-cell-fk-btn" title={`Mở bảng ${fkInfo.refTable}`}>
+                                  <ArrowUpRight size={10} strokeWidth={2.4} />
+                                </span>
+                              </div>
                             ) : (
-                              String(cellVal)
+                              renderCellWithHighlight(cellVal, quickSearchQuery)
                             )}
                           </td>
                         );
@@ -1437,7 +1801,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
                 })}
 
                 {/* 2. Render new added rows */}
-                {inserts.map((row) => {
+                {displayedInserts.map((row) => {
                   const rowId = row.__tempId;
                   const isSelected = selectedRowId === rowId;
                   return (
@@ -1455,6 +1819,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
                       {activeColumns.map(col => {
                         const cellVal = row[col.name];
                         const isEditing = editingCell?.rowId === rowId && editingCell?.colName === col.name;
+                        const fkInfo = getFkInfo(col.name);
 
                         return (
                           <td
@@ -1535,8 +1900,19 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
                               /* Ô chưa có giá trị: hiện dấu gạch mờ để thấy được ô,
                                  thay vì chuỗi rỗng làm cả dòng trông như trống trơn. */
                               <span className="grid-cell-empty">—</span>
+                            ) : fkInfo && cellVal !== undefined ? (
+                              <div
+                                className="grid-cell-fk"
+                                onClick={(e) => handleFkClick(col.name, cellVal, e)}
+                                title={`FK ➔ ${fkInfo.refTable}.${fkInfo.refColumn} = ${cellVal}`}
+                              >
+                                <span className="grid-cell-fk-val">{renderCellWithHighlight(cellVal, quickSearchQuery)}</span>
+                                <span className="grid-cell-fk-btn" title={`Mở bảng ${fkInfo.refTable}`}>
+                                  <ArrowUpRight size={10} strokeWidth={2.4} />
+                                </span>
+                              </div>
                             ) : (
-                              String(cellVal)
+                              renderCellWithHighlight(cellVal, quickSearchQuery)
                             )}
                           </td>
                         );
@@ -1544,6 +1920,15 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
                     </tr>
                   );
                 })}
+
+                {/* 3. Empty search result row */}
+                {displayedRows.length === 0 && displayedInserts.length === 0 && quickSearchQuery.trim() !== '' && (
+                  <tr>
+                    <td colSpan={activeColumns.length} className="doc-field-empty">
+                      {t('dataGrid.quickSearchNoMatches', '0 results')}
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           )}
@@ -1555,84 +1940,80 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
       <div className="grid-pagination gp-container">
         {/* Left segment: Data | Structure & + Row */}
         <div className="gp-left-section">
-          <div className="segmented-control">
-            <button
-              className={`segment-btn ${viewMode === 'data' ? 'active' : ''}`}
-              onClick={() => setViewMode('data')}
-            >
-              {t('dataGrid.dataTab')}
-            </button>
+          <button
+            className={`gp-btn ${viewMode === 'data' ? 'on' : ''}`}
+            onClick={() => setViewMode('data')}
+          >
+            {t('dataGrid.dataTab')}
+          </button>
 
-            {viewMode === 'data' ? (
+          {viewMode === 'data' ? (
+            <button
+              className="gp-btn"
+              onClick={() => { setViewMode('structure'); setStructSection('columns'); }}
+            >
+              {t('dataGrid.structureTab')}
+            </button>
+          ) : (
+            <>
               <button
-                className="segment-btn"
-                onClick={() => { setViewMode('structure'); setStructSection('columns'); }}
+                className={`gp-btn ${structSection === 'columns' ? 'on' : ''}`}
+                onClick={() => setStructSection('columns')}
               >
-                {t('dataGrid.structureTab')}
+                Columns {schema?.columns?.length !== undefined ? <span className="st-seg-count">{schema.columns.length}</span> : null}
               </button>
-            ) : (
-              <>
-                <button
-                  className={`segment-btn ${structSection === 'columns' ? 'active' : ''}`}
-                  onClick={() => setStructSection('columns')}
-                >
-                  Columns {schema?.columns?.length !== undefined ? <span className="st-seg-count">{schema.columns.length}</span> : null}
-                </button>
-                <button
-                  className={`segment-btn ${structSection === 'indexes' ? 'active' : ''}`}
-                  onClick={() => setStructSection('indexes')}
-                >
-                  Indexes {schema?.indexes?.length !== undefined ? <span className="st-seg-count">{schema.indexes.length}</span> : null}
-                </button>
-                <button
-                  className={`segment-btn ${structSection === 'fks' ? 'active' : ''}`}
-                  onClick={() => setStructSection('fks')}
-                >
-                  Foreign keys {schema?.foreignKeys?.length !== undefined ? <span className="st-seg-count">{schema.foreignKeys.length}</span> : null}
-                </button>
-                <button
-                  className={`segment-btn ${structSection === 'check_constraints' ? 'active' : ''}`}
-                  onClick={() => setStructSection('check_constraints')}
-                >
-                  Check Constraints
-                </button>
-                <button
-                  className={`segment-btn ${structSection === 'triggers' ? 'active' : ''}`}
-                  onClick={() => setStructSection('triggers')}
-                >
-                  Triggers
-                </button>
-                <button
-                  className={`segment-btn ${structSection === 'partitions' ? 'active' : ''}`}
-                  onClick={() => setStructSection('partitions')}
-                >
-                  Partitions
-                </button>
-                <button
-                  className={`segment-btn ${structSection === 'ddl' ? 'active' : ''}`}
-                  onClick={() => setStructSection('ddl')}
-                >
-                  DDL
-                </button>
-              </>
-            )}
-          </div>
+              <button
+                className={`gp-btn ${structSection === 'indexes' ? 'on' : ''}`}
+                onClick={() => setStructSection('indexes')}
+              >
+                Indexes {schema?.indexes?.length !== undefined ? <span className="st-seg-count">{schema.indexes.length}</span> : null}
+              </button>
+              <button
+                className={`gp-btn ${structSection === 'fks' ? 'on' : ''}`}
+                onClick={() => setStructSection('fks')}
+              >
+                Foreign keys {schema?.foreignKeys?.length !== undefined ? <span className="st-seg-count">{schema.foreignKeys.length}</span> : null}
+              </button>
+              <button
+                className={`gp-btn ${structSection === 'check_constraints' ? 'on' : ''}`}
+                onClick={() => setStructSection('check_constraints')}
+              >
+                Check Constraints
+              </button>
+              <button
+                className={`gp-btn ${structSection === 'triggers' ? 'on' : ''}`}
+                onClick={() => setStructSection('triggers')}
+              >
+                Triggers
+              </button>
+              <button
+                className={`gp-btn ${structSection === 'partitions' ? 'on' : ''}`}
+                onClick={() => setStructSection('partitions')}
+              >
+                Partitions
+              </button>
+              <button
+                className={`gp-btn ${structSection === 'ddl' ? 'on' : ''}`}
+                onClick={() => setStructSection('ddl')}
+              >
+                DDL
+              </button>
+            </>
+          )}
 
           {viewMode === 'data' && (
             <>
-              <button className="gp-btn" onClick={handleAddRow} title={t('dataGrid.addRowTitle')}>
-                <Plus size={12} />
-                <span>{t('dataGrid.rowLabel')}</span>
+              <button className="gp-btn icon" onClick={handleAddRow} title={t('dataGrid.addRowTitle')}>
+                <Plus size={13} />
               </button>
 
               <button
-                className="gp-btn danger"
+                className="gp-btn icon danger"
                 onClick={handleDeleteRow}
                 disabled={selectedRowId === null}
                 title={t('dataGrid.deleteRowTitle')}
               >
-                <Minus size={12} />
-                <span>{t('dataGrid.rowLabel')}</span>
+                <Minus size={13} />
               </button>
             </>
           )}
@@ -1653,20 +2034,44 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
 
         {/* Middle section: Row Count */}
         {viewMode === 'data' && (
-          <div className="gp-status-text">
+          <div
+            className="gp-status-text"
+            title={!countExact && totalCount !== null ? t('dataGrid.rowsApproxTitle') : undefined}
+          >
             <Trans
-              i18nKey="dataGrid.rowsRange"
+              // Ba biến thể vì tổng số dòng có ba trạng thái thật khác nhau: đếm chính xác, ước
+              // lượng (dấu `~`), và không đếm được. Hiển thị cùng một câu cho cả ba thì con số ước
+              // lượng trông như số thật — và nó lệch được tới vài chục phần trăm trên InnoDB.
+              i18nKey={
+                totalCount === null
+                  ? 'dataGrid.rowsRangeNoTotal'
+                  : countExact
+                    ? 'dataGrid.rowsRange'
+                    : 'dataGrid.rowsRangeApprox'
+              }
               values={{
                 from: (page - 1) * pageSize + 1,
-                to: Math.min(page * pageSize, totalCount),
-                total: fmtNum(totalCount),
+                // Từ số dòng thật của trang, không phải từ `totalCount`: trang cuối ngắn hơn
+                // `pageSize`, và `totalCount` có thể là ước lượng nên không cắt được cho đúng.
+                to: (page - 1) * pageSize + rows.length,
+                total: totalCount === null ? '' : fmtNum(totalCount),
               }}
               components={{ strong: <b /> }}
             />
+            {!countExact && totalCount !== null && (
+              // Ước lượng thì luôn đi kèm đường ra: một cú bấm là có số thật.
+              <button
+                className="gp-count-exact"
+                onClick={recountExact}
+                title={t('dataGrid.countExactTitle')}
+              >
+                {t('dataGrid.countExactBtn')}
+              </button>
+            )}
           </div>
         )}
 
-        {/* Right section: Columns | Filters | Navigation */}
+        {/* Right section: Columns | Import/Export | Search | Filters | Navigation */}
         {viewMode === 'data' && (
           <div className="gp-right-section">
             <div className="gp-popover-wrap">
@@ -1836,24 +2241,62 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
               )}
             </div>
 
+            {/* Combined Import / Export Dropdown Popover */}
+            <div className="gp-popover-wrap" ref={ioPopoverRef}>
+              <button
+                className={`gp-btn ${showIoPopover ? 'on' : ''}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowIoPopover(prev => !prev);
+                }}
+                disabled={loading}
+                title={t('dataGrid.ioTitle', 'Import or Export table data')}
+              >
+                <span>{t('dataGrid.ioBtn', 'Import / Export')}</span>
+                <ChevronDown size={11} />
+              </button>
+
+              {showIoPopover && (
+                <div className="ws-menu gp-io-popover">
+                  <button
+                    className="gp-io-item"
+                    onClick={() => {
+                      setShowIoPopover(false);
+                      handleImportClick();
+                    }}
+                  >
+                    <FileUp size={13} />
+                    <span>{t('dataGrid.importBtn', 'Import')} (CSV, JSON, XLSX, SQL)</span>
+                  </button>
+                  <button
+                    className="gp-io-item"
+                    onClick={() => {
+                      setShowIoPopover(false);
+                      setShowExportDialog(true);
+                    }}
+                  >
+                    <FileDown size={13} />
+                    <span>{t('dataGrid.exportBtn', 'Export')} (CSV, JSON, SQL, XLSX)</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Quick Search Button */}
             <button
-              className="gp-btn"
-              onClick={handleImportClick}
-              disabled={loading}
-              title={t('dataGrid.importTitle')}
+              className={`gp-btn ${showQuickSearch ? 'on' : ''}`}
+              onClick={() => {
+                setShowQuickSearch(prev => !prev);
+                if (!showQuickSearch) {
+                  setTimeout(() => quickSearchInputRef.current?.focus(), 50);
+                }
+              }}
+              title={t('dataGrid.quickSearchTitle', 'Quickly search anything in the loaded rows (Ctrl+F)')}
             >
-              {t('dataGrid.importBtn')}
+              {t('dataGrid.quickSearchBtn', 'Search')}
             </button>
 
-            <button
-              className="gp-btn"
-              onClick={() => setShowExportDialog(true)}
-              disabled={loading}
-              title={t('dataGrid.exportTitle')}
-            >
-              {t('dataGrid.exportBtn')}
-            </button>
-
+            {/* Filters Button */}
             <button
               className={`gp-btn ${showFilterBar ? 'on' : ''}`}
               onClick={() => setShowFilterBar(!showFilterBar)}
@@ -1890,10 +2333,13 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
 
               <span className="gp-pager-sep" />
 
+              {/* `hasMore` tới từ một dòng đọc thừa ở backend, không từ `totalCount / pageSize`:
+                  chia một con số ước lượng ra thì nút này khoá sai trang, còn đây là sự thật về
+                  dữ liệu và đúng cả khi không đếm gì cả. */}
               <button
                 className="gp-pager-btn"
-                onClick={() => setPage(p => Math.min(p + 1, totalPages))}
-                disabled={page >= totalPages}
+                onClick={() => setPage(p => p + 1)}
+                disabled={!hasMore}
                 title={t('dataGrid.nextPage')}
               >
                 <ChevronRight size={14} />
@@ -1915,7 +2361,10 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
           sortBy,
           sortDir,
           filter: activeFilter,
-          totalCount,
+          // CHỈ đưa xuống khi là số đếm chính xác. `fetchAllRows` của dialog lặp cho tới khi
+          // `all.length >= total`, nên một số ước lượng thiếu sẽ xuất ra tệp bị cắt mà không báo
+          // lỗi. `null` là an toàn: dialog tự đếm chính xác bằng lần đọc trang đầu của nó.
+          totalCount: countExact ? totalCount : null,
         }}
         onClose={() => setShowExportDialog(false)}
         onSuccess={setSuccessMsg}
@@ -2132,6 +2581,16 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
         >
           {/* Row actions */}
           <div style={{ padding: '2px 8px 4px', color: 'var(--win-text-disabled)', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{t('dataGrid.ctxRow')}</div>
+          <button className="context-menu-item" onClick={() => {
+            const cm = contextMenu;
+            setContextMenu(null);
+            const rowIdx = rows.findIndex((r, idx) => (r[primaryKey] !== undefined && r[primaryKey] !== null ? r[primaryKey] : `__idx_${idx}`) === cm.rowId);
+            if (rowIdx >= 0) {
+              setDocumentViewerIndex(rowIdx);
+            }
+          }}>
+            <span>📑</span> {t('dataGrid.ctxViewDocument', 'Xem chi tiết dòng (Document Viewer)')}
+          </button>
           <button className="context-menu-item" onClick={() => { setContextMenu(null); handleDuplicateRow(contextMenu.row); }}>
             <span>📋</span> {t('dataGrid.ctxDuplicate')}
           </button>
@@ -2179,6 +2638,24 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
           <button className="context-menu-item" onClick={() => { setContextMenu(null); setQuickLookCell({ colName: contextMenu.colName, value: contextMenu.cellValue }); }}>
             <span>🔍</span> {t('dataGrid.ctxQuickLook')}
           </button>
+          {(() => {
+            const fk = getFkInfo(contextMenu.colName);
+            if (fk && contextMenu.cellValue !== null && contextMenu.cellValue !== undefined && contextMenu.cellValue !== '') {
+              return (
+                <button
+                  className="context-menu-item"
+                  onClick={() => {
+                    const cm = contextMenu;
+                    setContextMenu(null);
+                    handleFkClick(cm.colName, cm.cellValue);
+                  }}
+                >
+                  <span>🔗</span> {t('dataGrid.ctxGoToFk', { table: fk.refTable, defaultValue: `Mở bảng ${fk.refTable} (${fk.refColumn} = ${contextMenu.cellValue})` })}
+                </button>
+              );
+            }
+            return null;
+          })()}
 
           <div style={{ borderTop: '1px solid var(--win-border)', margin: '4px 0' }} />
 
@@ -2243,12 +2720,48 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
             )}
           </ModalBody>
           <ModalFooter>
+            {/* Công tắc đặt ngay đây vì đây là lúc người ta thấy nó phiền. Nó chỉ có tác dụng từ lần
+                lưu SAU (lần này người dùng đã mở hộp thoại rồi), và bật lại được ở popover Safe Mode
+                — nhãn nói rõ chỗ đó, vì một "đừng hiện lại" không có đường về là một cái bẫy. */}
+            <label
+              style={{
+                display: 'flex', alignItems: 'center', gap: '8px', marginRight: 'auto',
+                fontSize: '11px', color: 'var(--win-text-secondary)', cursor: 'pointer',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={!getCommitPreviewForKey(connKeyOfConn(connId))}
+                onChange={(e) => {
+                  setCommitPreviewForKey(connKeyOfConn(connId), !e.target.checked);
+                  setPreviewOptOutTick((v) => v + 1);
+                }}
+              />
+              <span>{t('dataGrid.commitPreviewSkip')}</span>
+            </label>
             <button className="btn btn-secondary" onClick={() => { setCommitPreview(null); setPendingChanges([]); }} disabled={loading}>{t('common.cancel')}</button>
             <button className="btn btn-primary" onClick={handleConfirmCommit} disabled={loading || commitPreview.length === 0} style={{ background: 'var(--st-ok)', borderColor: 'var(--st-ok)' }}>
               {loading ? t('dataGrid.commitRunning') : t('dataGrid.commitConfirm')}
             </button>
           </ModalFooter>
         </Modal>
+      )}
+
+      {/* ─── Studio 3T / TablePlus Style Document / Row Viewer Modal ─── */}
+      {documentViewerIndex !== null && (
+        <React.Suspense fallback={<LazyModalFallback />}>
+          <RowDocumentModal
+            isOpen={documentViewerIndex !== null}
+            onClose={() => setDocumentViewerIndex(null)}
+            tableName={tableName}
+            primaryKey={primaryKey}
+            rowIndex={documentViewerIndex}
+            rows={rows}
+            columns={columns}
+            foreignKeys={schema?.foreignKeys}
+            onNavigateRow={(newIdx) => setDocumentViewerIndex(newIdx)}
+          />
+        </React.Suspense>
       )}
     </div>
   );

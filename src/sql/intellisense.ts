@@ -6,7 +6,7 @@ import { editorConnId } from './editorScope';
 import { LANG_IDS } from './sqlLanguage';
 import { statementAt, resolveAliases } from './statements';
 import { getDoc, formatDocMarkdown } from '../utils/docsService';
-import { currentLanguage } from '../i18n';
+import i18n, { currentLanguage } from '../i18n';
 
 /** Tìm bảng theo tên, không phân biệt hoa/thường. Chỉ đọc cache đã nạp. */
 export async function findTable(name: string): Promise<{ name: string; type: string } | null> {
@@ -21,36 +21,42 @@ export function openTableTab(table: string, viewMode: 'data' | 'structure' = 'da
   window.dispatchEvent(new CustomEvent('open-table-tab', { detail: { table, viewMode } }));
 }
 
+// Markdown của hover. Chỉ phần chữ đi qua i18n; dấu markdown (`**`, `_`, `|`) và các nhãn kỹ
+// thuật `PK` / `NOT NULL` ở lại trong code — chúng là cú pháp và từ khoá SQL, không phải câu văn,
+// nên dịch chúng chỉ tạo thêm chỗ để lệch.
 function tableMarkdown(tableName: string, type: string, schema: Awaited<ReturnType<typeof catalog.getSchema>>): string {
-  const lines: string[] = [`**${tableName}** · ${type === 'view' ? 'Khung nhìn (View)' : 'Bảng'}`];
+  const kind = type === 'view' ? i18n.t('sqlEditor.hoverKindView') : i18n.t('sqlEditor.hoverKindTable');
+  const lines: string[] = [`**${tableName}** · ${kind}`];
   const cols = schema?.columns || [];
   // Giới hạn 12 dòng: bảng nhiều cột sẽ làm popup cao quá khung editor
   const MAX_COLS = 12;
   if (cols.length) {
-    lines.push('', '| Cột | Kiểu |', '| --- | --- |');
+    lines.push('', `| ${i18n.t('sqlEditor.hoverColHeader')} | ${i18n.t('sqlEditor.hoverTypeHeader')} |`, '| --- | --- |');
     for (const c of cols.slice(0, MAX_COLS)) {
       const badges = [c.isPrimaryKey ? 'PK' : '', c.nullable === false ? 'NOT NULL' : ''].filter(Boolean).join(', ');
       lines.push(`| ${c.name}${c.isPrimaryKey ? ' 🔑' : ''} | ${c.type}${badges ? ` · ${badges}` : ''} |`);
     }
-    if (cols.length > MAX_COLS) lines.push(`| _… còn ${cols.length - MAX_COLS} cột_ | |`);
+    if (cols.length > MAX_COLS) {
+      lines.push(`| _${i18n.t('sqlEditor.hoverMoreColumns', { n: cols.length - MAX_COLS })}_ | |`);
+    }
   }
   const fks = schema?.foreignKeys || [];
   if (fks.length) {
-    lines.push('', '**Khóa ngoại:**');
+    lines.push('', `**${i18n.t('sqlEditor.hoverForeignKeys')}**`);
     for (const fk of fks.slice(0, 5)) lines.push(`- \`${fk.column}\` → \`${fk.refTable}.${fk.refColumn}\``);
-    if (fks.length > 5) lines.push(`- _… còn ${fks.length - 5} khóa ngoại_`);
+    if (fks.length > 5) lines.push(`- _${i18n.t('sqlEditor.hoverMoreForeignKeys', { n: fks.length - 5 })}_`);
   }
-  lines.push('', '_Ctrl+Click hoặc F12 để mở bảng_');
+  lines.push('', `_${i18n.t('sqlEditor.hoverOpenTable')}_`);
   return lines.join('\n');
 }
 
 function columnMarkdown(colName: string, owners: { table: string; type: string; isPrimaryKey?: boolean; nullable?: boolean }[]): string {
-  const lines: string[] = [`**${colName}** · Cột`];
+  const lines: string[] = [`**${colName}** · ${i18n.t('sqlEditor.hoverKindColumn')}`];
   for (const o of owners.slice(0, 6)) {
     const badges = [o.isPrimaryKey ? 'PK' : '', o.nullable === false ? 'NOT NULL' : ''].filter(Boolean).join(', ');
     lines.push('', `\`${o.table}.${colName}\` — ${o.type}${badges ? ` · ${badges}` : ''}`);
   }
-  if (owners.length > 6) lines.push('', `_… còn ${owners.length - 6} bảng khác có cột này_`);
+  if (owners.length > 6) lines.push('', `_${i18n.t('sqlEditor.hoverMoreTables', { n: owners.length - 6 })}_`);
   return lines.join('\n');
 }
 

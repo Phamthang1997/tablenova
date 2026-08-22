@@ -18,7 +18,7 @@ impl client::Handler for TunnelHandler {
 
     fn check_server_key(
         &mut self,
-        _server_public_key: &russh::keys::ssh_key::PublicKey,
+        _server_public_key: &russh::keys::PublicKeyOrCertificate,
     ) -> impl std::future::Future<Output = Result<bool, Self::Error>> + Send {
         async { Ok(true) }
     }

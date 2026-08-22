@@ -155,6 +155,22 @@ impl ServerHandle {
             Err(e) => *e.into_inner() = v,
         }
     }
+
+    /// Sửa MỘT trường của config, giữ nguyên phần còn lại.
+    ///
+    /// Có riêng hàm này thay vì `config()` → sửa → `set_config()`: hai bước đó là read-modify-write
+    /// ngoài khoá, nên hai lệnh chạy cạnh nhau có thể ghi đè nhau. Ở đây cả ba bước nằm trong cùng
+    /// một lần giữ khoá. Config không phải object (không xảy ra trong thực tế) thì bỏ qua, chứ
+    /// không thay nó bằng một object mới và làm mất thông tin kết nối.
+    pub fn set_config_field(&self, key: &str, v: Value) {
+        let mut guard = match self.last_config.lock() {
+            Ok(g) => g,
+            Err(e) => e.into_inner(),
+        };
+        if let Some(obj) = guard.as_object_mut() {
+            obj.insert(key.to_string(), v);
+        }
+    }
 }
 
 /// A Redis connection, as one registry entry holds it.

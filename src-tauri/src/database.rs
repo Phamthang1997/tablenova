@@ -20,6 +20,61 @@ const STREAM_BATCH: usize = 500;
 // tưởng app treo. 10s đủ cho cả máy chủ ở xa mà vẫn báo lỗi sớm.
 const LIST_DB_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
+/// Giới hạn thời gian cho MỘT câu lệnh mà người dùng chạy, đọc từ config của kết nối
+/// (`statementTimeoutSecs`, 0/absent = tắt).
+///
+/// Đây là hàng rào phía **client**: hết giờ thì future bị bỏ, sqlx đóng connection đó và UI được
+/// trả lại ngay. Nó không phải `statement_timeout` của server, nên server có thể còn chạy nốt câu
+/// lệnh cho tới khi phát hiện socket đã đóng. Đổi lại — và đây là lý do chọn cách này — nó không
+/// để lại một chút state nào trong session: đặt `statement_timeout` ở mức pool thì mọi connection
+/// lấy ra sau đó đều mang theo giới hạn ấy, kể cả những việc **dài theo thiết kế** như phục hồi
+/// dump, sinh dữ liệu hay `CREATE INDEX`, và mỗi ngoại lệ lại là một `SET` phải nhớ hoàn nguyên
+/// đúng lúc. Ở đây thì không cần ngoại lệ nào: giới hạn chỉ tồn tại trong bốn command mà người
+/// dùng tự bấm chạy, còn các việc dài đi đường khác.
+fn stmt_timeout(config: &Value) -> Option<std::time::Duration> {
+    let secs = config.get("statementTimeoutSecs").and_then(|v| v.as_u64()).unwrap_or(0);
+    (secs > 0).then(|| std::time::Duration::from_secs(secs))
+}
+
+/// Đổi giới hạn thời gian câu lệnh của một kết nối **ngay lúc đang chạy**.
+///
+/// Ghi vào chính config của server trong registry, và `stmt_timeout` đọc config đó ở mỗi lần một
+/// command chạy — nên giá trị mới có hiệu lực từ câu lệnh kế tiếp, không cần kết nối lại. Đây là
+/// phần thưởng của việc không đặt `statement_timeout` ở mức session: không có state nào ở server
+/// phải đồng bộ lại.
+///
+/// Phạm vi là **server**, không phải từng kết nối: các database mở trên cùng một server dùng chung
+/// `ServerHandle`, đúng bằng phạm vi mà frontend lưu (`connKey`).
+#[tauri::command]
+pub async fn set_statement_timeout(
+    state: tauri::State<'_, crate::AppState>,
+    conn_id: String,
+    secs: u64,
+) -> Result<Value, String> {
+    let ctx = state.connections.acquire(&conn_id)?;
+    ctx.server().set_config_field("statementTimeoutSecs", json!(secs));
+    Ok(json!({ "success": true, "secs": secs }))
+}
+
+/// Thông báo hết giờ. Là literal tiếng Việt nên có bản sinh đôi ở `backendErrors.ts`.
+fn timeout_msg(limit: std::time::Duration) -> String {
+    format!("Câu lệnh đã chạy quá {} giây và bị dừng", limit.as_secs())
+}
+
+/// Chạy một tương lai dưới giới hạn của kết nối. `None` = chạy như trước, không thêm lớp nào.
+async fn with_timeout<T, F>(limit: Option<std::time::Duration>, fut: F) -> Result<T, String>
+where
+    F: std::future::Future<Output = Result<T, String>>,
+{
+    match limit {
+        None => fut.await,
+        Some(d) => match tokio::time::timeout(d, fut).await {
+            Ok(r) => r,
+            Err(_) => Err(timeout_msg(d)),
+        },
+    }
+}
+
 // Giải mã một ô dữ liệu Postgres sang serde_json::Value.
 // Thử lần lượt nhiều kiểu để không mất dữ liệu: số nguyên/thực, bool, NUMERIC, ngày giờ, UUID, JSON, chuỗi, blob.
 // Kiểu ngày/số thập phân/json/uuid được hỗ trợ nhờ bật feature trên sqlx-postgres (không kéo sqlx-sqlite).
@@ -788,6 +843,94 @@ pub async fn get_tables(state: tauri::State<'_, crate::AppState>, conn_id: Strin
     Ok(json!({ "success": true, "tables": tables }))
 }
 
+/// Below this, an exact `COUNT(*)` is cheap enough that the estimate is not worth its inaccuracy.
+///
+/// The threshold is compared against the *estimate*, which is the only number available before
+/// deciding — so a table the planner thinks is small always gets counted for real, and a table it
+/// thinks is huge is never scanned just to fill in a status line.
+const APPROX_COUNT_MIN: i64 = 500_000;
+
+/// First cell of the first row of an `execute_raw_sql_generic` result, as an integer.
+///
+/// `DECIMAL`/`bigint` arrive from sqlx as a string often enough that both spellings have to be
+/// accepted here — this is the same widening the inline count-extraction did before, minus four
+/// levels of nesting, and it is now shared by the exact count and the estimate.
+fn first_i64(results: Vec<Value>) -> Option<i64> {
+    let row = results.first()?.get("data")?.as_array()?.first()?.as_object()?;
+    let v = row.values().next()?;
+    v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+}
+
+/// Exact `COUNT(*)`. `None` means "could not be counted", which is **not** the same as zero — the
+/// grid has to be able to say "unknown" instead of claiming an empty table.
+async fn exact_row_count(conn: &DbConnection, count_sql: &str) -> Option<i64> {
+    match &conn.kind {
+        DbKind::Sqlite(conn_arc) => {
+            let c = conn_arc.lock().ok()?;
+            c.query_row(count_sql, [], |r| r.get::<_, i64>(0)).ok()
+        }
+        _ => first_i64(execute_raw_sql_generic(conn, count_sql.to_string()).await.ok()?),
+    }
+}
+
+/// The planner's own row estimate, when it is both available and large enough to be worth using.
+///
+/// Same statistics `db_stats.rs` already reads for the database overview, and the same caveats
+/// apply: `reltuples` is `-1` on a Postgres table that was never analyzed and MySQL's `TABLE_ROWS`
+/// is an InnoDB guess that can be off by half. Both fall out through `APPROX_COUNT_MIN` rather
+/// than needing a special case — a bogus estimate reads as "small" and gets counted for real.
+///
+/// Deliberately restricted to `relkind = 'r'` / `TABLE_TYPE = 'BASE TABLE'`: a view has no
+/// statistics of its own, and a partitioned parent's `reltuples` does not include its partitions.
+/// SQLite has no such statistic at all, and its `COUNT(*)` is local file I/O, so it returns `None`.
+///
+/// The caller must only reach this with **no WHERE clause** — an estimate cannot answer a filter.
+async fn estimate_row_count(conn: &DbConnection, schema: &Option<String>, table: &str) -> Option<i64> {
+    let sql = match &conn.kind {
+        DbKind::Postgres(_) => format!(
+            "SELECT c.reltuples::bigint AS n FROM pg_class c \
+             JOIN pg_namespace ns ON ns.oid = c.relnamespace \
+             WHERE ns.nspname = '{}' AND c.relname = '{}' AND c.relkind = 'r'",
+            sql_str(&pg_schema_of(schema)),
+            sql_str(table)
+        ),
+        DbKind::Mysql(_) => format!(
+            "SELECT TABLE_ROWS AS n FROM information_schema.TABLES \
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{}' AND TABLE_TYPE = 'BASE TABLE'",
+            sql_str(table)
+        ),
+        DbKind::Sqlite(_) => return None,
+    };
+    let n = first_i64(execute_raw_sql_generic(conn, sql).await.ok()?)?;
+    (n >= APPROX_COUNT_MIN).then_some(n)
+}
+
+/// A cursor value, exactly as the database spelled it.
+///
+/// Only a number or a string can be a cursor. Anything else (NULL, a BLOB arriving as a byte array,
+/// a composite) has no usable `>` boundary here, and returning `None` is what makes the frontend
+/// fall back to `OFFSET` for that view instead of paging on a value it cannot compare.
+fn scalar_to_cursor(v: &Value) -> Option<String> {
+    match v {
+        // `Number::to_string` keeps every digit of an i64 — the whole reason the cursor is minted
+        // here and not read off the row on the frontend (see `next_cursor`).
+        Value::Number(n) => Some(n.to_string()),
+        Value::String(s) => Some(s.clone()),
+        _ => None,
+    }
+}
+
+/// One page of a table, plus how many rows there are in total.
+///
+/// Paging is by cursor when the frontend names a `seek_column` (a single-column primary key) and
+/// hands back the `nextCursor` of the previous page, and by `OFFSET` otherwise — a filter or a sort
+/// on another column is not a reason to fall back, but a table without a single-column key is.
+///
+/// `count_mode` is `"skip"` | `"auto"` | `"exact"`, and **anything else — including absent — means
+/// `"exact"`**. That default is load-bearing, not a formality: the export paths (`dumpBuilder`,
+/// `ExportTableDialog`) page until `rows.length >= totalCount`, so an *under*estimate there would
+/// end the loop early and write a truncated dump with no error. Only the grid's status line, which
+/// can afford a `~`, opts into the other two modes.
 #[tauri::command]
 pub async fn get_table_data(
     state: tauri::State<'_, crate::AppState>, conn_id: String,
@@ -797,11 +940,14 @@ pub async fn get_table_data(
     sort_by: Option<String>,
     sort_dir: Option<String>,
     filter: Option<String>,
+    count_mode: Option<String>,
+    seek_column: Option<String>,
+    cursor: Option<String>,
 ) -> Result<Value, String> {
-    let (conn_type, schema) = {
+    let (conn_type, schema, limit_dur) = {
         let ctx = state.connections.acquire(&conn_id)?;
         let ct = ctx.conn().clone();
-        (ct, ctx.raw_schema().map(str::to_string))
+        (ct, ctx.raw_schema().map(str::to_string), stmt_timeout(&ctx.server().config()))
     };
 
     let is_mysql = matches!(&conn_type.kind, DbKind::Mysql(_));
@@ -812,47 +958,86 @@ pub async fn get_table_data(
     let table_ref = qualified(&conn_type, &schema, &name);
 
     // WHERE: frontend đã dựng mệnh đề lọc đúng dialect, chỉ ghép thô vào sau WHERE
-    let where_clause = match filter.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+    let filter_body = filter.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty());
+    let where_clause = match filter_body {
         Some(f) => format!(" WHERE {}", f),
         None => String::new(),
     };
 
-    // ORDER BY: chỉ nhận tên cột (được trích dẫn lại) + chiều ASC/DESC đã chuẩn hóa
-    let order_clause = match sort_by.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
-        Some(col) => {
-            let dir = match sort_dir.as_deref() {
-                Some(d) if d.eq_ignore_ascii_case("desc") => "DESC",
-                _ => "ASC",
-            };
-            // loại bỏ ký tự trích dẫn có sẵn để tránh phá cú pháp, rồi tự bọc lại
-            let safe_col = col.replace('`', "").replace('"', "");
-            format!(" ORDER BY {}{}{} {}", q, safe_col, q, dir)
-        }
+    // loại bỏ ký tự trích dẫn có sẵn để tránh phá cú pháp, rồi tự bọc lại
+    let safe_ident = |s: &str| s.replace('`', "").replace('"', "");
+    let seek_col = seek_column
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| safe_ident(s));
+
+    // ORDER BY: cột người dùng chọn, và nếu không có thì cột seek (khoá chính một cột) mà frontend
+    // đưa xuống. Keyset pagination chỉ đúng khi thứ tự là xác định, nên chế độ "chưa sort" cũng
+    // phải nhận `ORDER BY <pk>` — việc đó vá luôn một lỗi âm thầm có từ trước: `LIMIT/OFFSET` mà
+    // không `ORDER BY` thì server được phép trả cùng một dòng ở hai trang khác nhau.
+    let sort_col = sort_by
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| safe_ident(s))
+        .or_else(|| seek_col.clone());
+    let desc = matches!(sort_dir.as_deref(), Some(d) if d.eq_ignore_ascii_case("desc"));
+    let dir = if desc { "DESC" } else { "ASC" };
+    let order_clause = match &sort_col {
+        Some(col) => format!(" ORDER BY {q}{col}{q} {dir}"),
         None => String::new(),
     };
 
-    let offset = (page.saturating_sub(1)) * limit;
+    // Keyset ("seek") pagination. Con trỏ chỉ có nghĩa với đúng cột nó được lấy ra, nên nó chỉ được
+    // dùng khi thứ tự đang áp dụng CHÍNH LÀ cột seek: sort theo cột khác thì frontend đã thôi gửi
+    // `seek_column`, và điều kiện này là lớp chặn thứ hai.
+    let seek_active = seek_col.as_ref().filter(|c| sort_col.as_deref() == Some(c.as_str()));
+    let seek_clause = match (seek_active, cursor.as_ref().map(|s| s.as_str()).filter(|s| !s.is_empty())) {
+        (Some(col), Some(v)) => {
+            let op = if desc { "<" } else { ">" };
+            let lit = sql_str(v);
+            // Luôn là literal chuỗi, kể cả với khoá số: kiểu của CỘT quyết định phép so sánh, nên
+            // `id > '500'` vẫn so theo số. Tự suy kiểu từ giá trị thì một khoá `varchar` chứa số
+            // sẽ được so như số trong khi `ORDER BY` so như chuỗi — hai thứ tự khác nhau, và trang
+            // sau lặng lẽ bỏ sót dòng.
+            Some(format!("{q}{col}{q} {op} '{lit}'"))
+        }
+        _ => None,
+    };
+
+    // WHERE của trang = filter + con trỏ. Filter PHẢI được bọc ngoặc: `a = 1 OR b = 2` nối thẳng
+    // bằng AND sẽ thành `a = 1 OR (b = 2 AND pk > …)`, tức là lọc khác hẳn ý người dùng.
+    let row_where = match (filter_body, &seek_clause) {
+        (Some(f), Some(seek)) => format!(" WHERE ({f}) AND {seek}"),
+        (Some(f), None) => format!(" WHERE {f}"),
+        (None, Some(seek)) => format!(" WHERE {seek}"),
+        (None, None) => String::new(),
+    };
+
+    // Con trỏ THAY THẾ offset, không cộng dồn: đó là toàn bộ điểm của pha này — trang sâu không
+    // còn phải đọc rồi bỏ đi n dòng đầu.
+    let offset = if seek_clause.is_some() { 0 } else { (page.saturating_sub(1)) * limit };
+    // Read ONE row more than the page needs: whether a next page exists is then a fact about the
+    // rows, not a division of a row count that may be an estimate — and it costs nothing.
+    let fetch_limit = limit.saturating_add(1);
     let sql = format!(
-        "SELECT * FROM {table_ref}{where_clause}{order_clause} LIMIT {limit} OFFSET {offset}",
-        table_ref = table_ref, where_clause = where_clause, order_clause = order_clause, limit = limit, offset = offset
+        "SELECT * FROM {table_ref}{row_where}{order_clause} LIMIT {fetch_limit} OFFSET {offset}",
+        table_ref = table_ref, row_where = row_where, order_clause = order_clause, fetch_limit = fetch_limit, offset = offset
     );
+    // Số đếm là của cả tập đã lọc, nên nó dùng `where_clause` (không có con trỏ) — nếu không thì
+    // mỗi trang lại báo một tổng nhỏ dần.
     let count_sql = format!(
         "SELECT COUNT(*) FROM {table_ref}{where_clause}",
         table_ref = table_ref, where_clause = where_clause
     );
-    
+
     let mut rows_json = Vec::new();
     let mut columns = Vec::new();
-    let mut total_count: i64 = 0;
-    
+
     match &conn_type.kind {
         DbKind::Sqlite(conn_arc) => {
             let conn = conn_arc.lock().map_err(|e| e.to_string())?;
-            
-            // Lấy total count
-            if let Ok(c) = conn.query_row(&count_sql, [], |r| r.get::<_, i64>(0)) {
-                total_count = c;
-            }
 
             let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
             let col_count = stmt.column_count();
@@ -880,26 +1065,7 @@ pub async fn get_table_data(
             }
         }
         _ => {
-            // Lấy total count cho Postgres/MySQL
-            if let Ok(results) = execute_raw_sql_generic(&conn_type, count_sql).await {
-                if let Some(first_res) = results.get(0) {
-                    if let Some(data) = first_res.get("data").and_then(|v| v.as_array()) {
-                        if let Some(row) = data.get(0).and_then(|r| r.as_object()) {
-                            if let Some(val) = row.values().next() {
-                                if let Some(c) = val.as_i64() {
-                                    total_count = c;
-                                } else if let Some(s) = val.as_str() {
-                                    if let Ok(c) = s.parse::<i64>() {
-                                        total_count = c;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            let result = execute_raw_sql_generic(&conn_type, sql.clone()).await?;
+            let result = with_timeout(limit_dur, execute_raw_sql_generic(&conn_type, sql.clone())).await?;
             if let Some(first_res) = result.get(0) {
                 if let Some(data) = first_res.get("data").and_then(|v| v.as_array()) {
                     rows_json = data.clone();
@@ -910,12 +1076,65 @@ pub async fn get_table_data(
             }
         }
     }
-    
+
+    // The extra row read above never reaches the frontend — it only answers "is there a next page".
+    let has_more = rows_json.len() > limit as usize;
+    rows_json.truncate(limit as usize);
+
+    // Con trỏ cho trang sau: giá trị cột seek ở dòng CUỐI của trang này (sau khi đã cắt dòng đọc
+    // thừa), dạng chuỗi chính xác. Phải lấy ở Rust chứ không để frontend đọc từ dòng JSON: một khoá
+    // i64 lớn hơn 2^53 (kiểu snowflake) đi qua `JSON.parse` của JS là mất chữ số cuối, và con trỏ
+    // lệch một đơn vị thì trang sau bỏ sót dòng — không lỗi, không dấu vết.
+    let next_cursor = if has_more {
+        seek_active
+            .and_then(|col| rows_json.last()?.get(col.as_str()))
+            .and_then(scalar_to_cursor)
+    } else {
+        None
+    };
+
+    // Counting is the expensive half of this command: it re-scans the whole table (or the whole
+    // filter) while the page itself touches `limit` rows. Paging, sorting and resizing a page
+    // cannot change the answer, so the grid asks for it only when the table, the filter or the
+    // data itself changed — see `gridPaging.ts`.
+    let mode = count_mode.as_deref().unwrap_or("exact");
+    let (total_count, count_exact) = if mode == "skip" {
+        (None, None)
+    } else {
+        // An estimate cannot answer a WHERE clause, so a filtered view is always counted for real.
+        let approx = if mode == "auto" && where_clause.is_empty() {
+            estimate_row_count(&conn_type, &schema, &name).await
+        } else {
+            None
+        };
+        match approx {
+            Some(n) => (Some(n), Some(false)),
+            // Đếm quá giờ thì trả `None`, không phải lỗi: dòng dữ liệu đã có rồi, và giao diện đã
+            // biết hiển thị "không rõ tổng số" (pha 2). Chết cả trang chỉ vì con số ở thanh dưới
+            // là đổi một bất tiện thành một sự cố.
+            None => match limit_dur {
+                None => (exact_row_count(&conn_type, &count_sql).await, Some(true)),
+                Some(d) => (
+                    tokio::time::timeout(d, exact_row_count(&conn_type, &count_sql))
+                        .await
+                        .unwrap_or(None),
+                    Some(true),
+                ),
+            },
+        }
+    };
+
     Ok(json!({
         "success": true,
         "data": rows_json,
         "columns": columns,
-        "totalCount": total_count
+        // `null`, not 0: "not counted" and "no rows" must not look the same on the frontend.
+        "totalCount": total_count,
+        "countExact": count_exact,
+        "hasMore": has_more,
+        // Đưa nguyên vào lần gọi sau để lấy trang kế tiếp. `null` = không seek được (không có trang
+        // sau, hoặc khoá không phải số/chuỗi) và frontend lại dùng số trang.
+        "nextCursor": next_cursor
     }))
 }
 
@@ -1465,17 +1684,17 @@ pub async fn preview_alter_schema(state: tauri::State<'_, crate::AppState>, conn
 
 #[tauri::command]
 pub async fn execute_query(state: tauri::State<'_, crate::AppState>, conn_id: String, sql: String, params: Option<Vec<Value>>) -> Result<Value, String> {
-    let conn_type = {
+    let (conn_type, limit) = {
         let ctx = state.connections.acquire(&conn_id)?;
-        ctx.conn().clone()
+        (ctx.conn().clone(), stmt_timeout(&ctx.server().config()))
     };
 
     // Có tham số -> bind ở tầng driver (parameterized, một câu lệnh). Không có -> giữ nguyên hành vi cũ.
     let params = params.unwrap_or_default();
     let results = if params.is_empty() {
-        execute_raw_sql_generic(&conn_type, sql.clone()).await?
+        with_timeout(limit, execute_raw_sql_generic(&conn_type, sql.clone())).await?
     } else {
-        run_bound_query(&conn_type, sql.clone(), &params).await?
+        with_timeout(limit, run_bound_query(&conn_type, sql.clone(), &params)).await?
     };
     Ok(json!({ "success": true, "results": results }))
 }
@@ -1922,16 +2141,19 @@ fn split_sql_statements(sql: &str) -> Vec<String> {
 // Chạy nhiều câu lệnh SQL, mỗi câu trả về một bộ kết quả riêng (phục vụ nhiều result tab ở SqlEditor)
 #[tauri::command]
 pub async fn execute_multi_query(state: tauri::State<'_, crate::AppState>, conn_id: String, sql: String) -> Result<Value, String> {
-    let conn_type = {
+    let (conn_type, limit) = {
         let ctx = state.connections.acquire(&conn_id)?;
-        ctx.conn().clone()
+        (ctx.conn().clone(), stmt_timeout(&ctx.server().config()))
     };
 
     let statements = split_sql_statements(&sql);
     let mut results: Vec<Value> = Vec::new();
 
     for stmt in statements {
-        match execute_raw_sql_generic(&conn_type, stmt.clone()).await {
+        // Giới hạn tính cho TỪNG câu lệnh, không cho cả lô: "Run all" trên 50 câu lệnh ngắn không
+        // phải là một câu lệnh chạy lâu, và cộng dồn thời gian của chúng lại sẽ giết đúng những lô
+        // hoàn toàn bình thường.
+        match with_timeout(limit, execute_raw_sql_generic(&conn_type, stmt.clone())).await {
             Ok(mut res) => {
                 if let Some(first) = res.drain(..).next() {
                     let mut obj = first.as_object().cloned().unwrap_or_default();
@@ -1969,9 +2191,9 @@ pub async fn execute_query_stream(
     channel: Channel<Value>,
     params: Option<Vec<Value>>,
 ) -> Result<Value, String> {
-    let conn_type = {
+    let (conn_type, limit) = {
         let ctx = state.connections.acquire(&conn_id)?;
-        ctx.conn().clone()
+        (ctx.conn().clone(), stmt_timeout(&ctx.server().config()))
     };
 
     // Đăng ký cờ hủy để cancel_query có thể dừng vòng lặp stream đang chạy
@@ -1981,8 +2203,29 @@ pub async fn execute_query_stream(
         flags.insert(query_id.clone(), cancel_flag.clone());
     }
 
+    // Hết giờ thì bật đúng cái cờ mà `cancel_query` bật, nên vòng stream dừng bằng cùng một đường
+    // — không thêm nhánh dừng thứ hai vào chỗ đang đẩy dữ liệu. `timed_out` để phân biệt "hết giờ"
+    // với "người dùng bấm Stop": hai thứ đó phải hiện hai thông báo khác nhau.
+    //
+    // Giới hạn tính cho cả câu lệnh, kể cả phần đang đẩy dòng về — giống hệt `statement_timeout`
+    // của server, vốn cũng không dừng đếm khi bắt đầu có dòng đầu tiên.
+    let timed_out = Arc::new(AtomicBool::new(false));
+    let timer = limit.map(|d| {
+        let flag = cancel_flag.clone();
+        let fired = timed_out.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(d).await;
+            fired.store(true, Ordering::Relaxed);
+            flag.store(true, Ordering::Relaxed);
+        })
+    });
+
     let params = params.unwrap_or_default();
     let outcome = stream_sql_statements(&conn_type, &sql, &params, &channel, &cancel_flag).await;
+    // Xong sớm thì hẹn giờ không còn việc gì; để nó chạy tiếp là bật cờ hủy của một lượt chạy sau.
+    if let Some(t) = timer {
+        t.abort();
+    }
 
     // Luôn gỡ cờ khi kết thúc (dù thành công hay lỗi)
     if let Ok(mut flags) = state.cancel_flags.lock() {
@@ -1991,6 +2234,12 @@ pub async fn execute_query_stream(
 
     match outcome {
         Ok((stmt_count, cancelled)) => {
+            // Hết giờ đi ra bằng khung `error`, không phải `done{cancelled}`: người dùng không bấm
+            // Stop, và nói với họ là họ đã bấm thì lần sau họ sẽ đi tìm một cái nút không tồn tại.
+            if let (true, Some(d)) = (timed_out.load(Ordering::Relaxed), limit) {
+                let _ = channel.send(json!({ "type": "error", "stmtIndex": stmt_count, "message": timeout_msg(d) }));
+                return Ok(json!({ "success": false }));
+            }
             let _ = channel.send(json!({ "type": "done", "stmtCount": stmt_count, "cancelled": cancelled }));
             Ok(json!({ "success": true }))
         }

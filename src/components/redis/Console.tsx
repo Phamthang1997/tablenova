@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import Editor, { loader } from '@monaco-editor/react';
+import Editor from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
 import { Play, ListChecks } from 'lucide-react';
 import { dbHelper } from '../../utils/dbHelper';
@@ -9,8 +9,10 @@ import { defineSqlThemes, sqlThemeName } from '../../sql/theme';
 import { COMMANDS } from './commandHelp';
 import { REDIS_LANG_ID, registerRedisLanguage } from './redisLanguage';
 import { commandAtLine, splitRedisCommands } from './redisScript';
-
-loader.config({ monaco });
+// Worker factory + loader binding. This module is lazy-loaded and may well be the first thing
+// in the app to touch Monaco, so it configures the environment itself rather than relying on
+// `SqlEditor` having been imported first.
+import '../../sql/monacoSetup';
 
 interface ConsoleProps {
   /** localStorage scope for the buffer — the server, never `dbName`. */

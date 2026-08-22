@@ -1,18 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import * as monaco from 'monaco-editor';
-import Editor, { loader } from '@monaco-editor/react';
+import Editor from '@monaco-editor/react';
 
-// Import workers directly using Vite's ?worker loader query
-import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
-import jsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker';
-import cssWorker from 'monaco-editor/esm/vs/language/css/css.worker?worker';
-import htmlWorker from 'monaco-editor/esm/vs/language/html/html.worker?worker';
-import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker';
-// Worker cho monaco-sql-languages (parser + ngữ cảnh caret) theo dialect
-import MySQLWorker from 'monaco-sql-languages/esm/languages/mysql/mysql.worker?worker';
-import PgSQLWorker from 'monaco-sql-languages/esm/languages/pgsql/pgsql.worker?worker';
-import GenericSQLWorker from 'monaco-sql-languages/esm/languages/generic/generic.worker?worker';
+// Worker factory + loader binding, shared with the Redis console (see the module's header).
+import '../sql/monacoSetup';
 import { setupSqlCompletion, langIdForDbType, LANG_IDS } from '../sql/sqlLanguage';
 import { setupSqlHover, findTable, openTableTab } from '../sql/intellisense';
 import { defineSqlThemes, sqlThemeName } from '../sql/theme';
@@ -20,6 +12,10 @@ import { SQL_EDITOR_OPTIONS } from '../sql/editorOptions';
 import { formatSql, minifySql } from '../sql/format';
 import { attachEditorInspection } from '../sql/inspection';
 import { registerSqlRenameProvider } from '../sql/refactor';
+import { registerSqlQuickFix } from '../sql/quickFix';
+import { registerSqlSignatureHelp } from '../sql/signatureHelp';
+import { registerSqlPeekDefinition } from '../sql/peekDefinition';
+import { registerSqlOutline } from '../sql/outline';
 import {
   statementAt, analyzeStatements, splitStatements, isSchemaChangingSql,
   findUnsafeStatements, type UnsafeStatement, type UnsafeStatementKind,
@@ -29,48 +25,15 @@ import { willPromptForSql } from '../utils/safeMode';
 import { resolveResultEditability, type ResultEditability, type NotEditableReason } from '../sql/editableResult';
 import { SqlSnippetPanel } from './SqlSnippetPanel';
 
-// Configure Monaco Environment for Vite native web workers
-(window as any).MonacoEnvironment = {
-  getWorker(_: any, label: string) {
-    if (label === 'json') {
-      return new jsonWorker();
-    }
-    if (label === 'css' || label === 'scss' || label === 'less') {
-      return new cssWorker();
-    }
-    if (label === 'html' || label === 'handlebars' || label === 'razor') {
-      return new htmlWorker();
-    }
-    if (label === 'typescript' || label === 'javascript') {
-      return new tsWorker();
-    }
-    if (label === 'mysql') {
-      return new MySQLWorker();
-    }
-    if (label === 'pgsql') {
-      return new PgSQLWorker();
-    }
-    if (label === 'genericsql') {
-      return new GenericSQLWorker();
-    }
-    return new editorWorker();
-  }
-};
-
 // Đăng ký smart completion + hover + theme + rename provider (dùng chung, chỉ chạy 1 lần)
 setupSqlCompletion();
 setupSqlHover();
 defineSqlThemes();
 registerSqlRenameProvider(monaco);
-
-// Monaco đo bề rộng ký tự lúc khởi tạo. Nếu JetBrains Mono nạp xong SAU đó thì con trỏ
-// sẽ lệch khỏi chữ -> đo lại khi mọi font đã sẵn sàng.
-if (typeof document !== 'undefined' && (document as any).fonts?.ready) {
-  (document as any).fonts.ready.then(() => monaco.editor.remeasureFonts()).catch(() => { /* bỏ qua */ });
-}
-
-// Pack monaco directly into the loader config
-loader.config({ monaco });
+registerSqlQuickFix(monaco);
+registerSqlSignatureHelp(monaco);
+registerSqlPeekDefinition(monaco);
+registerSqlOutline(monaco);
 import { setEditorConnId } from '../sql/editorScope';
 import { dbIndexRegistry } from '../sql/dbIndexRegistry';
 import { dbHelper, type GridChange } from '../utils/dbHelper';
@@ -923,6 +886,36 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       contextMenuOrder: 1.0,
       run: (ed: any) => {
         ed.trigger('keyboard', 'editor.action.rename', {});
+      },
+    });
+
+    // Alt+Enter / context menu: Quick Fix cho chỗ đang bị gạch chân (xem sql/quickFix.ts).
+    // Ctrl+. mặc định của Monaco không dùng được trên máy người dùng (chưa rõ vì bàn phím hay vì
+    // bộ gõ) nên gắn phím riêng: Alt+Enter là phím "intention actions" của JetBrains/DataGrip và
+    // không đụng Ctrl+Enter / Ctrl+Shift+Enter vốn đã dành cho việc chạy câu lệnh. Mục trong menu
+    // chuột phải mới là đường dễ tìm nhất — một phím tắt không nhìn thấy được coi như không có,
+    // và nó cũng là cách nhanh nhất để phân biệt "phím không tới" với "provider không trả gì".
+    editor.addAction({
+      id: 'trigger-sql-quick-fix',
+      label: tRef.current('sqlEditor.actionQuickFix'),
+      keybindings: [monaco.KeyMod.Alt | monaco.KeyCode.Enter],
+      contextMenuGroupId: '1_modification',
+      contextMenuOrder: 0.9,
+      run: (ed: any) => {
+        ed.trigger('keyboard', 'editor.action.quickFix', {});
+      },
+    });
+
+    // Alt+F12: xem DDL của bảng ngay tại chỗ, không rời tab (xem sql/peekDefinition.ts).
+    // Tách khỏi F12 vì hai việc khác nhau: liếc cấu trúc vs. mở hẳn bảng ra để xem dữ liệu.
+    editor.addAction({
+      id: 'peek-table-definition',
+      label: tRef.current('sqlEditor.actionPeekDefinition'),
+      keybindings: [monaco.KeyMod.Alt | monaco.KeyCode.F12],
+      contextMenuGroupId: 'navigation',
+      contextMenuOrder: 1.05,
+      run: (ed: any) => {
+        ed.trigger('keyboard', 'editor.action.peekDefinition', {});
       },
     });
 

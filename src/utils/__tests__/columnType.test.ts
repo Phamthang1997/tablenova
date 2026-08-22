@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { splitType, joinType, typeBase } from '../columnType';
+import { splitType, joinType, typeBase, enumValues, typeFamily } from '../columnType';
 
 describe('splitType', () => {
   it('splits a plain length', () => {
@@ -72,5 +72,43 @@ describe('typeBase', () => {
     expect(typeBase('varchar(255)')).toBe('varchar');
     expect(typeBase('int(10) unsigned')).toBe('int unsigned');
     expect(typeBase('timestamp without time zone')).toBe('timestamp without time zone');
+  });
+});
+
+describe('enumValues', () => {
+  it('lấy giá trị của enum và set', () => {
+    expect(enumValues("enum('active','pending','banned')"))
+      .toEqual(['active', 'pending', 'banned']);
+    expect(enumValues("set('a','b')")).toEqual(['a', 'b']);
+  });
+
+  it('giá trị chứa dấu phẩy hoặc dấu nháy đã thoát', () => {
+    expect(enumValues("enum('a,b','c')")).toEqual(['a,b', 'c']);
+    expect(enumValues("enum('it''s','x')")).toEqual(["it's", 'x']);
+  });
+
+  it('kiểu khác trả rỗng — đó là lý do cột id không gợi ý gì', () => {
+    expect(enumValues('int')).toEqual([]);
+    expect(enumValues('varchar(255)')).toEqual([]);
+    expect(enumValues(null)).toEqual([]);
+  });
+});
+
+describe('typeFamily', () => {
+  it('khớp theo từ nên int không nuốt interval', () => {
+    expect(typeFamily('int')).toBe('number');
+    expect(typeFamily('interval')).toBe('other');
+    expect(typeFamily('int(10) unsigned')).toBe('number');
+  });
+
+  it('kiểu nhiều từ vẫn đúng nhóm', () => {
+    expect(typeFamily('timestamp without time zone')).toBe('date');
+    expect(typeFamily('character varying(45)')).toBe('string');
+    expect(typeFamily('double precision')).toBe('number');
+  });
+
+  it('không nhận ra thì other, và mọi kiểm tra phải hiểu other là không kết luận', () => {
+    expect(typeFamily('geometry')).toBe('other');
+    expect(typeFamily('')).toBe('other');
   });
 });

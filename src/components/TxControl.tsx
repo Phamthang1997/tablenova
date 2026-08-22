@@ -5,6 +5,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { AlertTriangle, Undo2 } from 'lucide-react';
 import { dbHelper, TX_EVENT, TX_ISOLATION_LEVELS, type TxStatus } from '../utils/dbHelper';
 import { Modal, ModalBody, ModalFooter } from './Modal';
+import { CLOSE_PRIORITY_TX, registerCloseBlocker } from '../utils/closeGuard';
 
 interface TxControlProps {
   /** 'sqlite' | 'postgres' | 'mysql' — quyết định danh sách mức cô lập hiển thị. */
@@ -85,33 +86,26 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected, connId 
 
   // Đóng app khi còn thay đổi chưa commit = mất trắng. Chặn ở `onCloseRequested` chứ không ở nút
   // × của TitleBar: Alt+F4 và nút đóng của hệ điều hành không đi qua nút đó.
-  useEffect(() => {
-    const un = getCurrentWindow().onCloseRequested(async (event) => {
-      // Asks the BACKEND about every connection, not `statusRef` about the one on screen. Closing
-      // the window ends every session, so a per-connection answer would silently discard another
-      // connection's transaction — see `tx_any_pending`.
-      //
-      // `preventDefault()` first: the check is async, and by the time it resolves the window would
-      // already be gone. Nothing pending -> close it explicitly.
-      event.preventDefault();
-      let pending = false;
-      try {
-        pending = await dbHelper.txAnyPending();
-      } catch {
-        // Backend unreachable: fall back to what this window knows rather than trapping the user.
-        const s = statusRef.current;
-        pending = !!s?.open && s.statements > 0;
-      }
-      if (pending) {
-        setAskOnClose(true);
-        return;
-      }
-      void getCurrentWindow().destroy();
-    });
-    return () => {
-      void un.then((f) => f());
-    };
-  }, []);
+  //
+  // Listener `onCloseRequested` giờ do `closeGuard.ts` giữ, một cái duy nhất cho cả app: hai
+  // listener độc lập thì cái nào resolve trước sẽ gọi `destroy()` và giết luôn hộp thoại của cái
+  // kia. Đây là blocker ưu tiên cao nhất — mất dữ liệu là không lấy lại được.
+  useEffect(() => registerCloseBlocker(CLOSE_PRIORITY_TX, async () => {
+    // Asks the BACKEND about every connection, not `statusRef` about the one on screen. Closing
+    // the window ends every session, so a per-connection answer would silently discard another
+    // connection's transaction — see `tx_any_pending`.
+    let pending = false;
+    try {
+      pending = await dbHelper.txAnyPending();
+    } catch {
+      // Backend unreachable: fall back to what this window knows rather than trapping the user.
+      const s = statusRef.current;
+      pending = !!s?.open && s.statements > 0;
+    }
+    if (!pending) return false;
+    setAskOnClose(true);
+    return true;
+  }), []);
 
   if (!connected || !status) return null;
 

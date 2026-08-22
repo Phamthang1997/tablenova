@@ -48,6 +48,43 @@ describe('DbIndexRegistry & SQL Inspection Tests', () => {
     expect(suggestions).toContain('email');
   });
 
+  it('should catch a transposed-letter typo, not just substrings', () => {
+    // `nmae` chứa `name` cũng không, `name` chứa `nmae` cũng không — bản so chuỗi con bỏ lọt.
+    expect(dbIndexRegistry.findSimilarColumns('nmae', 'users')).toContain('name');
+    expect(dbIndexRegistry.findSimilarColumns('emial', 'users')).toContain('email');
+  });
+
+  it('should not suggest anything for a wholly unrelated name', () => {
+    expect(dbIndexRegistry.findSimilarColumns('zzzzzzzz', 'users')).toEqual([]);
+  });
+
+  it('should find similar table names', () => {
+    expect(dbIndexRegistry.findSimilarTables('user')).toContain('users');
+    expect(dbIndexRegistry.findSimilarTables('odrers')).toContain('orders');
+    expect(dbIndexRegistry.findSimilarTables('zzzzzzzz')).toEqual([]);
+  });
+
+  it('should attach quick-fix data pointing at the column only, not the whole alias.column', () => {
+    const sql = 'SELECT u.nmae FROM users u;';
+    const issue = inspectSqlText(sql).find((i) => i.fix);
+    expect(issue?.fix?.candidates).toContain('name');
+    // Vùng gạch chân phủ `u.nmae`, vùng sửa chỉ phủ `nmae`.
+    expect(sql.slice(issue!.startColumn - 1, issue!.endColumn - 1)).toBe('u.nmae');
+    expect(sql.slice(issue!.fix!.startColumn - 1, issue!.fix!.endColumn - 1)).toBe('nmae');
+  });
+
+  it('should attach quick-fix data for a mistyped table name', () => {
+    const issue = inspectSqlText('SELECT * FROM odrers;').find((i) => i.fix);
+    expect(issue?.severity).toBe('error');
+    expect(issue?.fix?.candidates).toContain('orders');
+  });
+
+  it('should leave fix undefined when nothing is close enough', () => {
+    const issues = inspectSqlText('SELECT * FROM zzzzzzzz;');
+    expect(issues.length).toBeGreaterThan(0);
+    expect(issues[0].fix).toBeUndefined();
+  });
+
   it('should inspect valid SQL text with zero issues', () => {
     const sql = 'SELECT u.id, u.name, u.email FROM users u WHERE u.id = 1;';
     const issues = inspectSqlText(sql);
@@ -68,6 +105,172 @@ describe('DbIndexRegistry & SQL Inspection Tests', () => {
     expect(issues.length).toBeGreaterThan(0);
     expect(issues[0].severity).toBe('warning');
     expect(issues[0].message).toContain('non_existent_column');
+  });
+
+  it('should not flag a CTE name as a missing table', () => {
+    const sql = 'WITH recent AS (SELECT * FROM orders WHERE total > 10) SELECT * FROM recent;';
+    expect(inspectSqlText(sql)).toEqual([]);
+  });
+
+  it('should not flag any name in a comma-separated CTE list', () => {
+    const sql =
+      'WITH a AS (SELECT id FROM users), b AS (SELECT id FROM orders) SELECT * FROM a JOIN b ON a.id = b.id;';
+    expect(inspectSqlText(sql)).toEqual([]);
+  });
+
+  it('should still flag a real unknown table used alongside a CTE', () => {
+    const sql = 'WITH recent AS (SELECT * FROM orders) SELECT * FROM recent JOIN ghost_table g ON 1=1;';
+    const issues = inspectSqlText(sql);
+    expect(issues.length).toBeGreaterThan(0);
+    expect(issues.every((i) => i.message.includes('ghost_table'))).toBe(true);
+  });
+
+  describe('unqualified columns in the select list', () => {
+    const messages = (sql: string) => inspectSqlText(sql).map((i) => i.message);
+
+    it('flags a mistyped bare column and offers the fix', () => {
+      const issue = inspectSqlText('SELECT nmae FROM users u;')[0];
+      expect(issue.severity).toBe('warning');
+      expect(issue.message).toContain('nmae');
+      expect(issue.fix?.candidates).toContain('name');
+    });
+
+    it('accepts every real column, qualified or not', () => {
+      expect(messages('SELECT id, name, u.email FROM users u;')).toEqual([]);
+      expect(messages('SELECT DISTINCT name FROM users;')).toEqual([]);
+      expect(messages('SELECT * FROM users;')).toEqual([]);
+      expect(messages('SELECT u.* FROM users u;')).toEqual([]);
+    });
+
+    it('accepts columns coming from any joined table', () => {
+      expect(messages('SELECT name, total FROM users JOIN orders ON users.id = orders.user_id;'))
+        .toEqual([]);
+    });
+
+    // Mỗi ca dưới đây từng là một kiểu báo nhầm khác nhau nếu thiếu một bộ lọc.
+    it('does not mistake a function call, a keyword or a literal for a column', () => {
+      expect(messages('SELECT COUNT(id) FROM users;')).toEqual([]);
+      expect(messages('SELECT NULL, TRUE, 42 FROM users;')).toEqual([]);
+      expect(messages('SELECT CASE WHEN id > 1 THEN name ELSE email END FROM users;')).toEqual([]);
+    });
+
+    it('does not flag an alias being defined', () => {
+      expect(messages('SELECT name AS full_name FROM users;')).toEqual([]);
+      expect(messages('SELECT COUNT(*) total FROM orders;')).toEqual([]);
+      expect(messages('SELECT id, name AS n, email AS e FROM users;')).toEqual([]);
+    });
+
+    it('stays silent when the scope is not fully known', () => {
+      // Bảng lạ: đã có lỗi riêng cho nó, và cột thì không thể kết luận.
+      expect(messages('SELECT whatever FROM ghost_table;')).toHaveLength(1);
+      // CTE: cột của nó không nằm trong catalog.
+      expect(messages('WITH c AS (SELECT 1 AS x) SELECT x FROM c;')).toEqual([]);
+      // Truy vấn con trong FROM.
+      expect(messages('SELECT anything FROM (SELECT id FROM users) t;')).toEqual([]);
+    });
+
+    // `users` và `orders` đều có cột `id` -> `SELECT id FROM users JOIN orders` là lỗi thật
+    // trên MySQL/Postgres ("column 'id' is ambiguous"), nhưng SQLite thì chạy được.
+    describe('ambiguous columns', () => {
+      const ambiguous = 'SELECT id FROM users JOIN orders ON users.id = orders.user_id;';
+
+      it('is an error on MySQL and Postgres, with one fix per candidate table', () => {
+        for (const dialect of ['mysql', 'pgsql']) {
+          const issue = inspectSqlText(ambiguous, dialect)[0];
+          expect(issue.severity).toBe('error');
+          expect(issue.message).toContain('id');
+          expect(issue.fix?.candidates).toEqual(['users.id', 'orders.id']);
+        }
+      });
+
+      it('stays silent on SQLite and when the dialect is unknown', () => {
+        expect(inspectSqlText(ambiguous, 'genericsql')).toEqual([]);
+        expect(inspectSqlText(ambiguous)).toEqual([]);
+      });
+
+      it('uses the aliases actually written, so the fix compiles', () => {
+        const sql = 'SELECT id FROM users u JOIN orders o ON u.id = o.user_id;';
+        expect(inspectSqlText(sql, 'mysql')[0].fix?.candidates).toEqual(['u.id', 'o.id']);
+      });
+
+      it('treats a self-join as two sources', () => {
+        const sql = 'SELECT name FROM users a JOIN users b ON a.id = b.id;';
+        expect(inspectSqlText(sql, 'mysql')[0].fix?.candidates).toEqual(['a.name', 'b.name']);
+      });
+
+      it('leaves a column owned by only one of the joined tables alone', () => {
+        const sql = 'SELECT total, name FROM users JOIN orders ON users.id = orders.user_id;';
+        expect(inspectSqlText(sql, 'mysql')).toEqual([]);
+      });
+    });
+
+    describe('type mismatch in a comparison', () => {
+      const msgs = (sql: string) => inspectSqlText(sql, 'mysql').map((i) => i.message);
+
+      it('flags a numeric column compared with non-numeric text', () => {
+        expect(msgs("SELECT id FROM users WHERE id = 'abc';")).toHaveLength(1);
+        expect(msgs("SELECT total FROM orders o WHERE o.total > 'x';")).toHaveLength(1);
+      });
+
+      // Mỗi ca dưới đây là một cách viết bình thường; báo ở đây là báo nhầm.
+      it('accepts the coercions every dialect performs', () => {
+        expect(msgs("SELECT id FROM users WHERE id = '5';")).toEqual([]);
+        expect(msgs("SELECT id FROM users WHERE name = 'abc';")).toEqual([]);
+        expect(msgs('SELECT id FROM users WHERE id = 5;')).toEqual([]);
+      });
+
+      it('ignores text inside a string or a comment', () => {
+        expect(msgs("SELECT id FROM users WHERE name = 'id = ''abc''';")).toEqual([]);
+        expect(msgs("SELECT id FROM users -- id = 'abc'\n;")).toEqual([]);
+      });
+
+      it('says nothing when the column is ambiguous, since the two types may differ', () => {
+        // `id` có ở cả users lẫn orders, nên không biết đang so với kiểu nào -> không kết luận.
+        const sql = "SELECT users.id FROM users JOIN orders ON users.id = orders.user_id WHERE id = 'abc';";
+        expect(inspectSqlText(sql, 'mysql')).toEqual([]);
+      });
+    });
+
+    describe('columns missing from GROUP BY', () => {
+      it('is an error on MySQL and Postgres', () => {
+        const sql = 'SELECT name, COUNT(*) FROM users GROUP BY email;';
+        for (const dialect of ['mysql', 'pgsql']) {
+          const issues = inspectSqlText(sql, dialect);
+          expect(issues).toHaveLength(1);
+          expect(issues[0].severity).toBe('error');
+          expect(issues[0].message).toContain('name');
+        }
+      });
+
+      it('stays silent on SQLite, which returns an arbitrary row instead', () => {
+        expect(inspectSqlText('SELECT name, COUNT(*) FROM users GROUP BY email;', 'genericsql'))
+          .toEqual([]);
+      });
+
+      it('accepts grouped columns and aggregates', () => {
+        expect(inspectSqlText('SELECT email, COUNT(*) FROM users GROUP BY email;', 'mysql'))
+          .toEqual([]);
+        expect(inspectSqlText('SELECT email, MAX(name) FROM users GROUP BY email;', 'mysql'))
+          .toEqual([]);
+      });
+
+      it('accepts anything when grouping by a primary key', () => {
+        // Cả Postgres lẫn MySQL đều cho chọn cột phụ thuộc hàm vào khoá chính đã gom nhóm.
+        expect(inspectSqlText('SELECT id, name, email FROM users GROUP BY id;', 'pgsql'))
+          .toEqual([]);
+      });
+
+      it('does not judge GROUP BY by ordinal, where names cannot be matched', () => {
+        expect(inspectSqlText('SELECT name, COUNT(*) FROM users GROUP BY 1;', 'mysql')).toEqual([]);
+      });
+    });
+
+    it('scopes each statement separately', () => {
+      // `total` là cột của orders, không phải của users -> chỉ câu thứ hai hợp lệ.
+      const msgs = messages('SELECT total FROM users;\nSELECT total FROM orders;');
+      expect(msgs).toHaveLength(1);
+      expect(msgs[0]).toContain('total');
+    });
   });
 
   it('should propagate table rename across SQL script while skipping strings and comments', () => {

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { Lock, LockOpen, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { Eye, EyeOff, Lock, LockOpen, ShieldAlert, ShieldCheck } from 'lucide-react';
 import {
   getSafeModeForKey,
   SAFE_MODE_CHANGED_EVENT,
@@ -9,6 +9,18 @@ import {
   setSafeModeForKey,
   type SafeMode,
 } from '../utils/safeMode';
+import {
+  getStmtTimeoutForKey,
+  STMT_TIMEOUT_CHANGED_EVENT,
+  STMT_TIMEOUT_PRESETS,
+  setStmtTimeoutForKey,
+} from '../utils/stmtTimeout';
+import {
+  COMMIT_PREVIEW_CHANGED_EVENT,
+  getCommitPreviewForKey,
+  setCommitPreviewForKey,
+} from '../utils/commitPreview';
+import { dbHelper } from '../utils/dbHelper';
 
 /**
  * One control, four escalating levels — three "ask" levels plus read-only, which blocks instead of
@@ -35,6 +47,17 @@ interface SafeModeControlProps {
   /** Read-only is App state (and the backend's own flag), not part of Safe Mode's storage. */
   readOnly: boolean;
   onToggleReadOnly?: () => void;
+  /**
+   * Kết nối đang xem — cần cho lệnh đổi giới hạn thời gian câu lệnh, thứ áp vào *phiên* đang chạy
+   * chứ không phải vào một server nào đó đã lưu.
+   */
+  connId?: string;
+  /**
+   * Dialect của kết nối. Hàng "giới hạn thời gian" chỉ hiện với `postgres`/`mysql`: SQLite chạy
+   * đồng bộ trên tệp cục bộ nên không có chỗ chen một hạn chót vào, và bày ra một ô cài đặt không
+   * có tác dụng thì tệ hơn là không bày.
+   */
+  dbType?: string;
 }
 
 export const SafeModeControl: React.FC<SafeModeControlProps> = ({
@@ -42,9 +65,13 @@ export const SafeModeControl: React.FC<SafeModeControlProps> = ({
   connKey,
   readOnly,
   onToggleReadOnly,
+  connId,
+  dbType,
 }) => {
   const { t } = useTranslation();
   const [mode, setMode] = useState<SafeMode>('silent');
+  const [stmtSecs, setStmtSecs] = useState(0);
+  const [previewOn, setPreviewOn] = useState(true);
   const [anchor, setAnchor] = useState<{ top: number; left: number } | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
 
@@ -55,6 +82,24 @@ export const SafeModeControl: React.FC<SafeModeControlProps> = ({
     read();
     window.addEventListener(SAFE_MODE_CHANGED_EVENT, read);
     return () => window.removeEventListener(SAFE_MODE_CHANGED_EVENT, read);
+  }, [connKey]);
+
+  // Cùng lối với Safe Mode ở trên: nguồn sự thật là localStorage, nên hai cửa sổ hoặc hai lần mount
+  // không hiện hai con số khác nhau.
+  useEffect(() => {
+    const read = () => setStmtSecs(getStmtTimeoutForKey(connKey));
+    read();
+    window.addEventListener(STMT_TIMEOUT_CHANGED_EVENT, read);
+    return () => window.removeEventListener(STMT_TIMEOUT_CHANGED_EVENT, read);
+  }, [connKey]);
+
+  // Cái ô "đừng hiện lại" nằm trong chính hộp thoại xem trước, tức là nó bị tắt từ chỗ khác — nghe
+  // sự kiện để hàng ở đây không hiện trạng thái cũ khi popover mở lại.
+  useEffect(() => {
+    const read = () => setPreviewOn(getCommitPreviewForKey(connKey));
+    read();
+    window.addEventListener(COMMIT_PREVIEW_CHANGED_EVENT, read);
+    return () => window.removeEventListener(COMMIT_PREVIEW_CHANGED_EVENT, read);
   }, [connKey]);
 
   useEffect(() => {
@@ -133,6 +178,24 @@ export const SafeModeControl: React.FC<SafeModeControlProps> = ({
     setMode(getSafeModeForKey(connKey));
   };
 
+  /**
+   * Đặt giới hạn. Ghi vào localStorage (để lần kết nối sau vẫn còn) **và** đẩy sang phiên đang chạy
+   * — hai chỗ, vì một cái là bộ nhớ còn cái kia là hiệu lực. Popover không đóng lại: người ta hay
+   * thử một mức rồi đổi ngay sang mức khác.
+   */
+  const pickTimeout = (secs: number) => {
+    setStmtTimeoutForKey(connKey, secs);
+    setStmtSecs(getStmtTimeoutForKey(connKey));
+    if (connId) void dbHelper.setStatementTimeout(connId, secs);
+  };
+
+  const timeoutLabel = (secs: number): string =>
+    secs === 0
+      ? t('stmtTimeout.off')
+      : secs % 60 === 0
+        ? t('stmtTimeout.minutes', { n: secs / 60 })
+        : t('stmtTimeout.seconds', { n: secs });
+
   return (
     <>
       <button
@@ -168,6 +231,52 @@ export const SafeModeControl: React.FC<SafeModeControlProps> = ({
                   </button>
                 </React.Fragment>
               ))}
+              {/* Giới hạn thời gian câu lệnh — cùng popover vì nó trả lời cùng một câu hỏi với Safe
+                  Mode ("kết nối này bảo vệ mình tới đâu") và cũng lưu theo server. Các mức đặt sẵn
+                  chứ không phải ô nhập số: gõ số trong một menu là thao tác lạc, và sáu mức đã phủ
+                  hết khoảng người ta thực sự chọn. */}
+              {(dbType === 'postgres' || dbType === 'mysql') && (
+                <>
+                  <div className="sm-divider" />
+                  <div className="sm-pop-title">{t('stmtTimeout.menuTitle')}</div>
+                  <div className="sm-seg">
+                    {STMT_TIMEOUT_PRESETS.map((secs) => (
+                      <button
+                        key={secs}
+                        className={stmtSecs === secs ? 'is-on' : ''}
+                        onClick={() => pickTimeout(secs)}
+                        disabled={!connKey}
+                      >
+                        {timeoutLabel(secs)}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="sm-item-desc sm-pop-note">{t('stmtTimeout.hint')}</div>
+                </>
+              )}
+
+              {/* Xem trước SQL trước khi grid lưu. Ở đây vì đây là đường BẬT LẠI: nó bị tắt từ ô
+                  "đừng hiện lại" trong chính hộp thoại đó, và một công tắc tắt được mà không bật
+                  lại được thì chỉ là một cái bẫy. */}
+              <div className="sm-divider" />
+              <button
+                className={`sm-item ${previewOn ? 'is-on' : ''}`}
+                onClick={() => {
+                  setCommitPreviewForKey(connKey, !previewOn);
+                  setPreviewOn(getCommitPreviewForKey(connKey));
+                }}
+                disabled={!connKey}
+              >
+                <span style={{ display: 'flex', flexShrink: 0, marginTop: '1px' }}>
+                  {previewOn ? <Eye size={14} /> : <EyeOff size={14} />}
+                </span>
+                <span style={{ minWidth: 0 }}>
+                  <span className="sm-item-label">{t('commitPreview.label')}</span>
+                  <span className="sm-item-desc">
+                    {previewOn ? t('commitPreview.onDesc') : t('commitPreview.offDesc')}
+                  </span>
+                </span>
+              </button>
             </div>
           </>,
           document.body

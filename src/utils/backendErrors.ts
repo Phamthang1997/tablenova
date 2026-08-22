@@ -123,6 +123,8 @@ export const NORMALIZED_ALIASES = new Set(['Chưa kết nối database']);
  */
 export const PATTERNS: { re: RegExp; key: string; nested?: boolean }[] = [
   { re: /^Lỗi khi chạy lệnh SQL: ([\s\S]*?)\. Chi tiết: ([\s\S]*)$/, key: 'backend.sqlFailed' },
+  // database.rs — hàng rào thời gian của một câu lệnh (`statementTimeoutSecs` của kết nối).
+  { re: /^Câu lệnh đã chạy quá ([\d]+) giây và bị dừng$/, key: 'backend.statementTimeout' },
   { re: /^Lỗi tại câu lệnh:\n([\s\S]*)\n\nChi tiết: ([\s\S]*)$/, key: 'backend.sqlStatementFailed' },
   { re: /^Lỗi kết nối SSH tới ([^\s]+): ([\s\S]*)$/, key: 'backend.sshConnectFailed' },
   { re: /^Lỗi xác thực SSH bằng mật khẩu: ([\s\S]*)$/, key: 'backend.sshPasswordAuthFailed' },
@@ -139,6 +141,9 @@ export const PATTERNS: { re: RegExp; key: string; nested?: boolean }[] = [
   { re: /^Không thể kết nối Redis: ([\s\S]*)$/, key: 'backend.redisConnectFailed' },
   // redis_db.rs — chặn lệnh & phân trang
   { re: /^Lệnh '([^']*)' bị chặn ở chế độ chỉ đọc$/, key: 'backend.redisReadOnlyCmd' },
+  // redis_db.rs — trần một lô DUMP/RESTORE. Con số nằm trong message (`TRANSFER_BATCH_MAX`) nên
+  // đây là regex, không phải một entry EXACT.
+  { re: /^Mỗi lượt chỉ nhận tối đa (\d+) key$/, key: 'backend.redisTransferBatchTooBig' },
   {
     re: /^Lệnh '([^']*)' cần kết nối riêng — dùng tab Pub\/Sub hoặc Profiler$/,
     key: 'backend.redisBlockingCmd',

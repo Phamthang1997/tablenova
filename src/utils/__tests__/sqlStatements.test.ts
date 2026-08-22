@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { splitStatements, statementAt, analyzeStatements, resolveAliases, collectTableRefs, isSchemaChangingSql, findUnsafeStatements } from '../../sql/statements';
+import { splitStatements, statementAt, analyzeStatements, resolveAliases, collectTableRefs, collectCteNames, describeStatement, enclosingCall, valuePosition, isSchemaChangingSql, findUnsafeStatements } from '../../sql/statements';
 import { formatSql, minifySql } from '../../sql/format';
 
 describe('splitStatements', () => {
@@ -508,5 +508,160 @@ describe('findUnsafeStatements', () => {
   it('văn bản rỗng / chỉ có comment -> không có gì', () => {
     expect(kinds('')).toEqual([]);
     expect(kinds('-- DELETE FROM t')).toEqual([]);
+  });
+});
+
+describe('valuePosition', () => {
+  it('nhận ra chỗ điền giá trị sau toán tử so sánh', () => {
+    expect(valuePosition('SELECT * FROM t WHERE status = '))
+      .toEqual({ column: 'status', quoted: false });
+    expect(valuePosition("SELECT * FROM t WHERE status = '"))
+      .toEqual({ column: 'status', quoted: true });
+    expect(valuePosition('SELECT * FROM t WHERE u.status <> '))
+      .toEqual({ column: 'u.status', quoted: false });
+    expect(valuePosition('SELECT * FROM t WHERE `status` = '))
+      .toEqual({ column: 'status', quoted: false });
+  });
+
+  it('nhận ra IN (...) kể cả khi đã có giá trị liệt kê trước', () => {
+    expect(valuePosition('WHERE status IN (')).toEqual({ column: 'status', quoted: false });
+    expect(valuePosition("WHERE status IN ('a', ")).toEqual({ column: 'status', quoted: false });
+    expect(valuePosition("WHERE status NOT IN ('a', '")).toEqual({ column: 'status', quoted: true });
+  });
+
+  it('nhận ra LIKE', () => {
+    expect(valuePosition('WHERE name LIKE ')).toEqual({ column: 'name', quoted: false });
+  });
+
+  it('không nhận khi chưa tới chỗ điền giá trị', () => {
+    expect(valuePosition('SELECT * FROM t WHERE status')).toBeNull();
+    expect(valuePosition('SELECT * FROM t WHERE ')).toBeNull();
+    expect(valuePosition("SELECT * FROM t WHERE status = 'a'")).toBeNull();
+    expect(valuePosition('SELECT * FROM t WHERE 1 = ')).toBeNull(); // số không phải tên cột
+  });
+});
+
+describe('describeStatement', () => {
+  const label = (sql: string) => describeStatement(sql).label;
+
+  it('DML lấy tên bảng chính', () => {
+    expect(label('SELECT id, name FROM users WHERE id = 1')).toBe('SELECT users');
+    expect(label('INSERT INTO orders (a) VALUES (1)')).toBe('INSERT orders');
+    expect(label('UPDATE users SET name = 1')).toBe('UPDATE users');
+    expect(label('DELETE FROM sessions WHERE id = 2')).toBe('DELETE sessions');
+  });
+
+  it('DDL lấy cả loại đối tượng lẫn tên, bỏ qua từ đệm', () => {
+    expect(label('CREATE TABLE users (id INT)')).toBe('CREATE TABLE users');
+    expect(label('CREATE TABLE IF NOT EXISTS users (id INT)')).toBe('CREATE TABLE users');
+    expect(label('CREATE OR REPLACE VIEW v AS SELECT 1')).toBe('CREATE VIEW v');
+    expect(label('CREATE UNIQUE INDEX idx_a ON t (a)')).toBe('CREATE INDEX idx_a');
+    expect(label('DROP TABLE `orders`')).toBe('DROP TABLE orders');
+    expect(label('ALTER TABLE users ADD COLUMN x INT')).toBe('ALTER TABLE users');
+  });
+
+  it('CTE được gọi tên theo câu lệnh thật, không phải theo WITH', () => {
+    expect(label('WITH recent AS (SELECT * FROM orders) SELECT * FROM recent'))
+      .toBe('SELECT orders');
+  });
+
+  it('động từ trong chuỗi, comment hay truy vấn con không cướp nhãn', () => {
+    expect(label("SELECT 'DROP TABLE x' FROM users")).toBe('SELECT users');
+    expect(label('-- DROP TABLE x\nSELECT * FROM users')).toBe('SELECT users');
+    expect(label('SELECT (SELECT 1) FROM users')).toBe('SELECT users');
+  });
+
+  it('loại câu lệnh dùng để chọn biểu tượng', () => {
+    expect(describeStatement('SELECT 1 FROM t').kind).toBe('select');
+    expect(describeStatement('UPDATE t SET a = 1').kind).toBe('write');
+    expect(describeStatement('CREATE TABLE t (a INT)').kind).toBe('ddl');
+    expect(describeStatement('SET foreign_key_checks = 0').kind).toBe('other');
+  });
+
+  it('không nhận ra thì vẫn cho một nhãn định vị được, không bỏ trống', () => {
+    expect(label('???')).toBe('???');
+    expect(label('   ')).toBe('SQL');
+  });
+});
+
+describe('enclosingCall', () => {
+  // `|` đánh dấu con trỏ; ký tự đó bị bỏ ra trước khi gọi.
+  const at = (marked: string) => {
+    const offset = marked.indexOf('|');
+    return enclosingCall(marked.slice(0, offset) + marked.slice(offset + 1), offset);
+  };
+
+  it('nhận ra hàm và tham số đang gõ', () => {
+    expect(at('SELECT date_add(|')).toEqual({ name: 'date_add', activeParam: 0 });
+    expect(at('SELECT date_add(a, |')).toEqual({ name: 'date_add', activeParam: 1 });
+    expect(at('SELECT date_add(a, b, c|)')).toEqual({ name: 'date_add', activeParam: 2 });
+  });
+
+  it('không đếm dấu phẩy của lời gọi lồng bên trong', () => {
+    expect(at('SELECT concat(a, foo(b, c), |')).toEqual({ name: 'concat', activeParam: 2 });
+  });
+
+  it('bỏ qua ngoặc và phẩy nằm trong chuỗi hoặc comment', () => {
+    expect(at("SELECT concat('a, (b', |")).toEqual({ name: 'concat', activeParam: 1 });
+    expect(at('SELECT concat(a /* , ( */, |')).toEqual({ name: 'concat', activeParam: 1 });
+  });
+
+  it('ngoặc dùng để nhóm biểu thức không phải lời gọi hàm', () => {
+    // `SELECT` có mục trong bộ tài liệu, nên nới lỏng chỗ này là mỗi lần mở ngoặc lại nhảy ra
+    // bảng cú pháp của SELECT.
+    expect(at('SELECT (a + |')).toBeNull();
+    expect(at('SELECT count (|')).toBeNull();
+  });
+
+  it('không vượt qua dấu ; sang câu lệnh khác', () => {
+    expect(at('SELECT foo(a); SELECT |')).toBeNull();
+  });
+
+  it('ngoài mọi lời gọi thì không trả về gì', () => {
+    expect(at('SELECT a FROM t |')).toBeNull();
+    expect(at('SELECT foo(a) |')).toBeNull();
+  });
+});
+
+describe('collectCteNames', () => {
+  const names = (sql: string) => [...collectCteNames(sql)].sort();
+
+  it('lấy tên CTE đơn', () => {
+    expect(names('WITH recent AS (SELECT * FROM orders) SELECT * FROM recent')).toEqual(['recent']);
+  });
+
+  it('lấy đủ danh sách CTE ngăn bằng dấu phẩy', () => {
+    expect(names('WITH a AS (SELECT 1), b AS (SELECT 2) SELECT * FROM a JOIN b ON 1=1'))
+      .toEqual(['a', 'b']);
+  });
+
+  it('bỏ qua thân CTE có ngoặc lồng nhau', () => {
+    const sql = 'WITH x AS (SELECT (SELECT 1) AS a FROM (SELECT 2) t), y AS (SELECT 3) SELECT * FROM y';
+    expect(names(sql)).toEqual(['x', 'y']);
+  });
+
+  it('hiểu RECURSIVE, danh sách cột và MATERIALIZED', () => {
+    expect(names('WITH RECURSIVE tree (id, parent) AS (SELECT 1, NULL) SELECT * FROM tree'))
+      .toEqual(['tree']);
+    expect(names('WITH t AS NOT MATERIALIZED (SELECT 1) SELECT * FROM t')).toEqual(['t']);
+  });
+
+  it('thấy cả CTE lồng trong thân một CTE khác', () => {
+    expect(names('WITH outer_q AS (WITH inner_q AS (SELECT 1) SELECT * FROM inner_q) SELECT * FROM outer_q'))
+      .toEqual(['inner_q', 'outer_q']);
+  });
+
+  it('WITH trong chuỗi hoặc comment không tính', () => {
+    expect(names("SELECT 'WITH fake AS (SELECT 1)' FROM t")).toEqual([]);
+    expect(names('-- WITH fake AS (SELECT 1)\nSELECT * FROM t')).toEqual([]);
+  });
+
+  it('không đoán bừa khi WITH không mở đầu một CTE', () => {
+    expect(names('SELECT * FROM t WITH (NOLOCK)')).toEqual([]);
+    expect(names('WITH')).toEqual([]);
+  });
+
+  it('tên được hạ về chữ thường để so khớp không phân biệt hoa thường', () => {
+    expect(names('WITH Recent AS (SELECT 1) SELECT * FROM RECENT')).toEqual(['recent']);
   });
 });
