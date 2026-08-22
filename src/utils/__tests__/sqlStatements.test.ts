@@ -588,7 +588,7 @@ describe('enclosingCall', () => {
   // `|` đánh dấu con trỏ; ký tự đó bị bỏ ra trước khi gọi.
   const at = (marked: string) => {
     const offset = marked.indexOf('|');
-    return enclosingCall(marked.replace('|', ''), offset);
+    return enclosingCall(marked.slice(0, offset) + marked.slice(offset + 1), offset);
   };
 
   it('nhận ra hàm và tham số đang gõ', () => {
