@@ -157,7 +157,7 @@ pub async fn restore_backup(
     // Restore acquires its own connection and runs its own transaction. It would not corrupt the
     // user's open transaction — different session — but it would block on the locks that
     // transaction holds, and a frozen progress bar is a worse answer than a clear refusal.
-    crate::tx_session::reject_if_manual_or_open(&conn_id, "phục hồi dữ liệu")?;
+    crate::tx::reject_if_manual_or_open(&conn_id, "phục hồi dữ liệu")?;
     let conn_type = {
         let ctx = state.connections.acquire(&conn_id)?;
         ctx.conn().clone()

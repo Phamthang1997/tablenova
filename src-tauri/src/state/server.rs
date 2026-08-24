@@ -43,7 +43,7 @@ impl ServerHandle {
         }
     }
 
-    /// A clone of the server config. Tolerates a poisoned lock the same way `tx_session` does —
+    /// A clone of the server config. Tolerates a poisoned lock the same way `tx/` does —
     /// a panic elsewhere must not turn every later connection attempt into an error.
     pub fn config(&self) -> Value {
         match self.last_config.lock() {

@@ -14,7 +14,8 @@ pub mod ssh_terminal;
 pub mod ssh_tunnel;
 pub mod stats;
 pub mod state;
-pub mod tx_session;
+pub mod tx;
+
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

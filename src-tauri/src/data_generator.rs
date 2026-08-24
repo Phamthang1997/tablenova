@@ -2260,8 +2260,8 @@ pub async fn generate_data(
     on_progress: Channel<Value>,
 ) -> Result<Value, String> {
     // Same reason as restore_backup: this runs on its own connection and would block on the locks
-    // an open manual transaction holds. See tx_session::reject_if_manual_or_open.
-    crate::tx_session::reject_if_manual_or_open(&conn_id, "sinh dữ liệu")?;
+    // an open manual transaction holds. See tx::reject_if_manual_or_open.
+    crate::tx::reject_if_manual_or_open(&conn_id, "sinh dữ liệu")?;
     let (conn, dialect, schema) = active_conn(&state, &conn_id)?;
     // Its INSERTs go through `Exec`, i.e. past the funnels that carry the read-only gate.
     // `preview_generated_data` is deliberately not gated — it writes nothing.

@@ -78,7 +78,7 @@ pub(crate) fn spawn_iam_refresh(
             // Replacing the pool would drop the connection an open manual transaction is pinned to,
             // silently losing everything the user has not committed. The token is still valid for
             // ~2 more minutes; wait for the next cycle instead.
-            if crate::tx_session::is_open(&conn_id) {
+            if crate::tx::is_open(&conn_id) {
                 continue;
             }
             match build_iam_conn(&db_type, &config).await {

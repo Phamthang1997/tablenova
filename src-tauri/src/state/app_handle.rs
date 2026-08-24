@@ -6,7 +6,7 @@ use super::ids::ConnId;
 
 /// `AppHandle` parked so the three SQL funnels can reach the registry.
 ///
-/// They receive a `&DbConnection` and no `AppState` — the same shape that made `tx_session` keep its
+/// They receive a `&DbConnection` and no `AppState` — the same shape that made `tx/` keep its
 /// state in a module-level static. The difference here is deliberate: this parks a *handle* and
 /// reads the registry through it, so the read-only flag has exactly one home (`ConnEntry`). A second
 /// copy kept in sync would be the duplicate-cache mistake this codebase has paid for twice already.

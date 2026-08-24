@@ -132,7 +132,7 @@ async fn run_fk_wrapped(
     // Before the FK-disable statement, not after: refusing halfway would leave the session with
     // foreign-key checks off on a connection we just declared untouchable.
     reject_conn_read_only(conn)?;
-    if crate::tx_session::use_session(conn) {
+    if crate::tx::use_session(conn) {
         // execute_raw_sql_generic routes to the pinned session, so all of these share one
         // connection exactly like the `Exec` branch below.
         if disable_fk {

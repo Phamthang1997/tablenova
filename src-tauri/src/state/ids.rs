@@ -17,7 +17,7 @@ pub type ServerId = Arc<str>;
 /// B's id, which is the exact failure class this refactor exists to remove. A field cannot drift.
 #[derive(Clone)]
 pub enum ConnId {
-    /// A registry entry. `tx_session` may pin this one as a manual-transaction session.
+    /// A registry entry. `tx/` may pin this one as a manual-transaction session.
     Session(SessionId),
     /// A short-lived pool this process opened for itself — `db_compare::resolve_side`, a deep scan,
     /// a `list_databases` probe. **Never routable to a transaction session**, and that is a fix

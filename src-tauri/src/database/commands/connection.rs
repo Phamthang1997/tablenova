@@ -174,7 +174,7 @@ pub async fn disconnect_db(
     // An unknown id is not an error: disconnecting something already gone is the state the caller
     // wanted. `reset(None)` still runs so the state machine itself is cleared.
     let entry = state.connections.remove(&conn_id)?;
-    crate::tx_session::reset(entry.as_ref().and_then(|e| e.conn.sql())).await;
+    crate::tx::reset(entry.as_ref().and_then(|e| e.conn.sql())).await;
     drop(entry);
     Ok(json!({ "success": true }))
 }

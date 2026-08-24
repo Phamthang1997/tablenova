@@ -32,7 +32,7 @@ pub(crate) fn reject_conn_read_only(conn: &DbConnection) -> Result<(), String> {
 /// `is_write_stmt` is deliberately conservative — `WITH` counts as a write, because a CTE can end in
 /// INSERT/UPDATE/DELETE. Over-refusing costs a toggle; under-refusing costs the row.
 pub(crate) fn reject_if_read_only(conn: &DbConnection, sql: &str) -> Result<(), String> {
-    if !crate::tx_session::is_write_stmt(strip_leading_comments(sql)) {
+    if !crate::tx::is_write_stmt(strip_leading_comments(sql)) {
         return Ok(());
     }
     reject_conn_read_only(conn)

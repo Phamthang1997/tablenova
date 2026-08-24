@@ -16,7 +16,7 @@ pub enum DbKind {
 /// A live connection handle plus **which connection it is**.
 ///
 /// The id rides inside the handle so the ~35 helper signatures that take `&DbConnection` and the 66
-/// `execute_raw_sql_generic` call sites stay byte-identical, while `tx_session` finally has a key to
+/// `execute_raw_sql_generic` call sites stay byte-identical, while `tx/` finally has a key to
 /// look a session up by (§4.4a of `docs/multi-connection-plan.md`).
 #[derive(Clone)]
 pub struct DbConnection {

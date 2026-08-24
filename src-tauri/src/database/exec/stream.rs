@@ -58,9 +58,9 @@ pub(crate) async fn stream_one_statement(
 ) -> Result<(), String> {
     reject_if_read_only(conn, sql)?;
     // Manual transaction mode: this is the SQL editor's path, so it is the one where the user
-    // actually types BEGIN/COMMIT. See tx_session.rs.
-    if crate::tx_session::should_route(conn, sql) {
-        return crate::tx_session::run_stream(conn, sql, params, stmt_index, channel, cancel).await;
+    // actually types BEGIN/COMMIT. See tx/.
+    if crate::tx::should_route(conn, sql) {
+        return crate::tx::run_stream(conn, sql, params, stmt_index, channel, cancel).await;
     }
     match &conn.kind {
         DbKind::Sqlite(conn_arc) => sqlite_stream(conn_arc, sql, params, stmt_index, channel, cancel).await,

@@ -48,7 +48,7 @@ impl LiveConn {
     /// reason `ctx_of` gives: `ServerHandle::db_type` can be stale, a handle cannot.
     pub fn dialect(&self) -> &'static str {
         match self {
-            LiveConn::Sql(c) => crate::tx_session::dialect_of(c),
+            LiveConn::Sql(c) => crate::tx::dialect_of(c),
             LiveConn::Redis(_) => "redis",
         }
     }

@@ -92,7 +92,7 @@ pub(super) fn ctx_of(key: &SessionId, entry: &ConnEntry) -> Result<ConnCtx, Stri
         server: entry.server.clone(),
         // Always derived from the live connection, never from `ServerHandle::db_type` — the two
         // cannot disagree that way, and `db_type` is `""` while disconnected.
-        dialect: crate::tx_session::dialect_of(&conn),
+        dialect: crate::tx::dialect_of(&conn),
         conn,
         schema: crate::database::pg_schema_of(&entry.current_schema),
         raw_schema: entry.current_schema.clone(),

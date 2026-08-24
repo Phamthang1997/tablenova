@@ -40,7 +40,7 @@ impl ConnRegistry {
     pub fn acquire(&self, id: &str) -> Result<ConnCtx, String> {
         let map = self.inner.lock().map_err(|e| e.to_string())?;
         // `get_key_value`, not `get`: the ConnCtx carries the *conn_id* (this map's key), which is
-        // what tx_session will key a session on. `entry.server.id` is a different thing — several
+        // what tx will key a session on. `entry.server.id` is a different thing — several
         // conn_ids share one server.
         let (key, entry) = map.get_key_value(id).ok_or_else(|| "Chưa kết nối CSDL".to_string())?;
         ctx_of(key, entry)
@@ -77,7 +77,7 @@ impl ConnRegistry {
                         "serverId": &*e.server.id,
                         "schema": e.current_schema,
                         // Badge của rail (§4.2b): số câu GHI đang chờ commit trên kết nối này.
-                        "pending": crate::tx_session::pending_count(id),
+                        "pending": crate::tx::pending_count(id),
                         "readOnly": e.read_only,
                     }),
                 )

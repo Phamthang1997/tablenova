@@ -11,7 +11,7 @@ pub fn init(app: &tauri::App) {
     // The transaction state changes deep inside the SQL funnels, which have no AppHandle.
     // Park one here so it can emit "tx-state-changed" instead of every command's response
     // shape having to carry the state.
-    crate::tx_session::set_app_handle(app.handle().clone());
+    crate::tx::set_app_handle(app.handle().clone());
     // Same trick, different purpose: the SQL funnels read the read-only flag out of the
     // connection registry, and they have a `&DbConnection` but no `AppState`.
     crate::state::set_app_handle(app.handle().clone());

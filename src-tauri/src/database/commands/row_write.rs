@@ -121,7 +121,7 @@ pub async fn commit_changes(state: tauri::State<'_, crate::AppState>, conn_id: S
     // `use_session()`, NOT `is_open()`: the transaction does not exist until its first statement,
     // and pressing Save right after switching to manual is exactly that case. Checking `is_open()`
     // sent it down the auto-commit branch below and committed it.
-    if crate::tx_session::use_session(&conn_type) {
+    if crate::tx::use_session(&conn_type) {
         for sql in sqls {
             execute_raw_sql_generic(&conn_type, sql).await?;
         }

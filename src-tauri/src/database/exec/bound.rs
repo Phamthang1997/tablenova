@@ -16,8 +16,8 @@ use super::super::rows::uniquify_columns;
 // SQL truyền vào phải đã dùng placeholder native (`?` cho SQLite/MySQL, `$1..$n` cho Postgres).
 pub(crate) async fn run_bound_query(conn: &DbConnection, sql: String, params: &[Value]) -> Result<Vec<Value>, String> {
     reject_if_read_only(conn, &sql)?;
-    if crate::tx_session::should_route(conn, &sql) {
-        return crate::tx_session::run_bound(conn, sql, params).await;
+    if crate::tx::should_route(conn, &sql) {
+        return crate::tx::run_bound(conn, sql, params).await;
     }
     match &conn.kind {
         DbKind::Sqlite(conn_arc) => sqlite_bound(conn_arc, &sql, params),

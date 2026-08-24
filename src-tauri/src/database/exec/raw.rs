@@ -22,9 +22,9 @@ pub(crate) fn is_mysql_unprepared_error(err_text: &str) -> bool {
 pub(crate) async fn execute_raw_sql_generic(conn: &DbConnection, sql: String) -> Result<Vec<Value>, String> {
     reject_if_read_only(conn, &sql)?;
     // Manual transaction mode: the statement must run on the connection the transaction was opened
-    // on, otherwise it neither sees nor joins the uncommitted work. See tx_session.rs.
-    if crate::tx_session::should_route(conn, &sql) {
-        return crate::tx_session::run_raw(conn, sql).await;
+    // on, otherwise it neither sees nor joins the uncommitted work. See tx/.
+    if crate::tx::should_route(conn, &sql) {
+        return crate::tx::run_raw(conn, sql).await;
     }
     match &conn.kind {
         DbKind::Sqlite(conn_arc) => sqlite_raw(conn_arc, &sql),
@@ -42,7 +42,7 @@ pub(crate) async fn execute_raw_sql_generic(conn: &DbConnection, sql: String) ->
 
 // The three functions below are the row-building bodies that used to sit inline in
 // `execute_raw_sql_generic`. They are split out so the SAME code runs whether the connection came
-// from the pool or from the pinned manual-transaction session (tx_session.rs) — duplicating them
+// from the pool or from the pinned manual-transaction session (tx/) — duplicating them
 // would mean duplicating the two rules that every row-building site in this file must follow:
 // `uniquify_columns` before any row is assembled, and cell decoding BY INDEX.
 
