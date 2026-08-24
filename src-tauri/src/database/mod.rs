@@ -26,5 +26,6 @@ pub(crate) use exec::stream::*;
 pub(crate) use iam::*;
 pub(crate) use ident::*;
 pub(crate) use read_only::*;
+pub(crate) use rows::*;
 pub(crate) use splitter::*;
 pub(crate) use timeout::*;

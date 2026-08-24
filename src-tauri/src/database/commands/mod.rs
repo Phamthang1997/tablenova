@@ -1,0 +1,32 @@
+//! Mọi `#[tauri::command]` liên quan tới SQL, một nhóm một tệp.
+
+pub mod objects;
+
+mod catalog;
+mod connection;
+mod databases;
+mod ddl_extras;
+mod query;
+mod restore;
+mod row_read;
+mod row_write;
+mod status;
+mod stubs;
+mod table_alter;
+mod table_ddl;
+mod table_schema;
+
+pub use catalog::*;
+pub use connection::*;
+pub use databases::*;
+pub use ddl_extras::*;
+pub use objects::*;
+pub use query::*;
+pub use restore::*;
+pub use row_read::*;
+pub use row_write::*;
+pub use status::*;
+pub use stubs::*;
+pub use table_alter::*;
+pub use table_ddl::*;
+pub use table_schema::*;
