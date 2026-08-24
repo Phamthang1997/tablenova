@@ -7,7 +7,6 @@ pub mod compare;
 pub mod export;
 pub mod local_terminal;
 pub mod oauth;
-pub mod redis_cmds;
 pub mod redis_db;
 pub mod secret_store;
 pub mod ssh_terminal;
