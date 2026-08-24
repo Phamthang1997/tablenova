@@ -1,5 +1,5 @@
 // SSH Terminal: mở PTY + shell trên máy chủ SSH để xem log / chạy lệnh (tail -f, journalctl...).
-// Tái dùng connect_and_auth + TunnelHandler từ ssh_tunnel.rs (một đường xác thực duy nhất).
+// Tái dùng connect_and_auth từ ssh/auth.rs (một đường xác thực duy nhất cho tunnel lẫn terminal).
 //
 // Output server -> frontend đi qua tauri::ipc::Channel (đồng bộ pattern với streaming SQL).
 // Input, resize, close từ frontend đi qua các command riêng, chuyển vào task quản lý phiên
@@ -17,7 +17,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tauri::ipc::Channel;
 use russh::ChannelMsg;
-use crate::ssh_tunnel::connect_and_auth;
+use crate::ssh::connect_and_auth;
 
 // Lệnh gửi từ command frontend vào task quản lý một phiên terminal.
 enum TermCmd {

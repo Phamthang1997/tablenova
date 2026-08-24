@@ -10,7 +10,7 @@ use crate::database::{
     apply_iam_password, apply_ssh_tunnel, build_mysql_url, build_pg_url, cell,
     execute_raw_sql_generic, is_iam, rows_of, spawn_iam_refresh, DbConnection, DbKind,
 };
-use crate::ssh_tunnel::SshTunnel;
+use crate::ssh::SshTunnel;
 
 /// The schema a fresh Postgres connection lands in — i.e. the first existing entry of its
 /// `search_path`. This is what the plan's §4.1 calls the default for the Sidebar picker, and it

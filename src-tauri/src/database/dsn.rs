@@ -2,7 +2,7 @@
 
 use serde_json::{json, Value};
 
-use crate::ssh_tunnel::SshTunnel;
+use crate::ssh::SshTunnel;
 
 // Mã hóa thành phần user/password để tránh vỡ URL khi có ký tự đặc biệt (@, :, /, ...)
 fn url_encode_component(s: &str) -> String {

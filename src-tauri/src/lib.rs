@@ -4,7 +4,7 @@ pub mod credentials;
 pub mod database;
 pub mod datagen;
 pub mod redis_db;
-pub mod ssh_tunnel;
+pub mod ssh;
 pub mod state;
 pub mod stats;
 pub mod terminal;

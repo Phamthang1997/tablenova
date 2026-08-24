@@ -13,7 +13,7 @@ use tauri::State;
 use crate::database::{
     build_mysql_url, build_pg_url, execute_raw_sql_generic, DbConnection, DbKind,
 };
-use crate::ssh_tunnel::SshTunnel;
+use crate::ssh::SshTunnel;
 use crate::AppState;
 
 // ===================== Tham số từ frontend =====================

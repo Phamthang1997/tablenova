@@ -288,7 +288,7 @@ in-memory), nên compiler gần như là mạng lưới an toàn duy nhất. Vì
 
 | Trước | Sau |
 |---|---|
-| 18 tệp phẳng, 16.833 dòng | 10 thư mục + 3 tệp lẻ ở gốc, 122 tệp `.rs` |
+| 18 tệp phẳng, 16.833 dòng | 11 thư mục + 2 tệp lẻ ở gốc (`main.rs`, `lib.rs`), 124 tệp `.rs` |
 | `database.rs` 5.515 dòng | tệp lớn nhất còn 502 dòng (`datagen/column.rs` — một nhiệm vụ dài, không phải nhiều nhiệm vụ chồng lên nhau) |
 | `lib.rs` 239 dòng | 56 dòng |
 | 5 test Rust | **101** test Rust, phủ mọi tệp thuần |
@@ -324,7 +324,10 @@ không xảy ra lần nào trong cả 10 đợt; vòng lặp sửa–kiểm ch�
 - **Đợt 10 — gom nốt tệp lẻ ở gốc:** `terminal/{local,ssh}.rs` (chung một giao thức message, nên
   frontend chỉ có một component cho cả hai), `credentials/{aws_iam,oauth,secret_store}.rs` (chung một
   *mối quan tâm*, không chung code — `mod.rs` nói thẳng điều đó), `datasets.rs` vào `datagen/`.
-  `ssh_tunnel.rs` ở lại gốc có chủ đích: nó là transport, dùng bởi cả ba nơi.
+  `ssh_tunnel.rs` tách tiếp thành `ssh/{auth,tunnel}.rs`: nó đang làm HAI việc — xác thực (dùng
+  chung với `terminal/ssh.rs`) và chuyển tiếp cổng. `TunnelHandler` đổi tên thành `SshHandler`,
+  vì nó là handler của client SSH chứ không riêng gì tunnel. Gốc `src/` giờ chỉ còn `main.rs`
+  và `lib.rs`.
 - **Đợt 11 — xoá code chết:** `export.rs` + dependency `flate2`, và ba stub `export_table` /
   `import_dbeaver` / `restore_backup_old` (kèm wrapper `dbHelper` và mục `safeMode.ts` —
   `safeMode.test.ts` kiểm hai chiều nên bỏ sót một bên là fail build). `ai_chat` sang `app/ai.rs`.

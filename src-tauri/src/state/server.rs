@@ -4,7 +4,7 @@ use std::sync::Mutex;
 
 use serde_json::Value;
 
-use crate::ssh_tunnel::SshTunnel;
+use crate::ssh::SshTunnel;
 use super::ids::ServerId;
 
 /// What every `ConnEntry` on the same server shares.

@@ -1,19 +1,16 @@
-// SSH tunnel (local port forwarding) dùng russh.
-// Tạo một listener TCP ở 127.0.0.1:<local_port>, mỗi kết nối tới sẽ được chuyển tiếp
-// qua kênh direct-tcpip của phiên SSH tới (remote_host:remote_port) nhìn từ máy SSH.
-// sqlx/rusqlite sẽ kết nối tới 127.0.0.1:<local_port> thay vì host thật.
+//! Kết nối và XÁC THỰC SSH — một đường duy nhất, dùng chung bởi tunnel chuyển tiếp cổng
+//! (`ssh/tunnel.rs`) và bảng terminal (`terminal/ssh.rs`).
 
 use std::sync::Arc;
-use serde_json::Value;
-use tokio::net::TcpListener;
-use tokio::task::JoinHandle;
+
 use russh::client::{self, Handle};
 use russh::keys::{decode_secret_key, load_secret_key, PrivateKey, PrivateKeyWithHashAlg};
+use serde_json::Value;
 
 // Handler cho client SSH. Công cụ DB nội bộ: chấp nhận mọi host key (không kiểm tra known_hosts).
-pub struct TunnelHandler;
+pub struct SshHandler;
 
-impl client::Handler for TunnelHandler {
+impl client::Handler for SshHandler {
     type Error = russh::Error;
 
     fn check_server_key(
@@ -24,24 +21,10 @@ impl client::Handler for TunnelHandler {
     }
 }
 
-pub struct SshTunnel {
-    pub local_port: u16,
-    accept_task: JoinHandle<()>,
-    // Giữ phiên SSH sống suốt vòng đời tunnel (drop Handle sẽ ngắt phiên)
-    _session: Arc<Handle<TunnelHandler>>,
-}
-
-impl Drop for SshTunnel {
-    fn drop(&mut self) {
-        // Dừng vòng lặp accept; Arc<Handle> giảm ref -> phiên SSH đóng khi không còn tham chiếu
-        self.accept_task.abort();
-    }
-}
-
 /// Kết nối SSH và xác thực (password hoặc private key), trả về Handle đã sẵn sàng mở kênh.
 /// Dùng chung cho tunnel (chuyển tiếp cổng DB) và terminal (PTY/shell xem log).
 /// `config` chứa các trường ssh* từ frontend.
-pub async fn connect_and_auth(config: &Value) -> Result<Handle<TunnelHandler>, String> {
+pub async fn connect_and_auth(config: &Value) -> Result<Handle<SshHandler>, String> {
     let ssh_host = config.get("sshHost").and_then(|v| v.as_str())
         .filter(|s| !s.trim().is_empty())
         .ok_or("Thiếu địa chỉ máy chủ SSH")?;
@@ -53,7 +36,7 @@ pub async fn connect_and_auth(config: &Value) -> Result<Handle<TunnelHandler>, S
 
     // 1. Kết nối SSH
     let ssh_config = Arc::new(client::Config::default());
-    let mut handle = client::connect(ssh_config, (ssh_host, ssh_port), TunnelHandler)
+    let mut handle = client::connect(ssh_config, (ssh_host, ssh_port), SshHandler)
         .await
         .map_err(|e| format!("Lỗi kết nối SSH tới {}:{}: {}", ssh_host, ssh_port, e))?;
 
@@ -88,52 +71,4 @@ pub async fn connect_and_auth(config: &Value) -> Result<Handle<TunnelHandler>, S
         return Err("Xác thực SSH thất bại: sai tài khoản, mật khẩu hoặc khóa.".to_string());
     }
     Ok(handle)
-}
-
-impl SshTunnel {
-    /// Mở tunnel. `config` chứa các trường ssh* (từ frontend); `remote_host`/`remote_port`
-    /// là địa chỉ DB nhìn từ phía máy chủ SSH.
-    pub async fn open(config: &Value, remote_host: &str, remote_port: u16) -> Result<SshTunnel, String> {
-        // 1+2. Kết nối + xác thực (dùng chung với terminal)
-        let handle = connect_and_auth(config).await?;
-
-        let session = Arc::new(handle);
-
-        // 3. Listener local trên cổng ngẫu nhiên
-        let listener = TcpListener::bind(("127.0.0.1", 0u16))
-            .await
-            .map_err(|e| format!("Lỗi mở cổng chuyển tiếp local: {}", e))?;
-        let local_port = listener.local_addr().map_err(|e| e.to_string())?.port();
-
-        // 4. Vòng lặp accept: mỗi kết nối -> mở kênh direct-tcpip và bơm dữ liệu hai chiều
-        let remote_host = remote_host.to_string();
-        let session_for_task = session.clone();
-        let accept_task = tokio::spawn(async move {
-            loop {
-                let (mut inbound, _addr) = match listener.accept().await {
-                    Ok(v) => v,
-                    Err(_) => break,
-                };
-                let sess = session_for_task.clone();
-                let rhost = remote_host.clone();
-                tokio::spawn(async move {
-                    let channel = match sess
-                        .channel_open_direct_tcpip(rhost, remote_port as u32, "127.0.0.1", local_port as u32)
-                        .await
-                    {
-                        Ok(c) => c,
-                        Err(_) => return,
-                    };
-                    let mut stream = channel.into_stream();
-                    let _ = tokio::io::copy_bidirectional(&mut inbound, &mut stream).await;
-                });
-            }
-        });
-
-        Ok(SshTunnel {
-            local_port,
-            accept_task,
-            _session: session,
-        })
-    }
 }
