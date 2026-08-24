@@ -19,7 +19,7 @@ pub type ServerId = Arc<str>;
 pub enum ConnId {
     /// A registry entry. `tx/` may pin this one as a manual-transaction session.
     Session(SessionId),
-    /// A short-lived pool this process opened for itself — `db_compare::resolve_side`, a deep scan,
+    /// A short-lived pool this process opened for itself — `compare::resolve_side`, a deep scan,
     /// a `list_databases` probe. **Never routable to a transaction session**, and that is a fix
     /// rather than an optimisation: `should_route` answers from global session state before it looks
     /// at the connection, so with manual commit on, an ad-hoc pool used to get pinned as the user's

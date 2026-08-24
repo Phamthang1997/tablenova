@@ -3,7 +3,7 @@ pub mod aws_iam;
 pub mod data_generator;
 pub mod database;
 pub mod datasets;
-pub mod db_compare;
+pub mod compare;
 pub mod export;
 pub mod local_terminal;
 pub mod oauth;

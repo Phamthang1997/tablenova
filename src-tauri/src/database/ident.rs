@@ -33,7 +33,7 @@ pub(crate) fn quote_ident(conn: &DbConnection, name: &str) -> String {
 /// Only Postgres qualifies — MySQL's schema *is* the open database (the connection already
 /// points at it) and SQLite has none. Passing `None`/empty leaves the bare quoted name, so
 /// every call site keeps its old output until a schema is actually selected. This is the twin
-/// of `db_compare.rs`'s `qualified()`; see `docs/postgres-schema-support-plan.md` §4.2 for the
+/// of `compare.rs`'s `qualified()`; see `docs/postgres-schema-support-plan.md` §4.2 for the
 /// list of sites that must use it.
 pub(crate) fn qualified(conn: &DbConnection, schema: &Option<String>, table: &str) -> String {
     match (&conn.kind, schema) {
