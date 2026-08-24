@@ -290,7 +290,7 @@ in-memory), nên compiler gần như là mạng lưới an toàn duy nhất. Vì
 |---|---|
 | 18 tệp phẳng, 16.833 dòng | 11 thư mục + 2 tệp lẻ ở gốc (`main.rs`, `lib.rs`), 124 tệp `.rs` |
 | `database.rs` 5.515 dòng | tệp lớn nhất còn 502 dòng (`datagen/column.rs` — một nhiệm vụ dài, không phải nhiều nhiệm vụ chồng lên nhau) |
-| `lib.rs` 239 dòng | 56 dòng |
+| `lib.rs` 239 dòng | **17 dòng** — chỉ danh sách module + 2 re-export |
 | 5 test Rust | **101** test Rust, phủ mọi tệp thuần |
 
 **Cách chia và cách kiểm.** Việc cắt được sinh bằng một bản đồ chunk cấp cao nhất (`chunks.awk`)

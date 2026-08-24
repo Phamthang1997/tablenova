@@ -45,9 +45,10 @@ The frontend never talks to a database directly — `src/utils/dbHelper.ts` is t
 - `app/` — vòng đời Tauri, không thuộc về database nào:
   - `app/setup.rs` — chạy một lần lúc khởi động: vật liệu kính của cửa sổ, và park `AppHandle` cho `tx/` + `state/` (hai tầng nhận `&DbConnection` mà không nhận `AppState`).
   - `app/handlers.rs` — **danh sách `generate_handler!`**. Thêm một command mà quên khai ở đây thì frontend gọi sẽ lỗi runtime "unknown command"; compiler không bắt được.
+  - `app/run.rs` — `Builder` của Tauri: plugin, `manage(AppState)`, nối `setup` và `handlers`.
   - `app/shell.rs` — `open_url`, `set_app_window_size`. `app/ai.rs` — `ai_chat` (stub).
-- `lib.rs` — chỉ còn khai báo module, `AppState`, và `Builder`.
-- `state/` — registry kết nối (`ids.rs` danh tính, `server.rs` `ServerHandle`, `entry.rs` một mục, `ctx.rs` `ConnCtx`/`RedisCtx`, `registry.rs` `ConnRegistry`, `app_handle.rs` handle park). Khối comment đầu `state/mod.rs` giải thích ba quyết định của `docs/multi-connection-plan.md` §4.
+- `lib.rs` — **chỉ** khai báo module, cộng hai re-export giữ nguyên đường dẫn cũ (`tablenova::run`, `crate::AppState`). Bootstrap của Tauri nằm ở `app/run.rs`, cạnh hai mảnh của chính nó là `setup.rs` và `handlers.rs`.
+- `state/` — mọi state còn sống: `app.rs` (`AppState`, thứ Tauri `manage()`) và registry kết nối (`ids.rs` danh tính, `server.rs` `ServerHandle`, `entry.rs` một mục, `ctx.rs` `ConnCtx`/`RedisCtx`, `registry.rs` `ConnRegistry`, `app_handle.rs` handle park). Khối comment đầu `state/mod.rs` giải thích ba quyết định của `docs/multi-connection-plan.md` §4.
 - `database/` — mọi thứ nói chuyện với một database SQL:
   - Tầng nền: `conn.rs` (`DbConnection`/`DbKind`/`Exec`), `dsn.rs` (dựng URL + `apply_ssh_tunnel`), `iam.rs`, `decode.rs` (hai macro decode + bind tham số), `rows.rs` (`uniquify_columns` và bạn bè), `ident.rs` (`quote_ident`/`qualified`/`sql_str`/`sql_literal`), `read_only.rs`, `timeout.rs`, `splitter.rs` (`split_sql_statements`).
   - `database/exec/{raw,bound,stream}.rs` — ba funnel thực thi.

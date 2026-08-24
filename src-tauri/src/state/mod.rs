@@ -19,9 +19,13 @@
 //    that shape stays reachable, "did I convert every site" is a grep question. With `inner`
 //    private to this module it becomes a compile question.
 //
+// `AppState` (`app.rs`) cũng ở đây: nó là gốc của mọi state còn sống, và trường lớn nhất của nó
+// chính là `ConnRegistry` bên dưới — tách hai thứ lồng nhau ra hai thư mục thì tệ hơn.
+//
 // `ConnId` lives here too (§4.4a): it is identity, and putting it next to `SessionId` keeps the one
 // question "which connection is this" answered in a single place.
 
+mod app;
 mod app_handle;
 mod ctx;
 mod entry;
@@ -29,6 +33,7 @@ mod ids;
 mod registry;
 mod server;
 
+pub use app::*;
 pub use app_handle::*;
 pub use ctx::*;
 pub use entry::*;
