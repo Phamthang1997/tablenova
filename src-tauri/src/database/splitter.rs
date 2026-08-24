@@ -1,0 +1,323 @@
+//! Tách một chuỗi SQL nhiều câu lệnh thành từng câu.
+//!
+//! **Sinh đôi của `src/sql/statements.ts` — sửa một bên phải sửa bên kia.** Bản TS quyết định
+//! Ctrl+Enter chạy gì và tô sáng gì; bản này quyết định cái gì thực sự chạy. Lệch nhau nghĩa là
+//! người dùng chạy thứ khác với thứ họ nhìn thấy được tô sáng.
+
+// Dòng này có phải lệnh `DELIMITER <token>` của client mysql? Trả về token mới.
+// Dùng `get(..9)` chứ không `[..9]`: cắt theo byte giữa một ký tự nhiều byte (tiếng Việt...)
+// sẽ panic, còn `get` trả None.
+fn delimiter_token_of_line(line: &str) -> Option<&str> {
+    let t = line.trim_start_matches([' ', '\t']);
+    if !t.get(..9)?.eq_ignore_ascii_case("DELIMITER") { return None; }
+    let rest = &t[9..];
+    if !rest.starts_with([' ', '\t']) { return None; }
+    let token = rest.trim(); // trim cắt luôn '\r' của file CRLF
+    if token.is_empty() || token.contains(char::is_whitespace) { return None; }
+    Some(token)
+}
+
+// Đọc lệnh DELIMITER tại đầu dòng `i` (chỉ mục ký tự trong `chars`).
+// Trả về (token mới, chỉ mục ngay sau dòng đó). Lệnh này KHÔNG phải SQL: gửi xuống server sẽ lỗi.
+fn read_delimiter_command(chars: &[char], i: usize) -> Option<(String, usize)> {
+    let line_end = chars[i..].iter().position(|&c| c == '\n').map(|p| i + p).unwrap_or(chars.len());
+    let line: String = chars[i..line_end].iter().collect();
+    let token = delimiter_token_of_line(&line)?.to_string();
+    let next = if line_end < chars.len() { line_end + 1 } else { chars.len() };
+    Some((token, next))
+}
+
+// `chars[i..]` có khớp đúng dấu kết thúc câu đang dùng?
+fn matches_delimiter(chars: &[char], i: usize, delim: &[char]) -> bool {
+    if i + delim.len() > chars.len() { return false; }
+    chars[i..i + delim.len()] == *delim
+}
+
+// Tách một chuỗi SQL nhiều câu lệnh thành từng câu. Nhận biết:
+//   - chuỗi trích dẫn ('..', "..", `..`) và escape bằng '\'
+//   - comment `-- ...`, `# ...`, `/* ... */`
+//   - khối dollar-quote của Postgres ($$ ... $$, $tag$ ... $tag$) — thân function chứa dấu ';'
+//   - lệnh DELIMITER của MySQL — đổi dấu kết thúc câu để viết được thân trigger/procedure
+// Nếu không xử lý 2 mục cuối, một file có function/trigger sẽ bị cắt giữa thân hàm và có thể
+// chạy nhầm một câu nằm bên trong nó.
+/// Bỏ khoảng trắng và comment ở ĐẦU câu lệnh, trả về phần bắt đầu bằng từ khoá SQL thật.
+///
+/// Splitter giữ nguyên comment trong text của câu lệnh, nên trong dump của mysqldump thì
+///     `-- Dumping data for table `store`` + newline + `LOCK TABLES `store` WRITE`
+/// là MỘT câu lệnh bắt đầu bằng "--". Phân loại theo text thô sẽ nhận sai hết:
+/// LOCK/UNLOCK TABLES không bị bỏ, `SET`/`USE` không được coi là lệnh cấp phiên.
+pub(crate) fn strip_leading_comments(stmt: &str) -> &str {
+    let b = stmt.as_bytes();
+    let mut i = 0usize;
+    loop {
+        while i < b.len() && b[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        // Comment dòng: -- ... hoặc # ...
+        if (i + 1 < b.len() && b[i] == b'-' && b[i + 1] == b'-') || (i < b.len() && b[i] == b'#') {
+            while i < b.len() && b[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        // Comment khối: /* ... */ (kể cả comment điều kiện /*!40101 ... */ của MySQL)
+        if i + 1 < b.len() && b[i] == b'/' && b[i + 1] == b'*' {
+            i += 2;
+            while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                i += 1;
+            }
+            i = (i + 2).min(b.len());
+            continue;
+        }
+        break;
+    }
+    // i luôn dừng sau '\n' / '*/' / khoảng trắng ASCII nên vẫn là biên ký tự UTF-8.
+    &stmt[i.min(stmt.len())..]
+}
+
+// Statement head is `CREATE [OR REPLACE] [TEMP|TEMPORARY] [DEFINER=...] TRIGGER`.
+fn is_create_trigger_head(seg: &str) -> bool {
+    let head = strip_leading_comments(seg).trim_start();
+    let mut words = head.split_whitespace();
+    if !words.next().is_some_and(|w| w.eq_ignore_ascii_case("CREATE")) {
+        return false;
+    }
+    for w in words.take(4) {
+        if w.eq_ignore_ascii_case("TRIGGER") {
+            return true;
+        }
+        let is_modifier = w.eq_ignore_ascii_case("OR")
+            || w.eq_ignore_ascii_case("REPLACE")
+            || w.eq_ignore_ascii_case("TEMP")
+            || w.eq_ignore_ascii_case("TEMPORARY")
+            // MySQL writes the whole clause as one token: DEFINER=`root`@`localhost`
+            || w.get(..7).is_some_and(|p| p.eq_ignore_ascii_case("DEFINER"));
+        if !is_modifier {
+            return false;
+        }
+    }
+    false
+}
+
+/// Is this `;` still INSIDE a trigger body rather than the end of the statement?
+///
+/// A `BEGIN ... END` body carries its own `;`, so splitting on the first one yields a truncated
+/// `CREATE TRIGGER ... BEGIN UPDATE t SET ...;` — SQLite answers "incomplete input" and the whole
+/// restore rolls back. MySQL avoids this with the client-side `DELIMITER` command, SQLite has no
+/// such thing, so the rule has to live here. It is what `sqlite3_complete()` does: a statement
+/// starting with CREATE TRIGGER only ends at the `;` that directly follows the `END` keyword.
+///
+/// Requiring `BEGIN` matters: a Postgres trigger (`... EXECUTE FUNCTION f();`) and MySQL's
+/// single-statement form (`... FOR EACH ROW SET NEW.a = 1;`) have no BEGIN block, and making
+/// them wait for an `END` would swallow the rest of the dump into one statement.
+///
+/// Twin of `insideTriggerBody()` in src/sql/statements.ts — keep both in sync.
+fn trigger_stmt_incomplete(seg: &str) -> bool {
+    if !is_create_trigger_head(seg) {
+        return false;
+    }
+    let b: Vec<char> = seg.chars().collect();
+    let n = b.len();
+    let mut i = 0usize;
+    let mut has_begin = false;
+    let mut last_word_is_end = false;
+
+    while i < n {
+        let c = b[i];
+        let peek = if i + 1 < n { Some(b[i + 1]) } else { None };
+
+        if (c == '-' && peek == Some('-')) || (c == '#' && !matches!(peek, Some('>') | Some('-'))) {
+            while i < n && b[i] != '\n' {
+                i += 1;
+            }
+            continue;
+        }
+        if c == '/' && peek == Some('*') {
+            i += 2;
+            while i + 1 < n && !(b[i] == '*' && b[i + 1] == '/') {
+                i += 1;
+            }
+            i = (i + 2).min(n);
+            continue;
+        }
+        if c == '\'' || c == '"' || c == '`' {
+            let quote = c;
+            i += 1;
+            while i < n {
+                if b[i] == '\\' && quote != '`' {
+                    i += 2;
+                    continue;
+                }
+                if b[i] == quote {
+                    if quote == '\'' && i + 1 < n && b[i + 1] == '\'' {
+                        i += 2;
+                        continue;
+                    }
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            last_word_is_end = false;
+            continue;
+        }
+        if c.is_alphabetic() || c == '_' {
+            let s = i;
+            while i < n && (b[i].is_alphanumeric() || b[i] == '_' || b[i] == '$') {
+                i += 1;
+            }
+            let word: String = b[s..i].iter().collect();
+            if word.eq_ignore_ascii_case("BEGIN") {
+                has_begin = true;
+            }
+            last_word_is_end = word.eq_ignore_ascii_case("END");
+            continue;
+        }
+        if !c.is_whitespace() {
+            last_word_is_end = false;
+        }
+        i += 1;
+    }
+
+    has_begin && !last_word_is_end
+}
+
+// Cheap pre-check for the rule above: skip leading whitespace/comments and compare six chars.
+// A dump of INSERTs bails out on the first character instead of rebuilding every statement
+// into a String only to find it is not a trigger.
+fn seg_may_be_create(chars: &[char], from: usize, to: usize) -> bool {
+    let mut i = from;
+    loop {
+        while i < to && chars[i].is_whitespace() {
+            i += 1;
+        }
+        if i + 1 < to && chars[i] == '-' && chars[i + 1] == '-' {
+            while i < to && chars[i] != '\n' {
+                i += 1;
+            }
+            continue;
+        }
+        if i + 1 < to && chars[i] == '/' && chars[i + 1] == '*' {
+            i += 2;
+            while i + 1 < to && !(chars[i] == '*' && chars[i + 1] == '/') {
+                i += 1;
+            }
+            i = (i + 2).min(to);
+            continue;
+        }
+        break;
+    }
+    const KW: [char; 6] = ['C', 'R', 'E', 'A', 'T', 'E'];
+    if i + KW.len() > to {
+        return false;
+    }
+    KW.iter()
+        .enumerate()
+        .all(|(k, ch)| chars[i + k].to_ascii_uppercase() == *ch)
+}
+
+pub(crate) fn split_sql_statements(sql: &str) -> Vec<String> {
+    let chars: Vec<char> = sql.chars().collect();
+    let n = chars.len();
+    // `DELIMITER` chỉ có ở script MySQL; ở đó '$$' là dấu kết thúc câu chứ không phải dollar-quote.
+    let mysql_script = sql.lines().any(|l| delimiter_token_of_line(l).is_some());
+
+    let mut out: Vec<String> = Vec::new();
+    let mut delim: Vec<char> = vec![';'];
+    let mut start = 0usize; // đầu câu lệnh đang gom
+    let mut at_line_start = true;
+    let mut i = 0usize;
+
+    let push_stmt = |out: &mut Vec<String>, from: usize, to: usize| {
+        let s: String = chars[from..to].iter().collect();
+        let s = s.trim().to_string();
+        if !s.is_empty() { out.push(s); }
+    };
+
+    while i < n {
+        let c = chars[i];
+        let peek = if i + 1 < n { Some(chars[i + 1]) } else { None };
+
+        // Comment dòng: -- ... | # ...  ('#>' và '#-' là toán tử jsonb của Postgres, không phải comment)
+        if (c == '-' && peek == Some('-')) || (c == '#' && !matches!(peek, Some('>') | Some('-'))) {
+            while i < n && chars[i] != '\n' { i += 1; }
+            at_line_start = true;
+            i += 1; // bỏ qua '\n'
+            continue;
+        }
+        // Comment khối: /* ... */
+        if c == '/' && peek == Some('*') {
+            i += 2;
+            while i + 1 < n && !(chars[i] == '*' && chars[i + 1] == '/') { i += 1; }
+            i = (i + 2).min(n);
+            at_line_start = false;
+            continue;
+        }
+        // Chuỗi / identifier có dấu: bỏ qua nguyên khối (kể cả escape \' và '' )
+        if c == '\'' || c == '"' || c == '`' {
+            let quote = c;
+            i += 1;
+            while i < n {
+                if chars[i] == '\\' && quote != '`' { i += 2; continue; }
+                if chars[i] == quote {
+                    if quote == '\'' && i + 1 < n && chars[i + 1] == '\'' { i += 2; continue; }
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            at_line_start = false;
+            continue;
+        }
+        // Khối dollar-quote của Postgres: $$ ... $$ hoặc $tag$ ... $tag$ (không phải $1, ${x})
+        if !mysql_script && c == '$' {
+            let mut j = i + 1;
+            while j < n && (chars[j].is_ascii_alphanumeric() || chars[j] == '_') { j += 1; }
+            if j < n && chars[j] == '$' && (j == i + 1 || chars[i + 1].is_ascii_alphabetic() || chars[i + 1] == '_') {
+                let tag: Vec<char> = chars[i..=j].to_vec();
+                let mut k = j + 1;
+                while k < n && !matches_delimiter(&chars, k, &tag) { k += 1; }
+                i = if k < n { k + tag.len() } else { n };
+                at_line_start = false;
+                continue;
+            }
+        }
+        // Lệnh DELIMITER (đầu dòng): đổi dấu kết thúc câu, bản thân dòng đó không phải câu lệnh
+        if at_line_start {
+            if let Some((token, next)) = read_delimiter_command(&chars, i) {
+                push_stmt(&mut out, start, i);
+                delim = token.chars().collect();
+                start = next;
+                i = next;
+                at_line_start = true;
+                continue;
+            }
+        }
+        // Dấu kết thúc câu đang hiệu lực
+        if matches_delimiter(&chars, i, &delim) {
+            // A ';' inside a trigger's BEGIN...END body is not the end of the statement. Only
+            // while the delimiter is still ';': a MySQL script that issued DELIMITER already
+            // protects the body that way.
+            if delim.len() == 1
+                && delim[0] == ';'
+                && seg_may_be_create(&chars, start, i)
+                && trigger_stmt_incomplete(&chars[start..i].iter().collect::<String>())
+            {
+                i += 1;
+                at_line_start = false;
+                continue;
+            }
+            push_stmt(&mut out, start, i);
+            i += delim.len();
+            start = i;
+            at_line_start = false;
+            continue;
+        }
+
+        at_line_start = c == '\n';
+        i += 1;
+    }
+
+    push_stmt(&mut out, start, n);
+    out
+}
