@@ -9,11 +9,12 @@ Tài liệu này tổng hợp phân tích kiến trúc, thiết kế UX/UI và g
 | STT | Tính năng | Mục tiêu | Độ ưu tiên |
 |:---|:---|:---|:---:|
 | **1** | **Tự động cập nhật ứng dụng (Tauri Auto-Updater)** | Giúp người dùng nhận bản cập nhật mới tự động qua GitHub Releases mà không cần tải lại file `.exe`/`.dmg` thủ công. | **P0 (Cao nhất)** |
-| **2** | **Sơ đồ quan hệ bảng trực quan (Interactive ER Diagram)** | Quét và trực quan hóa cấu trúc bảng, khóa ngoại (Foreign Keys) thành sơ đồ node tương tác, zoom/pan và xuất ảnh. | **P1** |
-| **3** | **Giám sát thời gian thực & Hủy truy vấn (Live Processlist & Kill Query)** | Giám sát các truy vấn đang chạy trên PostgreSQL/MySQL, phát hiện khóa (Locks) và hủy truy vấn bị treo với 1-click. | **P1** |
-| **4** | **Trực quan hóa kết quả truy vấn (Query Result Charts)** | Chuyển đổi bảng kết quả `SELECT` thành biểu đồ (Bar, Line, Pie, Area) trực tiếp trong SQL Editor. | **P2** |
-| **5** | **Mở rộng định dạng xuất dữ liệu (Excel `.xlsx`, Copy Markdown)** | Xuất kết quả ra file Excel định dạng chuẩn và copy nhanh hàng loạt dòng dưới dạng bảng Markdown / JSON Array. | **P2** |
-| **6** | **Tích hợp DuckDB & Quét file Parquet/CSV cục bộ** | Hỗ trợ phân tích dữ liệu cục bộ siêu tốc từ file mà không cần cài đặt database server. | **P3** |
+| **2** | **Tích hợp MCP Server nội bộ (Built-in Model Context Protocol)** | Mở Local MCP Server (127.0.0.1) cho phép Cursor, Claude Desktop, Raycast truy vấn database qua TableNova có bảo vệ. | **P0 (Cao nhất)** |
+| **3** | **Sơ đồ quan hệ bảng trực quan (Interactive ER Diagram)** | Quét và trực quan hóa cấu trúc bảng, khóa ngoại (Foreign Keys) thành sơ đồ node tương tác, zoom/pan và xuất ảnh. | **P1** |
+| **4** | **Giám sát thời gian thực & Hủy truy vấn (Live Processlist & Kill Query)** | Giám sát các truy vấn đang chạy trên PostgreSQL/MySQL, phát hiện khóa (Locks) và hủy truy vấn bị treo với 1-click. | **P1** |
+| **5** | **Trực quan hóa kết quả truy vấn (Query Result Charts)** | Chuyển đổi bảng kết quả `SELECT` thành biểu đồ (Bar, Line, Pie, Area) trực tiếp trong SQL Editor. | **P2** |
+| **6** | **Mở rộng định dạng xuất dữ liệu (Excel `.xlsx`, Copy Markdown)** | Xuất kết quả ra file Excel định dạng chuẩn và copy nhanh hàng loạt dòng dưới dạng bảng Markdown / JSON Array. | **P2** |
+| **7** | **Tích hợp DuckDB & Quét file Parquet/CSV cục bộ** | Hỗ trợ phân tích dữ liệu cục bộ siêu tốc từ file mà không cần cài đặt database server. | **P3** |
 
 ---
 

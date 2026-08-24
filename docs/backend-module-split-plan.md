@@ -278,3 +278,54 @@ in-memory), nên compiler gần như là mạng lưới an toàn duy nhất. Vì
 - **Không viết test mới trong cùng commit di chuyển.** Sau khi các hàm thuần đã ở tệp riêng
   (`tx/effect.rs`, `database/splitter.rs`, `datagen/{rng,regex,template,text}.rs`,
   `compare/diff.rs`), thêm `#[cfg(test)]` là việc riêng, và lúc đó mới rẻ.
+
+---
+
+## 8. Đã thực hiện
+
+Đợt 0–9 đã xong trên nhánh `refactor/backend-module-split`, mỗi đợt một commit, mỗi commit
+`cargo check` sạch (không error, không warning) và `cargo test --lib` 5/5.
+
+| Trước | Sau |
+|---|---|
+| 18 tệp phẳng, 16.833 dòng | 8 thư mục + 10 tệp lẻ, 121 tệp `.rs` |
+| `database.rs` 5.515 dòng | tệp lớn nhất còn 502 dòng (`datagen/column.rs` — một nhiệm vụ dài, không phải nhiều nhiệm vụ chồng lên nhau) |
+| `lib.rs` 239 dòng | 56 dòng |
+
+**Cách chia và cách kiểm.** Việc cắt được sinh bằng một bản đồ chunk cấp cao nhất (`chunks.awk`)
+rồi phân hoạch theo dòng, nên mỗi đợt kiểm được bằng một câu: *tập hợp dòng (bỏ dòng trắng) của
+các tệp mới phải GIỐNG HỆT tệp cũ*. Không đợt nào mất hay nhân đôi một dòng.
+
+**`cargo check` KHÔNG crash.** Giả định ở §5 (build script của Tauri có thể `STATUS_ACCESS_VIOLATION`)
+không xảy ra lần nào trong cả 10 đợt; vòng lặp sửa–kiểm chạy được bình thường (~18s tăng dần).
+
+**Ba chỗ lệch so với kế hoạch, đều có lý do:**
+
+1. **Không đổi tên `redis_db` → `redis`** (§3 dự tính đổi). `pub mod redis;` ở gốc crate trùng tên
+   với chính crate `redis`, và uniform path của Rust 2018 biến `use redis::aio::…` thành lỗi E0659
+   *ambiguous* ở mọi tệp con. Tên `redis_db` được giữ.
+2. **`open_url` / `set_app_window_size` chuyển ở đợt 0**, không phải đợt 9 — chúng đi cùng lúc với
+   việc tạo `app/`, và việc đó xảy ra trước khi `database.rs` bị cắt.
+3. **`get_primary_key_columns` / `detect_primary_key` về `commands/catalog.rs`**, không phải
+   `row_write.rs`: ba nhóm lệnh đọc chúng, và chúng là đọc metadata chứ không phải ghi.
+
+**Ba thay đổi vượt ra ngoài "di chuyển thuần", đều nhỏ và có chủ ý:**
+
+- `redis_ctx_of()` tách khỏi `ConnRegistry::acquire_redis` sang `state/ctx.rs`. Field của `RedisCtx`
+  là private có chủ đích, nên nơi duy nhất được dựng nó phải là module khai báo nó — cách này giữ
+  được điều đó, thay vì nới field thành `pub(super)`.
+- Khối comment mô tả `get_full_catalog` vốn nằm nhầm phía trên `rows_of`, nay về đúng chỗ.
+- Visibility: helper nội bộ được nới lên `pub(super)` (hoặc `pub(crate)` khi vượt một tầng module),
+  không nới lên `pub`.
+
+**Chưa làm — cần một quyết định riêng, không phải việc của đợt tách:**
+
+- Xoá code chết. `export.rs` (75 dòng) không còn caller nào trong Rust. `import_dbeaver` và
+  `restore_backup_old` không còn dấu vết nào trong `src/`; `export_table` còn một wrapper
+  `dbHelper.exportTable` nhưng không ai gọi wrapper đó. Cả ba nằm gọn trong
+  `database/commands/stubs.rs` kèm ghi chú, để xoá là một commit một chỗ.
+- Thêm `#[cfg(test)]` cho các tệp thuần vừa tách ra: `tx/effect.rs`, `database/splitter.rs`,
+  `datagen/{rng,regex,template,text}.rs`, `compare/{diff,values}.rs`. Giờ mới rẻ.
+- `CLAUDE.md` còn vài chỗ nói về `DatabaseManager` — kiểu này đã bị xoá từ đợt đa kết nối, trước
+  đợt tách này. Bản đồ module và mọi đường dẫn tệp đã được cập nhật; phần mô tả `DatabaseManager`
+  thì không, vì nó lệch từ trước và sửa nó là việc khác.
