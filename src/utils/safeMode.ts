@@ -197,7 +197,6 @@ export const COMMAND_KINDS: Record<string, CommandKind> = {
   secret_get_many: 'internal',
   secret_set_many: 'internal',
   ai_chat: 'internal',
-  export_table: 'internal',
   open_url: 'internal',
 };
 

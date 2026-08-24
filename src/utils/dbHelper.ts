@@ -1506,15 +1506,6 @@ export const dbHelper = {
     }
   },
 
-  async exportTable(name: string, format: string): Promise<{ success: boolean; error?: string }> {
-    try {
-      const res: any = await invoke('export_table', { name, format });
-      return { success: !!res.success, error: res.message };
-    } catch (err: any) {
-      return { success: false, error: err.toString() };
-    }
-  },
-
   async getDatabasesList(config: DbConnectionConfig): Promise<{ success: boolean; databases: string[]; error?: string }> {
     try {
       const mappedConfig = {

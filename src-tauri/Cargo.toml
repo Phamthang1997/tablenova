@@ -37,7 +37,6 @@ bigdecimal = "0.4"
 uuid = { version = "1", features = ["v4"] }
 russh = "0.63.0"
 portable-pty = "0.9"
-flate2 = "1.1.9"
 zip = "8.6.0"
 tokio = { version = "1.53.1", features = ["full"] }
 futures-util = "0.3"

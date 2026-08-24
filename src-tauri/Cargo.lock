@@ -5297,7 +5297,6 @@ dependencies = [
  "base64 0.23.1",
  "bigdecimal",
  "chrono",
- "flate2",
  "futures-util",
  "hmac 0.13.0",
  "keyring",

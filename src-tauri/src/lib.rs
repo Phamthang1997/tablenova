@@ -3,7 +3,6 @@ pub mod compare;
 pub mod credentials;
 pub mod database;
 pub mod datagen;
-pub mod export;
 pub mod redis_db;
 pub mod ssh_tunnel;
 pub mod state;
