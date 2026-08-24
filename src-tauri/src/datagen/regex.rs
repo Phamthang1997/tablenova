@@ -262,3 +262,116 @@ pub(super) fn sample_regex(seq: &[Rx], rng: &mut Rng, out: &mut String) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample(pattern: &str, seed: u64) -> String {
+        let seq = parse_regex(pattern).expect(pattern);
+        let mut rng = Rng::new(seed);
+        let mut out = String::new();
+        sample_regex(&seq, &mut rng, &mut out);
+        out
+    }
+
+    #[test]
+    fn literals_come_out_verbatim() {
+        assert_eq!(sample("abc", 1), "abc");
+        assert_eq!(sample("", 1), "");
+    }
+
+    #[test]
+    fn a_character_class_only_emits_members() {
+        for s in 0..50 {
+            let v = sample("[a-c0-9_]{6}", s);
+            assert_eq!(v.chars().count(), 6, "{v}");
+            assert!(
+                v.chars().all(|c| ('a'..='c').contains(&c) || c.is_ascii_digit() || c == '_'),
+                "{v}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_negated_class_never_emits_a_member() {
+        for s in 0..50 {
+            let v = sample("[^a-z]{8}", s);
+            assert!(v.chars().all(|c| !c.is_ascii_lowercase()), "{v}");
+        }
+    }
+
+    #[test]
+    fn the_shorthand_classes_work() {
+        for s in 0..30 {
+            assert!(sample(r"\d{4}", s).chars().all(|c| c.is_ascii_digit()));
+            assert!(sample(r"\w{4}", s).chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
+            assert!(sample(r"\D{4}", s).chars().all(|c| !c.is_ascii_digit()));
+        }
+    }
+
+    #[test]
+    fn quantifiers_produce_a_length_in_range() {
+        for s in 0..80 {
+            assert_eq!(sample("a{3}", s).len(), 3);
+            let q = sample("a{2,4}", s);
+            assert!((2..=4).contains(&q.len()), "{q}");
+            assert!(sample("a?", s).len() <= 1);
+            // `*` and `+` are capped so one stray `.*` cannot generate unbounded text.
+            assert!(sample("a*", s).len() <= RX_STAR_MAX as usize);
+            let p = sample("a+", s).len();
+            assert!((1..=RX_STAR_MAX as usize).contains(&p));
+        }
+    }
+
+    #[test]
+    fn alternation_picks_one_branch() {
+        for s in 0..50 {
+            let v = sample("(cat|dog|bird)", s);
+            assert!(["cat", "dog", "bird"].contains(&v.as_str()), "{v}");
+        }
+    }
+
+    #[test]
+    fn a_realistic_pattern_round_trips() {
+        for s in 0..30 {
+            let v = sample(r"[A-Z]{2}-\d{4}", s);
+            assert_eq!(v.len(), 7, "{v}");
+            assert!(v.as_bytes()[..2].iter().all(|b| b.is_ascii_uppercase()), "{v}");
+            assert_eq!(&v[2..3], "-");
+            assert!(v[3..].chars().all(|c| c.is_ascii_digit()), "{v}");
+        }
+    }
+
+    /// Determinism again: the whole generator is replayable, so a pattern must be too.
+    #[test]
+    fn the_same_seed_gives_the_same_string() {
+        assert_eq!(sample(r"[a-z]{10}", 99), sample(r"[a-z]{10}", 99));
+    }
+
+    /// Out-of-subset syntax is rejected while the column is being CONFIGURED, not at row
+    /// 1,000,000. Each of these has a distinct reason to be out.
+    #[test]
+    fn out_of_subset_syntax_is_refused_up_front() {
+        for bad in [
+            "(?:abc)",   // non-capturing / lookaround groups
+            "(?=abc)",
+            "^abc",      // anchors have no meaning when generating
+            "abc$",
+            "a{1,999}",  // over RX_REPEAT_MAX
+            "*abc",      // quantifier with nothing before it
+            "[a-z",      // unterminated class
+            "[]",        // empty class
+            "(abc",      // unterminated group
+            "abc\\",     // trailing backslash
+        ] {
+            assert!(parse_regex(bad).is_err(), "should be rejected: {bad}");
+        }
+    }
+
+    #[test]
+    fn the_repeat_cap_is_the_boundary_not_an_off_by_one() {
+        assert!(parse_regex(&format!("a{{{RX_REPEAT_MAX}}}")).is_ok());
+        assert!(parse_regex(&format!("a{{{}}}", RX_REPEAT_MAX + 1)).is_err());
+    }
+}

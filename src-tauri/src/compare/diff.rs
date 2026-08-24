@@ -203,3 +203,65 @@ pub(super) fn view_def_differs(
     }
     differs
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// MySQL 8 dropped the display width, so the same column reads `int(11)` on 5.7 and `int` on
+    /// 8. Reporting that as a difference is pure noise.
+    #[test]
+    fn integer_display_width_is_not_a_difference() {
+        assert_eq!(norm_type("int(11)"), "int");
+        assert_eq!(norm_type("INT(11) UNSIGNED"), norm_type("int unsigned"));
+        assert_eq!(norm_type("bigint(20)"), "bigint");
+        assert_eq!(norm_type("tinyint(1)"), "tinyint");
+    }
+
+    /// The same type spelled the MySQL way and the Postgres way must fold together, or every
+    /// cross-dialect comparison is one big diff.
+    #[test]
+    fn cross_dialect_synonyms_fold_together() {
+        assert_eq!(norm_type("character varying(50)"), norm_type("VARCHAR(50)"));
+        assert_eq!(norm_type("integer"), norm_type("int"));
+        assert_eq!(norm_type("int8"), norm_type("bigint"));
+        assert_eq!(norm_type("bool"), norm_type("BOOLEAN"));
+        assert_eq!(norm_type("double precision"), norm_type("double"));
+        assert_eq!(norm_type("timestamp without time zone"), norm_type("TIMESTAMP"));
+        assert_eq!(norm_type("numeric(10,2)"), norm_type("DECIMAL(10,2)"));
+        assert_eq!(norm_type("bytea"), norm_type("BLOB"));
+        assert_eq!(norm_type("longtext"), norm_type("TEXT"));
+    }
+
+    /// Length still counts — it is a real schema difference, not a spelling one.
+    #[test]
+    fn length_is_still_a_difference() {
+        assert_ne!(norm_type("varchar(50)"), norm_type("varchar(100)"));
+        assert_ne!(norm_type("decimal(10,2)"), norm_type("decimal(10,4)"));
+    }
+
+    /// A serial IS an int with a sequence attached; the sequence shows up elsewhere in the diff.
+    #[test]
+    fn serial_normalises_to_its_underlying_integer() {
+        assert_eq!(norm_type("serial"), "int");
+        assert_eq!(norm_type("bigserial"), "bigint");
+        assert_eq!(norm_type("smallserial"), "smallint");
+    }
+
+    /// Postgres writes a default as `'x'::character varying`, MySQL as `x`. Same default.
+    #[test]
+    fn a_postgres_cast_and_quotes_are_stripped_from_a_default() {
+        assert_eq!(norm_default(Some("'x'::character varying")), "x");
+        assert_eq!(norm_default(Some("'x'")), "x");
+        assert_eq!(norm_default(Some("  0  ")), "0");
+        assert_eq!(norm_default(None), "");
+    }
+
+    #[test]
+    fn the_current_timestamp_spellings_are_one_default() {
+        let want = "current_timestamp";
+        assert_eq!(norm_default(Some("now()")), want);
+        assert_eq!(norm_default(Some("CURRENT_TIMESTAMP")), want);
+        assert_eq!(norm_default(Some("current_timestamp()")), want);
+    }
+}

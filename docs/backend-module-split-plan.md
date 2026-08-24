@@ -288,9 +288,10 @@ in-memory), nên compiler gần như là mạng lưới an toàn duy nhất. Vì
 
 | Trước | Sau |
 |---|---|
-| 18 tệp phẳng, 16.833 dòng | 8 thư mục + 10 tệp lẻ, 121 tệp `.rs` |
+| 18 tệp phẳng, 16.833 dòng | 10 thư mục + 3 tệp lẻ ở gốc, 122 tệp `.rs` |
 | `database.rs` 5.515 dòng | tệp lớn nhất còn 502 dòng (`datagen/column.rs` — một nhiệm vụ dài, không phải nhiều nhiệm vụ chồng lên nhau) |
 | `lib.rs` 239 dòng | 56 dòng |
+| 5 test Rust | **101** test Rust, phủ mọi tệp thuần |
 
 **Cách chia và cách kiểm.** Việc cắt được sinh bằng một bản đồ chunk cấp cao nhất (`chunks.awk`)
 rồi phân hoạch theo dòng, nên mỗi đợt kiểm được bằng một câu: *tập hợp dòng (bỏ dòng trắng) của
@@ -318,14 +319,23 @@ không xảy ra lần nào trong cả 10 đợt; vòng lặp sửa–kiểm ch�
 - Visibility: helper nội bộ được nới lên `pub(super)` (hoặc `pub(crate)` khi vượt một tầng module),
   không nới lên `pub`.
 
-**Chưa làm — cần một quyết định riêng, không phải việc của đợt tách:**
+**Đã làm tiếp sau đó (đợt 10–12):**
 
-- Xoá code chết. `export.rs` (75 dòng) không còn caller nào trong Rust. `import_dbeaver` và
-  `restore_backup_old` không còn dấu vết nào trong `src/`; `export_table` còn một wrapper
-  `dbHelper.exportTable` nhưng không ai gọi wrapper đó. Cả ba nằm gọn trong
-  `database/commands/stubs.rs` kèm ghi chú, để xoá là một commit một chỗ.
-- Thêm `#[cfg(test)]` cho các tệp thuần vừa tách ra: `tx/effect.rs`, `database/splitter.rs`,
-  `datagen/{rng,regex,template,text}.rs`, `compare/{diff,values}.rs`. Giờ mới rẻ.
+- **Đợt 10 — gom nốt tệp lẻ ở gốc:** `terminal/{local,ssh}.rs` (chung một giao thức message, nên
+  frontend chỉ có một component cho cả hai), `credentials/{aws_iam,oauth,secret_store}.rs` (chung một
+  *mối quan tâm*, không chung code — `mod.rs` nói thẳng điều đó), `datasets.rs` vào `datagen/`.
+  `ssh_tunnel.rs` ở lại gốc có chủ đích: nó là transport, dùng bởi cả ba nơi.
+- **Đợt 11 — xoá code chết:** `export.rs` + dependency `flate2`, và ba stub `export_table` /
+  `import_dbeaver` / `restore_backup_old` (kèm wrapper `dbHelper` và mục `safeMode.ts` —
+  `safeMode.test.ts` kiểm hai chiều nên bỏ sót một bên là fail build). `ai_chat` sang `app/ai.rs`.
+- **Đợt 12 — test cho các tệp thuần:** 5 test -> **101**. Phủ `database/{splitter,rows,ident,decode}.rs`,
+  `tx/effect.rs`, `redis_db/cmds.rs`, `datagen/{rng,template,regex,text}.rs`, `compare/{diff,values}.rs`.
+  Hai chỗ đáng nói: `redis_db/cmds.rs` là **ranh giới bảo mật** của chế độ chỉ-đọc và trước đó chỉ
+  được kiểm bằng mẹo standalone-rustc; `database/splitter.rs` giờ có test hai bên cùng khoá cặp
+  sinh đôi với `src/sql/statements.ts`.
+
+**Vẫn chưa làm:**
+
 - `CLAUDE.md` còn vài chỗ nói về `DatabaseManager` — kiểu này đã bị xoá từ đợt đa kết nối, trước
   đợt tách này. Bản đồ module và mọi đường dẫn tệp đã được cập nhật; phần mô tả `DatabaseManager`
   thì không, vì nó lệch từ trước và sửa nó là việc khác.

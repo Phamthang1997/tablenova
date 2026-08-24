@@ -321,3 +321,146 @@ pub(crate) fn split_sql_statements(sql: &str) -> Vec<String> {
     push_stmt(&mut out, start, n);
     out
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn split(sql: &str) -> Vec<String> {
+        split_sql_statements(sql)
+    }
+
+    #[test]
+    fn splits_on_the_semicolon_and_trims() {
+        assert_eq!(split("SELECT 1; SELECT 2"), ["SELECT 1", "SELECT 2"]);
+        assert_eq!(split("SELECT 1;\r\nSELECT 2;\r\n"), ["SELECT 1", "SELECT 2"]);
+        assert!(split("   \n\t ").is_empty());
+    }
+
+    #[test]
+    fn a_semicolon_inside_a_string_or_a_comment_is_not_a_separator() {
+        assert_eq!(split("SELECT ';'; SELECT 2"), ["SELECT ';'", "SELECT 2"]);
+        assert_eq!(
+            split("SELECT 1 -- a;b\n; /* c;d */ SELECT 2"),
+            ["SELECT 1 -- a;b", "/* c;d */ SELECT 2"]
+        );
+    }
+
+    /// Deliberately DIFFERENT from the TS twin (`src/sql/statements.ts`), which drops a segment
+    /// that is only a comment. Here they survive: `restore_backup` filters them itself through
+    /// `is_skipped_stmt`, and dropping them would lose a dump's own header comments before that
+    /// decision is made.
+    #[test]
+    fn a_comment_only_segment_survives() {
+        assert_eq!(split("-- hi\nSELECT 1;\n/* block */"), ["-- hi\nSELECT 1", "/* block */"]);
+    }
+
+    #[test]
+    fn a_dollar_quoted_body_is_not_split() {
+        assert_eq!(
+            split("CREATE FUNCTION f() RETURNS int AS $$ BEGIN RETURN 1; END $$ LANGUAGE plpgsql; SELECT 1"),
+            ["CREATE FUNCTION f() RETURNS int AS $$ BEGIN RETURN 1; END $$ LANGUAGE plpgsql", "SELECT 1"]
+        );
+        assert_eq!(
+            split("CREATE FUNCTION f() RETURNS int AS $body$ SELECT 1; $body$ LANGUAGE sql; SELECT 2"),
+            ["CREATE FUNCTION f() RETURNS int AS $body$ SELECT 1; $body$ LANGUAGE sql", "SELECT 2"]
+        );
+    }
+
+    /// A bind placeholder and a query parameter both start with `$` and must not open a block —
+    /// if they did, everything after `$1` would be swallowed into one statement.
+    #[test]
+    fn a_bind_placeholder_does_not_open_a_dollar_block() {
+        assert_eq!(split("SELECT $1; SELECT ${x}"), ["SELECT $1", "SELECT ${x}"]);
+    }
+
+    /// The DELIMITER line is a CLIENT command: it is consumed here and never sent to the server,
+    /// which would reject it.
+    #[test]
+    fn the_delimiter_line_is_consumed_never_emitted() {
+        assert_eq!(
+            split("DELIMITER $$\nCREATE PROCEDURE p() BEGIN SELECT 1; END$$\nDELIMITER ;\nSELECT 2;"),
+            ["CREATE PROCEDURE p() BEGIN SELECT 1; END", "SELECT 2"]
+        );
+        // mysqldump --routines writes `;;`.
+        assert_eq!(
+            split("DELIMITER ;;\nCREATE PROCEDURE p() BEGIN SELECT 1; END;;\nDELIMITER ;"),
+            ["CREATE PROCEDURE p() BEGIN SELECT 1; END"]
+        );
+    }
+
+    /// In a script that uses DELIMITER, `$$` is the statement terminator — not a Postgres
+    /// dollar-quote. Reading it as one would merge the whole file into a single statement.
+    #[test]
+    fn dollar_dollar_is_a_terminator_in_a_delimiter_script() {
+        let sql = "DELIMITER $$\nCREATE PROCEDURE a() BEGIN SELECT 1; END$$\nCREATE PROCEDURE b() BEGIN SELECT 2; END$$";
+        assert_eq!(split(sql).len(), 2);
+    }
+
+    #[test]
+    fn delimiter_is_only_a_command_at_the_start_of_a_line() {
+        assert_eq!(split("SELECT 'DELIMITER $$'; SELECT 2"), ["SELECT 'DELIMITER $$'", "SELECT 2"]);
+        assert_eq!(split("SELECT 1 DELIMITER //;\nSELECT 2;"), ["SELECT 1 DELIMITER //", "SELECT 2"]);
+    }
+
+    /// Outside a script that issued DELIMITER, `$$` is a Postgres dollar-quote and nothing else —
+    /// even right after the word DELIMITER. That is why `mysql_script` is decided once for the
+    /// WHOLE input rather than per statement: the same two characters cannot mean both things in
+    /// one file, and guessing per statement would split a Postgres function body in half.
+    #[test]
+    fn outside_a_delimiter_script_dollar_dollar_always_opens_a_block() {
+        assert_eq!(
+            split("SELECT 1 DELIMITER $$;\nSELECT 2;"),
+            ["SELECT 1 DELIMITER $$;\nSELECT 2;"]
+        );
+    }
+
+    /// `sqlite3_complete()`'s rule, and SQLite needs it because it has no DELIMITER: a trigger
+    /// whose body contains BEGIN only ends at the `;` that follows END. Without this an exported
+    /// trigger came back truncated and killed the whole restore.
+    #[test]
+    fn a_trigger_body_holds_together() {
+        assert_eq!(
+            split("CREATE TRIGGER t AFTER INSERT ON a BEGIN UPDATE b SET n = 1; END;\nSELECT 9;"),
+            ["CREATE TRIGGER t AFTER INSERT ON a BEGIN UPDATE b SET n = 1; END", "SELECT 9"]
+        );
+        // END, then a comment, then the terminator.
+        assert_eq!(
+            split("CREATE TRIGGER t AFTER INSERT ON a BEGIN UPDATE b SET n=1; END -- done\n;\nSELECT 9;"),
+            ["CREATE TRIGGER t AFTER INSERT ON a BEGIN UPDATE b SET n=1; END -- done", "SELECT 9"]
+        );
+    }
+
+    /// Requiring the BEGIN word is what keeps the rule from swallowing the rest of a dump: a
+    /// Postgres trigger and MySQL's single-statement form both end at their first `;`.
+    #[test]
+    fn a_trigger_without_begin_ends_at_its_first_semicolon() {
+        assert_eq!(
+            split("CREATE TRIGGER t AFTER INSERT ON a EXECUTE FUNCTION f();\nSELECT 9;"),
+            ["CREATE TRIGGER t AFTER INSERT ON a EXECUTE FUNCTION f()", "SELECT 9"]
+        );
+        assert_eq!(
+            split("CREATE TRIGGER t BEFORE INSERT ON a FOR EACH ROW SET NEW.x = 1;\nSELECT 9;"),
+            ["CREATE TRIGGER t BEFORE INSERT ON a FOR EACH ROW SET NEW.x = 1", "SELECT 9"]
+        );
+    }
+
+    /// The rule is scoped to triggers: a BEGIN that is only a value, and any other CREATE, must
+    /// split normally.
+    #[test]
+    fn the_trigger_rule_does_not_leak_to_other_statements() {
+        assert_eq!(
+            split("INSERT INTO t VALUES ('BEGIN'); SELECT 1;"),
+            ["INSERT INTO t VALUES ('BEGIN')", "SELECT 1"]
+        );
+        assert_eq!(split("CREATE TABLE t (a INT); SELECT 1;"), ["CREATE TABLE t (a INT)", "SELECT 1"]);
+    }
+
+    #[test]
+    fn strip_leading_comments_reaches_the_first_keyword() {
+        assert_eq!(strip_leading_comments("-- header\n/* x */\n  SELECT 1"), "SELECT 1");
+        assert_eq!(strip_leading_comments("SELECT 1"), "SELECT 1");
+        assert_eq!(strip_leading_comments("  /* only */  ").trim(), "");
+    }
+}

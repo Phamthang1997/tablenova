@@ -113,3 +113,100 @@ pub(super) fn mix_seed(seed: u64, table: &str, column: &str) -> u64 {
     }
     h
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn seq(seed: u64, n: usize) -> Vec<u64> {
+        let mut r = Rng::new(seed);
+        (0..n).map(|_| r.next_u64()).collect()
+    }
+
+    /// The reason this PRNG is hand-written instead of `rand`: same spec + same seed must replay
+    /// byte-identically, which is what makes a generated dataset worth committing to a test suite.
+    #[test]
+    fn the_same_seed_replays_the_same_sequence() {
+        assert_eq!(seq(20_260_806, 8), seq(20_260_806, 8));
+        assert_ne!(seq(1, 8), seq(2, 8));
+    }
+
+    /// A seed of 0 must still produce a usable stream — `split_mix64` seeding exists for exactly
+    /// this: xoshiro with an all-zero state emits zeros forever.
+    #[test]
+    fn seed_zero_is_not_a_degenerate_stream() {
+        let v = seq(0, 8);
+        assert!(v.iter().any(|&x| x != 0));
+        assert_ne!(v[0], v[1]);
+    }
+
+    /// Each column draws from its OWN substream. One shared stream would make editing column 3
+    /// shift the values of every later column, and the preview would jump on every keystroke.
+    #[test]
+    fn each_column_gets_its_own_substream() {
+        let s = 42u64;
+        let a = mix_seed(s, "film", "title");
+        assert_eq!(a, mix_seed(s, "film", "title"), "must be stable for the same inputs");
+        assert_ne!(a, mix_seed(s, "film", "description"));
+        assert_ne!(a, mix_seed(s, "actor", "title"));
+        assert_ne!(a, mix_seed(s + 1, "film", "title"));
+    }
+
+    /// The table/column separator has to be real: without it `("ab", "c")` and `("a", "bc")`
+    /// would hash the same and two columns would share a stream.
+    #[test]
+    fn the_table_column_split_is_part_of_the_hash() {
+        assert_ne!(mix_seed(1, "ab", "c"), mix_seed(1, "a", "bc"));
+    }
+
+    #[test]
+    fn below_stays_in_range_and_degenerates_safely() {
+        let mut r = Rng::new(7);
+        for _ in 0..500 {
+            assert!(r.below(10) < 10);
+        }
+        assert_eq!(r.below(1), 0);
+        assert_eq!(r.below(0), 0);
+    }
+
+    /// Inclusive on both ends, and swapped bounds are tolerated rather than panicking — the
+    /// bounds come from a text box.
+    #[test]
+    fn range_i64_is_inclusive_and_tolerates_swapped_bounds() {
+        let mut r = Rng::new(11);
+        let mut saw_lo = false;
+        let mut saw_hi = false;
+        for _ in 0..500 {
+            let v = r.range_i64(-2, 2);
+            assert!((-2..=2).contains(&v), "{v}");
+            saw_lo |= v == -2;
+            saw_hi |= v == 2;
+        }
+        assert!(saw_lo && saw_hi, "both bounds must be reachable");
+        assert_eq!(r.range_i64(5, 5), 5);
+        for _ in 0..50 {
+            assert!((1..=9).contains(&r.range_i64(9, 1)));
+        }
+    }
+
+    #[test]
+    fn unit_and_chance_respect_their_edges() {
+        let mut r = Rng::new(3);
+        for _ in 0..500 {
+            let u = r.unit();
+            assert!((0.0..1.0).contains(&u), "{u}");
+        }
+        assert!(!r.chance(0.0));
+        assert!(r.chance(100.0));
+        assert!(!r.chance(-5.0));
+    }
+
+    #[test]
+    fn pick_returns_an_element_of_the_slice() {
+        let items = ["a", "b", "c"];
+        let mut r = Rng::new(5);
+        for _ in 0..100 {
+            assert!(items.contains(r.pick(&items)));
+        }
+    }
+}

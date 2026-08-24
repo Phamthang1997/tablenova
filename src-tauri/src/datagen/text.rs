@@ -116,3 +116,90 @@ pub(super) fn luhn_complete(digits: &str) -> String {
     let check = (10 - (sum % 10)) % 10;
     format!("{digits}{check}")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Standard Luhn check over the finished number, independent of how the digit was computed.
+    fn luhn_valid(s: &str) -> bool {
+        let mut sum = 0u32;
+        for (i, c) in s.chars().rev().enumerate() {
+            let d = c.to_digit(10).unwrap();
+            let d = if i % 2 == 1 { d * 2 } else { d };
+            sum += if d > 9 { d - 9 } else { d };
+        }
+        sum % 10 == 0
+    }
+
+    #[test]
+    fn luhn_complete_appends_a_digit_that_validates() {
+        for body in ["453201511283003", "4111111111111", "37828224631000", "0", ""] {
+            let full = luhn_complete(body);
+            assert_eq!(full.len(), body.len() + 1, "{body}");
+            assert!(full.starts_with(body), "{body}");
+            assert!(luhn_valid(&full), "{full}");
+        }
+    }
+
+    /// The visa test number: 4532015112830366 is the well-known valid value for this body.
+    #[test]
+    fn luhn_complete_matches_a_known_number() {
+        assert_eq!(luhn_complete("453201511283036"), "4532015112830366");
+    }
+
+    #[test]
+    fn slug_lowercases_and_joins_with_dots() {
+        assert_eq!(slug("John Smith"), "john.smith");
+        assert_eq!(slug("A  B"), "a.b");
+        assert_eq!(slug("O'Brien"), "o.brien");
+        assert_eq!(slug("  padded  "), "padded");
+        assert_eq!(slug(""), "");
+    }
+
+    /// A non-ASCII name slugs down to something useless, which is exactly why `vi_deaccent` runs
+    /// first when building an email local part.
+    #[test]
+    fn deaccenting_before_slugging_is_what_makes_it_usable() {
+        assert_eq!(vi_deaccent("Nguyễn Văn A"), "nguyen van a");
+        assert_eq!(slug(&vi_deaccent("Nguyễn Văn A")), "nguyen.van.a");
+        assert_eq!(vi_deaccent("Đỗ Thị Hà"), "do thi ha");
+    }
+
+    /// Deaccenting also lowercases, so an ASCII name passes through unchanged except for case.
+    #[test]
+    fn deaccenting_leaves_ascii_alone() {
+        assert_eq!(vi_deaccent("John"), "john");
+        assert_eq!(vi_deaccent(""), "");
+    }
+
+    #[test]
+    fn capitalize_and_title_case_handle_empty_and_multiword() {
+        assert_eq!(capitalize("abc"), "Abc");
+        assert_eq!(capitalize(""), "");
+        assert_eq!(title_case("lorem ipsum dolor"), "Lorem Ipsum Dolor");
+        assert_eq!(title_case(""), "");
+    }
+
+    #[test]
+    fn generated_text_is_deterministic_per_seed() {
+        let a = lorem_sentence(&mut Rng::new(4));
+        let b = lorem_sentence(&mut Rng::new(4));
+        assert_eq!(a, b);
+        assert!(a.ends_with('.'), "{a}");
+        assert_ne!(a, lorem_sentence(&mut Rng::new(5)));
+    }
+
+    #[test]
+    fn full_name_uses_the_locale_lists() {
+        let mut r = Rng::new(6);
+        for _ in 0..30 {
+            let en = full_name(&mut r, "en");
+            assert!(en.split(' ').count() >= 2, "{en}");
+            assert!(en.is_ascii(), "{en}");
+        }
+        // The Vietnamese list is a different set of names, not the English one transliterated.
+        let vi = full_name(&mut Rng::new(6), "vi");
+        assert_ne!(vi, full_name(&mut Rng::new(6), "en"));
+    }
+}

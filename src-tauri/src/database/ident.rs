@@ -70,3 +70,94 @@ pub(crate) fn sql_literal(v: Option<&Value>) -> String {
         Some(other) => other.to_string(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::sync::{Arc, Mutex};
+
+    // `connect_lazy` builds a pool without touching the network, which is all these need: the
+    // functions under test only branch on the DIALECT. It does spawn a pool reaper, though, so
+    // the tests that build one must run under `#[tokio::test]`.
+    fn sqlite() -> DbConnection {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        DbConnection::adhoc(DbKind::Sqlite(Arc::new(Mutex::new(c))))
+    }
+    fn postgres() -> DbConnection {
+        let p = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://u:p@127.0.0.1:5432/db")
+            .unwrap();
+        DbConnection::adhoc(DbKind::Postgres(p))
+    }
+    fn mysql() -> DbConnection {
+        let p = sqlx::mysql::MySqlPoolOptions::new()
+            .connect_lazy("mysql://u:p@127.0.0.1:3306/db")
+            .unwrap();
+        DbConnection::adhoc(DbKind::Mysql(p))
+    }
+
+    #[tokio::test]
+    async fn quoting_follows_the_dialect() {
+        assert_eq!(quote_ident(&mysql(), "film"), "`film`");
+        assert_eq!(quote_ident(&postgres(), "film"), "\"film\"");
+        assert_eq!(quote_ident(&sqlite(), "film"), "\"film\"");
+    }
+
+    /// SQL is assembled by string formatting throughout this app, so the closing character being
+    /// doubled is the escaping. A name that carries one must not be able to end the quote early.
+    #[tokio::test]
+    async fn the_closing_character_is_doubled() {
+        assert_eq!(quote_ident(&mysql(), "we`ird"), "`we``ird`");
+        assert_eq!(quote_ident(&postgres(), "we\"ird"), "\"we\"\"ird\"");
+        // A backtick is not special outside MySQL, and a double quote is not special inside it.
+        assert_eq!(quote_ident(&postgres(), "a`b"), "\"a`b\"");
+        assert_eq!(quote_ident(&mysql(), "a\"b"), "`a\"b`");
+    }
+
+    /// Only Postgres qualifies: MySQL's schema IS the open database and SQLite has none. Every
+    /// call site must keep its old output until a schema is actually selected.
+    #[tokio::test]
+    async fn only_postgres_qualifies_with_a_schema() {
+        let s = Some("sales".to_string());
+        assert_eq!(qualified(&postgres(), &s, "film"), "\"sales\".\"film\"");
+        assert_eq!(qualified(&mysql(), &s, "film"), "`film`");
+        assert_eq!(qualified(&sqlite(), &s, "film"), "\"film\"");
+        // No schema, or an empty one, leaves the bare quoted name on Postgres too.
+        assert_eq!(qualified(&postgres(), &None, "film"), "\"film\"");
+        assert_eq!(qualified(&postgres(), &Some(String::new()), "film"), "\"film\"");
+    }
+
+    #[test]
+    fn pg_schema_defaults_to_public_in_one_place() {
+        assert_eq!(pg_schema_of(&None), "public");
+        assert_eq!(pg_schema_of(&Some("sales".into())), "sales");
+    }
+
+    #[test]
+    fn sql_str_escapes_for_a_single_quoted_literal() {
+        assert_eq!(sql_str("public"), "public");
+        assert_eq!(sql_str("o'brien"), "o''brien");
+    }
+
+    #[tokio::test]
+    async fn fk_checks_sql_is_per_dialect_and_reversible() {
+        assert_eq!(fk_checks_sql(&mysql(), false), "SET FOREIGN_KEY_CHECKS = 0");
+        assert_eq!(fk_checks_sql(&mysql(), true), "SET FOREIGN_KEY_CHECKS = 1");
+        assert_eq!(fk_checks_sql(&postgres(), false), "SET session_replication_role = 'replica'");
+        assert_eq!(fk_checks_sql(&postgres(), true), "SET session_replication_role = 'origin'");
+        assert_eq!(fk_checks_sql(&sqlite(), false), "PRAGMA foreign_keys = OFF");
+        assert_eq!(fk_checks_sql(&sqlite(), true), "PRAGMA foreign_keys = ON");
+    }
+
+    /// An absent key and an explicit JSON null must both become `NULL`, not the string `"null"` —
+    /// they are what the grid sends for a cleared cell.
+    #[test]
+    fn sql_literal_covers_null_string_and_number() {
+        assert_eq!(sql_literal(None), "NULL");
+        assert_eq!(sql_literal(Some(&json!(null))), "NULL");
+        assert_eq!(sql_literal(Some(&json!("o'brien"))), "'o''brien'");
+        assert_eq!(sql_literal(Some(&json!(42))), "42");
+        assert_eq!(sql_literal(Some(&json!(true))), "true");
+    }
+}

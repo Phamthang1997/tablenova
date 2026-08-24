@@ -108,3 +108,70 @@ pub(crate) fn row_i64(row: &Value, col: &str) -> i64 {
         .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
         .unwrap_or(0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// The whole reason this function exists: every row is a JSON object keyed by column name, so
+    /// two columns of the same name would collapse — `Map::insert` overwrites and all but one
+    /// value is lost with no error. `SELECT *` over a few joins hits it immediately.
+    #[test]
+    fn repeats_get_a_numbered_suffix() {
+        let mut cols = vec![
+            "film_id".to_string(),
+            "last_update".to_string(),
+            "film_id".to_string(),
+            "last_update".to_string(),
+            "last_update".to_string(),
+        ];
+        uniquify_columns(&mut cols);
+        assert_eq!(
+            cols,
+            vec!["film_id", "last_update", "film_id (2)", "last_update (2)", "last_update (3)"]
+        );
+    }
+
+    /// A name that is already unique must come out byte-identical — the frontend's `row[col]`
+    /// lookups and every saved column width key off it.
+    #[test]
+    fn unique_names_are_untouched() {
+        let mut cols = vec!["id".to_string(), "name".to_string()];
+        uniquify_columns(&mut cols);
+        assert_eq!(cols, vec!["id", "name"]);
+        let mut empty: Vec<String> = Vec::new();
+        uniquify_columns(&mut empty);
+        assert!(empty.is_empty());
+    }
+
+    /// The suffix a repeat gets must not collide with a column literally called `x (2)`.
+    #[test]
+    fn a_generated_suffix_never_shadows_a_real_column() {
+        let mut cols = vec!["x".to_string(), "x (2)".to_string(), "x".to_string()];
+        uniquify_columns(&mut cols);
+        assert_eq!(cols.len(), 3);
+        let unique: std::collections::HashSet<&String> = cols.iter().collect();
+        assert_eq!(unique.len(), 3, "{cols:?}");
+    }
+
+    #[test]
+    fn rows_of_reads_the_first_result_set_and_tolerates_anything_else() {
+        let res = vec![json!({ "columns": ["a"], "data": [{ "a": 1 }, { "a": 2 }] })];
+        assert_eq!(rows_of(&res).len(), 2);
+        assert!(rows_of(&[]).is_empty());
+        assert!(rows_of(&[json!({ "affected": 3 })]).is_empty());
+        assert!(rows_of(&[json!({ "data": "not an array" })]).is_empty());
+    }
+
+    /// `cell` is used to read introspection results; a missing or non-string field must read as
+    /// empty rather than panic, because the shape differs per server version.
+    #[test]
+    fn cell_reads_a_string_field_or_empty() {
+        let row = json!({ "name": "actor", "rows": 200, "nil": null });
+        assert_eq!(cell(&row, "name"), "actor");
+        assert_eq!(cell(&row, "rows"), "");
+        assert_eq!(cell(&row, "nil"), "");
+        assert_eq!(cell(&row, "absent"), "");
+    }
+}

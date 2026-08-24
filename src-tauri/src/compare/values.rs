@@ -56,3 +56,74 @@ pub(super) fn values_equal(a: &Value, b: &Value) -> bool {
         _ => a == b,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// The ONE case this loosens: sqlx returns DECIMAL/NUMERIC as a string, so MySQL and Postgres
+    /// hand back two different JSON types for the same value.
+    #[test]
+    fn a_number_equals_its_own_numeric_string() {
+        assert!(values_equal(&json!(1.5), &json!("1.50")));
+        assert!(values_equal(&json!("1.50"), &json!(1.5)));
+        assert!(values_equal(&json!(10), &json!("10")));
+        assert!(!values_equal(&json!(1.5), &json!("1.6")));
+    }
+
+    /// Two strings are compared EXACTLY, so a real difference is never hidden — this is the line
+    /// that keeps the whole comparison honest.
+    #[test]
+    fn two_strings_are_compared_exactly() {
+        assert!(!values_equal(&json!("1.50"), &json!("1.5")));
+        assert!(!values_equal(&json!("a"), &json!("A")));
+        assert!(!values_equal(&json!(" a"), &json!("a")));
+        assert!(values_equal(&json!("a"), &json!("a")));
+    }
+
+    /// NULL equals only NULL: an empty string or a zero is a value the other side does not have.
+    #[test]
+    fn null_matches_only_null() {
+        assert!(values_equal(&json!(null), &json!(null)));
+        assert!(!values_equal(&json!(null), &json!("")));
+        assert!(!values_equal(&json!(null), &json!(0)));
+    }
+
+    /// MySQL has no boolean type — TINYINT(1) arrives as a number where Postgres sends a bool.
+    #[test]
+    fn a_bool_equals_the_number_a_tinyint_would_carry() {
+        assert!(values_equal(&json!(true), &json!(1)));
+        assert!(values_equal(&json!(false), &json!(0)));
+        assert!(!values_equal(&json!(true), &json!(0)));
+    }
+
+    #[test]
+    fn trailing_zeros_in_a_decimal_are_not_a_difference() {
+        assert_eq!(norm_number("1.50"), "1.5");
+        assert_eq!(norm_number("1.000"), "1");
+        assert_eq!(norm_number("10"), "10");
+        assert_eq!(norm_number("  2.20  "), "2.2");
+        // -0.0 and 0 are the same value; reporting them as different would be noise.
+        assert_eq!(norm_number("-0.0"), "0");
+        assert_eq!(norm_number("0.0"), "0");
+    }
+
+    /// A NULL must not collide with the literal string "null" when the two are used as a row key.
+    #[test]
+    fn the_null_marker_cannot_be_typed_by_a_user() {
+        assert_ne!(norm_scalar(&json!(null)), norm_scalar(&json!("null")));
+        assert_eq!(norm_scalar(&json!(true)), "1");
+        assert_eq!(norm_scalar(&json!(1.50)), "1.5");
+        assert_eq!(norm_scalar(&json!("x")), "x");
+    }
+
+    #[test]
+    fn looks_numeric_rejects_blank_and_text() {
+        assert!(looks_numeric("1.5"));
+        assert!(looks_numeric(" -2 "));
+        assert!(!looks_numeric(""));
+        assert!(!looks_numeric("   "));
+        assert!(!looks_numeric("1.5x"));
+    }
+}

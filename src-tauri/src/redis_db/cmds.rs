@@ -257,3 +257,125 @@ pub fn parse_version(v: &str) -> (u32, u32) {
 pub fn version_at_least(have: (u32, u32), want: (u32, u32)) -> bool {
     have.0 > want.0 || (have.0 == want.0 && have.1 >= want.1)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn t(input: &str) -> Vec<Vec<u8>> {
+        tokenize(input).unwrap()
+    }
+
+    #[test]
+    fn tokenize_splits_on_whitespace_and_honours_quotes() {
+        assert_eq!(t("GET  foo"), vec![b"GET".to_vec(), b"foo".to_vec()]);
+        assert_eq!(t(r#"SET k "a b""#), vec![b"SET".to_vec(), b"k".to_vec(), b"a b".to_vec()]);
+        assert_eq!(t("SET k 'a b'"), vec![b"SET".to_vec(), b"k".to_vec(), b"a b".to_vec()]);
+        assert!(t("").is_empty());
+        // An empty quoted argument is a real argument, not nothing.
+        assert_eq!(t(r#"SET k """#), vec![b"SET".to_vec(), b"k".to_vec(), Vec::new()]);
+    }
+
+    /// Arguments are bytes, not `String`: a Redis value may be arbitrary binary and forcing it
+    /// through UTF-8 would corrupt what gets written.
+    #[test]
+    fn tokenize_decodes_escapes_to_raw_bytes() {
+        assert_eq!(t(r#"SET k "\xff\x00""#)[2], vec![0xff, 0x00]);
+        assert_eq!(t(r#"SET k "a\nb\tc""#)[2], b"a\nb\tc".to_vec());
+        // Inside single quotes only \' and \\ are escapes, as in redis-cli, so \n stays literal.
+        assert_eq!(t(r"SET k 'a\nb'")[2], br"a\nb".to_vec());
+    }
+
+    /// A wrong split is a security decision made on wrong input — the classification below reads
+    /// the first token — so an unbalanced quote must fail rather than best-effort.
+    #[test]
+    fn tokenize_refuses_an_unbalanced_quote() {
+        assert!(tokenize(r#"SET k "abc"#).is_err());
+        assert!(tokenize("SET k 'abc").is_err());
+    }
+
+    #[test]
+    fn read_only_classification_is_case_insensitive() {
+        assert!(is_read_only_cmd(&t("get foo")));
+        assert!(is_read_only_cmd(&t("GET foo")));
+        assert!(is_read_only_cmd(&t("HgEtAlL h")));
+    }
+
+    /// The whole point of a whitelist: anything not listed counts as a write, including module
+    /// commands and whatever a future server version adds. A blacklist could not stay correct.
+    #[test]
+    fn an_unknown_command_is_treated_as_a_write() {
+        for cmd in ["JSON.SET k $ 1", "FT.DROPINDEX idx", "SOMETHING.NEW x", "FLUSHALL", "DEL k"] {
+            assert!(!is_read_only_cmd(&t(cmd)), "{cmd}");
+        }
+        assert!(!is_read_only_cmd(&[]));
+    }
+
+    /// A container command is read-only only for the right SUBcommand — `CONFIG GET` reads,
+    /// `CONFIG SET` writes, and the bare `CONFIG` decides nothing.
+    #[test]
+    fn container_commands_are_judged_by_their_subcommand() {
+        assert!(is_read_only_cmd(&t("CONFIG GET maxmemory")));
+        assert!(!is_read_only_cmd(&t("CONFIG SET maxmemory 0")));
+        assert!(!is_read_only_cmd(&t("CONFIG")));
+        assert!(is_read_only_cmd(&t("SLOWLOG GET 10")));
+        assert!(!is_read_only_cmd(&t("SLOWLOG RESET")));
+    }
+
+    /// DEBUG is deliberately absent from the read-only list: `DEBUG SLEEP` and `DEBUG SEGFAULT`
+    /// are anything but. TOUCH too — it updates the key's LRU/LFU metadata.
+    #[test]
+    fn the_deliberate_omissions_stay_omitted() {
+        assert!(!is_read_only_cmd(&t("DEBUG SLEEP 10")));
+        assert!(!is_read_only_cmd(&t("TOUCH k")));
+    }
+
+    #[test]
+    fn blocking_commands_are_recognised() {
+        for cmd in ["SUBSCRIBE ch", "MONITOR", "BLPOP k 0", "SHUTDOWN", "HELLO 3"] {
+            assert!(is_blocking_cmd(&t(cmd)), "{cmd}");
+        }
+        assert!(!is_blocking_cmd(&t("GET foo")));
+    }
+
+    /// XREAD only hijacks the connection when it carries BLOCK; without it the plain form must
+    /// stay usable in the console.
+    #[test]
+    fn xread_blocks_only_with_the_block_option() {
+        assert!(is_blocking_cmd(&t("XREAD BLOCK 0 STREAMS s $")));
+        assert!(is_blocking_cmd(&t("XREADGROUP GROUP g c BLOCK 0 STREAMS s >")));
+        assert!(!is_blocking_cmd(&t("XREAD COUNT 10 STREAMS s 0")));
+    }
+
+    /// `SELECT n` typed in the console must be routed like the dropdown, or the connection
+    /// switches database while the UI still shows the old index.
+    #[test]
+    fn select_is_detected_only_in_its_exact_shape() {
+        assert_eq!(select_db_arg(&t("SELECT 3")), Some(3));
+        assert_eq!(select_db_arg(&t("select 0")), Some(0));
+        assert_eq!(select_db_arg(&t("SELECT")), None);
+        assert_eq!(select_db_arg(&t("SELECT 1 2")), None);
+        assert_eq!(select_db_arg(&t("SELECT abc")), None);
+        assert_eq!(select_db_arg(&t("GET 3")), None);
+    }
+
+    /// Unparsable input yields (0, 0) so every `version_at_least` check fails — the app falls
+    /// back to the most compatible code path rather than assuming a feature exists.
+    #[test]
+    fn version_parsing_falls_back_to_the_compatible_path() {
+        assert_eq!(parse_version("7.4.1"), (7, 4));
+        assert_eq!(parse_version("6.0.16"), (6, 0));
+        assert_eq!(parse_version(" 255.255.255 "), (255, 255));
+        assert_eq!(parse_version("unknown"), (0, 0));
+        assert_eq!(parse_version(""), (0, 0));
+        assert!(!version_at_least(parse_version("unknown"), (6, 0)));
+    }
+
+    #[test]
+    fn version_at_least_compares_major_then_minor() {
+        assert!(version_at_least((7, 0), (6, 2)));
+        assert!(version_at_least((6, 2), (6, 2)));
+        assert!(!version_at_least((6, 1), (6, 2)));
+        assert!(!version_at_least((5, 9), (6, 0)));
+    }
+}
