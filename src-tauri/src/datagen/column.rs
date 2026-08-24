@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use chrono::{NaiveTime, TimeDelta};
 use serde_json::{json, Map, Value};
 
-use crate::datasets as ds;
+use crate::datagen::datasets as ds;
 
 use super::regex::{parse_regex, sample_regex, Rx};
 use super::rng::{mix_seed, Rng};

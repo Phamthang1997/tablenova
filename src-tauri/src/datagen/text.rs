@@ -1,6 +1,6 @@
 //! Sinh văn bản: lorem, slug, bỏ dấu tiếng Việt, tên người / địa chỉ, và số thẻ hợp Luhn.
 
-use crate::datasets as ds;
+use crate::datagen::datasets as ds;
 
 use super::rng::Rng;
 

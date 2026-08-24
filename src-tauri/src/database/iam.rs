@@ -20,7 +20,7 @@ pub(crate) fn apply_iam_password(orig_config: &Value, conn_config: &mut Value, d
     if !is_iam(orig_config) {
         return Ok(());
     }
-    let token = crate::aws_iam::generate_rds_token(orig_config, default_port)?;
+    let token = crate::credentials::aws_iam::generate_rds_token(orig_config, default_port)?;
     if let Some(obj) = conn_config.as_object_mut() {
         obj.insert("password".to_string(), json!(token));
         let mode = obj.get("sslMode").and_then(|v| v.as_str()).unwrap_or("DISABLED");

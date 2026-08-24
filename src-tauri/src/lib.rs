@@ -1,18 +1,14 @@
 pub mod app;
-pub mod aws_iam;
-pub mod datagen;
-pub mod database;
-pub mod datasets;
 pub mod compare;
+pub mod credentials;
+pub mod database;
+pub mod datagen;
 pub mod export;
-pub mod local_terminal;
-pub mod oauth;
 pub mod redis_db;
-pub mod secret_store;
-pub mod ssh_terminal;
 pub mod ssh_tunnel;
-pub mod stats;
 pub mod state;
+pub mod stats;
+pub mod terminal;
 pub mod tx;
 
 
@@ -30,9 +26,9 @@ pub struct AppState {
     // cancel_query bật cờ để dừng vòng lặp đẩy dữ liệu.
     pub cancel_flags: Mutex<HashMap<String, Arc<AtomicBool>>>,
     // Các phiên SSH Terminal đang mở (session_id -> phiên).
-    pub ssh_terminals: ssh_terminal::SshTerminalMap,
+    pub ssh_terminals: terminal::ssh::SshTerminalMap,
     // Các phiên Local Terminal (shell cục bộ) đang mở.
-    pub local_terminals: local_terminal::LocalTerminalMap,
+    pub local_terminals: terminal::local::LocalTerminalMap,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

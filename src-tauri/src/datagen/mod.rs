@@ -28,6 +28,7 @@
 // that table.
 
 mod column;
+pub mod datasets;
 mod commands;
 mod ident;
 mod meta;
