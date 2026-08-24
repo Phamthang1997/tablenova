@@ -875,7 +875,7 @@ async fn exact_row_count(conn: &DbConnection, count_sql: &str) -> Option<i64> {
 
 /// The planner's own row estimate, when it is both available and large enough to be worth using.
 ///
-/// Same statistics `db_stats.rs` already reads for the database overview, and the same caveats
+/// Same statistics `stats/` already reads for the database overview, and the same caveats
 /// apply: `reltuples` is `-1` on a Postgres table that was never analyzed and MySQL's `TABLE_ROWS`
 /// is an InnoDB guess that can be off by half. Both fall out through `APPROX_COUNT_MIN` rather
 /// than needing a special case — a bogus estimate reads as "small" and gets counted for real.

@@ -4,7 +4,6 @@ pub mod data_generator;
 pub mod database;
 pub mod datasets;
 pub mod db_compare;
-pub mod db_stats;
 pub mod export;
 pub mod local_terminal;
 pub mod oauth;
@@ -13,6 +12,7 @@ pub mod redis_db;
 pub mod secret_store;
 pub mod ssh_terminal;
 pub mod ssh_tunnel;
+pub mod stats;
 pub mod state;
 pub mod tx_session;
 
