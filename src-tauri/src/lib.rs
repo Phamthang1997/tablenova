@@ -1,6 +1,6 @@
 pub mod app;
 pub mod aws_iam;
-pub mod data_generator;
+pub mod datagen;
 pub mod database;
 pub mod datasets;
 pub mod compare;

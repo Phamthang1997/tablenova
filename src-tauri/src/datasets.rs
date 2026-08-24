@@ -1,4 +1,4 @@
-// Embedded word lists used by the "meaningful" generators of `data_generator.rs`.
+// Embedded word lists used by the "meaningful" generators of `datagen.rs`.
 //
 // Bundled as `const` slices rather than fetched or read from disk, for the same reason the
 // fonts in `public/fonts/` are bundled: the app must work offline. Each list is small on
