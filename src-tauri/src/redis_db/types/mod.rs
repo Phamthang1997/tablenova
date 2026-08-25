@@ -1,4 +1,4 @@
-//! Một tệp cho một kiểu dữ liệu Redis.
+//! One file per Redis data type.
 
 mod hash;
 mod json;

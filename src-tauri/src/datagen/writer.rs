@@ -1,8 +1,8 @@
-//! Chạy thật: chuẩn bị từng bảng, dựng INSERT nhiều dòng, ghi theo lô và commit định kỳ.
+//! The real run: preparing each table, building multi-row INSERTs, writing in batches and committing periodically.
 //!
-//! Một connection RIÊNG cho cả lượt chạy (`Exec`): `execute_raw_sql_generic` lấy connection MỚI
-//! từ pool mỗi lần gọi, nên `BEGIN` / `SET FOREIGN_KEY_CHECKS` gửi qua đó sẽ rơi vào một session
-//! khác với các INSERT.
+//! One DEDICATED connection for the whole run (`Exec`): `execute_raw_sql_generic` takes a NEW connection
+//! from the pool on every call, so `BEGIN` / `SET FOREIGN_KEY_CHECKS` sent through it would land on a
+//! different session than the INSERTs.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};

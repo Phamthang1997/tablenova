@@ -1,4 +1,4 @@
-//! Lấy connection ra khỏi registry, và mở connection RIÊNG cho Pub/Sub và Monitor.
+//! Taking a connection out of the registry, and opening a DEDICATED connection for Pub/Sub and Monitor.
 
 use redis::aio::MultiplexedConnection;
 use serde_json::Value;
@@ -13,7 +13,7 @@ pub(crate) async fn make_conn(config: &Value, db_index: i64) -> Result<Multiplex
         .map_err(|e| format!("Không thể kết nối Redis: {}", e))
 }
 
-// Lấy một handle connection đã clone (drop lock trước khi await).
+// Take a cloned connection handle (drop the lock before awaiting).
 pub(crate) fn take_conn(state: &crate::AppState, conn_id: &str) -> Result<MultiplexedConnection, String> {
     Ok(state.connections.acquire_redis(conn_id)?.conn())
 }
@@ -37,8 +37,8 @@ pub(crate) fn ensure_writable(state: &crate::AppState, conn_id: &str) -> Result<
 /// Opens a second connection to the same server/database as the active one.
 pub(crate) async fn dedicated_client(state: &crate::AppState, conn_id: &str) -> Result<redis::Client, String> {
     let ctx = state.connections.acquire_redis(conn_id)?;
-    // Config + db index của CHÍNH kết nối này, không phải của một state toàn cục: Pub/Sub và
-    // Profiler mở socket riêng, và socket đó phải nằm trên đúng db mà tab của nó đang xem.
+    // The config + db index of THIS connection, not of some global state: Pub/Sub and the
+    // Profiler open their own socket, and that socket has to sit on the db its tab is looking at.
     make_client(&ctx.config(), ctx.db_index())
         .map_err(|e| format!("Không mở được kết nối riêng cho Redis: {}", e))
 }

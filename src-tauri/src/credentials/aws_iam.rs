@@ -1,7 +1,7 @@
 // AWS IAM authentication cho RDS/Aurora (MySQL/MariaDB/PostgreSQL).
-// Thay mật khẩu tĩnh bằng TOKEN ngắn hạn (15 phút) ký SigV4 với service "rds-db", dùng làm password.
-// Tự implement SigV4 presign (hmac + sha2) để KHÔNG phải kéo cả AWS SDK.
-// Credential: Access Key (nhập tay) hoặc Profile (đọc ~/.aws/credentials). SSO chưa hỗ trợ.
+// Replaces the static password with a short-lived (15 minute) SigV4-signed TOKEN for the "rds-db" service, used as the password.
+// The SigV4 presign is implemented here (hmac + sha2) so the whole AWS SDK does NOT have to be pulled in.
+// Credentials: an Access Key (typed in) or a Profile (read from ~/.aws/credentials). SSO is not supported yet.
 
 use hmac::{Hmac, Mac, KeyInit};
 use sha2::{Digest, Sha256};
@@ -35,7 +35,7 @@ fn hex(bytes: &[u8]) -> String {
     s
 }
 
-// Mã hoá RFC3986 cho query của SigV4 (giữ A-Za-z0-9 -_.~ ; còn lại %XX in hoa).
+// RFC3986 encoding for the SigV4 query string (keeps A-Za-z0-9 -_.~ ; everything else becomes upper-case %XX).
 fn uri_encode(input: &str) -> String {
     let mut out = String::new();
     for b in input.bytes() {
@@ -49,7 +49,7 @@ fn uri_encode(input: &str) -> String {
     out
 }
 
-// Dò region từ hostname RDS: <name>.<hash>.<region>.rds.amazonaws.com
+// Detect the region from the RDS hostname: <name>.<hash>.<region>.rds.amazonaws.com
 pub fn detect_region(host: &str) -> Option<String> {
     let parts: Vec<&str> = host.split('.').collect();
     if let Some(pos) = parts.iter().position(|p| *p == "rds") {
@@ -64,7 +64,7 @@ fn home_dir() -> Option<String> {
     std::env::var("USERPROFILE").ok().or_else(|| std::env::var("HOME").ok())
 }
 
-// Đọc access key/secret/token của một profile trong ~/.aws/credentials (INI đơn giản).
+// Read the access key/secret/token of one profile in ~/.aws/credentials (a simple INI).
 fn read_profile_creds(profile: &str) -> Result<AwsCreds, String> {
     let path = std::env::var("AWS_SHARED_CREDENTIALS_FILE").ok().unwrap_or_else(|| {
         let home = home_dir().unwrap_or_default();
@@ -122,7 +122,7 @@ fn resolve_creds(config: &Value) -> Result<AwsCreds, String> {
     Ok(AwsCreds { access_key: ak.to_string(), secret_key: sk.to_string(), session_token: token })
 }
 
-// Sinh RDS IAM auth token = URL đã presign SigV4 (bỏ scheme https://). Dùng làm password.
+// Build the RDS IAM auth token = the SigV4-presigned URL (with the https:// scheme stripped). Used as the password.
 pub fn generate_rds_token(config: &Value, default_port: u16) -> Result<String, String> {
     let host = config.get("host").and_then(|v| v.as_str())
         .filter(|s| !s.trim().is_empty()).ok_or("Thiếu host RDS")?;
@@ -144,7 +144,7 @@ pub fn generate_rds_token(config: &Value, default_port: u16) -> Result<String, S
     let credential_scope = format!("{}/{}/{}/aws4_request", datestamp, region, service);
     let host_header = format!("{}:{}", host.to_lowercase(), port);
 
-    // Query params (chưa gồm chữ ký). Phải URI-encode cả key lẫn value, rồi sort theo key đã encode.
+    // Query params (signature not included yet). Both key and value must be URI-encoded, then sorted by the encoded key.
     let mut params: Vec<(String, String)> = vec![
         ("Action".into(), "connect".into()),
         ("DBUser".into(), user.to_string()),
@@ -171,7 +171,7 @@ pub fn generate_rds_token(config: &Value, default_port: u16) -> Result<String, S
 
     let canonical_headers = format!("host:{}\n", host_header);
     let signed_headers = "host";
-    let payload_hash = sha256_hex(b""); // GET không body
+    let payload_hash = sha256_hex(b""); // GET has no body
 
     let canonical_request = format!(
         "GET\n/\n{}\n{}\n{}\n{}",
@@ -186,7 +186,7 @@ pub fn generate_rds_token(config: &Value, default_port: u16) -> Result<String, S
         sha256_hex(canonical_request.as_bytes())
     );
 
-    // Khoá ký SigV4
+    // SigV4 signing key
     let k_date = hmac_sha256(format!("AWS4{}", creds.secret_key).as_bytes(), datestamp.as_bytes());
     let k_region = hmac_sha256(&k_date, region.as_bytes());
     let k_service = hmac_sha256(&k_region, service.as_bytes());

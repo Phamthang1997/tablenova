@@ -1,4 +1,4 @@
-//! CHECK constraint của một bảng.
+//! A table's CHECK constraints.
 
 use serde_json::{json, Value};
 

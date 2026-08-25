@@ -1,4 +1,4 @@
-//! Mọi `#[tauri::command]` liên quan tới SQL, một nhóm một tệp.
+//! Every SQL-related `#[tauri::command]`, one group per file.
 
 pub mod objects;
 

@@ -1,4 +1,4 @@
-//! Trích dẫn định danh và literal theo từng dialect. Mọi chỗ dựng SQL từ tên bảng/cột đi qua đây.
+//! Quoting identifiers and literals per dialect. Every place that builds SQL from a table/column name goes through here.
 
 use serde_json::Value;
 
@@ -20,7 +20,7 @@ pub(crate) fn sql_str(s: &str) -> String {
     s.replace('\'', "''")
 }
 
-// Bọc định danh theo dialect (MySQL backtick, còn lại double quote), nhân đôi ký tự đóng.
+// Wrap an identifier per dialect (backticks on MySQL, double quotes elsewhere), doubling the closing character.
 pub(crate) fn quote_ident(conn: &DbConnection, name: &str) -> String {
     match &conn.kind {
         DbKind::Mysql(_) => format!("`{}`", name.replace('`', "``")),
@@ -44,9 +44,9 @@ pub(crate) fn qualified(conn: &DbConnection, schema: &Option<String>, table: &st
     }
 }
 
-// Bật/tắt kiểm tra khóa ngoại ở MỨC SESSION. Chỉ đúng khi mọi lệnh dùng chung một `Exec`.
-// Dùng try_run: server từ chối (Postgres `session_replication_role` cần superuser) thì lệnh
-// chính vẫn phải chạy, và lệnh khôi phục vẫn phải thử dù lệnh chính đã lỗi.
+// Turn foreign-key checks on/off at the SESSION level. Only correct when every statement shares one `Exec`.
+// Uses try_run: when the server refuses (Postgres' `session_replication_role` needs superuser) the main
+// statement must still run, and the restoring statement must still be attempted even if the main one failed.
 pub(crate) fn fk_checks_sql(conn: &DbConnection, on: bool) -> &'static str {
     match &conn.kind {
         DbKind::Mysql(_) => {
@@ -61,8 +61,8 @@ pub(crate) fn fk_checks_sql(conn: &DbConnection, on: bool) -> &'static str {
     }
 }
 
-// Định dạng một giá trị JSON thành literal SQL (theo cùng quy ước với commit_changes/export):
-// null -> NULL, chuỗi -> '...' (escape nháy đơn), còn lại (số/bool) -> to_string().
+// Format one JSON value as a SQL literal (following the same convention as commit_changes/export):
+// null -> NULL, string -> '...' (single quotes escaped), everything else (numbers/bools) -> to_string().
 pub(crate) fn sql_literal(v: Option<&Value>) -> String {
     match v {
         None | Some(Value::Null) => "NULL".to_string(),

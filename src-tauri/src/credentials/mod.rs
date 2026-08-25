@@ -1,7 +1,7 @@
-//! Thông tin xác thực: nơi lấy và nơi cất.
+//! Credentials: where they come from and where they are kept.
 //!
-//! Ba tệp này KHÔNG dùng chung code — chúng dùng chung một mối quan tâm. Gom lại để câu hỏi
-//! "app giữ bí mật ở đâu, và lấy chúng bằng cách nào" có đúng một chỗ để trả lời.
+//! These three files share NO code — they share a concern. Grouping them gives the question
+//! "where does the app keep its secrets, and how does it obtain them" exactly one place to be answered.
 
 pub mod aws_iam;
 pub mod oauth;

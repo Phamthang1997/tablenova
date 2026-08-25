@@ -1,5 +1,5 @@
-//! State machine của một phiên: connection được pin, bộ đếm câu lệnh chờ commit,
-//! savepoint, và việc phát `tx-state-changed` về frontend.
+//! The state machine of one session: the pinned connection, the counter of statements waiting to be committed,
+//! savepoints, and emitting `tx-state-changed` to the frontend.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};

@@ -1,11 +1,11 @@
 //! SSH tunnel (local port forwarding).
 //!
-//! Mở listener TCP ở `127.0.0.1:<cổng ngẫu nhiên>`; mỗi kết nối tới được chuyển tiếp qua kênh
-//! `direct-tcpip` của phiên SSH tới `(remote_host, remote_port)` NHÌN TỪ máy chủ SSH. sqlx/redis
-//! kết nối tới cổng local đó thay vì host thật.
+//! Opens a TCP listener on `127.0.0.1:<random port>`; every incoming connection is forwarded over a
+//! `direct-tcpip` channel of the SSH session to `(remote_host, remote_port)` AS SEEN FROM the SSH
+//! server. sqlx/redis then connect to that local port instead of the real host.
 //!
-//! **Thả handle là đóng cổng**, nên ai sở hữu kết nối cũng phải sở hữu tunnel:
-//! `ServerHandle.ssh_tunnel` cho SQL lẫn Redis.
+//! **Dropping the handle closes the port**, so whoever owns the connection must own the tunnel:
+//! `ServerHandle.ssh_tunnel`, for SQL as well as Redis.
 
 use std::sync::Arc;
 
@@ -19,33 +19,33 @@ use super::auth::{connect_and_auth, SshHandler};
 pub struct SshTunnel {
     pub local_port: u16,
     accept_task: JoinHandle<()>,
-    // Giữ phiên SSH sống suốt vòng đời tunnel (drop Handle sẽ ngắt phiên)
+    // Keep the SSH session alive for the tunnel's whole lifetime (dropping the Handle tears the session down)
     _session: Arc<Handle<SshHandler>>,
 }
 
 impl Drop for SshTunnel {
     fn drop(&mut self) {
-        // Dừng vòng lặp accept; Arc<Handle> giảm ref -> phiên SSH đóng khi không còn tham chiếu
+        // Stop the accept loop; the Arc<Handle> refcount drops -> the SSH session closes once nothing references it
         self.accept_task.abort();
     }
 }
 
 impl SshTunnel {
-    /// Mở tunnel. `config` chứa các trường ssh* (từ frontend); `remote_host`/`remote_port`
-    /// là địa chỉ DB nhìn từ phía máy chủ SSH.
+    /// Open the tunnel. `config` carries the ssh* fields (from the frontend); `remote_host`/`remote_port`
+    /// is the DB address as seen from the SSH server.
     pub async fn open(config: &Value, remote_host: &str, remote_port: u16) -> Result<SshTunnel, String> {
-        // 1+2. Kết nối + xác thực (dùng chung với terminal)
+        // 1+2. Connect + authenticate (shared with the terminal)
         let handle = connect_and_auth(config).await?;
 
         let session = Arc::new(handle);
 
-        // 3. Listener local trên cổng ngẫu nhiên
+        // 3. Local listener on a random port
         let listener = TcpListener::bind(("127.0.0.1", 0u16))
             .await
             .map_err(|e| format!("Lỗi mở cổng chuyển tiếp local: {}", e))?;
         let local_port = listener.local_addr().map_err(|e| e.to_string())?.port();
 
-        // 4. Vòng lặp accept: mỗi kết nối -> mở kênh direct-tcpip và bơm dữ liệu hai chiều
+        // 4. Accept loop: each connection -> open a direct-tcpip channel and pump data both ways
         let remote_host = remote_host.to_string();
         let session_for_task = session.clone();
         let accept_task = tokio::spawn(async move {

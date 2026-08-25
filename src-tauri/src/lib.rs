@@ -1,5 +1,5 @@
-//! Gốc crate. Ở đây CHỈ có thứ duy nhất nó làm được: danh sách module, cộng hai re-export giữ
-//! nguyên đường dẫn cũ (`tablenova::run` cho `main.rs`, `crate::AppState` cho 152 call site).
+//! Crate root. It holds ONLY what nothing else can: the module list, plus two re-exports that keep
+//! the old paths working (`tablenova::run` for `main.rs`, `crate::AppState` for 152 call sites).
 
 pub mod app;
 pub mod compare;

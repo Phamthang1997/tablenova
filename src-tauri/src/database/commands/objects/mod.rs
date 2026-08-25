@@ -1,5 +1,5 @@
-//! Các đối tượng khác bảng: view, trigger, routine, sequence, partition, check constraint.
-//! Một tệp cho một loại đối tượng.
+//! The objects other than tables: views, triggers, routines, sequences, partitions, check constraints.
+//! One file per kind of object.
 
 mod constraints;
 mod listing;

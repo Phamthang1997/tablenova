@@ -1,8 +1,8 @@
-//! PRNG xoshiro256** có hạt giống, viết tay (~30 dòng) — không `rand`, không entropy của OS,
-//! không đồng hồ. Cùng spec + cùng seed thì dữ liệu sinh ra giống hệt tới từng byte.
+//! A seeded xoshiro256** PRNG, written by hand (~30 lines) — no `rand`, no OS entropy,
+//! no clock. The same spec + the same seed generates byte-identical data.
 //!
-//! Mỗi cột rút từ SUBSTREAM RIÊNG (`mix_seed`). Một stream dùng chung sẽ khiến sửa cột thứ 3
-//! làm đổi giá trị của mọi cột sau nó, và preview nhảy loạn theo từng phím gõ.
+//! Each column draws from its OWN SUBSTREAM (`mix_seed`). One shared stream would make editing column 3
+//! change the values of every column after it, and the preview would jump on every keystroke.
 
 
 // ===================== Seeded PRNG =====================

@@ -1,4 +1,4 @@
-//! Funnel 3: đẩy kết quả về frontend theo lô trong lúc truy vấn còn đang chạy.
+//! Funnel 3: pushing results to the frontend in batches while the query is still running.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -15,11 +15,11 @@ use super::super::read_only::reject_if_read_only;
 use super::super::rows::uniquify_columns;
 use super::super::splitter::split_sql_statements;
 
-// Số dòng gom lại trước mỗi lần đẩy batch qua Channel về frontend khi stream kết quả SQL.
+// How many rows are gathered before each batch is pushed to the frontend over the Channel when streaming SQL results.
 const STREAM_BATCH: usize = 500;
 
-// Tách và stream lần lượt từng câu lệnh. Trả về (số câu lệnh đã chạy, có bị hủy không).
-// Lỗi trả về (chỉ số câu lệnh gặp lỗi, thông báo).
+// Split the SQL and stream one statement after another. Returns (number of statements run, whether it was cancelled).
+// On error it returns (the index of the failing statement, the message).
 pub(crate) async fn stream_sql_statements(
     conn: &DbConnection,
     sql: &str,
@@ -28,8 +28,8 @@ pub(crate) async fn stream_sql_statements(
     cancel: &Arc<AtomicBool>,
 ) -> Result<(usize, bool), (usize, String)> {
     let statements = split_sql_statements(sql);
-    // Tham số truy vấn (parameterized) chỉ hỗ trợ đúng MỘT câu lệnh: binding theo vị trí
-    // không thể phân bổ an toàn qua nhiều câu lệnh. Báo lỗi rõ ràng thay vì đoán mò.
+    // Query parameters are supported for exactly ONE statement: positional binding
+    // cannot be safely distributed across several statements. Report a clear error rather than guessing.
     if !params.is_empty() && statements.len() > 1 {
         return Err((0, "Tham số truy vấn chỉ hỗ trợ một câu lệnh. Vui lòng chạy từng câu lệnh riêng hoặc tắt Tham số Truy vấn.".to_string()));
     }
@@ -38,7 +38,7 @@ pub(crate) async fn stream_sql_statements(
         if cancel.load(Ordering::Relaxed) {
             return Ok((idx, true));
         }
-        // params chỉ áp cho câu lệnh duy nhất (đã chặn multi-statement ở trên).
+        // params only apply to the single statement (multi-statement was rejected above).
         stream_one_statement(conn, &stmt, params, idx, channel, cancel)
             .await
             .map_err(|e| (idx, e))?;
@@ -47,7 +47,7 @@ pub(crate) async fn stream_sql_statements(
     Ok((idx, cancel.load(Ordering::Relaxed)))
 }
 
-// Stream kết quả của MỘT câu lệnh: emit "columns" rồi các batch "rows".
+// Stream the result of ONE statement: emit "columns", then the "rows" batches.
 pub(crate) async fn stream_one_statement(
     conn: &DbConnection,
     sql: &str,
@@ -86,7 +86,7 @@ pub(crate) async fn sqlite_stream(
     channel: &Channel<Value>,
     cancel: &Arc<AtomicBool>,
 ) -> Result<(), String> {
-    // rusqlite là đồng bộ -> chạy trong spawn_blocking để không chặn runtime async.
+    // rusqlite is synchronous -> run it in spawn_blocking so the async runtime is not blocked.
     let conn_arc = conn_arc.clone();
     let channel = channel.clone();
     let cancel = cancel.clone();
@@ -96,7 +96,7 @@ pub(crate) async fn sqlite_stream(
         let c = conn_arc.lock().map_err(|e| e.to_string())?;
         let mut stmt = c.prepare(&sql).map_err(|e| e.to_string())?;
         let col_count = stmt.column_count();
-        // Câu lệnh không trả về cột (INSERT/UPDATE/DELETE/DDL...) -> execute và báo số dòng ảnh hưởng.
+        // A statement that returns no columns (INSERT/UPDATE/DELETE/DDL...) -> execute it and report the affected rows.
         if col_count == 0 {
             let affected = stmt
                 .execute(rusqlite::params_from_iter(sqlite_params.iter()))
@@ -162,10 +162,10 @@ pub(crate) async fn pg_stream(
         let _ = channel.send(json!({ "type": "columns", "stmtIndex": stmt_index, "query": sql, "columns": Vec::<String>::new() }));
         return Ok(());
     }
-    // Dò xem câu lệnh có trả về cột không (qua prepared statement). Nếu không -> execute + báo affected.
+    // Probe whether the statement returns columns (via a prepared statement). If not -> execute + report affected.
     let returns_rows = match (&mut *conn).prepare(sqlx::AssertSqlSafe(sql.to_string()).into_sql_str()).await {
         Ok(st) => !st.columns().is_empty(),
-        Err(_) => true, // prepare lỗi -> cứ thử fetch theo đường cũ
+        Err(_) => true, // prepare failed -> just try fetching the old way
     };
     if !returns_rows {
         let r = bind_pg_params(sqlx::query(sqlx::AssertSqlSafe(sql.to_string())), params)
@@ -236,13 +236,13 @@ pub(crate) async fn mysql_stream(
         let _ = channel.send(json!({ "type": "columns", "stmtIndex": stmt_index, "query": sql, "columns": Vec::<String>::new() }));
         return Ok(());
     }
-    // Dò xem câu lệnh có trả về cột không. Nếu không -> execute + báo affected.
+    // Probe whether the statement returns columns. If not -> execute + report affected.
     let returns_rows = match (&mut *conn).prepare(sqlx::AssertSqlSafe(sql.to_string()).into_sql_str()).await {
         Ok(st) => !st.columns().is_empty(),
         Err(_) => {
-            // Không prepare được (CREATE/DROP TRIGGER|PROCEDURE|FUNCTION|EVENT -> lỗi 1295,
-            // hoặc cú pháp lỗi). Chạy bằng text protocol: đúng cho DDL, còn cú pháp sai thì
-            // lỗi thật của server được trả về ở đây.
+            // It could not be prepared (CREATE/DROP TRIGGER|PROCEDURE|FUNCTION|EVENT -> error 1295,
+            // or a syntax error). Run it over the text protocol: correct for DDL, and for bad syntax
+            // the server's real error comes back here.
             let r = sqlx::raw_sql(sqlx::AssertSqlSafe(sql.to_string()))
                 .execute(&mut *conn)
                 .await

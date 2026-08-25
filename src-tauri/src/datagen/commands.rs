@@ -1,4 +1,4 @@
-//! Bốn `#[tauri::command]` của Data Generator.
+//! The four `#[tauri::command]`s of the Data Generator.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -166,8 +166,8 @@ pub async fn cancel_data_generation(
 pub async fn generate_data(
     state: State<'_, AppState>, conn_id: String,
     spec: GenSpec,
-    // Bắt buộc (không dùng Option): Channel không impl Deserialize nên `Option<Channel<_>>`
-    // không thoả CommandArg — frontend luôn tạo kênh.
+    // Mandatory (not an Option): Channel does not implement Deserialize, so `Option<Channel<_>>`
+    // does not satisfy CommandArg — and the frontend always creates the channel.
     on_progress: Channel<Value>,
 ) -> Result<Value, String> {
     // Same reason as restore_backup: this runs on its own connection and would block on the locks

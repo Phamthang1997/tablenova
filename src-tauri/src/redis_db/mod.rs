@@ -1,11 +1,11 @@
-// Hỗ trợ Redis như một loại DB thứ 4 — TÁCH BIỆT khỏi enum DbConnection (SQL) để không phá vỡ
-// hàng loạt match sẵn có, nhưng nằm CHUNG registry `conn_id` với SQL
-// (`docs/redis-ui-unification-plan.md` §2.3): một danh sách kết nối đang mở cho `DbRail`, một vòng
-// đời, một cờ read-only. `RedisState` — một connection và một db_index cho cả app — đã bị xoá.
+// Redis support as a 4th kind of DB — kept SEPARATE from the DbConnection enum (SQL) so that a pile of
+// existing matches are not broken, but sharing the `conn_id` registry with SQL
+// (`docs/redis-ui-unification-plan.md` §2.3): one list of open connections for `DbRail`, one lifecycle,
+// one read-only flag. `RedisState` — one connection and one db_index for the whole app — has been deleted.
 //
-// Một `conn_id` = một `(server, db index)` (§2.1). Đổi db index là MỞ MỘT KẾT NỐI KHÁC, không phải
-// đổi state dùng chung; đó là thứ giữ cho hai tab key mở trên hai db không đọc nhầm của nhau.
-// Dùng redis::aio::MultiplexedConnection (Clone rẻ) theo pattern: lock -> clone -> drop lock -> await.
+// One `conn_id` = one `(server, db index)` (§2.1). Changing the db index OPENS ANOTHER CONNECTION, it does not
+// change shared state; that is what keeps two key tabs open on two dbs from reading each other's data.
+// Uses redis::aio::MultiplexedConnection (cheap to Clone) with the pattern: lock -> clone -> drop lock -> await.
 
 pub mod cmds;
 pub mod keys;

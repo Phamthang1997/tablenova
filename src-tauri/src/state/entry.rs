@@ -1,4 +1,4 @@
-//! Một mục trong registry: kết nối SQL hoặc Redis, cùng những gì riêng của nó.
+//! One entry in the registry: a SQL or Redis connection, together with whatever is specific to it.
 
 use std::sync::Arc;
 

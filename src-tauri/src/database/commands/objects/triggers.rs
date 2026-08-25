@@ -1,4 +1,4 @@
-//! Trigger: liệt kê theo bảng hoặc toàn database, lưu và xoá.
+//! Triggers: listing them per table or database-wide, saving and dropping them.
 
 use serde_json::{json, Value};
 

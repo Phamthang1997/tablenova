@@ -44,7 +44,7 @@ pub const LAST_NAMES_VI: &[&str] = &[
     "Hồ", "Ngô", "Dương", "Lý", "Đinh", "Trịnh", "Đoàn", "Lâm", "Mai", "Cao", "Tạ", "Thái",
 ];
 
-/// Middle names used to build a realistic Vietnamese full name (Họ + đệm + tên).
+/// Middle names used to build a realistic Vietnamese full name (surname + middle name + given name).
 pub const MIDDLE_NAMES_VI: &[&str] = &["Văn", "Thị", "Hữu", "Minh", "Đức", "Ngọc", "Thanh", "Quang", "Thu", "Gia"];
 
 pub const CITIES_EN: &[&str] = &[

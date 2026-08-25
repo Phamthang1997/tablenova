@@ -1,4 +1,4 @@
-//! Thao tác trên key, không phụ thuộc kiểu dữ liệu của nó.
+//! Key operations, independent of the key's data type.
 
 pub mod manage;
 pub mod read;

@@ -1,7 +1,7 @@
-//! `ai_chat` — điểm cuối của bảng AI Copilot (`AiAssistant.tsx`).
+//! `ai_chat` — the endpoint behind the AI Copilot panel (`AiAssistant.tsx`).
 //!
-//! Vẫn là STUB: nó echo lại prompt. Nằm ở `app/` chứ không ở `database/commands/` vì nó không
-//! chạm tới database nào — nó chỉ tình cờ được khai báo cạnh các lệnh SQL từ thuở một tệp.
+//! Still a STUB: it echoes the prompt back. It lives in `app/` rather than `database/commands/`
+//! because it touches no database — it only happened to be declared next to the SQL commands back when everything was one file.
 
 use serde_json::{json, Value};
 

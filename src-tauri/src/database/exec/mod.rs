@@ -1,5 +1,5 @@
-//! Ba funnel thực thi SQL. Cùng một thân hàm chạy dù connection đến từ pool hay từ
-//! phiên transaction đã được pin — xem `tx.rs`.
+//! The three SQL execution funnels. The same function body runs whether the connection came from the pool
+//! or from a pinned transaction session — see `tx.rs`.
 
 pub mod bound;
 pub mod raw;

@@ -1,5 +1,5 @@
-//! Trích dẫn định danh theo dialect. Chỉ Postgres mới được qualify bằng schema, nên đầu ra
-//! cho MySQL/SQLite không đổi.
+//! Identifier quoting per dialect. Only Postgres gets schema-qualified, so the output for
+//! MySQL/SQLite is unchanged.
 
 
 pub(super) fn quote_char(dialect: &str) -> char {

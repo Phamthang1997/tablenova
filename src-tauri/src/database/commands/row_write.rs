@@ -1,4 +1,4 @@
-//! Ghi dữ liệu: lưu sửa đổi từ lưới, và nạp hàng loạt (import).
+//! Writing data: saving the grid's edits, and bulk loading (import).
 
 use serde_json::{json, Value};
 
@@ -19,11 +19,11 @@ pub async fn commit_changes(state: tauri::State<'_, crate::AppState>, conn_id: S
 
     let table_name = payload.get("tableName").and_then(|v| v.as_str()).ok_or("Thiếu tên bảng")?;
     let changes = payload.get("changes").and_then(|v| v.as_array()).ok_or("Thiếu danh sách thay đổi")?;
-    // Chế độ xem trước: chỉ dựng SQL, không thực thi
+    // Preview mode: only build the SQL, do not execute it
     let preview = payload.get("preview").and_then(|v| v.as_bool()).unwrap_or(false);
 
-    // Xác định cột khóa chính: ưu tiên giá trị frontend gửi lên, nếu không có thì tự dò từ schema, cuối cùng mới fallback "id"
-    // Cùng schema với các câu ghi bên dưới — xem chú thích ở get_primary_key_columns.
+    // Determine the primary-key column: prefer the value the frontend sent, otherwise detect it from the schema, and only then fall back to "id"
+    // The same schema as the write statements below — see the note on get_primary_key_columns.
     let pk_col = match payload.get("primaryKey").and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()) {
         Some(pk) => pk.to_string(),
         None => detect_primary_key(&conn_type, &schema, table_name).await.unwrap_or_else(|| "id".to_string()),
@@ -105,7 +105,7 @@ pub async fn commit_changes(state: tauri::State<'_, crate::AppState>, conn_id: S
         }
     }
 
-    // Xem trước: trả về danh sách SQL, không chạy
+    // Preview: return the list of SQL statements without running them
     if preview {
         return Ok(json!({ "success": true, "preview": true, "sqls": sqls }));
     }
@@ -165,7 +165,7 @@ pub async fn import_new_table(state: tauri::State<'_, crate::AppState>, conn_id:
     let is_pg = matches!(&conn_type.kind, DbKind::Postgres(_));
     let q = if is_mysql { '`' } else { '"' };
 
-    // Cột = hợp các key (giữ thứ tự xuất hiện lần đầu).
+    // Columns = the union of the keys (in order of first appearance).
     let mut col_order: Vec<String> = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for row in &rows {
@@ -181,7 +181,7 @@ pub async fn import_new_table(state: tauri::State<'_, crate::AppState>, conn_id:
         return Err("Dữ liệu import không có cột nào".to_string());
     }
 
-    // Suy kiểu mỗi cột: mọi giá trị non-null là số nguyên -> INT; là số (có phần thập phân) -> REAL/DOUBLE; còn lại -> TEXT.
+    // Infer each column's type: every non-null value an integer -> INT; a number (with a fractional part) -> REAL/DOUBLE; anything else -> TEXT.
     let mut defs: Vec<String> = Vec::new();
     for c in &col_order {
         let (mut all_int, mut all_num, mut any) = (true, true, false);
@@ -216,8 +216,8 @@ pub async fn import_new_table(state: tauri::State<'_, crate::AppState>, conn_id:
     Ok(json!({ "success": true, "inserted": inserted }))
 }
 
-// Chèn hàng loạt dòng vào một bảng đã tồn tại. Gộp mỗi BATCH dòng vào một câu INSERT nhiều VALUES.
-// Cột lấy từ hợp (union) các key của các dòng, giữ thứ tự xuất hiện lần đầu.
+// Bulk-insert rows into an existing table. Every BATCH rows are folded into one multi-VALUES INSERT.
+// The columns come from the union of the rows' keys, in order of first appearance.
 async fn bulk_insert(conn: &DbConnection, schema: &Option<String>, table: &str, rows: &[Value]) -> Result<usize, String> {
     if rows.is_empty() {
         return Ok(0);
@@ -255,7 +255,7 @@ async fn bulk_insert(conn: &DbConnection, schema: &Option<String>, table: &str, 
                 .collect();
             values_list.push(format!("({})", vals.join(", ")));
         }
-        // MySQL/SQLite/PG đều chấp nhận cú pháp INSERT nhiều VALUES.
+        // MySQL/SQLite/PG all accept the multi-VALUES INSERT syntax.
         let sql = format!("INSERT INTO {} ({}) VALUES {};", quoted_table, cols_sql, values_list.join(", "));
         execute_raw_sql_generic(conn, sql).await?;
         inserted += chunk.len();

@@ -1,11 +1,11 @@
-//! Nói chuyện SSH. Hai nhiệm vụ tách rời nhau, và `auth` là phần dùng chung:
+//! Speaking SSH. Two separate jobs, with `auth` as the shared part:
 //!
-//! - `auth.rs`   — kết nối + xác thực (password hoặc private key)
-//! - `tunnel.rs` — chuyển tiếp cổng cho SQL và Redis
+//! - `auth.rs`   — connect + authenticate (password or private key)
+//! - `tunnel.rs` — port forwarding for SQL and Redis
 //!
-//! `terminal/ssh.rs` (PTY/shell) cũng dùng `auth` nhưng KHÔNG nằm ở đây: nó thuộc về
-//! `terminal/` cùng bản local, vì hai bảng terminal chia nhau một giao thức message và đó
-//! mới là ràng buộc dễ vỡ. SSH chỉ là đường truyền của nó.
+//! `terminal/ssh.rs` (PTY/shell) uses `auth` too but is NOT here: it belongs to
+//! `terminal/` next to the local one, because the two terminal panels share one message protocol
+//! and that is the fragile constraint. SSH is only its transport.
 
 pub mod auth;
 pub mod tunnel;

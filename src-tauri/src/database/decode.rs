@@ -1,13 +1,13 @@
-//! Chuyển đổi ở biên driver: đọc một ô ra `serde_json::Value`, và bind tham số theo chiều ngược lại.
+//! Conversion at the driver boundary: reading one cell into a `serde_json::Value`, and binding parameters the other way.
 //!
-//! Hai macro ở đây cố tình nhận `$col` không định kiểu để cả `&str` lẫn `usize` đều dùng được —
-//! dạng `&str` CHỈ dành cho truy vấn introspection viết tay với alias chắc chắn không trùng.
+//! The two macros here deliberately take an untyped `$col` so both a `&str` and a `usize` work —
+//! the `&str` form is ONLY for hand-written introspection queries whose aliases are certainly unique.
 
 use serde_json::Value;
 
-// Giải mã một ô dữ liệu Postgres sang serde_json::Value.
-// Thử lần lượt nhiều kiểu để không mất dữ liệu: số nguyên/thực, bool, NUMERIC, ngày giờ, UUID, JSON, chuỗi, blob.
-// Kiểu ngày/số thập phân/json/uuid được hỗ trợ nhờ bật feature trên sqlx-postgres (không kéo sqlx-sqlite).
+// Decode one Postgres cell into a serde_json::Value.
+// Several types are tried in turn so nothing is lost: integers/floats, bool, NUMERIC, date/time, UUID, JSON, string, blob.
+// The date/decimal/json/uuid types are supported by enabling features on sqlx-postgres (without pulling in sqlx-sqlite).
 macro_rules! decode_pg_cell {
     // `$col` may be a column name OR a 0-based index (both implement sqlx::ColumnIndex).
     // Callers reading a result set must pass the INDEX: `try_get` by name resolves to the
@@ -64,7 +64,7 @@ macro_rules! decode_pg_cell {
 
 pub(crate) use decode_pg_cell;
 
-// Giải mã một ô dữ liệu MySQL (bao gồm cả kiểu số không dấu, DECIMAL, ngày giờ, JSON).
+// Decode one MySQL cell (including unsigned integer types, DECIMAL, date/time and JSON).
 macro_rules! decode_mysql_cell {
     // Same contract as decode_pg_cell!: pass the 0-based INDEX when reading a result set.
     ($row:expr, $col:expr) => {{
@@ -115,8 +115,8 @@ macro_rules! decode_mysql_cell {
 
 pub(crate) use decode_mysql_cell;
 
-// Chuyển một giá trị JSON (do frontend gửi kèm tham số truy vấn) sang rusqlite Value để bind.
-// Dùng cho parameterized query ở SQLite — tránh nội suy chuỗi (chống SQL injection).
+// Convert one JSON value (sent by the frontend as a query parameter) into a rusqlite Value to bind.
+// Used for parameterized queries on SQLite — avoiding string interpolation (SQL injection safe).
 pub(crate) fn json_to_sqlite_value(v: &Value) -> rusqlite::types::Value {
     use rusqlite::types::Value as SV;
     match v {
@@ -130,7 +130,7 @@ pub(crate) fn json_to_sqlite_value(v: &Value) -> rusqlite::types::Value {
     }
 }
 
-// Bind lần lượt danh sách tham số JSON vào một sqlx::query cho Postgres (giữ nguyên kiểu để DB không báo lỗi cast).
+// Bind the list of JSON parameters onto a sqlx::query for Postgres, in order (keeping the types so the DB does not complain about casts).
 pub(crate) fn bind_pg_params<'q>(
     mut q: sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments>,
     params: &[Value],
@@ -149,7 +149,7 @@ pub(crate) fn bind_pg_params<'q>(
     q
 }
 
-// Bind lần lượt danh sách tham số JSON vào một sqlx::query cho MySQL.
+// Bind the list of JSON parameters onto a sqlx::query for MySQL, in order.
 pub(crate) fn bind_mysql_params<'q>(
     mut q: sqlx::query::Query<'q, sqlx::MySql, sqlx::mysql::MySqlArguments>,
     params: &[Value],

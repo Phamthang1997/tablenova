@@ -1,10 +1,10 @@
-//! Danh sách MỌI `#[tauri::command]` của app. Thêm một command mà quên khai ở đây thì
-//! frontend gọi sẽ lỗi runtime "unknown command", compiler không bắt được.
+//! The list of EVERY `#[tauri::command]` in the app. Add a command but forget to declare it here and
+//! the frontend call fails at runtime with "unknown command"; the compiler cannot catch it.
 
-/// Trả về handler cho `Builder::invoke_handler`.
+/// Returns the handler for `Builder::invoke_handler`.
 ///
-/// `generate_handler!` sinh ra một closure; bọc trong hàm để `lib.rs` không phải mang theo
-/// 150 dòng đường dẫn.
+/// `generate_handler!` expands to a closure; wrapping it in a function keeps `lib.rs` from carrying
+/// 150 lines of paths.
 pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
         crate::database::connect_db,

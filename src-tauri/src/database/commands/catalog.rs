@@ -1,5 +1,5 @@
-//! Đọc metadata của database hiện tại: danh sách bảng, catalog cho autocomplete,
-//! số dòng (chính xác hay ước tính) và khoá chính.
+//! Reading the current database's metadata: the table list, the catalog for autocomplete,
+//! row counts (exact or estimated) and primary keys.
 
 use serde_json::{json, Value};
 use sqlx::Row;
@@ -9,10 +9,10 @@ use crate::database::{
     DbConnection, DbKind,
 };
 
-// Lấy toàn bộ catalog (bảng + cột/kiểu/PK + FK) trong ÍT truy vấn để smart-completion nạp 1 lần
-// thay vì gọi get_table_schema từng bảng. Chỉ MySQL/Postgres (dùng information_schema);
+// Fetch the whole catalog (tables + columns/types/PK + FKs) in FEW queries so smart completion loads once
+// instead of calling get_table_schema per table. MySQL/Postgres only (they have information_schema);
 
-// SQLite trả về rỗng -> frontend fallback lazy per-table.
+// SQLite returns empty -> the frontend falls back to lazy per-table loading.
 #[tauri::command]
 pub async fn get_full_catalog(state: tauri::State<'_, crate::AppState>, conn_id: String) -> Result<Value, String> {
     let (conn_type, db_type, schema) = {
@@ -60,7 +60,7 @@ pub async fn get_full_catalog(state: tauri::State<'_, crate::AppState>, conn_id:
                 arr.push(json!({ "name": cell(&row, "c"), "type": cell(&row, "ty"), "isPrimaryKey": false }));
             }
         }
-        // PK: đánh dấu isPrimaryKey
+        // PK: mark isPrimaryKey
         let pk_sql = format!("SELECT tc.table_name AS t, kcu.column_name AS c FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema WHERE tc.constraint_type = 'PRIMARY KEY' AND tc.table_schema = '{sch}'");
         for row in rows_of(&execute_raw_sql_generic(&conn_type, pk_sql).await?) {
             let t = cell(&row, "t");
@@ -82,7 +82,7 @@ pub async fn get_full_catalog(state: tauri::State<'_, crate::AppState>, conn_id:
             }
         }
     }
-    // SQLite: trả rỗng -> frontend tự lazy per-table
+    // SQLite: return empty -> the frontend does its own lazy per-table loading
 
     Ok(json!({ "columns": columns_map, "foreignKeys": fk_map }))
 }
@@ -203,7 +203,7 @@ pub(super) async fn estimate_row_count(conn: &DbConnection, schema: &Option<Stri
     (n >= APPROX_COUNT_MIN).then_some(n)
 }
 
-// Lấy danh sách cột khóa chính của một bảng theo từng dialect (hỗ trợ cả khóa chính tổ hợp).
+// The list of primary-key columns of a table, per dialect (composite primary keys included).
 //
 // `schema` must be the same one the caller writes through. This feeds `commit_changes`, whose
 // UPDATE/DELETE build their WHERE from the result: reading the PK of `public.film` while writing
@@ -259,7 +259,7 @@ pub(super) async fn get_primary_key_columns(conn: &DbConnection, schema: &Option
     }
 }
 
-// Tự dò tên cột khóa chính (lấy cột đầu tiên). Trả về None nếu không xác định được.
+// Auto-detect the primary-key column name (taking the first one). Returns None when it cannot be determined.
 pub(super) async fn detect_primary_key(conn: &DbConnection, schema: &Option<String>, table: &str) -> Option<String> {
     get_primary_key_columns(conn, schema, table).await.into_iter().next()
 }

@@ -1,11 +1,11 @@
-//! Chuyển giá trị Redis sang JSON, và đọc text/nhị phân một cách an toàn.
+//! Converting Redis values into JSON, and reading text/binary safely.
 //!
-//! `lossy_text` biến byte không phải UTF-8 thành U+FFFD — đó chính là lý do cờ `binary` khoá
-//! việc sửa, và là lý do phần xuất/nhập keyspace KHÔNG đi qua đường này mà dùng DUMP/RESTORE.
+//! `lossy_text` turns non-UTF-8 bytes into U+FFFD — that is exactly why the `binary` flag blocks
+//! editing, and why the keyspace export/import does NOT go through this path but uses DUMP/RESTORE.
 
 use serde_json::{json, Value};
 
-// redis::Value -> serde_json::Value (đệ quy), phục vụ redis_execute_cmd.
+// redis::Value -> serde_json::Value (recursive), for redis_execute_cmd.
 pub(crate) fn redis_value_to_json(v: &redis::Value) -> Value {
     match v {
         redis::Value::Nil => Value::Null,

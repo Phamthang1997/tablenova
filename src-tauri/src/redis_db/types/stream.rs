@@ -1,4 +1,4 @@
-//! Stream: thêm/xoá entry, và toàn bộ phần consumer group.
+//! Stream: adding/deleting entries, and the whole consumer-group side.
 
 use serde_json::{json, Value};
 

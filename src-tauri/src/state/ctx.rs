@@ -1,4 +1,4 @@
-//! `ConnCtx` / `RedisCtx` — thứ `acquire()` trả ra: kết nối ĐÃ gắn với danh tính của nó.
+//! `ConnCtx` / `RedisCtx` — what `acquire()` hands back: a connection ALREADY tied to its identity.
 
 use std::sync::Arc;
 

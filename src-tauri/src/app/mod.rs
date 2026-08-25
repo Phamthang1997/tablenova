@@ -1,4 +1,4 @@
-//! Tầng "ứng dụng": mọi thứ thuộc về vòng đời Tauri chứ không thuộc về một database nào.
+//! The "application" layer: everything that belongs to the Tauri lifecycle rather than to any database.
 
 pub mod ai;
 pub mod handlers;

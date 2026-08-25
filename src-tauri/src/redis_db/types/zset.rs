@@ -1,4 +1,4 @@
-//! Sorted set: thêm và xoá một member.
+//! Sorted set: adding and removing one member.
 
 use serde_json::{json, Value};
 

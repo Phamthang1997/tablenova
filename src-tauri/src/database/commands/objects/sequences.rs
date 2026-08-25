@@ -1,4 +1,4 @@
-//! Sequence (Postgres): liệt kê, sửa, xoá.
+//! Sequences (Postgres): listing, editing, dropping.
 
 use serde_json::{json, Value};
 

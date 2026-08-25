@@ -1,4 +1,4 @@
-//! Phân tích keyspace: lấy mẫu key, gộp theo namespace, ước lượng bộ nhớ.
+//! Keyspace analysis: sampling keys, grouping them by namespace, estimating memory.
 
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;

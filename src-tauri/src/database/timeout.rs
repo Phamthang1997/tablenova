@@ -1,32 +1,32 @@
-//! Giới hạn thời gian cho MỘT câu lệnh do người dùng bấm chạy — hàng rào phía client.
+//! The time limit for ONE statement the user asked to run — a client-side fence.
 
 use serde_json::{json, Value};
 
-/// Giới hạn thời gian cho MỘT câu lệnh mà người dùng chạy, đọc từ config của kết nối
-/// (`statementTimeoutSecs`, 0/absent = tắt).
+/// The time limit for ONE statement the user runs, read from the connection's config
+/// (`statementTimeoutSecs`, 0/absent = off).
 ///
-/// Đây là hàng rào phía **client**: hết giờ thì future bị bỏ, sqlx đóng connection đó và UI được
-/// trả lại ngay. Nó không phải `statement_timeout` của server, nên server có thể còn chạy nốt câu
-/// lệnh cho tới khi phát hiện socket đã đóng. Đổi lại — và đây là lý do chọn cách này — nó không
-/// để lại một chút state nào trong session: đặt `statement_timeout` ở mức pool thì mọi connection
-/// lấy ra sau đó đều mang theo giới hạn ấy, kể cả những việc **dài theo thiết kế** như phục hồi
-/// dump, sinh dữ liệu hay `CREATE INDEX`, và mỗi ngoại lệ lại là một `SET` phải nhớ hoàn nguyên
-/// đúng lúc. Ở đây thì không cần ngoại lệ nào: giới hạn chỉ tồn tại trong bốn command mà người
-/// dùng tự bấm chạy, còn các việc dài đi đường khác.
+/// This is a **client-side** fence: when the time is up the future is dropped, sqlx closes that connection and the
+/// UI is handed back immediately. It is not the server's `statement_timeout`, so the server may keep running the
+/// statement until it notices the socket has closed. In exchange — and this is why it was done this way — it
+/// leaves no state whatsoever in the session: setting `statement_timeout` at the pool level makes every connection
+/// taken afterwards carry that limit, including work that is **long by design** such as restoring a
+/// dump, generating data or `CREATE INDEX`, and every exception is another `SET` that has to be reverted
+/// at the right moment. Here no exception is needed: the limit only exists inside the four commands the user
+/// presses Run on, and the long-running work takes another path.
 pub(crate) fn stmt_timeout(config: &Value) -> Option<std::time::Duration> {
     let secs = config.get("statementTimeoutSecs").and_then(|v| v.as_u64()).unwrap_or(0);
     (secs > 0).then(|| std::time::Duration::from_secs(secs))
 }
 
-/// Đổi giới hạn thời gian câu lệnh của một kết nối **ngay lúc đang chạy**.
+/// Change a connection's statement time limit **while it is running**.
 ///
-/// Ghi vào chính config của server trong registry, và `stmt_timeout` đọc config đó ở mỗi lần một
-/// command chạy — nên giá trị mới có hiệu lực từ câu lệnh kế tiếp, không cần kết nối lại. Đây là
-/// phần thưởng của việc không đặt `statement_timeout` ở mức session: không có state nào ở server
-/// phải đồng bộ lại.
+/// It writes into the server's own config in the registry, and `stmt_timeout` reads that config every time a
+/// command runs — so the new value takes effect from the next statement on, with no reconnect. This is the
+/// reward for not setting `statement_timeout` at the session level: there is no server-side state that has to
+/// be resynchronised.
 ///
-/// Phạm vi là **server**, không phải từng kết nối: các database mở trên cùng một server dùng chung
-/// `ServerHandle`, đúng bằng phạm vi mà frontend lưu (`connKey`).
+/// The scope is the **server**, not the individual connection: databases opened on the same server share one
+/// `ServerHandle`, exactly the scope the frontend stores (`connKey`).
 #[tauri::command]
 pub async fn set_statement_timeout(
     state: tauri::State<'_, crate::AppState>,
@@ -38,12 +38,12 @@ pub async fn set_statement_timeout(
     Ok(json!({ "success": true, "secs": secs }))
 }
 
-/// Thông báo hết giờ. Là literal tiếng Việt nên có bản sinh đôi ở `backendErrors.ts`.
+/// The timeout message. It is a Vietnamese literal, so it has a twin in `backendErrors.ts`.
 pub(crate) fn timeout_msg(limit: std::time::Duration) -> String {
     format!("Câu lệnh đã chạy quá {} giây và bị dừng", limit.as_secs())
 }
 
-/// Chạy một tương lai dưới giới hạn của kết nối. `None` = chạy như trước, không thêm lớp nào.
+/// Run a future under the connection's limit. `None` = run as before, adding no layer.
 pub(crate) async fn with_timeout<T, F>(limit: Option<std::time::Duration>, fut: F) -> Result<T, String>
 where
     F: std::future::Future<Output = Result<T, String>>,

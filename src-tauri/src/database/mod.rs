@@ -1,8 +1,8 @@
-//! Tất cả những gì nói chuyện với một database SQL.
+//! Everything that talks to a SQL database.
 //!
-//! `mod.rs` không chứa logic: nó chỉ khai báo module con và re-export. Dùng `pub use x::*;`
-//! (glob) chứ KHÔNG liệt kê từng tên — `#[tauri::command]` sinh kèm một `macro_rules! __cmd__<tên>`
-//! ẩn mà `generate_handler!` gọi tới, và chỉ glob mới kéo theo nó.
+//! `mod.rs` holds no logic: it only declares the submodules and re-exports. It uses `pub use x::*;`
+//! (a glob) rather than listing each name — `#[tauri::command]` also generates a hidden
+//! `macro_rules! __cmd__<name>` that `generate_handler!` calls, and only a glob pulls it in.
 
 pub mod exec;
 

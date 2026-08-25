@@ -1,4 +1,4 @@
-//! Duyệt keyspace: SCAN một trang, và SCAN chảy về theo lô có thể huỷ.
+//! Walking the keyspace: SCAN one page, and a cancellable SCAN streamed in batches.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -8,7 +8,7 @@ use tauri::ipc::Channel;
 
 use crate::redis_db::conn::take_conn;
 
-// Quét keys bằng SCAN (non-blocking) + TYPE + TTL cho từng key qua pipeline.
+// Scan keys with SCAN (non-blocking) + TYPE + TTL per key through a pipeline.
 #[tauri::command]
 pub async fn redis_scan_keys(
     state: tauri::State<'_, crate::AppState>,
@@ -18,8 +18,8 @@ pub async fn redis_scan_keys(
     count: usize,
     type_filter: Option<String>,
 ) -> Result<Value, String> {
-    // Không truyền TYPE cho SCAN: tham số này chỉ có ở Redis 6.0+ và nhiều bản tương thích
-    // (KeyDB/Dragonfly) không hỗ trợ -> "syntax error". Lọc theo kiểu được xử lý phía client.
+    // TYPE is not passed to SCAN: that argument only exists in Redis 6.0+ and many compatible servers
+    // (KeyDB/Dragonfly) do not support it -> "syntax error". Filtering by type is done client-side.
     let _ = &type_filter;
     let mut c = take_conn(&state, &conn_id)?;
     let mut cmd = redis::cmd("SCAN");
@@ -44,8 +44,8 @@ pub async fn redis_scan_keys(
     Ok(json!({ "success": true, "cursor": next, "keys": items }))
 }
 
-// Stream toàn bộ key qua Channel: vừa SCAN vừa đẩy từng batch (kèm type/ttl) cho tới khi cursor về 0.
-// Dừng giữa chừng bằng cancel_query(query_id) (tái dùng cancel_flags của AppState).
+// Stream every key over a Channel: SCAN and push each batch (with type/ttl) until the cursor returns to 0.
+// Stop it midway with cancel_query(query_id) (reusing AppState's cancel_flags).
 #[tauri::command]
 pub async fn redis_scan_stream(
     state: tauri::State<'_, crate::AppState>,

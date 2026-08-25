@@ -1,5 +1,5 @@
-//! `ColState` — bộ sinh giá trị của MỘT cột: giữ trạng thái của cột đó qua cả lượt chạy
-//! (bộ đếm tăng dần, tập giá trị đã dùng cho ràng buộc UNIQUE, pool khoá ngoại).
+//! `ColState` — the value generator of ONE column: it keeps that column's state across the whole run
+//! (the incrementing counter, the set of values already used for a UNIQUE constraint, the foreign-key pool).
 
 use std::collections::HashSet;
 

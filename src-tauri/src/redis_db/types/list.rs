@@ -1,4 +1,4 @@
-//! List: ghi theo index, đẩy vào đầu/cuối, và xoá một phần tử.
+//! List: writing by index, pushing to the head/tail, and removing one element.
 
 use serde_json::{json, Value};
 

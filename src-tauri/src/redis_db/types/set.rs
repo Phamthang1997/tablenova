@@ -1,4 +1,4 @@
-//! Set: thêm và xoá một member.
+//! Set: adding and removing one member.
 
 use serde_json::{json, Value};
 

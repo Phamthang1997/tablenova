@@ -1,4 +1,4 @@
-//! Hash: ghi và xoá một field.
+//! Hash: writing and deleting one field.
 
 use serde_json::{json, Value};
 

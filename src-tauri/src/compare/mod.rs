@@ -1,26 +1,26 @@
-// So sánh CẤU TRÚC và DỮ LIỆU giữa HAI database.
+// Comparing the STRUCTURE and the DATA of TWO databases.
 //
-// Phase 1 của đa kết nối vẫn chỉ mở MỘT kết nối, nên mỗi "phía" (source/target) được giải quyết
-// riêng trong `resolve_side()`: dùng lại kết nối đang mở nếu phía đó trỏ đúng database
-// hiện tại, còn không thì mở kết nối TẠM từ `last_config` với database/tệp thay thế —
-// cùng cách `get_all_databases_stats` làm khi "quét sâu". Kết nối tạm được đóng ngay
-// khi lệnh kết thúc (`Resolved::close`).
+// Phase 1 of multi-connection still opens only ONE connection, so each "side" (source/target) is resolved
+// separately in `resolve_side()`: it reuses the open connection when that side points at the current
+// database, and otherwise opens a TEMPORARY connection from `last_config` with the database/file
+// overridden — the same way `get_all_databases_stats` does its "deep scan". The temporary connection is
+// closed as soon as the command finishes (`Resolved::close`).
 //
-// Toàn bộ metadata đọc qua `execute_raw_sql_generic` (đã trả về JSON `{columns, data}`)
-// nên module này không lặp lại phần giải mã ô dữ liệu của từng driver. Việc pool tạm của
-// module không bao giờ bị pin làm phiên transaction của người dùng giờ do CHÍNH KIỂU bảo đảm:
-// mỗi pool tạm mang `ConnId::Adhoc` và `should_route` từ chối nó — không còn phụ thuộc vào
-// việc nhớ gọi đúng một funnel riêng.
+// All metadata is read through `execute_raw_sql_generic` (which already returns `{columns, data}` JSON),
+// so this module does not repeat any driver's cell decoding. That this module's temporary pool can never
+// be pinned as the user's transaction session is now guaranteed BY THE TYPE itself:
+// every temporary pool carries `ConnId::Adhoc` and `should_route` refuses it — it no longer depends on
+// remembering to call one particular funnel.
 //
-// SQL sinh ra (`syncSql`) luôn theo hướng source -> target và theo dialect của TARGET.
-// Mọi câu lệnh phá dữ liệu (DROP ...) chỉ được sinh ở dạng thực thi khi
-// `includeDrops = true`; mặc định chúng bị comment lại để một script chạy vô tình
-// không xoá gì.
+// The generated SQL (`syncSql`) always goes source -> target and follows the TARGET's dialect.
+// Every destructive statement (DROP ...) is only emitted in executable form when
+// `includeDrops = true`; by default they are commented out so a script run by accident
+// deletes nothing.
 //
-// NGÔN NGỮ: thông báo lỗi và `warnings` viết tiếng Việt như phần còn lại của backend
-// (frontend dịch qua `src/utils/backendErrors.ts`), nhưng phần comment TRONG script SQL
-// viết tiếng Anh — script là tệp đem đi chỗ khác (migration, DBeaver, psql/mysql CLI),
-// không phải chữ trên giao diện, nên không đi qua bảng dịch.
+// LANGUAGE: error messages and `warnings` are written in Vietnamese like the rest of the backend
+// (the frontend translates them through `src/utils/backendErrors.ts`), but the comments INSIDE the SQL
+// script are written in English — the script is an artifact taken elsewhere (a migration, DBeaver,
+// the psql/mysql CLI), not UI text, so it does not go through the translation table.
 
 pub mod read;
 

@@ -1,4 +1,4 @@
-//! DDL cấp bảng: tạo / xoá / làm rỗng / đổi tên, và đọc lại DDL của bảng.
+//! Table-level DDL: create / drop / empty / rename, and reading a table's DDL back.
 
 use serde_json::{json, Value};
 use sqlx::Row;
@@ -27,20 +27,20 @@ pub async fn create_table(state: tauri::State<'_, crate::AppState>, conn_id: Str
         DbKind::Mysql(_) => "mysql",
     };
     let q = if db_type == "mysql" { '`' } else { '"' };
-    // Không qualify thì bảng mới rơi vào schema đầu search_path, không phải schema đang chọn.
+    // Without qualifying it the new table lands in the first schema of search_path, not the selected schema.
     let table_ref = qualified(&conn_type, &schema, table_name);
 
     let columns = payload.get("columns").and_then(|v| v.as_array());
 
-    // Nếu không truyền cột nào -> giữ hành vi cũ: tạo bảng tối thiểu với 1 cột id khóa chính
+    // When no columns are passed -> keep the old behaviour: create a minimal table with one id primary-key column
     let create_sql = match columns {
         Some(cols) if !cols.is_empty() => {
-            // Danh sách cột khóa chính
+            // The list of primary-key columns
             let pk_cols: Vec<String> = cols.iter()
                 .filter(|c| c.get("isPrimaryKey").and_then(|v| v.as_bool()).unwrap_or(false))
                 .filter_map(|c| c.get("name").and_then(|v| v.as_str()).map(|s| s.to_string()))
                 .collect();
-            // Trường hợp đặc biệt: đúng 1 khóa chính và có tự tăng -> dùng cú pháp auto-increment ngay trên cột đó
+            // Special case: exactly 1 primary key with auto-increment -> use the auto-increment syntax right on that column
             let single_auto_pk = pk_cols.len() == 1
                 && cols.iter().any(|c| {
                     c.get("isPrimaryKey").and_then(|v| v.as_bool()).unwrap_or(false)
@@ -59,7 +59,7 @@ pub async fn create_table(state: tauri::State<'_, crate::AppState>, conn_id: Str
                 let default_val = col.get("defaultValue").and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty());
 
                 if single_auto_pk && is_pk {
-                    // Cột khóa chính tự tăng: cú pháp riêng theo từng dialect
+                    // An auto-incrementing primary-key column: the syntax differs per dialect
                     let def = match db_type {
                         "mysql" => format!("{q}{name}{q} {ty} NOT NULL AUTO_INCREMENT PRIMARY KEY", q = q, name = name, ty = col_type),
                         "postgres" => format!("{q}{name}{q} SERIAL PRIMARY KEY", q = q, name = name),
@@ -83,7 +83,7 @@ pub async fn create_table(state: tauri::State<'_, crate::AppState>, conn_id: Str
                 defs.push(def);
             }
 
-            // Nếu có nhiều khóa chính (hoặc khóa chính không tự tăng) -> thêm ràng buộc PRIMARY KEY ở cấp bảng
+            // With several primary keys (or a non-auto-increment primary key) -> add a table-level PRIMARY KEY constraint
             if !single_auto_pk && !pk_cols.is_empty() {
                 let pk_list = pk_cols.iter().map(|c| format!("{q}{c}{q}", q = q, c = c)).collect::<Vec<_>>().join(", ");
                 defs.push(format!("PRIMARY KEY ({})", pk_list));
@@ -99,7 +99,7 @@ pub async fn create_table(state: tauri::State<'_, crate::AppState>, conn_id: Str
 
     execute_raw_sql_generic(&conn_type, create_sql).await?;
 
-    // Sau khi tạo bảng, tạo tiếp Index & Foreign Key (nếu có) — tái dùng bộ sinh SQL đã sửa ở generate_alter_sqls
+    // After creating the table, create the Indexes & Foreign Keys too (when present) — reusing the SQL builder fixed in generate_alter_sqls
     let extra_payload = json!({
         "addedIndexes": payload.get("indexes").cloned().unwrap_or(json!([])),
         "addedFKs": payload.get("foreignKeys").cloned().unwrap_or(json!([])),
@@ -162,15 +162,15 @@ async fn run_fk_wrapped(
             exec.try_run(&extra).await;
         }
     }
-    // Khôi phục kể cả khi lỗi: connection quay lại pool (hoặc là handle SQLite dùng chung),
-    // nếu không lệnh sau sẽ chạy trên session còn tắt kiểm tra khóa ngoại.
+    // Restore it even on error: the connection goes back to the pool (or is the shared SQLite handle),
+    // otherwise the next statement runs on a session that still has foreign-key checking off.
     if disable_fk {
         exec.try_run(fk_checks_sql(conn, true)).await;
     }
     result
 }
 
-// Xóa bảng/view. `cascade` và `ignore_fk` là 2 tuỳ chọn của dialog Delete ở sidebar.
+// Drop a table/view. `cascade` and `ignore_fk` are the 2 options of the sidebar's Delete dialog.
 #[tauri::command]
 pub async fn drop_table(
     state: tauri::State<'_, crate::AppState>, conn_id: String,
@@ -186,11 +186,11 @@ pub async fn drop_table(
     };
     let is_view = is_view.unwrap_or(false);
     let cascade = cascade.unwrap_or(false);
-    // Bỏ qua khóa ngoại không có nghĩa với view: view không nằm trong ràng buộc FK nào.
+    // Ignoring foreign keys means nothing for a view: a view takes part in no FK constraint.
     let ignore_fk = ignore_fk.unwrap_or(false) && !is_view;
 
-    // CASCADE chỉ Postgres mới thực thi thật: SQLite báo lỗi cú pháp, MySQL chấp nhận từ khóa
-    // rồi bỏ qua -> người dùng tưởng đã xóa lan mà thực tế không. Từ chối còn hơn im lặng.
+    // Only Postgres really honours CASCADE: SQLite reports a syntax error and MySQL accepts the keyword
+    // then ignores it -> the user believes the cascade happened when it did not. Refusing beats staying silent.
     if cascade && !matches!(conn_type.kind, DbKind::Postgres(_)) {
         return Err("CASCADE chỉ được hỗ trợ trên PostgreSQL".to_string());
     }
@@ -208,8 +208,8 @@ pub async fn drop_table(
     Ok(json!({ "success": true }))
 }
 
-// Giá trị AUTO_INCREMENT kế tiếp của một bảng MySQL, None nếu bảng không có cột tự tăng.
-// Chỉ đọc (SELECT) nên chạy qua execute_raw_sql_generic được, không cần chung session với TRUNCATE.
+// The next AUTO_INCREMENT value of a MySQL table, None when the table has no auto-increment column.
+// Read-only (a SELECT), so it can go through execute_raw_sql_generic and does not need to share the session with the TRUNCATE.
 async fn mysql_next_auto_increment(conn: &DbConnection, name: &str) -> Option<u64> {
     let sql = format!(
         "SELECT AUTO_INCREMENT AS ai FROM information_schema.TABLES \
@@ -218,12 +218,12 @@ async fn mysql_next_auto_increment(conn: &DbConnection, name: &str) -> Option<u6
     );
     let results = execute_raw_sql_generic(conn, sql).await.ok()?;
     let cell = results.first()?.get("data")?.as_array()?.first()?.get("ai")?;
-    // decode_mysql_cell! trả u64 thành số, nhưng nhận cả chuỗi cho chắc.
+    // decode_mysql_cell! returns a u64 as a number, but a string is accepted too for safety.
     cell.as_u64().or_else(|| cell.as_str()?.parse().ok())
 }
 
-// Xóa sạch dữ liệu nhưng giữ cấu trúc bảng.
-// `restart_identity` / `disable_fk` / `cascade` là 3 tuỳ chọn của dialog Truncate ở sidebar.
+// Wipe the data but keep the table structure.
+// `restart_identity` / `disable_fk` / `cascade` are the 3 options of the sidebar's Truncate dialog.
 #[tauri::command]
 pub async fn truncate_table(
     state: tauri::State<'_, crate::AppState>, conn_id: String,
@@ -242,27 +242,27 @@ pub async fn truncate_table(
     let cascade = cascade.unwrap_or(false);
     let quoted = qualified(&conn_type, &schema, &name);
 
-    // Như DROP: chỉ Postgres có TRUNCATE ... CASCADE.
+    // Like DROP: only Postgres has TRUNCATE ... CASCADE.
     if cascade && !matches!(conn_type.kind, DbKind::Postgres(_)) {
         return Err("CASCADE chỉ được hỗ trợ trên PostgreSQL".to_string());
     }
 
-    // MySQL luôn reset bộ đếm tự tăng bên trong TRUNCATE và không có cách tắt, nên "giữ nguyên
-    // bộ đếm" phải làm thủ công: đọc giá trị trước, đặt lại sau. Đọc TRƯỚC khi truncate.
+    // MySQL always resets the auto-increment counter inside TRUNCATE and offers no way to stop it, so "keep the
+    // counter" has to be done by hand: read the value first, set it back afterwards. Read it BEFORE truncating.
     let keep_auto_inc = match (&conn_type.kind, restart_identity) {
         (DbKind::Mysql(_), false) => mysql_next_auto_increment(&conn_type, &name).await,
         _ => None,
     };
 
-    // Câu lệnh bắt buộc + câu lệnh "cố gắng" chạy sau (lỗi không tính là thất bại).
+    // The mandatory statement + a "best effort" statement to run afterwards (its failure does not count as a failure).
     let (sql, optional): (String, Option<String>) = match &conn_type.kind {
         DbKind::Mysql(_) => (
             format!("TRUNCATE TABLE {}", quoted),
             match (restart_identity, keep_auto_inc) {
-                // InnoDB đã reset sẵn; vẫn phát lệnh để ý định rõ ràng và các engine khác hành xử
-                // giống nhau. Bảng không có cột tự tăng -> bỏ qua lỗi.
+                // InnoDB has already reset it; the statement is still issued so the intent is explicit and other engines
+                // behave the same. A table with no auto-increment column -> ignore the error.
                 (true, _) => Some(format!("ALTER TABLE {} AUTO_INCREMENT = 1", quoted)),
-                // Đặt lại giá trị cũ để id mới không dùng lại id đã xóa.
+                // Put the old value back so a new id does not reuse a deleted one.
                 (false, Some(v)) if v > 1 => {
                     Some(format!("ALTER TABLE {} AUTO_INCREMENT = {}", quoted, v))
                 }
@@ -278,9 +278,9 @@ pub async fn truncate_table(
             ),
             None,
         ),
-        // SQLite không có TRUNCATE -> DELETE FROM, và bộ đếm tự tăng nằm ở bảng phụ
-        // sqlite_sequence mà DELETE không đụng tới. Bảng này chỉ tồn tại khi CSDL có
-        // ít nhất một cột AUTOINCREMENT -> bỏ qua lỗi "no such table".
+        // SQLite has no TRUNCATE -> DELETE FROM, and the auto-increment counter lives in the helper table
+        // sqlite_sequence, which DELETE does not touch. That table only exists when the database has
+        // at least one AUTOINCREMENT column -> ignore the "no such table" error.
         DbKind::Sqlite(_) => (
             format!("DELETE FROM {}", quoted),
             restart_identity.then(|| {
@@ -294,7 +294,7 @@ pub async fn truncate_table(
     Ok(json!({ "success": true }))
 }
 
-// Trả về câu lệnh CREATE TABLE (định nghĩa) của bảng theo từng dialect
+// Returns the table's CREATE TABLE statement (its definition) per dialect
 #[tauri::command]
 pub async fn get_table_definition(state: tauri::State<'_, crate::AppState>, conn_id: String, name: String) -> Result<Value, String> {
     let (conn_type, schema) = {
@@ -320,7 +320,7 @@ pub async fn get_table_definition(state: tauri::State<'_, crate::AppState>, conn
         DbKind::Mysql(pool) => {
             let show_sql = format!("SHOW CREATE TABLE `{}`", name);
             let row = sqlx::query(sqlx::AssertSqlSafe(show_sql)).fetch_one(pool).await.map_err(|e| e.to_string())?;
-            // Cột thứ 2 là "Create Table" (bảng) hoặc "Create View" (view)
+            // Column 2 is "Create Table" (a table) or "Create View" (a view)
             let s: String = row.try_get("Create Table").or_else(|_| row.try_get("Create View")).map_err(|e| e.to_string())?;
             format!("{};", s)
         }
@@ -366,7 +366,7 @@ pub async fn get_table_definition(state: tauri::State<'_, crate::AppState>, conn
                 }));
             }
 
-            // Postgres không có SHOW CREATE TABLE -> dựng lại từ metadata (cột + NOT NULL + DEFAULT + PRIMARY KEY)
+            // Postgres has no SHOW CREATE TABLE -> rebuild it from metadata (columns + NOT NULL + DEFAULT + PRIMARY KEY)
             let pk_cols = get_primary_key_columns(&conn_type, &schema, &name).await;
             // format_type() keeps length/precision — see get_table_schema for why.
             let sql = format!(
@@ -417,8 +417,8 @@ pub async fn rename_table(state: tauri::State<'_, crate::AppState>, conn_id: Str
         (ct, ctx.raw_schema().map(str::to_string))
     };
 
-    // Chỉ vế nguồn mang schema: RENAME TO nhận tên mới KHÔNG qualify (Postgres báo lỗi cú pháp
-    // nếu qualify), bảng đổi tên vẫn ở nguyên schema cũ.
+    // Only the source side carries the schema: RENAME TO takes an UNqualified new name (Postgres reports a syntax
+    // error if it is qualified), and the renamed table stays in the same schema.
     let sql = match &conn_type.kind {
         DbKind::Mysql(_) => format!("RENAME TABLE `{}` TO `{}`", old_name, new_name),
         _ => format!(

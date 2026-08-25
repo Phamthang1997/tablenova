@@ -1,4 +1,4 @@
-//! Nhận diện database hệ thống của từng dialect (thứ mà dashboard ẩn đi theo mặc định).
+//! Recognising each dialect's system databases (the ones the dashboard hides by default).
 
 pub(super) const MYSQL_SYSTEM_DBS: &[&str] = &["information_schema", "mysql", "performance_schema", "sys"];
 pub(super) const PG_SYSTEM_DBS: &[&str] = &["postgres", "template0", "template1"];

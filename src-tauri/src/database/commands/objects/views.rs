@@ -1,4 +1,4 @@
-//! View: lưu định nghĩa.
+//! Views: saving a definition.
 
 use serde_json::{json, Value};
 

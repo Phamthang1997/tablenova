@@ -1,4 +1,4 @@
-//! Bảy `#[tauri::command]` của chế độ commit thủ công (`TxControl.tsx` trên thanh tiêu đề).
+//! The seven `#[tauri::command]`s of manual commit mode (`TxControl.tsx` on the title bar).
 
 use serde_json::{json, Value};
 

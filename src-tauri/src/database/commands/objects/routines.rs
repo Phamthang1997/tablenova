@@ -1,4 +1,4 @@
-//! Stored procedure / function: lưu định nghĩa.
+//! Stored procedures / functions: saving a definition.
 
 use serde_json::{json, Value};
 

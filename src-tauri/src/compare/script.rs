@@ -1,19 +1,19 @@
-//! Sinh INSERT / UPDATE / DELETE cho phần so sánh DỮ LIỆU.
+//! Generating INSERT / UPDATE / DELETE for the DATA comparison.
 
 use serde_json::Value;
 
 use crate::compare::ident::{q_ident, q_lit, qualified};
 use crate::compare::side::Resolved;
 
-/// Literal SQL của một ô. Không tham số hóa được vì đây là script để người dùng đọc
-/// và chạy ở nơi khác — escaping theo đúng cách `database.rs` vẫn làm.
+/// The SQL literal of one cell. It cannot be parameterised because this is a script for the user to read
+/// and run elsewhere — escaped exactly the way `database.rs` has always done it.
 pub(super) fn sql_value(v: &Value) -> String {
     match v {
         Value::Null => "NULL".to_string(),
         Value::Bool(b) => if *b { "1".to_string() } else { "0".to_string() },
         Value::Number(n) => n.to_string(),
         Value::String(s) => q_lit(s),
-        // BLOB được trả về dạng mảng byte -> hex literal (X'..' dùng được ở cả 3 dialect).
+        // A BLOB comes back as a byte array -> a hex literal (X'..' works in all 3 dialects).
         Value::Array(a) => {
             let bytes: Option<Vec<u8>> = a
                 .iter()

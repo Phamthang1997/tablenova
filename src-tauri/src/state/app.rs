@@ -1,7 +1,7 @@
-//! `AppState` — mọi handle còn sống mà app sở hữu, tức thứ Tauri `manage()`.
+//! `AppState` — every live handle the app owns, i.e. the thing Tauri `manage()`s.
 //!
-//! Nằm trong `state/` chứ không trong `app/`: trường lớn nhất của nó CHÍNH LÀ `ConnRegistry`
-//! ngay cạnh đây, và tách hai thứ lồng nhau ra hai thư mục thì tệ hơn là để chung.
+//! It lives in `state/` rather than in `app/`: its biggest field IS the `ConnRegistry` right next
+//! to it, and splitting two nested things across two directories would be worse than keeping them together.
 
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
@@ -11,22 +11,22 @@ use super::registry::ConnRegistry;
 use crate::terminal;
 
 pub struct AppState {
-    // Mọi kết nối đang mở — SQL LẪN REDIS — khoá theo `conn_id`
-    // (docs/multi-connection-plan.md §4.3, docs/redis-ui-unification-plan.md §2.3). Đây là nguồn
-    // sự thật DUY NHẤT: `DatabaseManager` (một `Option<DbConnection>` cho cả app) và `RedisState`
-    // (một connection Redis cho cả app) đều đã bị xoá.
+    // Every open connection — SQL AND REDIS — keyed by `conn_id`
+    // (docs/multi-connection-plan.md §4.3, docs/redis-ui-unification-plan.md §2.3). This is the ONE
+    // source of truth: `DatabaseManager` (a single `Option<DbConnection>` for the whole app) and
+    // `RedisState` (a single Redis connection for the whole app) have both been deleted.
     pub connections: ConnRegistry,
-    // Cờ hủy cho các truy vấn đang stream (query_id -> cờ). execute_query_stream đăng ký,
-    // cancel_query bật cờ để dừng vòng lặp đẩy dữ liệu.
+    // Cancel flags for in-flight streaming queries (query_id -> flag). execute_query_stream registers one,
+    // cancel_query raises it to stop the row-pushing loop.
     pub cancel_flags: Mutex<HashMap<String, Arc<AtomicBool>>>,
-    // Các phiên SSH Terminal đang mở (session_id -> phiên).
+    // The open SSH Terminal sessions (session_id -> session).
     pub ssh_terminals: terminal::ssh::SshTerminalMap,
-    // Các phiên Local Terminal (shell cục bộ) đang mở.
+    // The open Local Terminal (local shell) sessions.
     pub local_terminals: terminal::local::LocalTerminalMap,
 }
 
 impl AppState {
-    /// Trạng thái lúc khởi động: chưa có kết nối, chưa có phiên terminal nào.
+    /// State at startup: no connection, and no terminal session.
     pub fn new() -> Self {
         AppState {
             connections: ConnRegistry::new(),

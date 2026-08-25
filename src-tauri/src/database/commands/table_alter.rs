@@ -1,10 +1,10 @@
-//! Dịch payload diff của trình sửa cấu trúc thành ALTER TABLE — và chạy hoặc chỉ xem trước.
+//! Translating the structure editor's diff payload into ALTER TABLE — and either running it or only previewing it.
 
 use serde_json::{json, Value};
 
 use crate::database::{execute_raw_sql_generic, DbKind};
 
-// Sinh câu lệnh SQL thay đổi cấu trúc bảng dựa trên payload DDL nhận từ frontend
+// Build the SQL statements that change a table's structure from the DDL payload the frontend sent
 pub(super) fn generate_alter_sqls(table_name: &str, payload: &Value, db_type: &str, schema: &Option<String>) -> Vec<String> {
     let mut sqls = Vec::new();
 
@@ -39,7 +39,7 @@ pub(super) fn generate_alter_sqls(table_name: &str, payload: &Value, db_type: &s
     let added_fks = payload.get("addedFKs").and_then(|v| v.as_array());
     let dropped_fks = payload.get("droppedFKs").and_then(|v| v.as_array());
 
-    // 1. Thêm cột mới
+    // 1. Add new columns
     if let Some(arr) = added {
         for col in arr {
             if let Some(col_name) = col.get("name").and_then(|v| v.as_str()) {
@@ -68,17 +68,17 @@ pub(super) fn generate_alter_sqls(table_name: &str, payload: &Value, db_type: &s
         }
     }
 
-    // 2. Xóa cột
+    // 2. Drop columns
     if let Some(arr) = dropped {
         for col_name in arr {
             if let Some(name) = col_name.as_str() {
-                // SQLite không hỗ trợ DROP COLUMN trực tiếp ở một số bản cũ, tuy nhiên sqlite3 hiện tại đã hỗ trợ ALTER TABLE DROP COLUMN
+                // Some older SQLite builds do not support DROP COLUMN directly, but current sqlite3 does support ALTER TABLE DROP COLUMN
                 sqls.push(format!("ALTER TABLE {} DROP COLUMN {}", tbl, quote(name)));
             }
         }
     }
 
-    // 3. Đổi tên cột
+    // 3. Rename columns
     if let Some(arr) = renamed {
         for item in arr {
             let old_name = item.get("oldName").and_then(|v| v.as_str()).unwrap_or("");
@@ -89,7 +89,7 @@ pub(super) fn generate_alter_sqls(table_name: &str, payload: &Value, db_type: &s
         }
     }
 
-    // 4. Sửa cột (Kiểu dữ liệu / Nullable)
+    // 4. Modify columns (data type / nullability)
     if let Some(arr) = modified {
         for col in arr {
             if let Some(col_name) = col.get("name").and_then(|v| v.as_str()) {
@@ -104,13 +104,13 @@ pub(super) fn generate_alter_sqls(table_name: &str, payload: &Value, db_type: &s
                     let null_action = if is_nullable { "DROP NOT NULL" } else { "SET NOT NULL" };
                     sqls.push(format!("ALTER TABLE {} ALTER COLUMN {} {}", tbl, quote(col_name), null_action));
                 } else {
-                    // SQLite không hỗ trợ thay đổi trực tiếp thuộc tính cột, cảnh báo cho người dùng
+                    // SQLite cannot change column attributes directly, so warn the user
                 }
             }
         }
     }
 
-    // 5. Xóa Index
+    // 5. Drop indexes
     if let Some(arr) = dropped_indexes {
         for idx in arr {
             if let Some(idx_name) = idx.as_str() {
@@ -124,7 +124,7 @@ pub(super) fn generate_alter_sqls(table_name: &str, payload: &Value, db_type: &s
         }
     }
 
-    // 6. Thêm Index
+    // 6. Add indexes
     if let Some(arr) = added_indexes {
         for idx in arr {
             if let Some(idx_name) = idx.get("name").and_then(|v| v.as_str()) {
@@ -168,7 +168,7 @@ pub(super) fn generate_alter_sqls(table_name: &str, payload: &Value, db_type: &s
         }
     }
 
-    // 7. Xóa Khóa ngoại
+    // 7. Drop foreign keys
     if let Some(arr) = dropped_fks {
         for fk in arr {
             if let Some(fk_name) = fk.get("name").and_then(|v| v.as_str()) {
@@ -181,7 +181,7 @@ pub(super) fn generate_alter_sqls(table_name: &str, payload: &Value, db_type: &s
         }
     }
 
-    // 8. Thêm Khóa ngoại (kèm On Update / On Delete)
+    // 8. Add foreign keys (with On Update / On Delete)
     if let Some(arr) = added_fks {
         for fk in arr {
             let col = fk.get("column").and_then(|v| v.as_str()).unwrap_or("");
@@ -203,7 +203,7 @@ pub(super) fn generate_alter_sqls(table_name: &str, payload: &Value, db_type: &s
                         "ALTER TABLE {} ADD CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {} ({}) ON UPDATE {} ON DELETE {}",
                         tbl, quote(&fk_name), quote(col), qual(ref_table), quote(ref_col), on_update, on_delete
                     )),
-                    // SQLite không hỗ trợ thêm khóa ngoại qua ALTER TABLE — bỏ qua (cần tạo lại bảng)
+                    // SQLite cannot add a foreign key through ALTER TABLE — skipped (the table would have to be recreated)
                     _ => {}
                 }
             }
@@ -249,7 +249,7 @@ pub async fn preview_alter_schema(state: tauri::State<'_, crate::AppState>, conn
         DbKind::Mysql(_) => "mysql",
     };
 
-    // Cùng SQL với alter_table_schema — người dùng xem trước đúng câu sẽ chạy.
+    // The same SQL as alter_table_schema — the user previews exactly the statements that will run.
     let sqls = generate_alter_sqls(&name, &payload, db_type, &schema);
     Ok(json!({ "success": true, "sql": sqls.join(";\n") }))
 }

@@ -1,4 +1,4 @@
-//! Liệt kê MỌI loại đối tượng của database, và đọc DDL của một cái theo `kind`.
+//! Listing EVERY kind of database object, and reading the DDL of one of them by `kind`.
 
 use serde_json::{json, Value};
 use sqlx::Row;
@@ -7,7 +7,7 @@ use crate::database::{
     all_string_values, execute_raw_sql_generic, result_rows, row_str, sql_str, DbKind,
 };
 
-// Liệt kê các đối tượng CSDL của kết nối hiện tại: bảng, khung nhìn, hàm, thủ tục
+// List the database objects of the current connection: tables, views, functions, procedures
 #[tauri::command]
 pub async fn get_database_objects(state: tauri::State<'_, crate::AppState>, conn_id: String) -> Result<Value, String> {
     let (conn_type, schema) = {
@@ -22,7 +22,7 @@ pub async fn get_database_objects(state: tauri::State<'_, crate::AppState>, conn
     let mut functions: Vec<String> = Vec::new();
     let mut procedures: Vec<String> = Vec::new();
 
-    // Tách bảng/khung nhìn từ kết quả (name_col, type_col) với giá trị đánh dấu view
+    // Split tables/views out of the result (name_col, type_col) using the value that marks a view
     fn split_tables_views(results: &[Value], name_col: &str, type_col: &str, view_val: &str,
                           tables: &mut Vec<String>, views: &mut Vec<String>) {
         if let Some(data) = results.get(0).and_then(|r| r.get("data")).and_then(|v| v.as_array()) {
@@ -47,7 +47,7 @@ pub async fn get_database_objects(state: tauri::State<'_, crate::AppState>, conn
                 let ty: String = row.get(1).map_err(|e| e.to_string())?;
                 if ty == "view" { views.push(name); } else { tables.push(name); }
             }
-            // SQLite không có hàm/thủ tục do người dùng định nghĩa
+            // SQLite has no user-defined functions/procedures
         }
         DbKind::Postgres(_) => {
             // Materialized views: see the note in get_tables — information_schema has none.
@@ -122,7 +122,7 @@ pub async fn get_database_objects(state: tauri::State<'_, crate::AppState>, conn
     }))
 }
 
-// Lấy định nghĩa (mã nguồn) của view / function / procedure
+// Read the definition (source) of a view / function / procedure
 #[tauri::command]
 pub async fn get_object_definition(state: tauri::State<'_, crate::AppState>, conn_id: String, name: String, kind: String) -> Result<Value, String> {
     let (conn_type, schema) = {

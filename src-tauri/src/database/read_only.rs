@@ -1,4 +1,4 @@
-//! Chế độ chỉ-đọc của một kết nối: chặn câu lệnh ghi trước khi nó rời khỏi backend.
+//! A connection's read-only mode: rejecting a write statement before it ever leaves the backend.
 
 use super::conn::DbConnection;
 use super::splitter::strip_leading_comments;

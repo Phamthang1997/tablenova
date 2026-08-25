@@ -1,14 +1,14 @@
-// SSH Terminal: mở PTY + shell trên máy chủ SSH để xem log / chạy lệnh (tail -f, journalctl...).
-// Tái dùng connect_and_auth từ ssh/auth.rs (một đường xác thực duy nhất cho tunnel lẫn terminal).
+// SSH Terminal: opens a PTY + shell on the SSH server for reading logs / running commands (tail -f, journalctl...).
+// Reuses connect_and_auth from ssh/auth.rs (one authentication path for both the tunnel and the terminal).
 //
-// Output server -> frontend đi qua tauri::ipc::Channel (đồng bộ pattern với streaming SQL).
-// Input, resize, close từ frontend đi qua các command riêng, chuyển vào task quản lý phiên
-// bằng một mpsc channel — nhờ đó task độc quyền sở hữu russh Channel (tránh chia sẻ &mut).
+// Output travels server -> frontend over a tauri::ipc::Channel (the same pattern as SQL streaming).
+// Input, resize and close come from the frontend as separate commands and are passed into the session
+// task over an mpsc channel — that way the task exclusively owns the russh Channel (no shared &mut).
 //
-// Message đẩy về frontend (đều có "type"):
-//   { type:"data",   bytes:[...] }   -> dữ liệu output (mảng byte, xterm tự giải mã UTF-8)
-//   { type:"exit",   code }          -> shell thoát
-//   { type:"closed" }                -> phiên đã đóng
+// Messages pushed to the frontend (all carry a "type"):
+//   { type:"data",   bytes:[...] }   -> output data (a byte array; xterm decodes the UTF-8 itself)
+//   { type:"exit",   code }          -> the shell exited
+//   { type:"closed" }                -> the session has closed
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -19,7 +19,7 @@ use tauri::ipc::Channel;
 use russh::ChannelMsg;
 use crate::ssh::connect_and_auth;
 
-// Lệnh gửi từ command frontend vào task quản lý một phiên terminal.
+// Commands sent from a frontend command into the task that manages one terminal session.
 enum TermCmd {
     Input(Vec<u8>),
     Resize(u32, u32),
@@ -47,7 +47,7 @@ pub async fn open_ssh_terminal(
     rows: u32,
     channel: Channel<Value>,
 ) -> Result<Value, String> {
-    // Nếu session_id đã tồn tại (mở lại), đóng phiên cũ trước
+    // If session_id already exists (reopened), close the old session first
     {
         let mut map = state.ssh_terminals.lock().map_err(|e| e.to_string())?;
         if let Some(old) = map.remove(&session_id) {
@@ -71,9 +71,9 @@ pub async fn open_ssh_terminal(
     let (tx, mut rx) = mpsc::unbounded_channel::<TermCmd>();
     let out = channel.clone();
 
-    // Task quản lý phiên: sở hữu handle (giữ session SSH sống) + russh channel.
+    // The session task: owns the handle (keeping the SSH session alive) + the russh channel.
     let task = tokio::spawn(async move {
-        let _handle = handle; // giữ phiên SSH sống suốt vòng đời task
+        let _handle = handle; // keep the SSH session alive for the task's whole lifetime
         loop {
             tokio::select! {
                 msg = ch.wait() => {
@@ -158,5 +158,5 @@ pub async fn close_ssh_terminal(
     Ok(json!({ "success": true }))
 }
 
-// Kiểu state giữ trong AppState.
+// The state type held in AppState.
 pub type SshTerminalMap = Mutex<HashMap<String, TerminalSession>>;

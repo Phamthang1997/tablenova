@@ -1,4 +1,4 @@
-//! SLOWLOG: đọc, xoá, và đọc/ghi ngưỡng.
+//! SLOWLOG: reading it, clearing it, and reading/writing the threshold.
 
 use serde_json::{json, Value};
 

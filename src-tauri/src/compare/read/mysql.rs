@@ -1,4 +1,4 @@
-//! Đọc schema MySQL từ `information_schema`.
+//! Reading a MySQL schema from `information_schema`.
 
 use std::collections::BTreeMap;
 
@@ -51,7 +51,7 @@ pub(super) async fn read_mysql(conn: &DbConnection, schema: &str) -> Result<Sche
         }
     }
 
-    // STATISTICS chứa cả PRIMARY: tách ra thành `pk`, phần còn lại là index thường.
+    // STATISTICS contains PRIMARY as well: split it out into `pk`, the rest are ordinary indexes.
     let sql = format!(
         "SELECT TABLE_NAME AS table_name, INDEX_NAME AS index_name, COLUMN_NAME AS column_name, \
                 NON_UNIQUE AS non_unique \

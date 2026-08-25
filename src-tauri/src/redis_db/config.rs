@@ -1,15 +1,15 @@
-//! Dựng URL kết nối và cấu hình TLS.
+//! Building the connection URL and the TLS configuration.
 //!
-//! TLS ở đây là một CHẾ ĐỘ, không phải một công tắc: `redis_ssl_mode()` gộp `sslEnabled` +
-//! `sslMode` của form thành DISABLED / REQUIRED / VERIFY_CA / VERIFY_IDENTITY. Bản sinh đôi
-//! của nó là `REDIS_SSL_MODES` trong `ConnectionManager.tsx`.
+//! TLS here is a MODE, not a switch: `redis_ssl_mode()` folds the form's `sslEnabled` +
+//! `sslMode` into DISABLED / REQUIRED / VERIFY_CA / VERIFY_IDENTITY. Its twin is
+//! `REDIS_SSL_MODES` in `ConnectionManager.tsx`.
 
 use serde_json::Value;
 
-// `RedisState` đã bị xoá. Năm trường của nó giờ nằm trong registry, mỗi kết nối một bản:
-// `conn`/`db_index`/`caps` trong `state::RedisConn`, `config`/`ssh_tunnel` trên
-// `state::ServerHandle` (dùng chung giữa các db index của cùng server), `read_only` là cờ của
-// `ConnEntry` — cùng một cờ mà SQL và thanh rail đọc, nên không còn hai nguồn sự thật.
+// `RedisState` has been deleted. Its five fields now live in the registry, one copy per connection:
+// `conn`/`db_index`/`caps` in `state::RedisConn`, `config`/`ssh_tunnel` on
+// `state::ServerHandle` (shared between the db indexes of the same server), and `read_only` is a flag on
+// `ConnEntry` — the same flag SQL and the rail read, so there is no second source of truth.
 
 pub(crate) fn url_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
@@ -55,17 +55,17 @@ pub(crate) fn build_redis_url(config: &Value, db_index: i64) -> String {
         String::new()
     };
     let mut url = format!("{}://{}{}:{}/{}", scheme, auth, host, port, db_index);
-    // REQUIRED = mã hoá nhưng không kiểm tra chứng chỉ. redis-rs chỉ nhận cấu hình này qua
-    // fragment `#insecure` của URL; url_encode đã escape '#' trong user/password nên fragment
-    // này không thể bị chèn từ dữ liệu người dùng.
+    // REQUIRED = encrypted but without certificate verification. redis-rs only accepts this configuration
+    // through the URL's `#insecure` fragment; url_encode already escapes '#' in the user/password, so this
+    // fragment cannot be injected from user data.
     if mode == "REQUIRED" {
         url.push_str("#insecure");
     }
     url
 }
 
-// Ba hàm đọc file PEM riêng thay vì một hàm có tham số "loại file": bảng backendErrors.ts dịch
-// cả khung câu, một tham số tiếng Việt lồng bên trong sẽ nằm nguyên trong câu đã dịch.
+// Three separate PEM-reading functions instead of one taking a "file kind" argument: the backendErrors.ts
+// table translates the whole sentence, and a Vietnamese argument nested inside it would survive untranslated.
 pub(crate) fn read_ca_pem(path: &str) -> Result<Vec<u8>, String> {
     std::fs::read(path).map_err(|e| format!("Không đọc được chứng chỉ CA '{}': {}", path, e))
 }
@@ -102,8 +102,8 @@ pub(crate) fn redis_tls_certs(config: &Value) -> Result<Option<redis::TlsCertifi
             client_key: read_client_key_pem(&k)?,
         }),
         (None, None) => None,
-        // mTLS cần đủ cặp cert + key. Thiếu một nửa mà im lặng bỏ qua thì server từ chối kết nối
-        // với một lỗi TLS khó hiểu, trong khi nguyên nhân thật nằm ở form.
+        // mTLS needs the full cert + key pair. Silently ignoring half of it makes the server refuse the connection
+        // with a cryptic TLS error, while the real cause is in the form.
         _ => return Err("mTLS cần cả chứng chỉ client và khoá client".to_string()),
     };
     let root_cert = match ca {
@@ -126,10 +126,10 @@ pub(crate) fn make_client(config: &Value, db_index: i64) -> Result<redis::Client
         None => redis::Client::open(url).map_err(|e| format!("Cấu hình TLS không hợp lệ: {}", e))?,
     };
 
-    // VERIFY_CA = kiểm tra chuỗi chứng chỉ nhưng bỏ qua tên miền. Phải đặt SAU build_with_tls:
-    // hàm đó dựng lại tls_params từ các file chứng chỉ và sẽ xoá mất cờ nếu đặt trước.
-    // Đây cũng là mode duy nhất dùng được khi Redis đi qua SSH tunnel, vì lúc đó chứng chỉ
-    // được đối chiếu với 127.0.0.1.
+    // VERIFY_CA = verify the certificate chain but skip the hostname. It must be set AFTER build_with_tls:
+    // that call rebuilds tls_params from the certificate files and would drop the flag if set before.
+    // It is also the only usable mode when Redis goes through an SSH tunnel, because the certificate is then
+    // checked against 127.0.0.1.
     if mode == "VERIFY_CA" {
         let mut addr = client.get_connection_info().addr().clone();
         addr.set_danger_accept_invalid_hostnames(true);

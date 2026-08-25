@@ -1,4 +1,4 @@
-//! `get_table_data` — đọc một trang dữ liệu của bảng cho lưới.
+//! `get_table_data` — reads one page of a table's data for the grid.
 
 use serde_json::{json, Value};
 
@@ -55,20 +55,20 @@ pub async fn get_table_data(
     };
 
     let is_mysql = matches!(&conn_type.kind, DbKind::Mysql(_));
-    // Ký tự trích dẫn định danh theo dialect: MySQL dùng backtick, còn lại dùng dấu nháy kép
+    // The identifier quoting character per dialect: MySQL uses backticks, the others double quotes
     let q = if is_mysql { '`' } else { '"' };
     // The grid reads through this command, so it has to name the same schema the sidebar listed
     // from — otherwise a table outside `public` lists fine and then fails to open.
     let table_ref = qualified(&conn_type, &schema, &name);
 
-    // WHERE: frontend đã dựng mệnh đề lọc đúng dialect, chỉ ghép thô vào sau WHERE
+    // WHERE: the frontend has already built the filter clause in the right dialect, so it is spliced in raw after WHERE
     let filter_body = filter.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty());
     let where_clause = match filter_body {
         Some(f) => format!(" WHERE {}", f),
         None => String::new(),
     };
 
-    // loại bỏ ký tự trích dẫn có sẵn để tránh phá cú pháp, rồi tự bọc lại
+    // strip any quoting characters already present so the syntax cannot break, then quote it ourselves
     let safe_ident = |s: &str| s.replace('`', "").replace('"', "");
     let seek_col = seek_column
         .as_ref()
@@ -76,10 +76,10 @@ pub async fn get_table_data(
         .filter(|s| !s.is_empty())
         .map(|s| safe_ident(s));
 
-    // ORDER BY: cột người dùng chọn, và nếu không có thì cột seek (khoá chính một cột) mà frontend
-    // đưa xuống. Keyset pagination chỉ đúng khi thứ tự là xác định, nên chế độ "chưa sort" cũng
-    // phải nhận `ORDER BY <pk>` — việc đó vá luôn một lỗi âm thầm có từ trước: `LIMIT/OFFSET` mà
-    // không `ORDER BY` thì server được phép trả cùng một dòng ở hai trang khác nhau.
+    // ORDER BY: the column the user picked, and failing that the seek column (a single-column primary key) the
+    // frontend sends down. Keyset pagination is only correct when the order is deterministic, so even the "unsorted"
+    // mode has to take `ORDER BY <pk>` — which also fixes a silent pre-existing bug: `LIMIT/OFFSET` without an
+    // `ORDER BY` lets the server return the same row on two different pages.
     let sort_col = sort_by
         .as_ref()
         .map(|s| s.trim())
@@ -93,25 +93,25 @@ pub async fn get_table_data(
         None => String::new(),
     };
 
-    // Keyset ("seek") pagination. Con trỏ chỉ có nghĩa với đúng cột nó được lấy ra, nên nó chỉ được
-    // dùng khi thứ tự đang áp dụng CHÍNH LÀ cột seek: sort theo cột khác thì frontend đã thôi gửi
-    // `seek_column`, và điều kiện này là lớp chặn thứ hai.
+    // Keyset ("seek") pagination. A cursor only means anything for the exact column it was taken from, so it is only
+    // used when the order in force IS that seek column: sorting by another column makes the frontend stop sending
+    // `seek_column`, and this condition is the second line of defence.
     let seek_active = seek_col.as_ref().filter(|c| sort_col.as_deref() == Some(c.as_str()));
     let seek_clause = match (seek_active, cursor.as_ref().map(|s| s.as_str()).filter(|s| !s.is_empty())) {
         (Some(col), Some(v)) => {
             let op = if desc { "<" } else { ">" };
             let lit = sql_str(v);
-            // Luôn là literal chuỗi, kể cả với khoá số: kiểu của CỘT quyết định phép so sánh, nên
-            // `id > '500'` vẫn so theo số. Tự suy kiểu từ giá trị thì một khoá `varchar` chứa số
-            // sẽ được so như số trong khi `ORDER BY` so như chuỗi — hai thứ tự khác nhau, và trang
-            // sau lặng lẽ bỏ sót dòng.
+            // Always a string literal, even for a numeric key: the COLUMN's type decides the comparison, so
+            // `id > '500'` still compares numerically. Inferring the type from the value would make a `varchar` key
+            // holding digits compare as a number while `ORDER BY` compares it as a string — two different orders, and the
+            // next page silently skips rows.
             Some(format!("{q}{col}{q} {op} '{lit}'"))
         }
         _ => None,
     };
 
-    // WHERE của trang = filter + con trỏ. Filter PHẢI được bọc ngoặc: `a = 1 OR b = 2` nối thẳng
-    // bằng AND sẽ thành `a = 1 OR (b = 2 AND pk > …)`, tức là lọc khác hẳn ý người dùng.
+    // The page's WHERE = filter + cursor. The filter MUST be parenthesised: `a = 1 OR b = 2` joined straight
+    // with AND becomes `a = 1 OR (b = 2 AND pk > …)`, i.e. a filter nothing like what the user asked for.
     let row_where = match (filter_body, &seek_clause) {
         (Some(f), Some(seek)) => format!(" WHERE ({f}) AND {seek}"),
         (Some(f), None) => format!(" WHERE {f}"),
@@ -119,8 +119,8 @@ pub async fn get_table_data(
         (None, None) => String::new(),
     };
 
-    // Con trỏ THAY THẾ offset, không cộng dồn: đó là toàn bộ điểm của pha này — trang sâu không
-    // còn phải đọc rồi bỏ đi n dòng đầu.
+    // The cursor REPLACES the offset, it is not added to it: that is the whole point of this phase — a deep page no
+    // longer has to read and throw away the first n rows.
     let offset = if seek_clause.is_some() { 0 } else { (page.saturating_sub(1)) * limit };
     // Read ONE row more than the page needs: whether a next page exists is then a fact about the
     // rows, not a division of a row count that may be an estimate — and it costs nothing.
@@ -129,8 +129,8 @@ pub async fn get_table_data(
         "SELECT * FROM {table_ref}{row_where}{order_clause} LIMIT {fetch_limit} OFFSET {offset}",
         table_ref = table_ref, row_where = row_where, order_clause = order_clause, fetch_limit = fetch_limit, offset = offset
     );
-    // Số đếm là của cả tập đã lọc, nên nó dùng `where_clause` (không có con trỏ) — nếu không thì
-    // mỗi trang lại báo một tổng nhỏ dần.
+    // The count is over the whole filtered set, so it uses `where_clause` (without the cursor) — otherwise
+    // every page would report a smaller total than the last.
     let count_sql = format!(
         "SELECT COUNT(*) FROM {table_ref}{where_clause}",
         table_ref = table_ref, where_clause = where_clause
@@ -185,10 +185,10 @@ pub async fn get_table_data(
     let has_more = rows_json.len() > limit as usize;
     rows_json.truncate(limit as usize);
 
-    // Con trỏ cho trang sau: giá trị cột seek ở dòng CUỐI của trang này (sau khi đã cắt dòng đọc
-    // thừa), dạng chuỗi chính xác. Phải lấy ở Rust chứ không để frontend đọc từ dòng JSON: một khoá
-    // i64 lớn hơn 2^53 (kiểu snowflake) đi qua `JSON.parse` của JS là mất chữ số cuối, và con trỏ
-    // lệch một đơn vị thì trang sau bỏ sót dòng — không lỗi, không dấu vết.
+    // The cursor for the next page: the seek column's value on the LAST row of this page (after the extra probe row
+    // has been trimmed), as an exact string. It has to be taken in Rust rather than read off the JSON row by the frontend: an
+    // i64 key above 2^53 (a snowflake id) loses its last digits going through JS's `JSON.parse`, and a cursor
+    // off by one makes the next page skip a row — no error, no trace.
     let next_cursor = if has_more {
         seek_active
             .and_then(|col| rows_json.last()?.get(col.as_str()))
@@ -213,9 +213,9 @@ pub async fn get_table_data(
         };
         match approx {
             Some(n) => (Some(n), Some(false)),
-            // Đếm quá giờ thì trả `None`, không phải lỗi: dòng dữ liệu đã có rồi, và giao diện đã
-            // biết hiển thị "không rõ tổng số" (pha 2). Chết cả trang chỉ vì con số ở thanh dưới
-            // là đổi một bất tiện thành một sự cố.
+            // A count that runs out of time returns `None`, not an error: the data rows are already there, and the UI
+            // knows how to show "total unknown" (phase 2). Killing the whole page over the number in the status bar
+            // would turn an inconvenience into an incident.
             None => match limit_dur {
                 None => (exact_row_count(&conn_type, &count_sql).await, Some(true)),
                 Some(d) => (
@@ -236,8 +236,8 @@ pub async fn get_table_data(
         "totalCount": total_count,
         "countExact": count_exact,
         "hasMore": has_more,
-        // Đưa nguyên vào lần gọi sau để lấy trang kế tiếp. `null` = không seek được (không có trang
-        // sau, hoặc khoá không phải số/chuỗi) và frontend lại dùng số trang.
+        // Pass it straight back on the next call to get the following page. `null` = seeking is not possible (there is no next
+        // page, or the key is neither a number nor a string) and the frontend goes back to page numbers.
         "nextCursor": next_cursor
     }))
 }

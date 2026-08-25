@@ -1,7 +1,7 @@
-//! Đọc một ô số nguyên ra khỏi row của driver, chấp nhận mọi kiểu server có thể trả về.
+//! Reads one integer cell out of a driver row, accepting every type the server may return.
 //!
-//! `COUNT(*)` là BIGINT trên Postgres nhưng `SUM(...)` là NUMERIC, và MySQL trả unsigned cho
-//! một số cột của `information_schema` — nên phải thử lần lượt thay vì ép một kiểu.
+//! `COUNT(*)` is a BIGINT on Postgres but `SUM(...)` is NUMERIC, and MySQL returns unsigned for
+//! some `information_schema` columns — so the types have to be tried in turn instead of forcing one.
 
 pub(super) fn get_pg_i64_cell(row: &sqlx::postgres::PgRow, col: &str) -> i64 {
     use sqlx::Row;

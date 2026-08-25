@@ -1,10 +1,10 @@
-//! Việc chạy MỘT LẦN lúc app khởi động: vật liệu kính của cửa sổ và các `AppHandle`
-//! được park lại cho những tầng không nhận được `AppState`.
+//! The work that runs ONCE at app startup: the window's glass material and the `AppHandle`s
+//! parked for the layers that never receive an `AppState`.
 
 use tauri::Manager;
 
-/// Chạy trong `Builder::setup`. Lỗi ở đây là lỗi khởi động, nhưng cả hai việc bên trong
-/// đều "cố gắng hết sức" nên hàm không có nhánh thất bại nào.
+/// Runs inside `Builder::setup`. A failure here would be a startup failure, but both pieces of work
+/// inside are best-effort, so the function has no failing branch.
 pub fn init(app: &tauri::App) {
     apply_window_material(app);
 
@@ -17,10 +17,10 @@ pub fn init(app: &tauri::App) {
     crate::state::set_app_handle(app.handle().clone());
 }
 
-/// Vật liệu kính của cửa sổ được áp DUY NHẤT ở đây, không dùng windowEffects trong
-/// tauri.conf.json — nếu khai cả hai thì effect bị áp hai lần. Chọn cách gọi thủ công vì
-/// Tauri xử lý windowEffects bằng cách lấy variant khớp đầu tiên rồi bỏ qua lỗi trả về,
-/// tức KHÔNG có fallback thật; còn ở đây mica lỗi thì còn tụt xuống blur được.
+/// The window's glass material is applied ONLY here, never through windowEffects in
+/// tauri.conf.json — declaring both applies the effect twice. Doing it by hand is deliberate:
+/// Tauri handles windowEffects by taking the first matching variant and then ignoring the error it
+/// returns, i.e. there is NO real fallback; here, when mica fails we can still fall back to blur.
 fn apply_window_material(app: &tauri::App) {
     let Some(window) = app.get_webview_window("main") else {
         return;
@@ -31,34 +31,34 @@ fn apply_window_material(app: &tauri::App) {
     let _ = window_vibrancy::apply_vibrancy(
         &window,
         window_vibrancy::NSVisualEffectMaterial::UnderWindowBackground,
-        // Active: giữ kính sáng đầy đủ cả khi cửa sổ mất focus (mặc định
-        // macOS sẽ làm xám đi). 12.0: bo góc khớp với CSS
-        // [data-os='macos'] #root vì decorations = false.
+        // Active: keep the glass fully lit even when the window loses focus
+        // (macOS greys it out by default). 12.0: corner radius matching the CSS
+        // [data-os='macos'] #root, since decorations = false.
         Some(window_vibrancy::NSVisualEffectState::Active),
         Some(12.0),
     );
 
     #[cfg(target_os = "windows")]
     {
-        // dark = None -> Mica đi theo tuỳ chọn sáng/tối của hệ thống.
-        // Trước đây truyền Some(true) là ép tối, nên theme sáng của app
-        // vẫn nằm trên nền kính tối. Máy không hỗ trợ Mica (Win 10) thì
-        // tụt xuống Blur.
+        // dark = None -> Mica follows the system's light/dark preference.
+        // Passing Some(true) used to force dark, so the app's light theme still
+        // sat on dark glass. A machine without Mica support (Win 10) falls back
+        // to Blur.
         if window_vibrancy::apply_mica(&window, None).is_err() {
             let _ = window_vibrancy::apply_blur(&window, Some((18, 20, 26, 125)));
         }
     }
 }
 
-// KHÔNG set_menu ở đây. Trước đây có một menu "Edit" tự dựng bằng
-// MenuItem::with_id, nhưng nó vô dụng và còn gây hại:
-//  - Không có on_menu_event nào -> bấm vào các mục không làm gì cả,
-//    trong khi vẫn chiếm accelerator Ctrl+Z/X/C/V/A.
-//  - Trên Windows với decorations = false, thanh menu native được vẽ
-//    trong client area -> hiện chữ "Edit" mờ đè lên TitleBar tự làm.
-//  - Trên macOS, Tauri đã tự gắn Menu::default() đầy đủ (App/File/Edit/
-//    View/Window/Help) với các mục copy/paste hoạt động thật khi builder
-//    không gọi .menu() — xem tauri/src/app.rs. set_menu() trong setup()
-//    chạy sau nên đang GHI ĐÈ menu tốt đó bằng menu hỏng.
-// Bỏ hẳn: macOS lấy lại menu mặc định, Windows/Linux thì WebView2/
-// WebKitGTK vốn tự xử lý clipboard trong input.
+// Do NOT set_menu here. There used to be a hand-built "Edit" menu made of
+// MenuItem::with_id, but it was useless and actively harmful:
+//  - No on_menu_event existed -> clicking the items did nothing at all,
+//    while they still claimed the Ctrl+Z/X/C/V/A accelerators.
+//  - On Windows with decorations = false the native menu bar is drawn
+//    inside the client area -> a faint "Edit" label on top of our own TitleBar.
+//  - On macOS, Tauri already attaches a full Menu::default() (App/File/Edit/
+//    View/Window/Help) whose copy/paste items really work when the builder
+//    does not call .menu() — see tauri/src/app.rs. set_menu() in setup()
+//    runs later, so it was OVERWRITING that good menu with a broken one.
+// Dropped entirely: macOS gets its default menu back, and on Windows/Linux
+// WebView2/WebKitGTK handle clipboard inside inputs on their own anyway.

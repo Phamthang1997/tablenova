@@ -1,32 +1,32 @@
-// Kho bí mật cho profile kết nối: mật khẩu DB, mật khẩu/passphrase/private key SSH,
-// AWS secret key... được cất trong kho bảo mật của HĐH thay vì localStorage.
+// The secret store for connection profiles: DB passwords, SSH password/passphrase/private key,
+// AWS secret key... kept in the OS credential store instead of localStorage.
 //
-// Lý do: localStorage của webview nằm trên đĩa dưới dạng file thường (Windows:
-// EBWebView\Default\Local Storage\leveldb) và KHÔNG mã hoá — tiến trình nào chạy dưới
-// cùng user cũng đọc được mật khẩu DB lẫn private key SSH. CodeQL cảnh báo đúng ở
+// Why: the webview's localStorage sits on disk as ordinary files (Windows:
+// EBWebView\Default\Local Storage\leveldb) and is NOT encrypted — any process running as the
+// same user can read both DB passwords and SSH private keys. CodeQL is right to flag
 // js/clear-text-storage-of-sensitive-data.
 //
-// Frontend chỉ còn lưu phần cấu hình không nhạy cảm; mỗi bí mật là một mục riêng trong
-// kho HĐH, định danh bằng "<profile_id>:<tên_field>".
+// The frontend only stores the non-sensitive part of the config; each secret is its own entry in
+// the OS store, identified by "<profile_id>:<field_name>".
 
 use keyring::Entry;
 use serde::{Deserialize, Serialize};
 
-// Tên service hiển thị trong Windows Credential Manager / Keychain.
+// The service name shown in Windows Credential Manager / Keychain.
 const SERVICE: &str = "TableNova";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SecretRef {
-    /// Id profile kết nối (khoá trong localStorage).
+    /// Connection profile id (the key in localStorage).
     pub profile_id: String,
-    /// Tên field bí mật, vd "password", "sshPassphrase".
+    /// Name of the secret field, e.g. "password", "sshPassphrase".
     pub field: String,
 }
 
 impl SecretRef {
-    // Khoá tài khoản trong kho: gộp profile + field để mỗi bí mật là một mục riêng.
-    // Tách từng mục thay vì gói chung một JSON để không đụng giới hạn kích thước của
-    // Windows Credential Manager (2560 byte mỗi mục) khi có private key dài.
+    // The account key in the store: profile + field combined so each secret is its own entry.
+    // Separate entries rather than one bundled JSON so a long private key cannot hit Windows
+    // Credential Manager's size limit (2560 bytes per entry).
     fn account(&self) -> String {
         format!("{}:{}", self.profile_id, self.field)
     }
@@ -37,7 +37,7 @@ impl SecretRef {
     }
 }
 
-/// Ghi một bí mật vào kho HĐH. Giá trị rỗng đồng nghĩa với xoá.
+/// Write one secret into the OS store. An empty value means delete.
 #[tauri::command]
 pub fn secret_set(profile_id: String, field: String, value: String) -> Result<(), String> {
     let r = SecretRef { profile_id, field };
@@ -52,7 +52,7 @@ pub fn secret_set(profile_id: String, field: String, value: String) -> Result<()
     })
 }
 
-/// Đọc một bí mật. Trả về None nếu chưa từng lưu.
+/// Read one secret. Returns None when nothing was ever stored.
 #[tauri::command]
 pub fn secret_get(profile_id: String, field: String) -> Result<Option<String>, String> {
     let r = SecretRef { profile_id, field };
@@ -63,7 +63,7 @@ pub fn secret_get(profile_id: String, field: String) -> Result<Option<String>, S
     }
 }
 
-/// Xoá một bí mật. Không có sẵn cũng coi như thành công.
+/// Delete one secret. Not being there counts as success.
 #[tauri::command]
 pub fn secret_delete(profile_id: String, field: String) -> Result<(), String> {
     let r = SecretRef { profile_id, field };
@@ -74,8 +74,8 @@ pub fn secret_delete(profile_id: String, field: String) -> Result<(), String> {
     }
 }
 
-/// Đọc nhiều bí mật của một profile trong một lần gọi (dùng khi nạp form / lúc kết nối).
-/// Field nào chưa có thì không xuất hiện trong map trả về.
+/// Read several secrets of one profile in a single call (used when loading the form / when connecting).
+/// A field that does not exist simply does not appear in the returned map.
 #[tauri::command]
 pub fn secret_get_many(
     profile_id: String,
@@ -90,7 +90,7 @@ pub fn secret_get_many(
     Ok(out)
 }
 
-/// Ghi nhiều bí mật của một profile trong một lần gọi (dùng khi lưu profile / migrate).
+/// Write several secrets of one profile in a single call (used when saving a profile / migrating).
 #[tauri::command]
 pub fn secret_set_many(
     profile_id: String,
@@ -102,7 +102,7 @@ pub fn secret_set_many(
     Ok(())
 }
 
-/// Xoá toàn bộ bí mật của một profile (khi xoá profile đó).
+/// Delete every secret of one profile (when that profile is deleted).
 #[tauri::command]
 pub fn secret_delete_many(profile_id: String, fields: Vec<String>) -> Result<(), String> {
     for field in fields {

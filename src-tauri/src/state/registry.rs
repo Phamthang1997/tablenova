@@ -1,4 +1,4 @@
-//! `ConnRegistry` — bản đồ `conn_id` -> kết nối, và `acquire()` là lối ra DUY NHẤT.
+//! `ConnRegistry` — the `conn_id` -> connection map, and `acquire()` is the ONLY way out.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -76,7 +76,7 @@ impl ConnRegistry {
                         "dialect": e.conn.dialect(),
                         "serverId": &*e.server.id,
                         "schema": e.current_schema,
-                        // Badge của rail (§4.2b): số câu GHI đang chờ commit trên kết nối này.
+                        // The rail's badge (§4.2b): the number of WRITE statements waiting to be committed on this connection.
                         "pending": crate::tx::pending_count(id),
                         "readOnly": e.read_only,
                     }),
@@ -87,14 +87,14 @@ impl ConnRegistry {
         Ok(out.into_iter().map(|(_, v)| v).collect())
     }
 
-    /// Mọi kết nối đang mở, kèm handle đã **clone ra khỏi khoá**.
+    /// Every open connection, with the handle **cloned out from under the lock**.
     ///
-    /// Tồn tại cho `ping_connections`, thứ phải chạm tới từng kết nối bằng `.await`. Trả JSON như
-    /// `list()` thì không được: khoá registry là `std::sync::Mutex` và không bao giờ được giữ qua
-    /// một await (`CODING_STANDARDS.md` §6.3). Clone `Arc`/pool là một atomic increment.
+    /// It exists for `ping_connections`, which has to touch every connection with an `.await`. Returning
+    /// JSON like `list()` will not do: the registry lock is a `std::sync::Mutex` and must never be held
+    /// across an await (`CODING_STANDARDS.md` §6.3). Cloning an `Arc`/pool is one atomic increment.
     ///
-    /// Chỉ kết nối SQL. `ping_connections` chạy một câu SELECT dò sống, thứ không có nghĩa với
-    /// Redis; ping Redis là `PING` trên `RedisCtx` và là một việc riêng.
+    /// SQL connections only. `ping_connections` runs a liveness SELECT, which means nothing for Redis;
+    /// pinging Redis is a `PING` on a `RedisCtx` and is a separate job.
     pub fn handles(&self) -> Result<Vec<(SessionId, DbConnection)>, String> {
         let map = self.inner.lock().map_err(|e| e.to_string())?;
         let mut out: Vec<(SessionId, DbConnection)> = map

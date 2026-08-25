@@ -1,10 +1,10 @@
-//! Dựng chuỗi kết nối từ config, và biến đổi config trước khi kết nối (SSH tunnel).
+//! Building the connection string from a config, and transforming the config before connecting (SSH tunnel).
 
 use serde_json::{json, Value};
 
 use crate::ssh::SshTunnel;
 
-// Mã hóa thành phần user/password để tránh vỡ URL khi có ký tự đặc biệt (@, :, /, ...)
+// Encode the user/password component so a special character (@, :, /, ...) cannot break the URL
 fn url_encode_component(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
@@ -16,7 +16,7 @@ fn url_encode_component(s: &str) -> String {
     out
 }
 
-// Dựng chuỗi kết nối Postgres kèm cấu hình SSL (sslmode + sslrootcert nếu có)
+// Build the Postgres connection string including the SSL configuration (sslmode + sslrootcert when present)
 pub(crate) fn build_pg_url(config: &Value, db_override: Option<&str>) -> String {
     let host = config.get("host").and_then(|v| v.as_str()).unwrap_or("localhost");
     let port = config.get("port").and_then(|v| v.as_u64()).unwrap_or(5432);
@@ -32,7 +32,7 @@ pub(crate) fn build_pg_url(config: &Value, db_override: Option<&str>) -> String 
         url_encode_component(user), url_encode_component(password), host, port, database
     );
 
-    // SSL: map các giá trị UI (DISABLED/PREFERRED/REQUIRED/VERIFY_CA/VERIFY_IDENTITY) -> sslmode của Postgres
+    // SSL: map the UI values (DISABLED/PREFERRED/REQUIRED/VERIFY_CA/VERIFY_IDENTITY) -> Postgres' sslmode
     let ssl_mode_ui = config.get("sslMode").and_then(|v| v.as_str()).unwrap_or("DISABLED");
     let ssl_enabled = config.get("sslEnabled").and_then(|v| v.as_bool()).unwrap_or(false) || ssl_mode_ui != "DISABLED";
     if ssl_enabled {
@@ -41,7 +41,7 @@ pub(crate) fn build_pg_url(config: &Value, db_override: Option<&str>) -> String 
             "REQUIRED" => "require",
             "VERIFY_CA" => "verify-ca",
             "VERIFY_IDENTITY" => "verify-full",
-            "DISABLED" => "require", // sslEnabled=true nhưng mode chưa đặt -> mặc định require
+            "DISABLED" => "require", // sslEnabled=true but no mode set -> default to require
             other => other,
         };
         url.push_str(&format!("?sslmode={}", pg_mode));
@@ -55,15 +55,15 @@ pub(crate) fn build_pg_url(config: &Value, db_override: Option<&str>) -> String 
             url.push_str(&format!("&sslkey={}", key));
         }
     } else {
-        // Phải nói rõ "disable": không truyền sslmode thì sqlx dùng default
-        // PgSslMode::Prefer (vẫn bật TLS nếu server hỗ trợ) và còn đọc cả biến
-        // môi trường PGSSLMODE -> UI chọn DISABLED mà thực tế lại đang mã hoá.
+        // "disable" has to be spelled out: without an sslmode sqlx uses its default
+        // PgSslMode::Prefer (which still enables TLS when the server supports it) and even reads the
+        // PGSSLMODE environment variable -> the UI says DISABLED while the connection is in fact encrypted.
         url.push_str("?sslmode=disable");
     }
     url
 }
 
-// Dựng chuỗi kết nối MySQL kèm cấu hình SSL (ssl-mode + ssl-ca nếu có)
+// Build the MySQL connection string including the SSL configuration (ssl-mode + ssl-ca when present)
 pub(crate) fn build_mysql_url(config: &Value, db_override: Option<&str>) -> String {
     let host = config.get("host").and_then(|v| v.as_str()).unwrap_or("localhost");
     let port = config.get("port").and_then(|v| v.as_u64()).unwrap_or(3306);
@@ -79,7 +79,7 @@ pub(crate) fn build_mysql_url(config: &Value, db_override: Option<&str>) -> Stri
         url_encode_component(user), url_encode_component(password), host, port, database
     );
 
-    // SSL: các giá trị UI trùng khớp với ssl-mode của sqlx MySQL
+    // SSL: the UI values match sqlx MySQL's ssl-mode exactly
     let ssl_mode_ui = config.get("sslMode").and_then(|v| v.as_str()).unwrap_or("DISABLED");
     let ssl_enabled = config.get("sslEnabled").and_then(|v| v.as_bool()).unwrap_or(false) || ssl_mode_ui != "DISABLED";
     if ssl_enabled {
@@ -95,14 +95,14 @@ pub(crate) fn build_mysql_url(config: &Value, db_override: Option<&str>) -> Stri
             url.push_str(&format!("&ssl-key={}", key));
         }
     } else {
-        // Tương tự Postgres: default của sqlx là MySqlSslMode::Preferred.
+        // Same as Postgres: sqlx's default is MySqlSslMode::Preferred.
         url.push_str("?ssl-mode=DISABLED");
     }
     url
 }
 
-// Nếu bật SSH, mở tunnel tới (host, port) hiện tại của config và trả về config đã chỉnh
-// để trỏ kết nối tới 127.0.0.1:<local_port>. Trả về (config_dùng_để_kết_nối, tunnel).
+// When SSH is enabled, open a tunnel to the config's current (host, port) and return the adjusted config
+// pointing the connection at 127.0.0.1:<local_port>. Returns (config_to_connect_with, tunnel).
 pub(crate) async fn apply_ssh_tunnel(config: &Value, default_port: u16) -> Result<(Value, Option<SshTunnel>), String> {
     let use_ssh = config.get("useSsh").and_then(|v| v.as_bool()).unwrap_or(false);
     if !use_ssh {

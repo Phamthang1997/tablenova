@@ -1,4 +1,4 @@
-//! Trạng thái kết nối: ping độ trễ của mọi kết nối, và bản mô tả đầy đủ của một kết nối.
+//! Connection status: the ping latency of every connection, and the full description of one connection.
 
 use serde_json::{json, Value};
 use sqlx::Row;
@@ -26,30 +26,30 @@ pub struct ConnectionStatusInfo {
     pub tls_version: String,
 }
 
-/// Latency của **mọi** kết nối đang mở, một `SELECT 1` cho mỗi cái, chạy song song.
+/// The latency of **every** open connection, one `SELECT 1` each, run in parallel.
 ///
-/// Không dùng `get_connection_status` cho việc này: lệnh đó còn hỏi version, user và TLS, tức 3–5
-/// round trip cho *một* kết nối. Gọi nó N lần mỗi khi mở Quick Switcher là bắt một cái menu chờ vài
-/// trăm ms — đó chính là lý do lệnh này tồn tại riêng.
+/// `get_connection_status` is not used for this: that command also asks for the version, the user and TLS, i.e. 3–5
+/// round trips for *one* connection. Calling it N times every time the Quick Switcher opens makes a menu wait a few
+/// hundred ms — which is exactly why this command exists on its own.
 ///
-/// **Đi thẳng vào pool, không qua `execute_raw_sql_generic`.** Nếu đi qua đó thì `should_route` sẽ
-/// đẩy câu này vào phiên transaction khi người dùng đang bật commit thủ công, và `run_raw` gọi
-/// `ensure_begin` ở câu **đầu tiên bất kể nó là gì** — một cú ping nền sẽ âm thầm MỞ transaction
-/// trên mọi kết nối, rồi bộ đếm "đang chờ commit" nói về những thứ người dùng chưa từng gõ. Ping là
-/// thao tác đọc trạng thái; nó không được để lại dấu vết nào.
+/// **It goes straight to the pool, not through `execute_raw_sql_generic`.** Going through that would make
+/// `should_route` push this statement into the transaction session while the user has manual commit on, and `run_raw`
+/// calls `ensure_begin` on the **first statement whatever it is** — a background ping would silently OPEN a transaction
+/// on every connection, and the "waiting to be committed" counter would then talk about things the user never typed. A ping is
+/// a state-reading operation; it must leave no trace behind.
 ///
-/// Không nhận `conn_id`: đây là câu hỏi về registry, giống `list_connections`, không phải về một kết
-/// nối. Lỗi của một kết nối trả về `ok: false` chứ không làm cả lệnh thất bại — một server đã ngắt
-/// là *thông tin* mà UI cần hiện, không phải lỗi che nốt N-1 kết nối còn lại.
+/// It takes no `conn_id`: this is a question about the registry, like `list_connections`, not about one
+/// connection. A failure on one connection returns `ok: false` rather than failing the whole command — a server that has gone away
+/// is *information* the UI needs to show, not an error that hides the other N-1 connections as well.
 #[tauri::command]
 pub async fn ping_connections(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
     let handles = state.connections.handles()?;
     let pings = futures_util::future::join_all(handles.into_iter().map(|(id, conn)| async move {
         let started = std::time::Instant::now();
         let ok = match &conn.kind {
-            // SQLite là handle dùng chung sau `Mutex`: một `SELECT 1` là vi giây, nhưng khoá đang bị
-            // giữ bởi một truy vấn dài thì ping sẽ chờ theo. Đó là sự thật đáng hiện — kết nối ấy
-            // *đang* bận — nên không cố lách bằng `try_lock`.
+            // SQLite is a shared handle behind a `Mutex`: one `SELECT 1` takes microseconds, but when the lock is
+            // held by a long query the ping waits with it. That is a truth worth showing — that connection
+            // *is* busy — so there is no attempt to dodge it with `try_lock`.
             DbKind::Sqlite(arc) => arc
                 .lock()
                 .map(|c| c.execute_batch("SELECT 1;").is_ok())
@@ -81,37 +81,37 @@ impl ConnectionStatusInfo {
     }
 }
 
-/// Giá trị của một biến trạng thái MySQL (`SHOW SESSION STATUS LIKE …`).
+/// The value of one MySQL status variable (`SHOW SESSION STATUS LIKE …`).
 ///
-/// Nhận nguyên câu lệnh dạng literal chứ không ghép tên biến vào chuỗi: sqlx 0.9
-/// chỉ cài `SqlSafeStr` cho `&'static str`, và ở đây cũng chẳng có gì động —
-/// tên biến luôn là hằng, nên không cần tới `AssertSqlSafe` như các chỗ dựng SQL
-/// từ tên bảng/cột trong file này.
+/// It takes the whole statement as a literal rather than splicing the variable name into a string: sqlx 0.9
+/// only implements `SqlSafeStr` for `&'static str`, and nothing here is dynamic anyway —
+/// the variable name is always a constant, so it needs none of the `AssertSqlSafe` the places that build SQL
+/// from table/column names in this file use.
 ///
-/// Chạy trên một connection khác trong pool vẫn cho kết quả đúng: cấu hình TLS
-/// là của cả pool nên mọi session đều thương lượng ra cùng cipher/version.
-/// MySQL trả `Ssl_cipher` là chuỗi rỗng khi phiên không mã hoá.
+/// Running it on a different connection of the pool still gives the right answer: the TLS configuration
+/// belongs to the whole pool, so every session negotiates the same cipher/version.
+/// MySQL returns an empty string for `Ssl_cipher` when the session is not encrypted.
 async fn mysql_status_var(pool: &sqlx::MySqlPool, sql: &'static str) -> String {
     match sqlx::query(sql).fetch_optional(pool).await {
-        // Cột 1 là `Value`; lấy theo chỉ số chứ không theo tên cho khớp quy ước
-        // chống trùng tên cột của file này.
+        // Column 1 is `Value`; taken by index rather than by name, matching this file's
+        // convention against duplicate column names.
         Ok(Some(row)) => row.try_get::<String, _>(1).unwrap_or_default(),
         _ => String::new(),
     }
 }
 
-/// Trả về trạng thái kết nối DB hiện tại, loại kết nối (loc/ssh/ssl/rem) và độ trễ ping (ms).
+/// Returns the current DB connection status, the connection kind (loc/ssh/ssl/rem) and the ping latency (ms).
 #[tauri::command]
 pub async fn get_connection_status(
-    // `State`/`AppState` không được import ở đầu file — mọi command khác trong file đều viết
-    // đường dẫn đầy đủ, giữ nguyên quy ước đó.
+    // `State`/`AppState` is not imported at the top of the file — every other command in this file writes
+    // the full path, and that convention is kept.
     state: tauri::State<'_, crate::AppState>, conn_id: String,
 ) -> Result<ConnectionStatusInfo, String> {
     let start = std::time::Instant::now();
     let (conn, db_type, config, has_ssh) = {
-        // `.ok()`, không phải `?`: không có kết nối SQL là trạng thái được DUNG THỨ ở đây — nhánh
-        // Redis phía dưới mới là câu trả lời khi đó. Dùng `?` sẽ biến "chưa kết nối SQL" thành lỗi
-        // và chặn luôn đường Redis.
+        // `.ok()`, not `?`: having no SQL connection is a TOLERATED state here — the Redis
+        // branch below is the answer in that case. Using `?` would turn "no SQL connection" into an error
+        // and block the Redis path too.
         match state.connections.acquire(&conn_id).ok() {
             Some(ctx) => (
                 Some(ctx.conn().clone()),
@@ -127,9 +127,9 @@ pub async fn get_connection_status(
         Some(c) => c,
         None => {
             // Check Redis connection
-            // Cùng `conn_id`, chỉ khác loại kết nối. Redis đã nằm trong registry nên không còn
-            // phải hỏi một state toàn cục "có kết nối Redis nào không" — câu hỏi đó không có câu
-            // trả lời đúng khi hai kết nối Redis cùng mở.
+            // The same `conn_id`, only a different kind of connection. Redis is in the registry now, so there is no
+            // more asking a global state "is there a Redis connection" — a question with no right
+            // answer once two Redis connections are open at the same time.
             let (redis_conn, redis_config, redis_db_index, has_redis_ssh, caps) =
                 match state.connections.acquire_redis(&conn_id) {
                     Ok(ctx) => (
@@ -230,10 +230,10 @@ pub async fn get_connection_status(
     }
     let latency_ms = start.elapsed().as_millis() as u64;
 
-    // Thông tin phiên hiển thị trong popover kết nối. Mọi truy vấn ở đây đều
-    // "best effort": lỗi thì để trống chứ không làm hỏng cả status pill.
-    // Phần TLS tách khỏi phần version/user vì `pg_stat_ssl` không tồn tại trên
-    // Postgres cũ — gộp chung thì một server cũ mất luôn cả version lẫn user.
+    // The session information shown in the connection popover. Every query here is
+    // "best effort": on error the field is left empty rather than breaking the whole status pill.
+    // The TLS part is separate from the version/user part because `pg_stat_ssl` does not exist on
+    // older Postgres — merged together, an old server would lose its version and user as well.
     let (server_version, session_user, session_db, cipher, tls_version) = match &conn.kind {
         DbKind::Sqlite(arc) => {
             let version = arc
@@ -247,8 +247,8 @@ pub async fn get_connection_status(
             (version, String::new(), String::new(), String::new(), String::new())
         }
         DbKind::Postgres(pool) => {
-            // `current_user`/`current_database()` có kiểu `name`, sqlx không giải mã
-            // thẳng sang String được nên phải ép ::text.
+            // `current_user`/`current_database()` are of type `name`, which sqlx cannot decode
+            // straight into a String, hence the ::text cast.
             let (version, user, db) = match sqlx::query(
                 "SELECT current_setting('server_version'), current_user::text, current_database()::text",
             )
@@ -343,7 +343,7 @@ pub async fn get_connection_status(
         .and_then(|v| v.as_u64())
         .unwrap_or(0) as u16;
 
-    // SQLite không có khái niệm "database đang dùng" — hiển thị đường dẫn file thay vào đó.
+    // SQLite has no notion of a "current database" — show the file path instead.
     let database = if session_db.is_empty() {
         config
             .as_ref()

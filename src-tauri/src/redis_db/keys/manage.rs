@@ -1,4 +1,4 @@
-//! Thao tác trên key mà không cần biết kiểu: xoá, TTL, đổi tên, xoá theo pattern, FLUSHDB.
+//! Key operations that need no knowledge of the type: delete, TTL, rename, delete by pattern, FLUSHDB.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

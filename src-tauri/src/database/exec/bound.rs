@@ -1,4 +1,4 @@
-//! Funnel 2: một câu lệnh với tham số bind ở tầng driver (EXPLAIN có `:param`, …).
+//! Funnel 2: one statement with parameters bound at the driver level (an EXPLAIN with `:param`, …).
 
 use std::sync::{Arc, Mutex};
 
@@ -11,9 +11,9 @@ use super::super::decode::{bind_mysql_params, bind_pg_params, decode_mysql_cell,
 use super::super::read_only::reject_if_read_only;
 use super::super::rows::uniquify_columns;
 
-// Như execute_raw_sql_generic nhưng bind tham số ở tầng driver (parameterized query).
-// Chỉ dùng cho MỘT câu lệnh (vd EXPLAIN <query có :param>) — không tách nhiều câu lệnh.
-// SQL truyền vào phải đã dùng placeholder native (`?` cho SQLite/MySQL, `$1..$n` cho Postgres).
+// Like execute_raw_sql_generic but binds the parameters at the driver level (a parameterized query).
+// For ONE statement only (e.g. EXPLAIN <query with :param>) — it does not split multiple statements.
+// The SQL passed in must already use native placeholders (`?` for SQLite/MySQL, `$1..$n` for Postgres).
 pub(crate) async fn run_bound_query(conn: &DbConnection, sql: String, params: &[Value]) -> Result<Vec<Value>, String> {
     reject_if_read_only(conn, &sql)?;
     if crate::tx::should_route(conn, &sql) {

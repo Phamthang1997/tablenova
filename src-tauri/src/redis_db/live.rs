@@ -1,4 +1,4 @@
-//! Hai luồng chảy liên tục: Pub/Sub và MONITOR. Cả hai đều cần connection RIÊNG.
+//! The two continuous streams: Pub/Sub and MONITOR. Both need a DEDICATED connection.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

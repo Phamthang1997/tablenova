@@ -1,4 +1,4 @@
-//! Chạy SQL do người dùng gõ: một câu, nhiều câu, hoặc stream kết quả về theo lô.
+//! Running SQL the user typed: one statement, several statements, or streaming the results back in batches.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -18,7 +18,7 @@ pub async fn execute_query(state: tauri::State<'_, crate::AppState>, conn_id: St
         (ctx.conn().clone(), stmt_timeout(&ctx.server().config()))
     };
 
-    // Có tham số -> bind ở tầng driver (parameterized, một câu lệnh). Không có -> giữ nguyên hành vi cũ.
+    // With parameters -> bind at the driver level (parameterized, one statement). Without -> keep the old behaviour.
     let params = params.unwrap_or_default();
     let results = if params.is_empty() {
         with_timeout(limit, execute_raw_sql_generic(&conn_type, sql.clone())).await?
@@ -28,7 +28,7 @@ pub async fn execute_query(state: tauri::State<'_, crate::AppState>, conn_id: St
     Ok(json!({ "success": true, "results": results }))
 }
 
-// Chạy nhiều câu lệnh SQL, mỗi câu trả về một bộ kết quả riêng (phục vụ nhiều result tab ở SqlEditor)
+// Run several SQL statements, each returning its own result set (feeding SqlEditor's multiple result tabs)
 #[tauri::command]
 pub async fn execute_multi_query(state: tauri::State<'_, crate::AppState>, conn_id: String, sql: String) -> Result<Value, String> {
     let (conn_type, limit) = {
@@ -40,9 +40,9 @@ pub async fn execute_multi_query(state: tauri::State<'_, crate::AppState>, conn_
     let mut results: Vec<Value> = Vec::new();
 
     for stmt in statements {
-        // Giới hạn tính cho TỪNG câu lệnh, không cho cả lô: "Run all" trên 50 câu lệnh ngắn không
-        // phải là một câu lệnh chạy lâu, và cộng dồn thời gian của chúng lại sẽ giết đúng những lô
-        // hoàn toàn bình thường.
+        // The limit applies to EACH statement, not to the batch: "Run all" over 50 short statements is not
+        // one long-running statement, and adding their times together would kill exactly the batches that are
+        // perfectly ordinary.
         match with_timeout(limit, execute_raw_sql_generic(&conn_type, stmt.clone())).await {
             Ok(mut res) => {
                 if let Some(first) = res.drain(..).next() {
@@ -52,7 +52,7 @@ pub async fn execute_multi_query(state: tauri::State<'_, crate::AppState>, conn_
                 }
             }
             Err(e) => {
-                // Trả về các kết quả đã chạy được + thông báo lỗi ở câu lệnh gặp sự cố
+                // Return the results that did run + the error message of the statement that failed
                 return Ok(json!({
                     "success": false,
                     "results": results,
@@ -66,13 +66,13 @@ pub async fn execute_multi_query(state: tauri::State<'_, crate::AppState>, conn_
 }
 
 // ---- Streaming SQL cho SQL Editor ----
-// Chạy (nhiều) câu lệnh và ĐẨY kết quả theo từng batch qua Channel về frontend thay vì gom hết rồi trả một lần.
-// Nhờ đó dòng đầu hiện gần như tức thì, UI không đơ, và có thể DỪNG giữa chừng qua cancel_query.
-// Giao thức message gửi qua channel (đều có trường "type"):
-//   { type:"columns", stmtIndex, query, columns:[...] }   -> bắt đầu 1 câu lệnh
-//   { type:"rows",    stmtIndex, rows:[{...}, ...] }        -> 1 batch dữ liệu
-//   { type:"done",    stmtCount, cancelled }                -> tất cả câu lệnh xong
-//   { type:"error",   stmtIndex, message }                  -> lỗi, dừng stream
+// Run (several) statements and PUSH the results batch by batch over a Channel to the frontend instead of collecting everything and returning once.
+// That way the first rows appear almost instantly, the UI never freezes, and the run can be STOPPED midway through cancel_query.
+// The message protocol on the channel (every message has a "type" field):
+//   { type:"columns", stmtIndex, query, columns:[...] }   -> one statement begins
+//   { type:"rows",    stmtIndex, rows:[{...}, ...] }        -> one batch of data
+//   { type:"done",    stmtCount, cancelled }                -> every statement is finished
+//   { type:"error",   stmtIndex, message }                  -> an error, the stream stops
 #[tauri::command]
 pub async fn execute_query_stream(
     state: tauri::State<'_, crate::AppState>, conn_id: String,
@@ -86,19 +86,19 @@ pub async fn execute_query_stream(
         (ctx.conn().clone(), stmt_timeout(&ctx.server().config()))
     };
 
-    // Đăng ký cờ hủy để cancel_query có thể dừng vòng lặp stream đang chạy
+    // Register the cancel flag so cancel_query can stop the running stream loop
     let cancel_flag = Arc::new(AtomicBool::new(false));
     {
         let mut flags = state.cancel_flags.lock().map_err(|e| e.to_string())?;
         flags.insert(query_id.clone(), cancel_flag.clone());
     }
 
-    // Hết giờ thì bật đúng cái cờ mà `cancel_query` bật, nên vòng stream dừng bằng cùng một đường
-    // — không thêm nhánh dừng thứ hai vào chỗ đang đẩy dữ liệu. `timed_out` để phân biệt "hết giờ"
-    // với "người dùng bấm Stop": hai thứ đó phải hiện hai thông báo khác nhau.
+    // On timeout it raises the very flag `cancel_query` raises, so the stream loop stops through the same path
+    // — no second stop branch is added where the rows are being pushed. `timed_out` tells "timed out" apart
+    // from "the user pressed Stop": those two have to show two different messages.
     //
-    // Giới hạn tính cho cả câu lệnh, kể cả phần đang đẩy dòng về — giống hệt `statement_timeout`
-    // của server, vốn cũng không dừng đếm khi bắt đầu có dòng đầu tiên.
+    // The limit covers the whole statement, including the part that is pushing rows back — exactly like the server's
+    // `statement_timeout`, which likewise does not stop counting once the first rows arrive.
     let timed_out = Arc::new(AtomicBool::new(false));
     let timer = limit.map(|d| {
         let flag = cancel_flag.clone();
@@ -112,20 +112,20 @@ pub async fn execute_query_stream(
 
     let params = params.unwrap_or_default();
     let outcome = stream_sql_statements(&conn_type, &sql, &params, &channel, &cancel_flag).await;
-    // Xong sớm thì hẹn giờ không còn việc gì; để nó chạy tiếp là bật cờ hủy của một lượt chạy sau.
+    // If it finishes early the timer has nothing left to do; leaving it running would raise the cancel flag of a later run.
     if let Some(t) = timer {
         t.abort();
     }
 
-    // Luôn gỡ cờ khi kết thúc (dù thành công hay lỗi)
+    // Always remove the flag when finished (whether it succeeded or failed)
     if let Ok(mut flags) = state.cancel_flags.lock() {
         flags.remove(&query_id);
     }
 
     match outcome {
         Ok((stmt_count, cancelled)) => {
-            // Hết giờ đi ra bằng khung `error`, không phải `done{cancelled}`: người dùng không bấm
-            // Stop, và nói với họ là họ đã bấm thì lần sau họ sẽ đi tìm một cái nút không tồn tại.
+            // A timeout leaves through the `error` shape, not `done{cancelled}`: the user did not press
+            // Stop, and telling them they did sends them looking for a button that does not exist.
             if let (true, Some(d)) = (timed_out.load(Ordering::Relaxed), limit) {
                 let _ = channel.send(json!({ "type": "error", "stmtIndex": stmt_count, "message": timeout_msg(d) }));
                 return Ok(json!({ "success": false }));
@@ -140,7 +140,7 @@ pub async fn execute_query_stream(
     }
 }
 
-// Đánh dấu một truy vấn đang stream cần dừng. Không lỗi nếu query_id không còn tồn tại.
+// Mark a streaming query as needing to stop. Not an error when query_id no longer exists.
 #[tauri::command]
 pub async fn cancel_query(state: tauri::State<'_, crate::AppState>, query_id: String) -> Result<Value, String> {
     let flags = state.cancel_flags.lock().map_err(|e| e.to_string())?;

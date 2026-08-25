@@ -1,4 +1,4 @@
-//! `AppHandle` được park lại cho những tầng nhận `&DbConnection` mà không nhận `AppState`.
+//! The `AppHandle` parked for the layers that receive a `&DbConnection` but no `AppState`.
 
 use std::sync::{Mutex, OnceLock};
 

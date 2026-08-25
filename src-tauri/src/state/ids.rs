@@ -1,4 +1,4 @@
-//! Danh tính của một kết nối: `SessionId`, `ServerId`, `ConnId` và cách sinh id mới.
+//! The identity of a connection: `SessionId`, `ServerId`, `ConnId`, and how a new id is minted.
 
 use std::sync::Arc;
 

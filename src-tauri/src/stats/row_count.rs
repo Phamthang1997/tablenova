@@ -1,4 +1,4 @@
-//! `get_exact_table_row_count` — COUNT(*) thật của một bảng, khi con số ước tính chưa đủ.
+//! `get_exact_table_row_count` — a real COUNT(*) of one table, for when the estimate is not enough.
 
 use tauri::State;
 use serde_json::{json, Value};
@@ -9,8 +9,8 @@ use super::cells::{get_mysql_i64_cell, get_pg_i64_cell};
 #[tauri::command]
 pub async fn get_exact_table_row_count(state: State<'_, AppState>, conn_id: String, table_name: String) -> Result<Value, String> {
     let (conn_clone, _db_type) = {
-        // `acquire` trả `"Chưa kết nối CSDL"` thay cho `"Chưa kết nối database"` trước đây; cả hai
-        // literal đã cùng trỏ về `backend.notConnected` trong `backendErrors.ts` nên UI không đổi.
+        // `acquire` returns `"Chưa kết nối CSDL"` where it used to be `"Chưa kết nối database"`; both
+        // literals already mapped to `backend.notConnected` in `backendErrors.ts`, so the UI is unchanged.
         let ctx = state.connections.acquire(&conn_id)?;
         (ctx.conn().clone(), ctx.server().db_type.clone())
     };

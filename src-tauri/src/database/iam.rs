@@ -1,4 +1,4 @@
-//! AWS IAM authentication: sinh token thay mật khẩu, và làm mới nó trước khi hết hạn.
+//! AWS IAM authentication: generating a token in place of the password, and refreshing it before it expires.
 
 use serde_json::{json, Value};
 use sqlx::{MySqlPool, PgPool};
@@ -7,15 +7,15 @@ use tauri::Manager;
 use super::conn::{DbConnection, DbKind};
 use super::dsn::{build_mysql_url, build_pg_url};
 
-// Chu kỳ làm mới token IAM (token sống 15 phút -> dựng lại pool trước khi hết hạn).
+// The IAM token refresh cycle (a token lives 15 minutes -> rebuild the pool before it expires).
 const IAM_REFRESH_SECS: u64 = 780;
 
 pub(crate) fn is_iam(config: &Value) -> bool {
     config.get("authMethod").and_then(|v| v.as_str()) == Some("aws_iam")
 }
 
-// Nếu dùng AWS IAM: sinh token và gán làm password cho conn_config, đồng thời ép SSL (IAM bắt buộc SSL).
-// Token ký từ ORIGINAL config (host/region thật), nên gọi trước khi dùng conn_config đã qua tunnel.
+// When AWS IAM is used: generate a token, set it as conn_config's password and force SSL (IAM requires SSL).
+// The token is signed from the ORIGINAL config (the real host/region), so call this before using the tunneled conn_config.
 pub(crate) fn apply_iam_password(orig_config: &Value, conn_config: &mut Value, default_port: u16) -> Result<(), String> {
     if !is_iam(orig_config) {
         return Ok(());
@@ -32,10 +32,10 @@ pub(crate) fn apply_iam_password(orig_config: &Value, conn_config: &mut Value, d
     Ok(())
 }
 
-// Dựng lại pool IAM với token mới (không qua SSH tunnel — IAM refresh giả định kết nối trực tiếp RDS).
+// Rebuild the IAM pool with a fresh token (no SSH tunnel — IAM refresh assumes a direct RDS connection).
 //
-// Trả `DbKind`, không phải `DbConnection`: pool mới thay chỗ của một kết nối ĐANG có, nên id phải là
-// id của kết nối đó. Caller (task refresh) là nơi biết id, và bọc ở đó.
+// It returns a `DbKind`, not a `DbConnection`: the new pool takes the place of an EXISTING connection, so the id must be
+// that connection's id. The caller (the refresh task) is what knows the id, and wraps it there.
 pub(crate) async fn build_iam_conn(db_type: &str, orig_config: &Value) -> Result<DbKind, String> {
     let default_port = if db_type == "postgres" { 5432 } else { 3306 };
     let mut conn_config = orig_config.clone();
@@ -51,7 +51,7 @@ pub(crate) async fn build_iam_conn(db_type: &str, orig_config: &Value) -> Result
     }
 }
 
-// Task nền: cứ ~13 phút sinh token mới và thay pool, chừng nào conn_id này còn trong registry.
+// Background task: every ~13 minutes generate a fresh token and swap the pool, for as long as this conn_id is in the registry.
 pub(crate) fn spawn_iam_refresh(
     app: tauri::AppHandle,
     db_type: String,
@@ -92,7 +92,7 @@ pub(crate) fn spawn_iam_refresh(
                         break; // registry poisoned -> nothing left to refresh
                     }
                 }
-                Err(_) => { /* lỗi tạm thời -> thử lại chu kỳ sau */ }
+                Err(_) => { /* transient error -> retry on the next cycle */ }
             }
         }
     });

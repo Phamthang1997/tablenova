@@ -1,8 +1,8 @@
-//! Phân loại một câu lệnh SQL: nó làm gì với transaction, có phải câu ghi không,
-//! và những chuỗi cố định của từng dialect (BEGIN, mức cô lập).
+//! Classifying a SQL statement: what it does to the transaction, whether it is a write,
+//! and the fixed strings of each dialect (BEGIN, isolation levels).
 //!
-//! Toàn bộ tệp này là hàm THUẦN — không state, không I/O — nên đây là phần duy nhất của
-//! `tx/` test được mà không cần một database.
+//! This whole file is PURE functions — no state, no I/O — which makes it the only part of
+//! `tx/` testable without a database.
 
 use crate::database::{DbConnection, DbKind};
 

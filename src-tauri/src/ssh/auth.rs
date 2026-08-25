@@ -1,5 +1,5 @@
-//! Kết nối và XÁC THỰC SSH — một đường duy nhất, dùng chung bởi tunnel chuyển tiếp cổng
-//! (`ssh/tunnel.rs`) và bảng terminal (`terminal/ssh.rs`).
+//! SSH connect and AUTHENTICATE — a single path, shared by the port-forwarding tunnel
+//! (`ssh/tunnel.rs`) and the terminal panel (`terminal/ssh.rs`).
 
 use std::sync::Arc;
 
@@ -7,7 +7,7 @@ use russh::client::{self, Handle};
 use russh::keys::{decode_secret_key, load_secret_key, PrivateKey, PrivateKeyWithHashAlg};
 use serde_json::Value;
 
-// Handler cho client SSH. Công cụ DB nội bộ: chấp nhận mọi host key (không kiểm tra known_hosts).
+// Handler for the SSH client. Internal DB tool: every host key is accepted (no known_hosts check).
 pub struct SshHandler;
 
 impl client::Handler for SshHandler {
@@ -21,9 +21,9 @@ impl client::Handler for SshHandler {
     }
 }
 
-/// Kết nối SSH và xác thực (password hoặc private key), trả về Handle đã sẵn sàng mở kênh.
-/// Dùng chung cho tunnel (chuyển tiếp cổng DB) và terminal (PTY/shell xem log).
-/// `config` chứa các trường ssh* từ frontend.
+/// Connect over SSH and authenticate (password or private key), returning a Handle ready to open channels.
+/// Shared by the tunnel (forwarding the DB port) and the terminal (PTY/shell for reading logs).
+/// `config` carries the ssh* fields from the frontend.
 pub async fn connect_and_auth(config: &Value) -> Result<Handle<SshHandler>, String> {
     let ssh_host = config.get("sshHost").and_then(|v| v.as_str())
         .filter(|s| !s.trim().is_empty())
@@ -34,13 +34,13 @@ pub async fn connect_and_auth(config: &Value) -> Result<Handle<SshHandler>, Stri
         .unwrap_or("root");
     let auth_type = config.get("sshAuthType").and_then(|v| v.as_str()).unwrap_or("password");
 
-    // 1. Kết nối SSH
+    // 1. SSH connection
     let ssh_config = Arc::new(client::Config::default());
     let mut handle = client::connect(ssh_config, (ssh_host, ssh_port), SshHandler)
         .await
         .map_err(|e| format!("Lỗi kết nối SSH tới {}:{}: {}", ssh_host, ssh_port, e))?;
 
-    // 2. Xác thực (password hoặc private key)
+    // 2. Authentication (password or private key)
     let auth_result = match auth_type {
         "key" => {
             let passphrase = config.get("sshPassphrase").and_then(|v| v.as_str())

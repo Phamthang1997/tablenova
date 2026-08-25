@@ -1,4 +1,4 @@
-//! Cấp database và schema: liệt kê, mở, tạo, xoá, đổi tên — và bảng mã của database.
+//! The database and schema level: listing, opening, creating, dropping, renaming — and a database's character set.
 
 use serde_json::{json, Value};
 use sqlx::{MySqlPool, PgPool, Row};
@@ -10,12 +10,12 @@ use crate::database::{
 
 use super::connection::probe_pg_schema;
 
-// Timeout cho lệnh liệt kê database (nút "Tải danh sách" ở form kết nối).
-// Mặc định của sqlx là 30s — quá lâu cho một thao tác dò thông tin, người dùng
-// tưởng app treo. 10s đủ cho cả máy chủ ở xa mà vẫn báo lỗi sớm.
+// The timeout for the list-databases command (the "Load list" button on the connection form).
+// sqlx defaults to 30s — far too long for a probe, and the user assumes the app has hung.
+// 10s is enough even for a distant server while still failing early.
 const LIST_DB_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
-// Pool tối giản chỉ để chạy 1 câu liệt kê database (1 connection, timeout ngắn).
+// A minimal pool just to run one list-databases statement (1 connection, a short timeout).
 async fn open_list_pool_pg(url: &str) -> Result<PgPool, String> {
     sqlx::pool::PoolOptions::<sqlx::Postgres>::new()
         .max_connections(1)
@@ -34,8 +34,8 @@ async fn open_list_pool_mysql(url: &str) -> Result<MySqlPool, String> {
         .map_err(|e| e.to_string())
 }
 
-// Lỗi thuộc dạng "database không tồn tại" (MySQL 1049, Postgres 3D000) thì đáng
-// thử lại bằng DB hệ thống; lỗi mạng/xác thực thì thử lại chỉ tốn thêm timeout.
+// An error of the "database does not exist" kind (MySQL 1049, Postgres 3D000) is worth
+// retrying against the system DB; a network/authentication error only costs another timeout to retry.
 fn is_unknown_database_err(err: &str) -> bool {
     err.contains("atabase")
 }
@@ -48,11 +48,11 @@ pub async fn get_databases_list(config: Value) -> Result<Value, String> {
     
     match db_type.as_str() {
         "postgres" => {
-            // Giữ tunnel sống trong suốt thao tác liệt kê (nếu bật SSH)
+            // Keep the tunnel alive for the whole listing operation (when SSH is on)
             let (conn_config, _tunnel) = apply_ssh_tunnel(&config, 5432).await?;
-            // Ưu tiên database đang điền (user bị giới hạn quyền — vd Postgres
-            // managed trên cloud — thường chỉ vào được đúng DB của mình). Nếu tên
-            // đó không tồn tại (đang gõ dở) thì lùi về DB hệ thống "postgres".
+            // Prefer the database currently typed in (a user with restricted privileges — a managed
+            // cloud Postgres, say — usually only has access to their own DB). If that name
+            // does not exist (half-typed), fall back to the "postgres" system DB.
             let pool = match open_list_pool_pg(&build_pg_url(&conn_config, None)).await {
                 Ok(p) => p,
                 Err(first) if is_unknown_database_err(&first) => {
@@ -102,7 +102,7 @@ pub async fn get_databases_list(config: Value) -> Result<Value, String> {
     Ok(json!({ "success": true, "databases": databases }))
 }
 
-// Liệt kê database bằng KẾT NỐI HIỆN TẠI (phục vụ switcher trong workspace)
+// List the databases using the CURRENT CONNECTION (for the switcher inside the workspace)
 #[tauri::command]
 pub async fn list_databases(state: tauri::State<'_, crate::AppState>, conn_id: String) -> Result<Value, String> {
     let conn_type = {
@@ -165,7 +165,7 @@ pub async fn open_database(
         }));
     }
 
-    // Config để dựng URL: nếu có tunnel thì trỏ qua 127.0.0.1:<local_port>
+    // The config used to build the URL: with a tunnel it points at 127.0.0.1:<local_port>
     let mut url_conf = server.config();
     if let Some(port) = tunnel_port {
         if let Some(obj) = url_conf.as_object_mut() {
@@ -205,15 +205,15 @@ pub async fn open_database(
     Ok(json!({ "success": true, "database": name, "schema": schema, "connId": &*new_id }))
 }
 
-// `switch_database` đã bị xoá.
+// `switch_database` has been deleted.
 //
-// Nó thay pool tại chỗ dưới chân một `conn_id` đang sống. Vì thế nó phải từ chối khi kết nối còn
-// thay đổi chưa commit, và khi nó thành công thì mọi tab đang mở vẫn trỏ vào bảng của database cũ mà
-// không ai báo. `open_database` không có cả hai vấn đề đó: nó thêm một pool trên cùng
-// `Arc<ServerHandle>` (cùng tunnel, cùng thông tin đăng nhập, không xác thực lại) và mint conn_id
-// mới, nên database cũ giữ nguyên tab lẫn transaction của nó. Cả ba đường gọi cũ — bộ chọn trên
-// thanh tiêu đề, Sidebar, popup thống kê — và bước "đổi sang database đích" của luồng nhập đều đã
-// chuyển sang nó.
+// It swapped the pool in place under a live `conn_id`. That is why it had to refuse whenever the connection still
+// had uncommitted changes, and when it succeeded every open tab still pointed at tables of the old database with
+// nobody saying so. `open_database` has neither problem: it adds a pool on the same
+// `Arc<ServerHandle>` (same tunnel, same credentials, no re-authentication) and mints a new conn_id,
+// so the old database keeps both its tabs and its transaction. All three former call sites — the picker on the
+// title bar, the Sidebar, the statistics popup — and the import flow's "switch to the target database" step have
+// moved to it.
 
 /// Schemas available on the current Postgres connection, for the Sidebar picker.
 ///
@@ -275,7 +275,7 @@ pub async fn set_current_schema(state: tauri::State<'_, crate::AppState>, conn_i
     Ok(json!({ "success": true, "schema": schema }))
 }
 
-// Tạo database mới (dùng kết nối hiện tại). encoding/collation là tùy chọn.
+// Create a new database (using the current connection). encoding/collation are optional.
 #[tauri::command]
 pub async fn create_database(state: tauri::State<'_, crate::AppState>, conn_id: String, payload: Value) -> Result<Value, String> {
     let conn_type = {
@@ -300,7 +300,7 @@ pub async fn create_database(state: tauri::State<'_, crate::AppState>, conn_id: 
             if let Some(e) = encoding { opts.push(format!("ENCODING '{}'", e.replace('\'', "''"))); }
             if let Some(c) = collation { opts.push(format!("LC_COLLATE '{}'", c.replace('\'', "''"))); }
             if !opts.is_empty() {
-                // TEMPLATE template0 cần khi đặt LC_* khác với template mặc định
+                // TEMPLATE template0 is needed when the LC_* settings differ from the default template
                 s.push_str(&format!(" WITH {} TEMPLATE template0", opts.join(" ")));
             }
             s
@@ -312,7 +312,7 @@ pub async fn create_database(state: tauri::State<'_, crate::AppState>, conn_id: 
     Ok(json!({ "success": true }))
 }
 
-// Xóa database (dùng kết nối hiện tại). Không thể xóa database đang kết nối.
+// Drop a database (using the current connection). The connected database cannot be dropped.
 #[tauri::command]
 pub async fn drop_database(state: tauri::State<'_, crate::AppState>, conn_id: String, name: String) -> Result<Value, String> {
     let conn_type = {
@@ -329,7 +329,7 @@ pub async fn drop_database(state: tauri::State<'_, crate::AppState>, conn_id: St
     Ok(json!({ "success": true }))
 }
 
-// Đổi tên database. Chỉ PostgreSQL hỗ trợ (và không được đổi tên DB đang kết nối tới).
+// Rename a database. PostgreSQL only (and the currently connected DB cannot be renamed).
 #[tauri::command]
 pub async fn rename_database(state: tauri::State<'_, crate::AppState>, conn_id: String, old_name: String, new_name: String) -> Result<Value, String> {
     let conn_type = {
@@ -338,7 +338,7 @@ pub async fn rename_database(state: tauri::State<'_, crate::AppState>, conn_id: 
     };
 
     let sql = match &conn_type.kind {
-        // PG có lệnh đổi tên trực tiếp (không được đổi tên DB đang kết nối tới)
+        // PG has a direct rename statement (the currently connected DB cannot be renamed)
         DbKind::Postgres(_) => format!("ALTER DATABASE \"{}\" RENAME TO \"{}\"", old_name, new_name),
         DbKind::Mysql(_) => return Err("MySQL không hỗ trợ đổi tên database.".to_string()),
         DbKind::Sqlite(_) => return Err("SQLite không hỗ trợ đổi tên database.".to_string()),
@@ -347,7 +347,7 @@ pub async fn rename_database(state: tauri::State<'_, crate::AppState>, conn_id: 
     Ok(json!({ "success": true }))
 }
 
-// Lấy danh sách encoding/collation được hỗ trợ theo hệ CSDL (dùng cho hộp thoại tạo database)
+// The supported encodings/collations per DBMS (used by the create-database dialog)
 #[tauri::command]
 pub async fn get_db_charsets(state: tauri::State<'_, crate::AppState>, conn_id: String) -> Result<Value, String> {
     let conn_type = {
@@ -355,7 +355,7 @@ pub async fn get_db_charsets(state: tauri::State<'_, crate::AppState>, conn_id: 
         ctx.conn().clone()
     };
 
-    // Trích các giá trị của một cột từ kết quả execute_raw_sql_generic
+    // Extract the values of one column from an execute_raw_sql_generic result
     fn col_values(results: &[Value], col: &str) -> Vec<String> {
         let mut out = Vec::new();
         if let Some(data) = results.get(0).and_then(|r| r.get("data")).and_then(|v| v.as_array()) {
@@ -375,7 +375,7 @@ pub async fn get_db_charsets(state: tauri::State<'_, crate::AppState>, conn_id: 
             encodings.sort();
 
             let coll_res = execute_raw_sql_generic(&conn_type, "SHOW COLLATION".to_string()).await?;
-            // Nhóm collation theo charset để UI lọc theo encoding đã chọn
+            // Group the collations by charset so the UI can filter them by the chosen encoding
             let mut by_enc: serde_json::Map<String, Value> = serde_json::Map::new();
             if let Some(data) = coll_res.get(0).and_then(|r| r.get("data")).and_then(|v| v.as_array()) {
                 for row in data {

@@ -1,4 +1,4 @@
-//! `get_all_databases_stats` — phase 1 của dashboard: đọc data dictionary, trả về gần như tức thì.
+//! `get_all_databases_stats` — phase 1 of the dashboard: reads the data dictionary, returns almost instantly.
 
 use std::collections::HashMap;
 use tauri::State;
@@ -28,7 +28,7 @@ pub async fn get_all_databases_stats(state: State<'_, AppState>, conn_id: String
 
     match &conn_clone.kind {
         DbKind::Sqlite(sqlite_conn) => {
-            // SQLite: "tất cả database" = database chính + các database đã ATTACH.
+            // SQLite: "every database" = the main database + the ATTACHed ones.
             let conn = sqlite_conn.lock().map_err(|e| e.to_string())?;
 
             let entries: Vec<(String, Option<String>)> = {
@@ -55,7 +55,7 @@ pub async fn get_all_databases_stats(state: State<'_, AppState>, conn_id: String
                 // Table count only (reads sqlite_master); COUNT(*) per table is phase 2.
                 let table_count = sqlite_table_names(&conn, &q).len();
 
-                // Tên hiển thị ưu tiên đường dẫn tệp; database tạm/in-memory thì không có tệp.
+                // The display name prefers the file path; a temporary/in-memory database has no file.
                 let display_name = file.filter(|f| !f.is_empty()).unwrap_or_else(|| schema.clone());
                 let is_current = schema == "main";
 
@@ -90,7 +90,7 @@ pub async fn get_all_databases_stats(state: State<'_, AppState>, conn_id: String
                 .await
                 .unwrap_or_default();
 
-            // pg_database_size() lỗi nếu user không có quyền CONNECT, nên lọc trước.
+            // pg_database_size() errors out when the user has no CONNECT privilege, so filter first.
             let rows = sqlx::query(
                 r#"
                 SELECT

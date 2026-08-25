@@ -1,4 +1,4 @@
-//! `restore_backup` — phát lại một dump `.sql` nhiều câu lệnh, lọc theo bảng người dùng chọn.
+//! `restore_backup` — replays a multi-statement `.sql` dump, filtered to the tables the user selected.
 
 use serde_json::{json, Value};
 use sqlx::{MySqlPool, PgPool};
@@ -9,27 +9,27 @@ use crate::database::{
     split_sql_statements, strip_leading_comments, DbConnection, DbKind,
 };
 
-/// Phần đầu câu lệnh, in hoa — đủ để phân loại bằng `is_skipped_stmt`/`is_session_level_stmt`.
+/// The head of a statement, upper-cased — enough to classify it with `is_skipped_stmt`/`is_session_level_stmt`.
 ///
-/// Chỉ 4-5 từ đầu quyết định loại câu lệnh, nên `to_uppercase()` trên CẢ câu là vô ích và đắt:
-/// nó cấp phát một bản copy của từng câu INSERT, tức là copy lại toàn bộ dump một lần nữa.
-/// Từ khoá dài nhất cần so là `START TRANSACTION` (17 ký tự) nên 32 byte là đủ rộng.
+/// Only the first 4-5 words decide a statement's kind, so `to_uppercase()` over the WHOLE statement is useless and expensive:
+/// it allocates a copy of every INSERT, i.e. copies the entire dump one more time.
+/// The longest keyword to match is `START TRANSACTION` (17 characters), so 32 bytes is wide enough.
 fn upper_head(body: &str) -> String {
     let mut end = body.len().min(32);
-    // Cắt theo byte thì phải lùi về biên ký tự UTF-8 (câu lệnh có thể mở đầu bằng ký tự nhiều byte).
+    // Slicing by byte means backing up to a UTF-8 character boundary (a statement may start with a multi-byte character).
     while end > 0 && !body.is_char_boundary(end) {
         end -= 1;
     }
     body[..end].to_uppercase()
 }
 
-// Lệnh của dump mà restore KHÔNG được chạy lại:
-//   - LOCK/UNLOCK TABLES: mysqldump thêm vào cho nhanh. `LOCK TABLES x WRITE` có tên bảng nên
-//     lọt qua bộ lọc, còn `UNLOCK TABLES` thì không -> khoá treo lại và bảng kế tiếp bị lỗi
-//     1100 "was not locked with LOCK TABLES". Bỏ cả cặp là an toàn nhất, nhất là khi người
-//     dùng chỉ chọn một phần bảng.
-//   - BEGIN/START TRANSACTION/COMMIT/ROLLBACK: transaction do chính hàm này quản lý; chạy lại
-//     lệnh của dump (nhất là ROLLBACK) có thể huỷ phần đã nhập.
+// Statements in a dump that the restore must NOT replay:
+//   - LOCK/UNLOCK TABLES: mysqldump adds them for speed. `LOCK TABLES x WRITE` carries a table name so it
+//     passes the filter, while `UNLOCK TABLES` does not -> the lock stays held and the next table fails with
+//     1100 "was not locked with LOCK TABLES". Dropping the whole pair is safest, especially when the user
+//     selected only some of the tables.
+//   - BEGIN/START TRANSACTION/COMMIT/ROLLBACK: the transaction is managed by this function; replaying the
+//     dump's own statement (ROLLBACK above all) could throw away what has already been imported.
 /// Statement text as it appears in an error message.
 ///
 /// The framing is `Lỗi khi chạy lệnh SQL: {statement}. Chi tiết: {cause}` (kept verbatim so the
@@ -64,10 +64,10 @@ fn is_skipped_stmt(stmt_upper: &str) -> bool {
         || stmt_upper.starts_with("ROLLBACK")
 }
 
-// Lệnh cấp phiên/schema trong một tệp dump: luôn chạy dù người dùng chỉ chọn một phần bảng
-// (không nhắc tên bảng nào nên bộ lọc theo bảng sẽ bỏ sót), và lỗi của chúng KHÔNG huỷ cả
-// lần restore — dump của dialect khác thường có `SET NAMES`/`SET @@...` mà server hiện tại
-// không hiểu, còn `CREATE SCHEMA` thì lỗi nếu schema đã tồn tại.
+// Session-/schema-level statements in a dump file: they always run even when the user selected only some tables
+// (they mention no table name, so the table filter would drop them), and their failure does NOT abort the whole
+// restore — a dump from another dialect commonly carries `SET NAMES`/`SET @@...` that the current server does
+// not understand, while `CREATE SCHEMA` errors out when the schema already exists.
 fn is_session_level_stmt(stmt_upper: &str) -> bool {
     stmt_upper.starts_with("USE ")
         || stmt_upper.starts_with("SET ")
@@ -80,17 +80,17 @@ fn is_session_level_stmt(stmt_upper: &str) -> bool {
         || stmt_upper.starts_with("CREATE SCHEMA")
 }
 
-// Câu lệnh có nhắc tới một trong các bảng được chọn không (so khớp theo biên từ để
-// `film` không khớp `film_actor`).
+// Does the statement mention one of the selected tables (matched on word boundaries so
+// `film` does not match `film_actor`).
 //
-// Regex được biên dịch MỘT lần cho cả lần restore, không phải theo từng cặp (câu lệnh × bảng):
-// một dump 10MB có ~50.000 câu lệnh, nhân 22 bảng là hơn một triệu lần `Regex::new()` — bước
-// lọc này từng tốn nhiều thời gian hơn cả lúc chạy SQL thật, và nó xảy ra TRƯỚC khi gửi
-// `start` về UI nên người dùng chỉ thấy "Đang chuẩn bị..." đứng im.
+// The regex is compiled ONCE for the whole restore, not per (statement × table) pair:
+// a 10MB dump holds ~50,000 statements, times 22 tables is over a million `Regex::new()` calls — this
+// filtering step used to cost more time than running the actual SQL, and it happens BEFORE `start` is sent
+// to the UI, so all the user saw was a frozen "Preparing...".
 pub(crate) struct TableMatcher {
-    /// Một regex alternation cho tất cả bảng: quét mỗi câu lệnh một lượt thay vì một lượt/bảng.
+    /// One alternation regex for every table: each statement is scanned once instead of once per table.
     re: Option<regex::Regex>,
-    /// Dự phòng khi regex không dựng được (tên bảng quá lạ / danh sách quá lớn).
+    /// The fallback for when the regex cannot be built (very odd table names / too long a list).
     lowered: Vec<String>,
 }
 
@@ -100,8 +100,8 @@ impl TableMatcher {
             return Self { re: None, lowered: Vec::new() };
         }
         let alts: Vec<String> = tables.iter().map(|t| regex::escape(t)).collect();
-        // (?i) thay cho việc lowercase từng câu lệnh: `to_lowercase()` cấp phát một bản copy
-        // của mỗi câu INSERT, tức là copy lại cả dump.
+        // (?i) instead of lower-casing each statement: `to_lowercase()` allocates a copy
+        // of every INSERT, i.e. copies the whole dump.
         let re = regex::Regex::new(&format!(r"(?i)\b(?:{})\b", alts.join("|"))).ok();
         Self {
             re,
@@ -118,7 +118,7 @@ impl TableMatcher {
     }
 }
 
-// Tên database trong lệnh `USE <db>` (để reconnect sau khi restore xong).
+// The database name in a `USE <db>` statement (for reconnecting once the restore is done).
 fn use_db_name(stmt: &str) -> Option<String> {
     let parts: Vec<&str> = stmt.split_whitespace().collect();
     if parts.len() < 2 {
@@ -135,22 +135,22 @@ pub async fn restore_backup(
     state: tauri::State<'_, crate::AppState>, conn_id: String,
     sql_content: String,
     tables: Vec<String>,
-    // Kênh báo tiến độ về UI: {type:'start'|'progress'|'done', done, total}. Restore là một
-    // lần gọi dài nên không có kênh thì UI chỉ vẽ được thanh vô định.
-    // Bắt buộc (không dùng Option): Channel không impl Deserialize nên `Option<Channel<_>>`
-    // không thoả CommandArg — frontend luôn tạo kênh, có cần dùng hay không thì tuỳ nó.
+    // The progress channel back to the UI: {type:'start'|'progress'|'done', done, total}. A restore is one
+    // long call, so without a channel the UI could only draw an indeterminate bar.
+    // Mandatory (not an Option): Channel does not implement Deserialize, so `Option<Channel<_>>`
+    // does not satisfy CommandArg — the frontend always creates the channel, whether it needs it or not.
     on_progress: Channel<Value>,
-    // Gặp lệnh lỗi thì bỏ qua và chạy tiếp, thay vì rollback toàn bộ (giống `mysql --force`).
+    // Skip a failing statement and keep going instead of rolling everything back (like `mysql --force`).
     //
-    // KHÔNG phải "tắt kiểm tra toàn vẹn": khoá ngoại vốn đã tắt sẵn ở mọi lần restore
+    // This is NOT "turn off integrity checking": foreign keys are already off for every restore
     // (`SET FOREIGN_KEY_CHECKS = 0` / `SET CONSTRAINTS ALL DEFERRED` / `PRAGMA foreign_keys OFF`).
-    // Thứ thật sự làm hỏng cả lần nhập là những lỗi không tắt được: `CREATE VIEW` đọc bảng
-    // không có trong tệp, routine gọi hàm chưa tồn tại, kiểu dữ liệu server này không hiểu.
-    // Chế độ này cứu lấy phần chạy được, đổi lại mất tính nguyên tử.
+    // What really ruins a whole import are the errors that cannot be turned off: a `CREATE VIEW` reading a table
+    // that is not in the file, a routine calling a function that does not exist yet, a data type this server does not know.
+    // This mode rescues the part that can run, at the cost of atomicity.
     continue_on_error: Option<bool>,
 ) -> Result<Value, String> {
     let continue_on_error = continue_on_error.unwrap_or(false);
-    // Câu lệnh lỗi đã bỏ qua: đếm hết, nhưng chỉ giữ vài cái đầu để hiện cho người dùng.
+    // Failing statements that were skipped: all of them are counted, but only the first few are kept to show the user.
     let mut failed_count: usize = 0;
     let mut failed_samples: Vec<Value> = Vec::new();
     const FAILED_SAMPLES_MAX: usize = 5;
@@ -168,26 +168,26 @@ pub async fn restore_backup(
     let mut statements_count = 0;
     let mut last_use_db: Option<String> = None;
 
-    // Dùng CHUNG splitter với SQL editor: nó hiểu lệnh DELIMITER của MySQL và khối $$ của
-    // Postgres, nên thân trigger/procedure/function không bị cắt ở dấu ';' bên trong.
+    // The SAME splitter as the SQL editor: it understands MySQL's DELIMITER command and Postgres' $$ blocks,
+    // so a trigger/procedure/function body is not cut at a ';' inside it.
     let statements = split_sql_statements(&sql_content);
 
-    // Lọc TRƯỚC để biết tổng số câu lệnh sẽ chạy -> báo được phần trăm thật thay vì thanh vô định.
-    // bool đi kèm = lệnh cấp phiên/schema (lỗi của nó không huỷ cả lần restore).
+    // Filter FIRST so the total number of statements to run is known -> a real percentage instead of an indeterminate bar.
+    // The accompanying bool = a session-/schema-level statement (whose failure does not abort the restore).
     let mut to_run: Vec<(String, bool)> = Vec::new();
     let matcher = TableMatcher::new(&tables);
     for q in statements {
-        // Phân loại theo phần SAU comment đầu câu: dump của mysqldump luôn có
-        // `-- Dumping data for table x` dán liền trước LOCK TABLES / INSERT.
+        // Classify by the part AFTER the leading comment: a mysqldump dump always has
+        // `-- Dumping data for table x` glued right in front of LOCK TABLES / INSERT.
         let body = strip_leading_comments(&q);
         let head = upper_head(body);
         if is_skipped_stmt(&head) {
             continue;
         }
         if body.is_empty() {
-            // Câu chỉ còn comment. Comment ĐIỀU KIỆN của MySQL (`/*!40101 SET NAMES utf8mb4 */`)
-            // là lệnh thật và ảnh hưởng tới charset/timezone của dữ liệu nhập -> vẫn phải chạy
-            // (xếp vào cấp phiên để lỗi không huỷ cả lần restore). Comment thường thì bỏ.
+            // A statement that is nothing but a comment. MySQL's CONDITIONAL comments (`/*!40101 SET NAMES utf8mb4 */`)
+            // are real statements and affect the charset/timezone of the imported data -> they still have to run
+            // (classified as session-level so their failure does not abort the restore). Ordinary comments are dropped.
             if q.contains("/*!") {
                 to_run.push((q, true));
             }
@@ -206,22 +206,22 @@ pub async fn restore_backup(
         to_run.push((q, session_level));
     }
 
-    // Đẩy mọi câu CREATE VIEW xuống cuối.
+    // Move every CREATE VIEW statement to the end.
     //
-    // Dump ghi view xen kẽ với bảng theo thứ tự alphabet — view `actor_info` của sakila đứng
-    // ngay sau bảng `actor`, trước cả bảng `film` mà nó đọc — trong khi `CREATE VIEW` được
-    // kiểm tra NGAY lúc chạy: MySQL trả 1146 "Table doesn't exist" và cả lần nhập bị rollback.
-    // Bên xuất đã được sửa để ghi view sau bảng, nhưng những tệp dump đã có sẵn (và dump của
-    // công cụ khác) thì không sửa được nữa, nên chỗ chạy cũng phải chịu được thứ tự sai.
+    // Dumps interleave views with tables alphabetically — sakila's `actor_info` view sits right
+    // after the `actor` table, long before the `film` table it reads — while `CREATE VIEW` is
+    // validated AS IT RUNS: MySQL returns 1146 "Table doesn't exist" and the whole import is rolled back.
+    // The export side has been fixed to write views after the tables, but dumps that already exist (and other
+    // tools' dumps) cannot be fixed retroactively, so the runner has to tolerate the wrong order too.
     //
-    // Chỉ CREATE VIEW được dời, và thứ tự tương đối giữa chúng được giữ nguyên (một view có thể
-    // đọc view khác; export của app xếp sẵn theo phụ thuộc — xem `orderViewsByDependency`).
-    // `DROP VIEW` nằm lại chỗ cũ là vô hại. Dời thêm loại câu lệnh khác thì có thể đổi nghĩa
-    // của dump — ví dụ dump nào INSERT qua một updatable view sẽ hỏng.
+    // Only CREATE VIEW moves, and their relative order is preserved (a view may read another view;
+    // the app's export already orders them by dependency — see `orderViewsByDependency`).
+    // `DROP VIEW` staying put is harmless. Moving any other kind of statement could change what the dump
+    // means — a dump that INSERTs through an updatable view, for example, would break.
     if let Ok(create_view_re) = regex::Regex::new(
         r"(?i)^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:ALGORITHM\s*=\s*\w+\s+)?(?:DEFINER\s*=\s*\S+\s+)?(?:SQL\s+SECURITY\s+\w+\s+)?VIEW\b",
     ) {
-        // partition giữ nguyên thứ tự trong từng nhóm.
+        // partition keeps the order within each group.
         let (rest, views): (Vec<_>, Vec<_>) = to_run
             .into_iter()
             .partition(|(q, _)| !create_view_re.is_match(strip_leading_comments(q)));
@@ -231,7 +231,7 @@ pub async fn restore_backup(
 
     let total = to_run.len();
     let _ = on_progress.send(json!({ "type": "start", "total": total }));
-    // Gửi mỗi PROGRESS_EVERY câu để không làm ngập IPC với dump hàng chục nghìn câu lệnh.
+    // Send one event every PROGRESS_EVERY statements so a dump of tens of thousands of statements does not flood the IPC.
     const PROGRESS_EVERY: usize = 20;
     let send_progress = |done: usize| {
         let _ = on_progress.send(json!({ "type": "progress", "done": done, "total": total }));
@@ -242,31 +242,31 @@ pub async fn restore_backup(
         DbKind::Mysql(pool) => {
             let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
 
-            // 0. Dọn khoá còn treo trên connection này. LOCK TABLES là theo SESSION và pool thì
-            //    tái dùng session: một lần restore trước đó chạy `LOCK TABLES x WRITE` mà không
-            //    tới được `UNLOCK TABLES` sẽ để khoá lại, khiến lần sau ghi bảng khác báo lỗi
-            //    1100 "was not locked with LOCK TABLES". Phải đứng TRƯỚC START TRANSACTION vì
-            //    UNLOCK TABLES tự commit transaction đang mở.
+            // 0. Clear any lock still held on this connection. LOCK TABLES is per SESSION and the pool
+            //    reuses sessions: an earlier restore that ran `LOCK TABLES x WRITE` and never reached
+            //    `UNLOCK TABLES` leaves the lock behind, so the next write to another table fails with
+            //    1100 "was not locked with LOCK TABLES". It has to come BEFORE START TRANSACTION because
+            //    UNLOCK TABLES implicitly commits an open transaction.
             let _ = sqlx::raw_sql("UNLOCK TABLES;").execute(&mut *conn).await;
 
-            // 1. Tắt khóa ngoại
+            // 1. Turn off foreign keys
             let _ = sqlx::query("SET FOREIGN_KEY_CHECKS = 0;").execute(&mut *conn).await;
-            // 2. Bắt đầu Transaction
+            // 2. Begin the transaction
             let _ = sqlx::query("START TRANSACTION;").execute(&mut *conn).await;
 
-            // 3. Chạy các lệnh
+            // 3. Run the statements
             for (idx, (q, session_level)) in to_run.iter().enumerate() {
                 let session_level = *session_level;
 
-                // raw_sql = text protocol: MySQL KHÔNG cho CREATE/DROP TRIGGER|PROCEDURE|FUNCTION|
-                // EVENT chạy qua prepared statement (lỗi 1295), mà dump thường có đủ mấy loại này.
-                // Restore chỉ cần chạy, không đọc dòng nào, nên dùng text protocol cho tất cả.
+                // raw_sql = the text protocol: MySQL does NOT allow CREATE/DROP TRIGGER|PROCEDURE|FUNCTION|
+                // EVENT through a prepared statement (error 1295), and a dump usually contains all of those.
+                // A restore only needs to run statements, never to read a row, so the text protocol is used for everything.
                 if let Err(e) = sqlx::raw_sql(sqlx::AssertSqlSafe(q.clone())).execute(&mut *conn).await {
-                    // Lệnh cấp phiên/schema lỗi thì bỏ qua; lỗi thật thì Rollback rồi trả lỗi.
+                    // A failing session-/schema-level statement is skipped; a real error rolls back and returns the error.
                     if !session_level {
                         if continue_on_error {
-                            // Lỗi một câu KHÔNG huỷ transaction của MySQL, nên phần đã ghi vẫn
-                            // còn và chạy tiếp được ngay.
+                            // One failing statement does NOT abort a MySQL transaction, so what has been written
+                            // is still there and the run can continue right away.
                             failed_count += 1;
                             if failed_samples.len() < FAILED_SAMPLES_MAX {
                                 failed_samples.push(json!({ "sql": stmt_for_error(q), "error": e.to_string() }));
@@ -274,7 +274,7 @@ pub async fn restore_backup(
                             continue;
                         }
                         let _ = sqlx::query("ROLLBACK;").execute(&mut *conn).await;
-                        // Trả connection về pool ở trạng thái sạch, không để khoá/FK-check treo lại.
+                        // Hand the connection back to the pool clean, leaving no lock/FK-check behind.
                         let _ = sqlx::raw_sql("UNLOCK TABLES;").execute(&mut *conn).await;
                         let _ = sqlx::query("SET FOREIGN_KEY_CHECKS = 1;").execute(&mut *conn).await;
                         return Err(format!("Lỗi khi chạy lệnh SQL: {}. Chi tiết: {}", stmt_for_error(q), e));
@@ -289,12 +289,12 @@ pub async fn restore_backup(
             }
 
             let _ = sqlx::query("COMMIT;").execute(&mut *conn).await;
-            // 4. Trả connection về pool sạch sẽ: bỏ khoá (nếu dump có LOCK lọt qua) + bật lại FK
+            // 4. Hand the connection back to the pool clean: drop the locks (in case a LOCK slipped through) + turn FKs back on
             let _ = sqlx::raw_sql("UNLOCK TABLES;").execute(&mut *conn).await;
             let _ = sqlx::query("SET FOREIGN_KEY_CHECKS = 1;").execute(&mut *conn).await;
         }
         _ => {
-            // Tắt kiểm tra khóa ngoại và bắt đầu Transaction
+            // Turn off foreign-key checking and begin the transaction
             match &conn_type.kind {
                 DbKind::Postgres(_) => {
                     let _ = execute_raw_sql_generic(&conn_type, "SET CONSTRAINTS ALL DEFERRED;".to_string()).await;
@@ -316,10 +316,10 @@ pub async fn restore_backup(
                     DbKind::Postgres(_) => q.replace("`", "\""),
                     _ => q.clone(),
                 };
-                // Postgres: một lỗi làm cả transaction chuyển sang trạng thái aborted (25P02),
-                // mọi câu sau đó đều lỗi "current transaction is aborted". Muốn chạy tiếp thì
-                // phải có điểm lùi cho từng câu. Chỉ trả giá 2 round trip khi người dùng bật
-                // chế độ này; MySQL và SQLite không cần vì lỗi một câu không huỷ transaction.
+                // Postgres: one error puts the whole transaction into the aborted state (25P02), and
+                // every later statement then fails with "current transaction is aborted". Continuing
+                // requires a rollback point per statement. The 2 extra round trips are only paid when the user turns
+                // this mode on; MySQL and SQLite need none of it, since one failing statement does not abort their transaction.
                 let pg_savepoint = continue_on_error && matches!(&conn_type.kind, DbKind::Postgres(_));
                 if pg_savepoint {
                     let _ = execute_raw_sql_generic(&conn_type, "SAVEPOINT tn_restore_sp;".to_string()).await;
@@ -336,7 +336,7 @@ pub async fn restore_backup(
                         continue;
                     }
                     if !session_level {
-                        // Rollback nếu có lỗi
+                        // Roll back on error
                         match &conn_type.kind {
                             DbKind::Postgres(_) => {
                                 let _ = execute_raw_sql_generic(&conn_type, "ROLLBACK;".to_string()).await;
@@ -353,7 +353,7 @@ pub async fn restore_backup(
                     }
                     continue;
                 }
-                // Giải phóng điểm lùi ngay khi câu chạy xong, không để savepoint dồn lại.
+                // Release the rollback point as soon as the statement is through, so savepoints do not pile up.
                 if pg_savepoint {
                     let _ = execute_raw_sql_generic(&conn_type, "RELEASE SAVEPOINT tn_restore_sp;".to_string()).await;
                 }
@@ -377,7 +377,7 @@ pub async fn restore_backup(
                 _ => {}
             }
 
-            // Bật lại khóa ngoại
+            // Turn foreign keys back on
             match &conn_type.kind {
                 DbKind::Sqlite(conn_arc) => {
                     if let Ok(conn) = conn_arc.lock() {
@@ -391,9 +391,9 @@ pub async fn restore_backup(
 
     if let Some(ref db_name) = last_use_db {
         let (last_conf_opt, db_type, tunnel_port) = {
-            // Server-level, không phải connection-level: `last_config` + cổng tunnel thuộc
-            // `ServerHandle`. `last_config` ở đó là `Value` (một server thì luôn có config) nên bọc
-            // `Some` để phần dưới không phải đổi.
+            // Server-level, not connection-level: `last_config` + the tunnel port belong to
+            // `ServerHandle`. `last_config` there is a `Value` (a server always has a config), so it is wrapped in
+            // `Some` to leave the code below unchanged.
             let ctx = state.connections.acquire(&conn_id)?;
             (Some(ctx.server().config()), ctx.server().db_type.clone(),
              ctx.server().ssh_tunnel.as_ref().map(|t| t.local_port))
@@ -402,7 +402,7 @@ pub async fn restore_backup(
         if let Some(mut last_conf) = last_conf_opt {
             if let Some(obj) = last_conf.as_object_mut() {
                 obj.insert("database".to_string(), json!(db_name));
-                // Nếu đang dùng SSH tunnel, reconnect vẫn phải đi qua 127.0.0.1:<local_port>
+                // When an SSH tunnel is in use, the reconnect must still go through 127.0.0.1:<local_port>
                 if let Some(port) = tunnel_port {
                     obj.insert("host".to_string(), json!("127.0.0.1"));
                     obj.insert("port".to_string(), json!(port));
@@ -423,9 +423,9 @@ pub async fn restore_backup(
                 _ => None
             };
             if let Some(kind) = new_conn {
-                // `USE <db>` đổi database ngay dưới chân tab đang restore. Phase 3 sẽ mint một
-                // `conn_id` mới cho database mới (§4.3); ở đây vẫn chuyển entry hiện tại như trước —
-                // nên pool mới mang ĐÚNG id của entry đó, không phải một id mới.
+                // `USE <db>` changes the database right under the tab doing the restore. Phase 3 will mint a
+                // new `conn_id` for the new database (§4.3); for now the current entry is switched as before —
+                // so the new pool carries THAT entry's id, not a fresh one.
                 let ctx = state.connections.acquire(&conn_id)?;
                 let id = ctx.id().clone();
                 ctx.server().set_config(last_conf);
@@ -441,8 +441,8 @@ pub async fn restore_backup(
         "success": true,
         "statementsCount": statements_count,
         "activeDatabase": last_use_db,
-        // Chỉ khác 0 khi bật continue_on_error — UI phải nói rõ "đã nhập nhưng thiếu ngần này",
-        // im lặng ở đây thì người dùng tin là nhập trọn vẹn.
+        // Only non-zero when continue_on_error is on — the UI has to say "imported, but this much is missing";
+        // staying silent here makes the user believe the import was complete.
         "failedCount": failed_count,
         "failedSamples": failed_samples
     }))

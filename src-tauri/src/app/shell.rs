@@ -1,12 +1,12 @@
-//! Lệnh cấp hệ điều hành / cửa sổ. Không liên quan tới database — chúng nằm trong
-//! `database.rs` chỉ vì lịch sử.
+//! OS- and window-level commands. Nothing to do with databases — they lived in
+//! `database.rs` only for historical reasons.
 
 #[tauri::command]
 pub fn open_url(url: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        // Tham số rỗng đầu tiên là TIÊU ĐỀ cửa sổ của `start`: thiếu nó thì đường dẫn
-        // có dấu cách (đã được bọc nháy) bị hiểu thành tiêu đề và không mở gì cả.
+        // The first empty argument is the window TITLE for `start`: without it a path
+        // containing spaces (already quoted) is read as the title and nothing opens.
         std::process::Command::new("cmd")
             .args(["/C", "start", "", &url])
             .spawn()

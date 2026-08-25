@@ -1,4 +1,4 @@
-//! Đọc schema của một phía về dạng `SchemaMeta` — một tệp cho một dialect.
+//! Reading one side's schema into a `SchemaMeta` — one file per dialect.
 
 mod mysql;
 mod pg;

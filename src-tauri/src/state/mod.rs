@@ -19,8 +19,8 @@
 //    that shape stays reachable, "did I convert every site" is a grep question. With `inner`
 //    private to this module it becomes a compile question.
 //
-// `AppState` (`app.rs`) cũng ở đây: nó là gốc của mọi state còn sống, và trường lớn nhất của nó
-// chính là `ConnRegistry` bên dưới — tách hai thứ lồng nhau ra hai thư mục thì tệ hơn.
+// `AppState` (`app.rs`) lives here too: it is the root of every piece of live state, and its biggest
+// field is the `ConnRegistry` below — splitting two nested things across two directories would be worse.
 //
 // `ConnId` lives here too (§4.4a): it is identity, and putting it next to `SessionId` keeps the one
 // question "which connection is this" answered in a single place.

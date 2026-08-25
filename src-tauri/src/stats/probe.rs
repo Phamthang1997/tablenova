@@ -1,10 +1,10 @@
-//! Đếm bảng / số dòng của MỘT database, kể cả database chưa có kết nối mở.
+//! Counting the tables / rows of ONE database, including a database with no open connection.
 
 use super::cells::get_pg_i64_cell;
 
-// Đếm bảng + số dòng ước tính của MỘT database Postgres đang kết nối.
-// pg_class chỉ nhìn thấy database hiện tại, nên muốn số liệu của database khác
-// bắt buộc phải mở kết nối riêng tới nó (chế độ "quét sâu").
+// Counts the tables + estimated rows of ONE connected Postgres database.
+// pg_class only sees the current database, so getting the numbers for another one
+// requires opening a separate connection to it ("deep scan" mode).
 pub(super) const PG_DB_COUNT_SQL: &str = r#"
     SELECT
         COUNT(*)::bigint AS total_tables,
@@ -24,7 +24,7 @@ pub(super) async fn pg_count_tables_rows(pool: &sqlx::PgPool) -> Result<(i64, i6
     ))
 }
 
-// Mở kết nối tạm tới một database Postgres khác để lấy số bảng/số dòng, rồi đóng ngay.
+// Open a temporary connection to another Postgres database to read its table/row counts, then close it right away.
 pub(super) async fn pg_count_tables_rows_remote(url: &str) -> Result<(i64, i64), String> {
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)

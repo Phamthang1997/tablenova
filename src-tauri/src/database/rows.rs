@@ -1,4 +1,4 @@
-//! Đọc kết quả đã chuẩn hoá (`{ columns, data }`) — và làm tên cột duy nhất trước khi dựng row.
+//! Reading normalised results (`{ columns, data }`) — and making the column names unique before any row is built.
 
 use serde_json::Value;
 
@@ -62,7 +62,7 @@ pub(crate) fn first_i64(results: Vec<Value>) -> Option<i64> {
     v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))
 }
 
-// Lấy giá trị chuỗi ở ô đầu tiên của mỗi hàng trong kết quả execute_raw_sql_generic
+// Take the string value of the first cell of every row in an execute_raw_sql_generic result
 pub(crate) fn all_string_values(results: &[Value]) -> Vec<String> {
     let mut out = Vec::new();
     if let Some(data) = results.get(0).and_then(|r| r.get("data")).and_then(|v| v.as_array()) {

@@ -1,4 +1,4 @@
-//! Chọn generator MẶC ĐỊNH cho một cột, từ kiểu dữ liệu và tên của nó.
+//! Picking the DEFAULT generator for a column, from its data type and its name.
 
 use serde_json::{json, Value};
 

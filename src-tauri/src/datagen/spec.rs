@@ -1,4 +1,4 @@
-//! Spec mà frontend gửi xuống (`GenSpec`), ô giá trị sinh ra (`Cell`), và các hàm đọc tuỳ chọn.
+//! The spec the frontend sends down (`GenSpec`), the generated cell (`Cell`), and the option readers.
 
 use chrono::{NaiveDate, NaiveDateTime, Timelike};
 use serde::Deserialize;

@@ -1,4 +1,4 @@
-//! Đọc một key: kiểu, TTL, và các phần tử của nó theo trang.
+//! Reading one key: its type, its TTL, and its elements page by page.
 
 use redis::aio::MultiplexedConnection;
 use serde_json::{json, Value};

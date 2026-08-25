@@ -1,4 +1,4 @@
-//! Đọc schema SQLite từ `sqlite_master` + các PRAGMA.
+//! Reading a SQLite schema from `sqlite_master` + the PRAGMAs.
 
 use std::collections::BTreeMap;
 
@@ -39,7 +39,7 @@ pub(super) async fn read_sqlite(conn: &DbConnection) -> Result<SchemaMeta, Strin
     for name in names {
         let quoted = q_ident("sqlite", &name);
 
-        // (cột, thứ tự trong PK) — PRAGMA trả `pk` = 0 nếu không thuộc PK, 1..n nếu thuộc.
+        // (column, position in the PK) — PRAGMA returns `pk` = 0 when not part of the PK, 1..n when it is.
         let mut pk: Vec<(i64, String)> = Vec::new();
         for row in query_rows_soft(conn, format!("PRAGMA table_info({quoted})")).await {
             let col = ColMeta {
@@ -65,7 +65,7 @@ pub(super) async fn read_sqlite(conn: &DbConnection) -> Result<SchemaMeta, Strin
         let mut indexes: Vec<IdxMeta> = Vec::new();
         for row in query_rows_soft(conn, format!("PRAGMA index_list({quoted})")).await {
             let idx_name = f_str(&row, "name");
-            // origin = 'pk' -> index ngầm của PRIMARY KEY, đã có trong `pk`.
+            // origin = 'pk' -> the implicit index of the PRIMARY KEY, already covered by `pk`.
             if idx_name.is_empty() || f_str(&row, "origin") == "pk" {
                 continue;
             }
@@ -83,7 +83,7 @@ pub(super) async fn read_sqlite(conn: &DbConnection) -> Result<SchemaMeta, Strin
         let mut fks: Vec<FkMeta> = Vec::new();
         for row in query_rows_soft(conn, format!("PRAGMA foreign_key_list({quoted})")).await {
             let id = row.get("id").and_then(|v| v.as_i64()).unwrap_or(0);
-            // SQLite không đặt tên FK -> tên tổng hợp, đủ ổn định để so hai bên.
+            // SQLite does not name its FKs -> a synthesised name, stable enough to compare the two sides.
             let fk_name = format!("fk_{}_{}", name, id);
             let from = f_str(&row, "from");
             let to = f_str(&row, "to");

@@ -1,4 +1,4 @@
-//! Mẫu chuỗi kiểu `AA-####`: mở rộng, và đếm không gian giá trị (cho cảnh báo trùng).
+//! String templates like `AA-####`: expanding them, and counting the value space (for the duplicate warning).
 
 use super::rng::Rng;
 

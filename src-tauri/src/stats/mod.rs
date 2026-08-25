@@ -1,4 +1,4 @@
-//! Thống kê dung lượng / số dòng, cho Database Info và dashboard danh sách database.
+//! Size / row-count statistics, for Database Info and the database-list dashboard.
 
 mod cells;
 mod probe;

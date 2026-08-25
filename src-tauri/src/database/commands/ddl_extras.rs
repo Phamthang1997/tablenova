@@ -1,5 +1,5 @@
-//! `get_table_ddl_extras` — phần DDL mà `CREATE TABLE` tự dựng còn thiếu (index, FK, CHECK,
-//! comment, sequence). Bên xuất dump gọi lệnh này cho từng bảng.
+//! `get_table_ddl_extras` — the DDL a hand-built `CREATE TABLE` is missing (indexes, FKs, CHECKs,
+//! comments, sequences). The dump export calls this per table.
 
 use serde_json::{json, Value};
 

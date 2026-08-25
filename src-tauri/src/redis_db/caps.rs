@@ -1,4 +1,4 @@
-//! Server này làm được gì: phiên bản, và những module đã nạp (ReJSON, TimeSeries, …).
+//! What this server can do: its version, and the modules it has loaded (ReJSON, TimeSeries, …).
 
 use redis::aio::MultiplexedConnection;
 use serde_json::{json, Value};

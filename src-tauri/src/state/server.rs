@@ -1,4 +1,4 @@
-//! `ServerHandle` — thứ mà mọi kết nối trên cùng một server dùng chung.
+//! `ServerHandle` — what every connection to the same server shares.
 
 use std::sync::Mutex;
 
@@ -59,12 +59,12 @@ impl ServerHandle {
         }
     }
 
-    /// Sửa MỘT trường của config, giữ nguyên phần còn lại.
+    /// Change ONE field of the config, leaving the rest untouched.
     ///
-    /// Có riêng hàm này thay vì `config()` → sửa → `set_config()`: hai bước đó là read-modify-write
-    /// ngoài khoá, nên hai lệnh chạy cạnh nhau có thể ghi đè nhau. Ở đây cả ba bước nằm trong cùng
-    /// một lần giữ khoá. Config không phải object (không xảy ra trong thực tế) thì bỏ qua, chứ
-    /// không thay nó bằng một object mới và làm mất thông tin kết nối.
+    /// It exists instead of `config()` → edit → `set_config()`: those two steps are a read-modify-write
+    /// outside the lock, so two commands running side by side can overwrite each other. Here all three
+    /// steps happen under the same lock acquisition. A config that is not an object (never happens in
+    /// practice) is skipped rather than replaced by a fresh object, which would lose connection details.
     pub fn set_config_field(&self, key: &str, v: Value) {
         let mut guard = match self.last_config.lock() {
             Ok(g) => g,

@@ -1,4 +1,4 @@
-//! ReJSON: đọc / ghi / xoá theo JSONPath. Cần module `ReJSON` trên server.
+//! ReJSON: read / write / delete by JSONPath. Requires the `ReJSON` module on the server.
 
 use serde_json::{json, Value};
 

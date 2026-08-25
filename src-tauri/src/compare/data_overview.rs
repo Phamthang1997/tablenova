@@ -1,5 +1,5 @@
-//! `compare_data_overview` — đếm số dòng mỗi bảng ở hai phía. Bước sàng lọc rẻ tiền trước
-//! khi so từng dòng.
+//! `compare_data_overview` — counts the rows of each table on both sides. The cheap triage step before
+//! comparing row by row.
 
 use std::collections::BTreeSet;
 
@@ -11,7 +11,7 @@ use crate::compare::ident::qualified;
 use crate::compare::read::read_schema;
 use crate::compare::side::{query_rows, resolve_side, side_json, CompareSide, Resolved};
 
-// ===================== Lệnh: tổng quan dữ liệu (đếm dòng) =====================
+// ===================== Command: data overview (row counts) =====================
 
 #[tauri::command]
 pub async fn compare_data_overview(
@@ -71,7 +71,7 @@ pub(super) async fn data_overview_inner(
         }
         let s = src_meta.get(name);
         let t = tgt_meta.get(name);
-        // View không so dữ liệu (không có khóa, và đọc lại phụ thuộc bảng gốc).
+        // Views are not data-compared (no key, and reading them back depends on the base tables).
         if s.map(|m| m.is_view).unwrap_or(false) || t.map(|m| m.is_view).unwrap_or(false) {
             continue;
         }
@@ -106,7 +106,7 @@ pub(super) async fn data_overview_inner(
             diff_tables += 1;
         }
 
-        // Khóa gợi ý cho so dữ liệu: PK phải có ở CẢ HAI bên mới dùng được.
+        // The suggested key for the data comparison: a PK is only usable when BOTH sides have one.
         let pk: Vec<String> = match (s, t) {
             (Some(s), Some(t)) if !s.pk.is_empty() && s.pk == t.pk => s.pk.clone(),
             (Some(s), None) => s.pk.clone(),

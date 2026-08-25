@@ -106,7 +106,7 @@ pub async fn start_google_oauth_flow(
     eprintln!("[OAuth] Redirect URI: {}", redirect_uri);
     eprintln!("[OAuth] Opening URL: {}", auth_url);
 
-    // Mở URL đăng nhập Google trên trình duyệt mặc định một cách an toàn
+    // Safely open the Google sign-in URL in the default browser
     #[cfg(target_os = "windows")]
     {
         let _ = std::process::Command::new("powershell")
@@ -131,7 +131,7 @@ pub async fn start_google_oauth_flow(
             .spawn();
     }
 
-    // Lắng nghe callback trên TCP socket với timeout 120 giây
+    // Listen for the callback on a TCP socket with a 120 second timeout
     let timeout = Duration::from_secs(120);
     let accept_future = async {
         let (mut socket, _) = listener.accept().await.map_err(|e| e.to_string())?;
@@ -139,7 +139,7 @@ pub async fn start_google_oauth_flow(
         let n = socket.read(&mut buffer).await.map_err(|e| e.to_string())?;
         let request_str = String::from_utf8_lossy(&buffer[..n]);
 
-        // Trang HTML thành công gửi về trình duyệt
+        // The success HTML page sent back to the browser
         let html_body = r#"<!DOCTYPE html>
 <html lang="vi">
 <head>

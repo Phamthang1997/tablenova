@@ -1,7 +1,7 @@
-//! Vòng đời một kết nối Redis: connect / disconnect / đổi db index / cờ chỉ-đọc.
+//! The lifecycle of one Redis connection: connect / disconnect / change db index / the read-only flag.
 //!
-//! Một `conn_id` = một `(server, db index)`. Đổi db index là MỞ KẾT NỐI KHÁC, không phải đổi
-//! state dùng chung — đó là thứ giữ cho hai tab key trên hai db không đọc nhầm của nhau.
+//! One `conn_id` = one `(server, db index)`. Changing the db index OPENS ANOTHER CONNECTION, it does not change
+//! shared state — that is what keeps two key tabs on two dbs from reading each other's data.
 
 use std::sync::Arc;
 
@@ -21,22 +21,23 @@ pub(crate) fn redis_db_name(index: i64) -> String {
 #[tauri::command]
 pub async fn redis_connect(state: tauri::State<'_, crate::AppState>, config: Value) -> Result<Value, String> {
     let db_index = config.get("dbIndex").and_then(|v| v.as_i64()).unwrap_or(0);
-    // Mở SSH tunnel trước: conn_config trỏ về 127.0.0.1:<cổng chuyển tiếp>, và chính conn_config
-    // đó được lưu lại để mọi lần reconnect sau (đổi db index, Pub/Sub, Profiler) dùng lại đúng
-    // cổng này thay vì mở tunnel mới.
+    // Open the SSH tunnel first: conn_config then points at 127.0.0.1:<forwarded port>, and that very conn_config
+    // is the one stored, so every later reconnect (changing db index, Pub/Sub, Profiler) reuses this same
+    // port instead of opening a new tunnel.
     let (conn_config, tunnel) = crate::database::apply_ssh_tunnel(&config, 6379).await?;
     let mut conn = make_conn(&conn_config, db_index).await?;
 
-    // PING để chắc chắn kết nối/authenticate OK.
+    // PING to make sure the connection/authentication really worked.
     let _: String = redis::cmd("PING").query_async(&mut conn).await.map_err(|e| format!("PING lỗi: {}", e))?;
 
     let caps = probe_caps(&mut conn).await;
     let read_only = config.get("readOnly").and_then(|v| v.as_bool()).unwrap_or(false);
 
     let conn_id = crate::state::mint_id();
-    // `ServerHandle` giữ config đã TUNNEL, khác với SQL (giữ config gốc rồi mở tunnel lại mỗi lần
-    // dựng pool). Redis reconnect nhiều hơn — đổi db index, Pub/Sub, Profiler đều mở socket mới —
-    // và tunnel đã sống sẵn ngay trên handle này, nên dựng lại là mở thừa một cổng chuyển tiếp.
+    // `ServerHandle` keeps the TUNNELED config, unlike SQL (which keeps the original config and reopens the
+    // tunnel every time it builds a pool). Redis reconnects far more often — changing db index, Pub/Sub and the
+    // Profiler all open a new socket — and the tunnel is already alive on this very handle, so rebuilding
+    // it would open one redundant forwarded port.
     let server = Arc::new(crate::state::ServerHandle::new(
         crate::state::mint_id(),
         "redis".to_string(),
@@ -54,8 +55,8 @@ pub async fn redis_connect(state: tauri::State<'_, crate::AppState>, config: Val
                 db_index,
                 caps: caps.clone(),
             }),
-            // Redis không có schema. `None` chứ không phải `Some("")`: `pg_schema_of` mặc định
-            // `public`, và một chuỗi rỗng ở đây sẽ đi vào scopeKey của frontend.
+            // Redis has no schemas. `None` rather than `Some("")`: `pg_schema_of` defaults to
+            // `public`, and an empty string here would end up in the frontend's scopeKey.
             current_schema: None,
         },
     )?;
@@ -90,18 +91,18 @@ pub async fn redis_disconnect(
     conn_id: String,
 ) -> Result<Value, String> {
     // Dropping the entry releases its `Arc<ServerHandle>`; the SSH tunnel closes with the LAST
-    // entry of that server, not with this one — which is the point of putting it there. Ngắt `db3`
-    // trong khi `db0` của cùng server còn mở thì cổng chuyển tiếp phải sống tiếp.
+    // entry of that server, not with this one — which is the point of putting it there. Disconnecting `db3`
+    // while `db0` of the same server is still open must leave the forwarded port alive.
     let entry = state.connections.remove(&conn_id)?;
     drop(entry);
     Ok(json!({ "success": true }))
 }
 
-/// Đổi database index (0-15).
+/// Change the database index (0-15).
 ///
-/// Không còn đổi state dùng chung: nó **mở một kết nối khác** trên cùng server và trả về `conn_id`
-/// của kết nối đó (§2.1). Frontend chuyển workspace sang id mới, đúng như khi mở database thứ hai
-/// của một server Postgres. Idempotent — bấm `db3` hai lần trả về cùng một `conn_id`.
+/// It no longer changes shared state: it **opens another connection** to the same server and returns that
+/// connection's `conn_id` (§2.1). The frontend moves the workspace to the new id, exactly as when opening a
+/// second database of a Postgres server. Idempotent — clicking `db3` twice returns the same `conn_id`.
 #[tauri::command]
 pub async fn redis_select_db(
     state: tauri::State<'_, crate::AppState>,
@@ -124,7 +125,7 @@ pub(crate) async fn select_db_inner(
     };
     let db = redis_db_name(index);
 
-    // Đã mở sẵn thì dùng lại, không mint pool thứ hai cho cùng một chỗ.
+    // Already open -> reuse it, do not mint a second pool for the same place.
     if let Some(existing) = state.connections.find(&server.id, &db)? {
         return Ok(json!({ "success": true, "connId": &*existing, "dbIndex": index }));
     }
@@ -138,11 +139,11 @@ pub(crate) async fn select_db_inner(
     state.connections.insert(
         new_id.clone(),
         crate::state::ConnEntry {
-            // Kế thừa cờ read-only của kết nối mở ra nó: cùng một server, và ai đã đánh dấu
-            // production chỉ đọc thì có ý nói mọi db index của nó. Cùng lý lẽ với `open_database`.
+            // Inherit the read-only flag of the connection it was opened from: same server, and whoever marked
+            // production read-only meant every db index of it. Same reasoning as `open_database`.
             read_only,
-            // CÙNG `Arc<ServerHandle>`: một `ServerHandle` khác sẽ mở tunnel riêng và đóng nó ngay
-            // khi kết nối đầu tiên biến mất.
+            // The SAME `Arc<ServerHandle>`: a different `ServerHandle` would open its own tunnel and close it as soon
+            // as the first connection disappeared.
             server,
             db,
             conn: crate::state::LiveConn::Redis(crate::state::RedisConn { conn, db_index: index, caps }),

@@ -1,4 +1,4 @@
-//! `compare_schemas` — lệnh so sánh CẤU TRÚC hai database.
+//! `compare_schemas` — the command that compares the STRUCTURE of two databases.
 
 use std::collections::BTreeSet;
 
@@ -18,7 +18,7 @@ use crate::compare::sync_sql::{
     drop_fk_sql, drop_index_sql, fk_stmt_or_note, SqlOut,
 };
 
-// ===================== Lệnh: so sánh cấu trúc =====================
+// ===================== Command: compare structure =====================
 
 #[tauri::command]
 pub async fn compare_schemas(
@@ -215,7 +215,7 @@ pub(super) async fn compare_schemas_inner(
                     let mut changes: Vec<&str> = Vec::new();
                     let mut diff_count = 0usize;
 
-                    // ---- Cột ----
+                    // ---- Columns ----
                     let mut cols_json: Vec<Value> = Vec::new();
                     let col_names: Vec<String> = s
                         .columns
@@ -341,7 +341,7 @@ pub(super) async fn compare_schemas_inner(
                         changes.push("indexes");
                     }
 
-                    // ---- Khóa ngoại ----
+                    // ---- Foreign keys ----
                     let mut fk_json_list: Vec<Value> = Vec::new();
                     let fk_names: Vec<String> = s
                         .fks
@@ -416,7 +416,7 @@ pub(super) async fn compare_schemas_inner(
                         changes.push("foreignKeys");
                     }
 
-                    // ---- Khóa chính ----
+                    // ---- Primary key ----
                     let pk_differs = s.pk != t.pk;
                     if pk_differs {
                         diff_count += 1;

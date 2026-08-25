@@ -1,4 +1,4 @@
-//! Đọc metadata của các bảng đích (cột, kiểu, khoá ngoại) và tính THỨ TỰ CHÈN an toàn với FK.
+//! Reads the metadata of the target tables (columns, types, foreign keys) and computes the FK-safe INSERTION ORDER.
 
 use std::collections::{HashMap, HashSet};
 

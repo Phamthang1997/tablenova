@@ -1,4 +1,4 @@
-//! Ghi CẢ một key: tạo/ghi đè theo kiểu, và bản ghi từ byte thô cho trình sửa HEX.
+//! Writing a WHOLE key: create/overwrite per type, plus the raw-byte write for the HEX editor.
 
 use serde_json::{json, Value};
 
@@ -6,7 +6,7 @@ use crate::redis_db::caps::caps_of;
 use crate::redis_db::cmds::version_at_least;
 use crate::redis_db::conn::{ensure_writable, take_conn};
 
-// Tạo/ghi đè một key theo kiểu. Ngữ nghĩa REPLACE: xóa key cũ rồi dựng lại theo payload.
+// Create/overwrite one key per type. REPLACE semantics: delete the old key, then rebuild it from the payload.
 #[tauri::command]
 pub async fn redis_set_key(state: tauri::State<'_, crate::AppState>, conn_id: String, payload: Value) -> Result<Value, String> {
     ensure_writable(&state, &conn_id)?;
@@ -16,7 +16,7 @@ pub async fn redis_set_key(state: tauri::State<'_, crate::AppState>, conn_id: St
     let kind = payload.get("kind").and_then(|v| v.as_str()).unwrap_or("string").to_string();
     let ttl = payload.get("ttl").and_then(|v| v.as_i64()).unwrap_or(-1);
 
-    // Xóa key cũ để ghi đè sạch (trừ string sẽ SET trực tiếp).
+    // Delete the old key for a clean overwrite (except for a string, which is SET directly).
     if kind != "string" {
         let _: i64 = redis::cmd("DEL").arg(&key).query_async(&mut c).await.map_err(|e| e.to_string())?;
     }

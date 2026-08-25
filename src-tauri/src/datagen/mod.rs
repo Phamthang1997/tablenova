@@ -42,7 +42,7 @@ mod writer;
 
 pub use commands::*;
 
-// `template_space` không có caller trong Rust: nó là bản gốc mà `templateSpace` bên
-// `src/utils/dataGenHelper.ts` được kiểm theo (xem dataGenHelper.test.ts). Giữ nguyên mức hiển thị
-// cũ để cặp sinh đôi đó còn nghĩa — xoá nó là một quyết định riêng, không phải việc của đợt tách.
+// `template_space` has no caller in Rust: it is the original that `templateSpace` in
+// `src/utils/dataGenHelper.ts` is checked against (see dataGenHelper.test.ts). Its old visibility is kept
+// so that twin still means something — removing it is a separate decision, not part of the split.
 pub use template::template_space;

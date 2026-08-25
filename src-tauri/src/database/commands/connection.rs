@@ -1,4 +1,4 @@
-//! Mở / đóng / liệt kê kết nối, và cờ chỉ-đọc của một kết nối.
+//! Opening / closing / listing connections, and a connection's read-only flag.
 
 use std::sync::{Arc, Mutex};
 
@@ -107,11 +107,11 @@ pub async fn connect_db(app: tauri::AppHandle, state: tauri::State<'_, crate::Ap
     // Probed before the registry is locked: this awaits, and no guard may be held across it.
     let schema = probe_pg_schema(&conn).await;
 
-    // `connect_db` là "phiên server mới": mint cả server id lẫn conn_id, và thay trọn registry vì
-    // Phase 1 giữ tối đa một kết nối. Việc dùng LẠI một `Arc<ServerHandle>` đã có là của
-    // `open_database` ở Phase 3, không phải của lệnh này.
+    // `connect_db` means "a new server session": it mints both the server id and the conn_id, and replaces the whole
+    // registry because Phase 1 keeps at most one connection. REUSING an existing `Arc<ServerHandle>` is
+    // `open_database`'s job in Phase 3, not this command's.
     {
-        // Tên database của kết nối; SQLite thì là đường dẫn tệp.
+        // The connection's database name; on SQLite it is the file path.
         let db_name = if db_type == "sqlite" {
             config.get("filePath").and_then(|v| v.as_str()).unwrap_or("").to_string()
         } else {
@@ -121,9 +121,9 @@ pub async fn connect_db(app: tauri::AppHandle, state: tauri::State<'_, crate::Ap
             crate::state::mint_id(),
             db_type.clone(),
             config.clone(),
-            // `ServerHandle` SỞ HỮU tunnel. `SshTunnel` không `Clone` và `Drop` của nó đóng port,
-            // nên đúng một bên được giữ — và đây là bên đúng: `ConnEntry` cuối cùng của server bị
-            // drop thì `Arc` cuối cùng đi theo và port tự đóng, không cần refcount tay.
+            // `ServerHandle` OWNS the tunnel. `SshTunnel` is not `Clone` and its `Drop` closes the port,
+            // so exactly one side holds it — and this is the right side: when the server's last `ConnEntry` is
+            // dropped the last `Arc` goes with it and the port closes on its own, with no hand-written refcount.
             ssh_tunnel.take(),
         ));
         // Nothing is dropped here any more: connecting ADDS a connection, it no longer replaces the
@@ -144,7 +144,7 @@ pub async fn connect_db(app: tauri::AppHandle, state: tauri::State<'_, crate::Ap
         )?;
     }
 
-    // Kết nối IAM: chạy task làm mới token định kỳ (token chỉ sống 15 phút)
+    // An IAM connection: run the periodic token refresh task (a token only lives 15 minutes)
     if is_iam(&config) && (db_type == "postgres" || db_type == "mysql") {
         spawn_iam_refresh(app, db_type, config, conn_id.clone());
     }

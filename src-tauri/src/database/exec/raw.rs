@@ -1,4 +1,4 @@
-//! Funnel 1: chạy SQL thô, không tham số. Đường đi của gần như mọi lệnh trong app.
+//! Funnel 1: run raw SQL with no parameters. The path almost every command in the app takes.
 
 use std::sync::{Arc, Mutex};
 
@@ -12,9 +12,9 @@ use super::super::read_only::reject_if_read_only;
 use super::super::rows::uniquify_columns;
 
 // Utility: executes raw SQL statements across all databases and maps to standard outputs
-// MySQL báo 1295 "This command is not supported in the prepared statement protocol yet" cho
-// CREATE/DROP TRIGGER, PROCEDURE, FUNCTION, EVENT... Những lệnh đó phải gửi bằng text protocol
-// (sqlx::raw_sql) thay vì sqlx::query.
+// MySQL reports 1295 "This command is not supported in the prepared statement protocol yet" for
+// CREATE/DROP TRIGGER, PROCEDURE, FUNCTION, EVENT... Those statements have to be sent over the text protocol
+// (sqlx::raw_sql) instead of sqlx::query.
 pub(crate) fn is_mysql_unprepared_error(err_text: &str) -> bool {
     err_text.contains("1295") || err_text.contains("not supported in the prepared statement protocol")
 }
@@ -33,7 +33,7 @@ pub(crate) async fn execute_raw_sql_generic(conn: &DbConnection, sql: String) ->
             pg_raw(&mut conn, &sql).await
         }
         DbKind::Mysql(pool) => {
-            // Lấy 1 connection duy nhất từ pool để chạy câu lệnh, đảm bảo SET FOREIGN_KEY_CHECKS hoạt động xuyên suốt phiên
+            // Take a single connection out of the pool to run the statement, so SET FOREIGN_KEY_CHECKS holds for the whole session
             let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
             mysql_raw(&mut conn, &sql).await
         }
@@ -132,8 +132,8 @@ pub(crate) async fn mysql_raw(
     let rows = match sqlx::query(sqlx::AssertSqlSafe(sql.to_string())).fetch_all(&mut *conn).await {
         Ok(r) => r,
         Err(e) if is_mysql_unprepared_error(&e.to_string()) => {
-            // MySQL từ chối prepare một số lệnh (CREATE/DROP TRIGGER, PROCEDURE,
-            // FUNCTION, EVENT...) -> chạy lại bằng text protocol.
+            // MySQL refuses to prepare some statements (CREATE/DROP TRIGGER, PROCEDURE,
+            // FUNCTION, EVENT...) -> rerun them over the text protocol.
             sqlx::raw_sql(sqlx::AssertSqlSafe(sql.to_string()))
                 .execute(&mut *conn)
                 .await

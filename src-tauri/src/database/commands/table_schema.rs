@@ -1,4 +1,4 @@
-//! `get_table_schema` — cột / index / khoá ngoại của MỘT bảng, cho trình sửa cấu trúc.
+//! `get_table_schema` — the columns / indexes / foreign keys of ONE table, for the structure editor.
 
 use serde_json::{json, Value};
 use sqlx::Row;
@@ -20,7 +20,7 @@ pub async fn get_table_schema(state: tauri::State<'_, crate::AppState>, conn_id:
     let mut foreign_keys = Vec::new();
     let mut columns = Vec::new();
 
-    // Danh sách cột khóa chính thật sự (dùng cho Postgres/MySQL; SQLite lấy trực tiếp từ PRAGMA)
+    // The real list of primary-key columns (used for Postgres/MySQL; SQLite takes it straight from the PRAGMA)
     let pk_cols = get_primary_key_columns(&conn_type, &schema, &name).await;
 
     match &conn_type.kind {
@@ -46,7 +46,7 @@ pub async fn get_table_schema(state: tauri::State<'_, crate::AppState>, conn_id:
                 }));
             }
 
-            // Lấy danh sách Indexes của SQLite
+            // The list of SQLite indexes
             let idx_sql = format!("PRAGMA index_list(\"{}\")", name);
             let mut idx_stmt = conn.prepare(&idx_sql).map_err(|e| e.to_string())?;
             let mut idx_rows = idx_stmt.query([]).map_err(|e| e.to_string())?;
@@ -54,7 +54,7 @@ pub async fn get_table_schema(state: tauri::State<'_, crate::AppState>, conn_id:
                 let idx_name: String = row.get("name").map_err(|e| e.to_string())?;
                 let unique: bool = row.get::<_, i32>("unique").map_err(|e| e.to_string())? == 1;
 
-                // Lấy các cột tương ứng của index này
+                // The columns belonging to this index
                 let info_sql = format!("PRAGMA index_info(\"{}\")", idx_name);
                 let mut info_stmt = conn.prepare(&info_sql).map_err(|e| e.to_string())?;
                 let mut info_rows = info_stmt.query([]).map_err(|e| e.to_string())?;
@@ -73,7 +73,7 @@ pub async fn get_table_schema(state: tauri::State<'_, crate::AppState>, conn_id:
                 }));
             }
 
-            // Lấy danh sách Foreign Keys của SQLite
+            // The list of SQLite foreign keys
             let fk_sql = format!("PRAGMA foreign_key_list(\"{}\")", name);
             let mut fk_stmt = conn.prepare(&fk_sql).map_err(|e| e.to_string())?;
             let mut fk_rows = fk_stmt.query([]).map_err(|e| e.to_string())?;
@@ -139,7 +139,7 @@ pub async fn get_table_schema(state: tauri::State<'_, crate::AppState>, conn_id:
                 }));
             }
 
-            // Lấy danh sách Indexes của Postgres
+            // The list of Postgres indexes
             let idx_sql = format!(
                 "SELECT i.relname AS index_name, ix.indisunique AS is_unique, ix.indisprimary AS is_primary, am.amname AS index_method, pg_get_indexdef(ix.indexrelid) AS index_def
                  FROM pg_class t
@@ -178,7 +178,7 @@ pub async fn get_table_schema(state: tauri::State<'_, crate::AppState>, conn_id:
                 }
             }
 
-            // Lấy danh sách Foreign Keys của Postgres
+            // The list of Postgres foreign keys
             let fk_sql = format!(
                 "SELECT tc.constraint_name AS name, kcu.column_name AS column, ccu.table_name AS ref_table, ccu.column_name AS ref_column
                  FROM information_schema.table_constraints AS tc
@@ -239,7 +239,7 @@ pub async fn get_table_schema(state: tauri::State<'_, crate::AppState>, conn_id:
                 }));
             }
 
-            // Lấy danh sách Indexes của MySQL
+            // The list of MySQL indexes
             let idx_sql = format!("SHOW INDEX FROM `{}`", name);
             if let Ok(idx_rows) = sqlx::query(sqlx::AssertSqlSafe(idx_sql)).fetch_all(pool).await {
                 use std::collections::HashMap;
@@ -270,7 +270,7 @@ pub async fn get_table_schema(state: tauri::State<'_, crate::AppState>, conn_id:
                 }
             }
 
-            // Lấy danh sách Foreign Keys của MySQL
+            // The list of MySQL foreign keys
             let fk_sql = format!(
                 "SELECT CONSTRAINT_NAME AS name, COLUMN_NAME AS `column`, REFERENCED_TABLE_NAME AS ref_table, REFERENCED_COLUMN_NAME AS ref_column
                  FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE

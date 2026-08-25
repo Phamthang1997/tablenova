@@ -1,15 +1,15 @@
-//! So hai mô tả schema: cột/index/FK nào khác nhau, và khác ở chỗ nào.
+//! Comparing two schema descriptions: which columns/indexes/FKs differ, and how.
 //!
-//! `norm_type` cố tình chuẩn hoá `int(11)`/`INT` và `character varying`/`varchar` để
-//! MySQL 5.7-vs-8 hay MySQL-vs-Postgres không báo nhiễu — độ dài thì vẫn tính.
+//! `norm_type` deliberately normalises `int(11)`/`INT` and `character varying`/`varchar` so that
+//! MySQL 5.7-vs-8 or MySQL-vs-Postgres does not report noise — lengths still count.
 
 use crate::compare::meta::{ColMeta, FkMeta, IdxMeta};
 
-// ===================== So sánh cấu trúc =====================
+// ===================== Structure comparison =====================
 
-/// Chuẩn hóa kiểu dữ liệu trước khi so, để hai bên chỉ khác cách viết thì không bị
-/// báo là khác nhau: bỏ display-width của kiểu số nguyên (MySQL 8 không còn `int(11)`),
-/// gộp các tên đồng nghĩa giữa các dialect.
+/// Normalise a data type before comparing, so two sides that merely spell it differently are not
+/// reported as different: drop the display width of integer types (MySQL 8 no longer has `int(11)`),
+/// and fold synonymous names across dialects.
 pub(super) fn norm_type(raw: &str) -> String {
     let mut t = raw.trim().to_ascii_lowercase();
     t = t.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -49,9 +49,9 @@ pub(super) fn norm_type(raw: &str) -> String {
     format!("{}{}", head, tail)
 }
 
-/// Giá trị mặc định hai bên có coi là giống nhau. Bỏ dấu nháy/cast của Postgres
-/// (`'x'::character varying` <-> `x` của MySQL) và không phân biệt hoa/thường của
-/// các hằng như CURRENT_TIMESTAMP.
+/// Whether two default values count as the same. Strips Postgres' quotes/casts
+/// (`'x'::character varying` <-> MySQL's `x`) and ignores the case of constants
+/// such as CURRENT_TIMESTAMP.
 pub(super) fn norm_default(raw: Option<&str>) -> String {
     let mut d = match raw {
         None => return String::new(),
@@ -125,8 +125,8 @@ pub(super) fn fk_changes(a: &FkMeta, b: &FkMeta) -> Vec<&'static str> {
     ch
 }
 
-/// So sánh định nghĩa view sau khi bỏ khoảng trắng, ngoặc đơn, quotes, typecast, schema qualification —
-/// hai server format khác nhau là chuyện thường, chỉ nội dung SQL thực sự khác mới đáng báo.
+/// Compares view definitions after stripping whitespace, parentheses, quotes, typecasts and schema qualification —
+/// two servers formatting differently is ordinary, only a real difference in the SQL is worth reporting.
 pub(super) fn view_def_differs(
     a: Option<&String>,
     b: Option<&String>,
@@ -144,7 +144,7 @@ pub(super) fn view_def_differs(
         }
 
         let lower = str_val.to_ascii_lowercase();
-        // Cắt bỏ phần tiền tố "CREATE [OR REPLACE] [ALGORITHM=...] [DEFINER=...] VIEW view_name AS "
+        // Cut off the "CREATE [OR REPLACE] [ALGORITHM=...] [DEFINER=...] VIEW view_name AS " prefix
         if let Some(v_idx) = lower.find("view ") {
             let after_view = &lower[v_idx + 5..];
             if let Some(as_idx) = after_view.find(" as ") {

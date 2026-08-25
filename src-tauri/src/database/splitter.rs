@@ -1,24 +1,24 @@
-//! Tách một chuỗi SQL nhiều câu lệnh thành từng câu.
+//! Splitting a multi-statement SQL string into individual statements.
 //!
-//! **Sinh đôi của `src/sql/statements.ts` — sửa một bên phải sửa bên kia.** Bản TS quyết định
-//! Ctrl+Enter chạy gì và tô sáng gì; bản này quyết định cái gì thực sự chạy. Lệch nhau nghĩa là
-//! người dùng chạy thứ khác với thứ họ nhìn thấy được tô sáng.
+//! **The twin of `src/sql/statements.ts` — change one side and you must change the other.** The TS one decides
+//! what Ctrl+Enter runs and what gets highlighted; this one decides what actually executes. A mismatch means
+//! the user runs something other than what they saw highlighted.
 
-// Dòng này có phải lệnh `DELIMITER <token>` của client mysql? Trả về token mới.
-// Dùng `get(..9)` chứ không `[..9]`: cắt theo byte giữa một ký tự nhiều byte (tiếng Việt...)
-// sẽ panic, còn `get` trả None.
+// Is this line the mysql client's `DELIMITER <token>` command? Returns the new token.
+// It uses `get(..9)` rather than `[..9]`: slicing by byte in the middle of a multi-byte character (Vietnamese...)
+// would panic, while `get` returns None.
 fn delimiter_token_of_line(line: &str) -> Option<&str> {
     let t = line.trim_start_matches([' ', '\t']);
     if !t.get(..9)?.eq_ignore_ascii_case("DELIMITER") { return None; }
     let rest = &t[9..];
     if !rest.starts_with([' ', '\t']) { return None; }
-    let token = rest.trim(); // trim cắt luôn '\r' của file CRLF
+    let token = rest.trim(); // trim also strips the '\r' of a CRLF file
     if token.is_empty() || token.contains(char::is_whitespace) { return None; }
     Some(token)
 }
 
-// Đọc lệnh DELIMITER tại đầu dòng `i` (chỉ mục ký tự trong `chars`).
-// Trả về (token mới, chỉ mục ngay sau dòng đó). Lệnh này KHÔNG phải SQL: gửi xuống server sẽ lỗi.
+// Read the DELIMITER command at the start of line `i` (a character index into `chars`).
+// Returns (the new token, the index right after that line). This command is NOT SQL: sending it to the server errors out.
 fn read_delimiter_command(chars: &[char], i: usize) -> Option<(String, usize)> {
     let line_end = chars[i..].iter().position(|&c| c == '\n').map(|p| i + p).unwrap_or(chars.len());
     let line: String = chars[i..line_end].iter().collect();
@@ -27,25 +27,25 @@ fn read_delimiter_command(chars: &[char], i: usize) -> Option<(String, usize)> {
     Some((token, next))
 }
 
-// `chars[i..]` có khớp đúng dấu kết thúc câu đang dùng?
+// Does `chars[i..]` match the statement terminator currently in force?
 fn matches_delimiter(chars: &[char], i: usize, delim: &[char]) -> bool {
     if i + delim.len() > chars.len() { return false; }
     chars[i..i + delim.len()] == *delim
 }
 
-// Tách một chuỗi SQL nhiều câu lệnh thành từng câu. Nhận biết:
-//   - chuỗi trích dẫn ('..', "..", `..`) và escape bằng '\'
+// Split a multi-statement SQL string into individual statements. It recognises:
+//   - quoted strings ('..', "..", `..`) and '\' escapes
 //   - comment `-- ...`, `# ...`, `/* ... */`
-//   - khối dollar-quote của Postgres ($$ ... $$, $tag$ ... $tag$) — thân function chứa dấu ';'
-//   - lệnh DELIMITER của MySQL — đổi dấu kết thúc câu để viết được thân trigger/procedure
-// Nếu không xử lý 2 mục cuối, một file có function/trigger sẽ bị cắt giữa thân hàm và có thể
-// chạy nhầm một câu nằm bên trong nó.
-/// Bỏ khoảng trắng và comment ở ĐẦU câu lệnh, trả về phần bắt đầu bằng từ khoá SQL thật.
+//   - Postgres dollar-quoted blocks ($$ ... $$, $tag$ ... $tag$) — a function body contains ';'
+//   - MySQL's DELIMITER command — it changes the statement terminator so trigger/procedure bodies can be written
+// Without the last two, a file containing a function/trigger would be cut in the middle of the body and could
+// run a statement that sits inside it by mistake.
+/// Strip the whitespace and comments at the START of a statement, returning the part that begins with a real SQL keyword.
 ///
-/// Splitter giữ nguyên comment trong text của câu lệnh, nên trong dump của mysqldump thì
+/// The splitter keeps comments inside the statement text, so in a mysqldump dump
 ///     `-- Dumping data for table `store`` + newline + `LOCK TABLES `store` WRITE`
-/// là MỘT câu lệnh bắt đầu bằng "--". Phân loại theo text thô sẽ nhận sai hết:
-/// LOCK/UNLOCK TABLES không bị bỏ, `SET`/`USE` không được coi là lệnh cấp phiên.
+/// is ONE statement beginning with "--". Classifying by the raw text gets all of it wrong:
+/// LOCK/UNLOCK TABLES is not skipped, and `SET`/`USE` is not treated as a session-level statement.
 pub(crate) fn strip_leading_comments(stmt: &str) -> &str {
     let b = stmt.as_bytes();
     let mut i = 0usize;
@@ -53,14 +53,14 @@ pub(crate) fn strip_leading_comments(stmt: &str) -> &str {
         while i < b.len() && b[i].is_ascii_whitespace() {
             i += 1;
         }
-        // Comment dòng: -- ... hoặc # ...
+        // Line comment: -- ... or # ...
         if (i + 1 < b.len() && b[i] == b'-' && b[i + 1] == b'-') || (i < b.len() && b[i] == b'#') {
             while i < b.len() && b[i] != b'\n' {
                 i += 1;
             }
             continue;
         }
-        // Comment khối: /* ... */ (kể cả comment điều kiện /*!40101 ... */ của MySQL)
+        // Block comment: /* ... */ (including MySQL's conditional comments /*!40101 ... */)
         if i + 1 < b.len() && b[i] == b'/' && b[i + 1] == b'*' {
             i += 2;
             while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
@@ -71,7 +71,7 @@ pub(crate) fn strip_leading_comments(stmt: &str) -> &str {
         }
         break;
     }
-    // i luôn dừng sau '\n' / '*/' / khoảng trắng ASCII nên vẫn là biên ký tự UTF-8.
+    // i always stops after '\n' / '*/' / an ASCII space, so it is still a UTF-8 character boundary.
     &stmt[i.min(stmt.len())..]
 }
 
@@ -219,12 +219,12 @@ fn seg_may_be_create(chars: &[char], from: usize, to: usize) -> bool {
 pub(crate) fn split_sql_statements(sql: &str) -> Vec<String> {
     let chars: Vec<char> = sql.chars().collect();
     let n = chars.len();
-    // `DELIMITER` chỉ có ở script MySQL; ở đó '$$' là dấu kết thúc câu chứ không phải dollar-quote.
+    // `DELIMITER` only appears in MySQL scripts; there '$$' is a statement terminator, not a dollar quote.
     let mysql_script = sql.lines().any(|l| delimiter_token_of_line(l).is_some());
 
     let mut out: Vec<String> = Vec::new();
     let mut delim: Vec<char> = vec![';'];
-    let mut start = 0usize; // đầu câu lệnh đang gom
+    let mut start = 0usize; // the start of the statement being gathered
     let mut at_line_start = true;
     let mut i = 0usize;
 
@@ -238,14 +238,14 @@ pub(crate) fn split_sql_statements(sql: &str) -> Vec<String> {
         let c = chars[i];
         let peek = if i + 1 < n { Some(chars[i + 1]) } else { None };
 
-        // Comment dòng: -- ... | # ...  ('#>' và '#-' là toán tử jsonb của Postgres, không phải comment)
+        // Line comment: -- ... | # ...  ('#>' and '#-' are Postgres jsonb operators, not comments)
         if (c == '-' && peek == Some('-')) || (c == '#' && !matches!(peek, Some('>') | Some('-'))) {
             while i < n && chars[i] != '\n' { i += 1; }
             at_line_start = true;
-            i += 1; // bỏ qua '\n'
+            i += 1; // skip the '\n'
             continue;
         }
-        // Comment khối: /* ... */
+        // Block comment: /* ... */
         if c == '/' && peek == Some('*') {
             i += 2;
             while i + 1 < n && !(chars[i] == '*' && chars[i + 1] == '/') { i += 1; }
@@ -253,7 +253,7 @@ pub(crate) fn split_sql_statements(sql: &str) -> Vec<String> {
             at_line_start = false;
             continue;
         }
-        // Chuỗi / identifier có dấu: bỏ qua nguyên khối (kể cả escape \' và '' )
+        // A quoted string / quoted identifier: skip the whole block (including \' and '' escapes)
         if c == '\'' || c == '"' || c == '`' {
             let quote = c;
             i += 1;
@@ -269,7 +269,7 @@ pub(crate) fn split_sql_statements(sql: &str) -> Vec<String> {
             at_line_start = false;
             continue;
         }
-        // Khối dollar-quote của Postgres: $$ ... $$ hoặc $tag$ ... $tag$ (không phải $1, ${x})
+        // A Postgres dollar-quoted block: $$ ... $$ or $tag$ ... $tag$ (not $1 or ${x})
         if !mysql_script && c == '$' {
             let mut j = i + 1;
             while j < n && (chars[j].is_ascii_alphanumeric() || chars[j] == '_') { j += 1; }
@@ -282,7 +282,7 @@ pub(crate) fn split_sql_statements(sql: &str) -> Vec<String> {
                 continue;
             }
         }
-        // Lệnh DELIMITER (đầu dòng): đổi dấu kết thúc câu, bản thân dòng đó không phải câu lệnh
+        // The DELIMITER command (at the start of a line): it changes the statement terminator, and the line itself is not a statement
         if at_line_start {
             if let Some((token, next)) = read_delimiter_command(&chars, i) {
                 push_stmt(&mut out, start, i);
@@ -293,7 +293,7 @@ pub(crate) fn split_sql_statements(sql: &str) -> Vec<String> {
                 continue;
             }
         }
-        // Dấu kết thúc câu đang hiệu lực
+        // The statement terminator currently in force
         if matches_delimiter(&chars, i, &delim) {
             // A ';' inside a trigger's BEGIN...END body is not the end of the statement. Only
             // while the delimiter is still ';': a MySQL script that issued DELIMITER already

@@ -1,4 +1,4 @@
-//! `compare_table_data` — so từng dòng của MỘT bảng theo khoá, và sinh script đồng bộ.
+//! `compare_table_data` — compares ONE table row by row using a key, and generates the sync script.
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -13,17 +13,17 @@ use crate::compare::side::{query_rows, resolve_side, side_json, CompareSide, Res
 use crate::compare::sync_sql::SqlOut;
 use crate::compare::values::{norm_scalar, values_equal};
 
-// Số dòng tối đa đọc về từ MỖI phía khi so dữ liệu. Vượt ngưỡng -> kết quả đánh dấu
-// `truncated` và chỉ so phần đầu theo thứ tự khóa.
+// The maximum number of rows read from EACH side when comparing data. Above that -> the result is marked
+// `truncated` and only the first rows in key order are compared.
 pub(super) const DEFAULT_DATA_LIMIT: usize = 20_000;
 
-// Số dòng KHÁC BIỆT tối đa trả về cho UI (số đếm trong `summary` vẫn là số thật).
+// The maximum number of DIFFERING rows returned to the UI (the counts in `summary` are still the real ones).
 pub(super) const DEFAULT_MAX_DIFF_ROWS: usize = 500;
 
-// ===================== Lệnh: so dữ liệu một bảng =====================
+// ===================== Command: compare one table's data =====================
 
-/// Chuỗi khóa của một dòng. Dùng để ghép dòng hai bên, nên phải chuẩn hóa giống
-/// `values_equal` (số 1 và chuỗi "1" từ hai driver khác nhau là CÙNG một khóa).
+/// The key string of a row. It is used to pair rows across the two sides, so it must normalise the same
+/// way `values_equal` does (the number 1 and the string "1" from two different drivers are the SAME key).
 pub(super) fn key_of(row: &Value, keys: &[String]) -> String {
     keys.iter()
         .map(|k| norm_scalar(row.get(k).unwrap_or(&Value::Null)))
@@ -108,7 +108,7 @@ pub(super) async fn compare_table_data_inner(
         .get(table)
         .ok_or_else(|| format!("Bảng '{}' không có ở đích", table))?;
 
-    // Chỉ so những cột có ở CẢ HAI bên; phần lệch cấu trúc báo riêng để UI nhắc người dùng.
+    // Only compare columns present on BOTH sides; the structural mismatch is reported separately so the UI can tell the user.
     let common: Vec<String> = s_tbl
         .columns
         .iter()
@@ -131,7 +131,7 @@ pub(super) async fn compare_table_data_inner(
         .map(|c| c.name.clone())
         .collect();
 
-    // Khóa: người dùng chọn, hoặc PK của nguồn. Không có khóa thì không ghép được dòng.
+    // The key: chosen by the user, or the source's PK. With no key, rows cannot be paired.
     let keys: Vec<String> = match key_columns.filter(|k| !k.is_empty()) {
         Some(k) => k,
         None => s_tbl.pk.clone(),

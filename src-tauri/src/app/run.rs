@@ -1,7 +1,7 @@
-//! Bootstrap của Tauri: dựng `Builder`, gắn plugin, `manage` state và nối handler.
+//! Tauri bootstrap: builds the `Builder`, attaches plugins, `manage`s state and wires the handler.
 //!
-//! `setup.rs` và `handlers.rs` là hai mảnh của chính Builder này, nên nó phải nằm cạnh chúng
-//! chứ không ở `lib.rs` — `lib.rs` chỉ còn làm việc mà duy nhất nó làm được: khai báo module.
+//! `setup.rs` and `handlers.rs` are two pieces of this very Builder, so it has to sit next to them
+//! rather than in `lib.rs` — `lib.rs` only does what nothing else can: declare the modules.
 
 use crate::state::AppState;
 

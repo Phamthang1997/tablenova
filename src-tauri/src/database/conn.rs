@@ -1,5 +1,5 @@
-//! `DbConnection` — handle của một kết nối SQL, và `Exec` — một connection dành riêng
-//! cho cả một chuỗi câu lệnh.
+//! `DbConnection` — the handle of one SQL connection, and `Exec` — a connection dedicated
+//! to a whole run of statements.
 
 use std::sync::{Arc, Mutex};
 

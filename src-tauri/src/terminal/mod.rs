@@ -1,13 +1,13 @@
-//! Hai backend của bảng Terminal (`TerminalPanel.tsx`): shell cục bộ và shell qua SSH.
+//! The two backends of the Terminal panel (`TerminalPanel.tsx`): a local shell and a shell over SSH.
 //!
-//! Chúng nằm chung một thư mục vì dùng CHUNG một giao thức message đẩy về frontend, nên
-//! frontend chỉ có một component cho cả hai — đổi giao thức ở một bên mà quên bên kia thì
-//! component đó vỡ:
+//! They share a directory because they share ONE message protocol pushed to the frontend, so the
+//! frontend has a single component for both — change the protocol on one side and forget the other
+//! and that component breaks:
 //!
 //! ```text
-//! { type: "data",   bytes: [...] }   output (mảng byte, xterm tự giải mã UTF-8)
-//! { type: "exit",   code }           shell thoát (chỉ SSH)
-//! { type: "closed" }                 phiên đã đóng
+//! { type: "data",   bytes: [...] }   output (a byte array; xterm decodes the UTF-8 itself)
+//! { type: "exit",   code }           the shell exited (SSH only)
+//! { type: "closed" }                the session has closed
 //! ```
 
 pub mod local;

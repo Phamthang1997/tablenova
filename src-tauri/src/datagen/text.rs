@@ -1,4 +1,4 @@
-//! Sinh văn bản: lorem, slug, bỏ dấu tiếng Việt, tên người / địa chỉ, và số thẻ hợp Luhn.
+//! Text generation: lorem, slugs, stripping Vietnamese diacritics, person names / addresses, and Luhn-valid card numbers.
 
 use crate::datagen::datasets as ds;
 
@@ -92,7 +92,7 @@ pub(super) fn streets(locale: &str) -> &'static [&'static str] {
 
 pub(super) fn full_name(rng: &mut Rng, locale: &str) -> String {
     if locale == "vi" {
-        // Họ + đệm + tên.
+        // Surname + middle name + given name.
         format!(
             "{} {} {}",
             rng.pick(ds::LAST_NAMES_VI),

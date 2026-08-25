@@ -1,8 +1,8 @@
-//! Tập con regex được HỖ TRỢ: phân tích và LẤY MẪU từ nó.
+//! The SUPPORTED regex subset: parsing it and SAMPLING from it.
 //!
-//! Crate `regex` chỉ khớp được chứ không sinh được, nên tập con này được parse và sample tay.
-//! Thứ nằm ngoài tập con (`(?…)`, backreference, neo, `{n,m}` quá 64) bị từ chối NGAY LÚC
-//! cấu hình cột, chứ không phải ở dòng thứ 1.000.000.
+//! The `regex` crate can only match, not generate, so this subset is parsed and sampled by hand.
+//! Anything outside the subset (`(?…)`, backreferences, anchors, `{n,m}` above 64) is rejected RIGHT WHEN
+//! the column is configured, not at row 1,000,000.
 
 use super::rng::Rng;
 

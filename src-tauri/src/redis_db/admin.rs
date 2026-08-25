@@ -1,4 +1,4 @@
-//! INFO và console CLI.
+//! INFO and the CLI console.
 
 use serde_json::{json, Value};
 

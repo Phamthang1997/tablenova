@@ -1,8 +1,8 @@
-//! Định tuyến: câu lệnh này chạy trên connection của pool hay trên phiên đã pin?
+//! Routing: does this statement run on a pooled connection or on the pinned session?
 //!
-//! `should_route()` phải được hỏi ở ĐẦU mọi đường thực thi SQL. Chỉ định tuyến một phần
-//! nghĩa là lần refresh lưới đọc qua một connection khác và không thấy dữ liệu chưa commit —
-//! với người dùng thì đó là mất dữ liệu.
+//! `should_route()` must be asked at the TOP of every SQL execution path. Routing only some of them
+//! means a grid refresh reads through a different connection and cannot see the uncommitted data —
+//! which to the user reads as lost data.
 
 use std::time::Instant;
 
@@ -17,9 +17,9 @@ use super::session::{
     session_for, session_key, sessions, Pinned,
 };
 
-// `reject_if_pending` đã bị xoá cùng `switch_database` — nó tồn tại chỉ để bảo vệ cho việc thay pool
-// dưới chân một phiên đang sống. Không còn thao tác nào làm việc đó nữa: `open_database` thêm pool
-// mới nên không đụng gì tới phiên hiện có, và vì thế không có gì để từ chối.
+// `reject_if_pending` was deleted along with `switch_database` — it existed only to guard swapping the pool
+// out from under a live session. Nothing does that any more: `open_database` adds a NEW pool and so never
+// touches an existing session, which leaves nothing to reject.
 
 /// Should this statement run on the pinned session instead of a pooled connection?
 ///

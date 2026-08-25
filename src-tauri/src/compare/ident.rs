@@ -1,7 +1,7 @@
-//! Trích dẫn định danh và literal theo dialect ĐÍCH (script sinh ra luôn chạy trên target).
+//! Quoting identifiers and literals for the TARGET dialect (the generated script always runs on the target).
 
 
-// ---- Trích dẫn định danh / literal ----
+// ---- Identifier / literal quoting ----
 
 pub(super) fn q_ident(dialect: &str, name: &str) -> String {
     if dialect == "mysql" {
@@ -15,7 +15,7 @@ pub(super) fn q_lit(s: &str) -> String {
     format!("'{}'", s.replace('\'', "''"))
 }
 
-/// Tên bảng đầy đủ. SQLite không có schema nên chỉ trả về tên bảng.
+/// The fully qualified table name. SQLite has no schemas, so it just returns the table name.
 pub(super) fn qualified(dialect: &str, schema: &str, table: &str) -> String {
     if dialect == "sqlite" || schema.is_empty() {
         q_ident(dialect, table)

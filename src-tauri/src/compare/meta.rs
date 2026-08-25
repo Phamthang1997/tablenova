@@ -1,5 +1,5 @@
-//! Mô tả schema đã chuẩn hoá — dạng trung gian mà cả ba dialect đọc về, và phần so khác
-//! biệt làm việc trên đó.
+//! The normalised schema description — the intermediate form all three dialects are read into, and the
+//! form the diffing works on.
 
 use std::collections::BTreeMap;
 
@@ -44,8 +44,8 @@ pub(super) struct TableMeta {
     pub(super) fks: Vec<FkMeta>,
     pub(super) pk: Vec<String>,
     pub(super) view_def: Option<String>,
-    /// Câu CREATE gốc — chỉ SQLite có (sqlite_master.sql). Dùng lại nguyên văn khi cả hai
-    /// phía đều là SQLite, vì SQLite không ALTER được và câu gốc là bản mô tả chính xác nhất.
+    /// The original CREATE statement — SQLite only (sqlite_master.sql). Reused verbatim when both
+    /// sides are SQLite, since SQLite cannot ALTER and the original statement is the most accurate description.
     pub(super) create_sql: Option<String>,
 }
 

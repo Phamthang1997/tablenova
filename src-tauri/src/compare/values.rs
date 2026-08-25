@@ -1,11 +1,11 @@
-//! So sánh GIÁ TRỊ của một ô. Thuần, không I/O.
+//! Comparing the VALUE of one cell. Pure, no I/O.
 //!
-//! Chỉ nới lỏng ở chỗ số-với-chuỗi-số (`DECIMAL` về từ sqlx là chuỗi); hai chuỗi thì so
-//! chính xác, nên một khác biệt thật không bao giờ bị giấu.
+//! The only place it is lenient is number-vs-numeric-string (a `DECIMAL` comes back from sqlx as a string);
+//! two strings are compared exactly, so a real difference is never hidden.
 
 use serde_json::Value;
 
-/// Dạng chuẩn của một ô để so sánh/ghép khóa.
+/// The canonical form of a cell, for comparison / key pairing.
 pub(super) fn norm_scalar(v: &Value) -> String {
     match v {
         Value::Null => "\u{0}null".to_string(),
@@ -16,7 +16,7 @@ pub(super) fn norm_scalar(v: &Value) -> String {
     }
 }
 
-/// Bỏ số 0 vô nghĩa ở cuối phần thập phân: `1.50` và `1.5` là một giá trị.
+/// Drops meaningless trailing zeros in the fractional part: `1.50` and `1.5` are one value.
 pub(super) fn norm_number(s: &str) -> String {
     let t = s.trim();
     if !t.contains('.') {
@@ -24,7 +24,7 @@ pub(super) fn norm_number(s: &str) -> String {
     }
     let t = t.trim_end_matches('0');
     let t = t.trim_end_matches('.');
-    // "-0.0" và "0" là cùng một giá trị, đừng báo khác nhau.
+    // "-0.0" and "0" are the same value, do not report them as different.
     if t.is_empty() || t == "-" || t == "-0" {
         "0".to_string()
     } else {
@@ -36,12 +36,12 @@ pub(super) fn looks_numeric(s: &str) -> bool {
     !s.trim().is_empty() && s.trim().parse::<f64>().is_ok()
 }
 
-/// Hai ô có coi là bằng nhau.
+/// Whether two cells count as equal.
 ///
-/// Chỉ nới lỏng ĐÚNG trường hợp cần thiết: một bên là số, bên kia là chuỗi số —
-/// DECIMAL/NUMERIC được sqlx trả về dạng chuỗi nên MySQL và Postgres cho ra hai kiểu
-/// JSON khác nhau cho cùng một giá trị. Hai chuỗi thì so chính xác, để không bỏ sót
-/// khác biệt thật.
+/// It is lenient in EXACTLY the case that needs it: one side a number, the other a numeric string —
+/// DECIMAL/NUMERIC comes back from sqlx as a string, so MySQL and Postgres produce two different JSON
+/// types for the same value. Two strings are compared exactly, so a real difference is never
+/// missed.
 pub(super) fn values_equal(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Null, Value::Null) => true,

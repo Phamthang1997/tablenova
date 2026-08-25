@@ -1,4 +1,4 @@
-//! `get_all_databases_sizes` — phase 2 của dashboard: phần đắt tiền (quét mọi bảng).
+//! `get_all_databases_sizes` — phase 2 of the dashboard: the expensive part (scanning every table).
 
 use tauri::State;
 use serde_json::{json, Value};

@@ -1,4 +1,4 @@
-//! Partition của một bảng.
+//! A table's partitions.
 
 use serde_json::{json, Value};
 

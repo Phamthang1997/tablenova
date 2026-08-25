@@ -1,4 +1,4 @@
-//! Đọc schema Postgres từ `information_schema` + catalog riêng của Postgres.
+//! Reading a Postgres schema from `information_schema` + Postgres' own catalogs.
 
 use std::collections::BTreeMap;
 
@@ -12,7 +12,7 @@ pub(super) async fn read_pg(conn: &DbConnection, schema: &str) -> Result<SchemaM
     let s = schema.replace('\'', "''");
     let mut out: SchemaMeta = BTreeMap::new();
 
-    // relkind là kiểu "char" — sqlx không giải mã được thành String, nên map ngay trong SQL.
+    // relkind is of type "char" — sqlx cannot decode it into a String, so map it right there in the SQL.
     let sql = format!(
         "SELECT c.relname AS table_name, \
                 CASE WHEN c.relkind IN ('v','m') THEN 1 ELSE 0 END AS is_view \
@@ -134,7 +134,7 @@ pub(super) async fn read_pg(conn: &DbConnection, schema: &str) -> Result<SchemaM
     Ok(out)
 }
 
-/// Lấy danh sách cột từ `pg_get_indexdef` — phần trong cặp ngoặc CUỐI cùng.
+/// Takes the column list out of `pg_get_indexdef` — what sits inside the LAST pair of parentheses.
 /// `CREATE UNIQUE INDEX x ON t USING btree (a, lower(b))` -> ["a", "lower(b)"].
 pub(super) fn index_def_columns(def: &str) -> Vec<String> {
     let open = match def.rfind('(') {
