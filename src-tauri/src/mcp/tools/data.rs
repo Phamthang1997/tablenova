@@ -5,7 +5,7 @@
 
 use std::time::Instant;
 
-use rmcp::ErrorData as McpError;
+use crate::mcp::audit::Refusal;
 use rmcp::model::CallToolResult;
 use serde_json::{Value, json};
 
@@ -22,7 +22,7 @@ pub async fn preview_table(
     connection_id: &str,
     table_name: &str,
     limit: Option<usize>,
-) -> Result<CallToolResult, McpError> {
+) -> Result<CallToolResult, Refusal> {
     let state = app_state()?;
     let target = policy::resolve(&state, connection_id)?;
     let limit = policy::row_limit(limit);
@@ -45,7 +45,7 @@ pub async fn query(
     connection_id: &str,
     sql: &str,
     limit: Option<usize>,
-) -> Result<CallToolResult, McpError> {
+) -> Result<CallToolResult, Refusal> {
     let state = app_state()?;
     let target = policy::resolve(&state, connection_id)?;
     policy::ensure_single_read(sql)?;

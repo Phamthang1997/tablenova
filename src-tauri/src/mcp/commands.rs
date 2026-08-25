@@ -49,3 +49,20 @@ pub async fn mcp_regenerate_token(state: tauri::State<'_, AppState>) -> Result<S
     }
     Ok(token)
 }
+
+/// The requests AI clients have made this run, newest first.
+///
+/// In memory only, and the Settings screen says so - see `audit.rs`. The UI reads this once on open
+/// and then follows the `mcp-request` event, rather than polling.
+#[tauri::command]
+pub async fn mcp_audit_log(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<serde_json::Value>, String> {
+    Ok(state.mcp.audit.snapshot())
+}
+
+#[tauri::command]
+pub async fn mcp_audit_clear(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    state.mcp.audit.clear();
+    Ok(())
+}

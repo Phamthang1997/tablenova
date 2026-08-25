@@ -22,8 +22,13 @@ use rmcp::{
     model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerInfo},
     schemars, tool, tool_handler, tool_router,
 };
+use std::future::Future;
+use std::time::Instant;
+
 use serde::Deserialize;
 use serde_json::Value;
+
+use super::audit::{self, Refusal};
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ConnArgs {
@@ -80,7 +85,7 @@ impl TableNovaMcp {
                        connections the user did not share are invisible."
     )]
     async fn tablenova_list_connections(&self) -> Result<CallToolResult, McpError> {
-        catalog::list_connections().await
+        audited("tablenova_list_connections", None, None, catalog::list_connections()).await
     }
 
     #[tool(description = "List the databases (or schemas) reachable on one connection.")]
@@ -88,7 +93,13 @@ impl TableNovaMcp {
         &self,
         Parameters(a): Parameters<ConnArgs>,
     ) -> Result<CallToolResult, McpError> {
-        catalog::list_databases(&a.connection_id).await
+        audited(
+            "tablenova_list_databases",
+            Some(&a.connection_id),
+            None,
+            catalog::list_databases(&a.connection_id),
+        )
+        .await
     }
 
     #[tool(
@@ -99,7 +110,13 @@ impl TableNovaMcp {
         &self,
         Parameters(a): Parameters<ConnArgs>,
     ) -> Result<CallToolResult, McpError> {
-        catalog::list_tables(&a.connection_id).await
+        audited(
+            "tablenova_list_tables",
+            Some(&a.connection_id),
+            None,
+            catalog::list_tables(&a.connection_id),
+        )
+        .await
     }
 
     #[tool(
@@ -110,7 +127,13 @@ impl TableNovaMcp {
         &self,
         Parameters(a): Parameters<TableArgs>,
     ) -> Result<CallToolResult, McpError> {
-        catalog::describe_table(&a.connection_id, &a.table_name).await
+        audited(
+            "tablenova_describe_table",
+            Some(&a.connection_id),
+            Some(&a.table_name),
+            catalog::describe_table(&a.connection_id, &a.table_name),
+        )
+        .await
     }
 
     #[tool(
@@ -121,7 +144,13 @@ impl TableNovaMcp {
         &self,
         Parameters(a): Parameters<PreviewArgs>,
     ) -> Result<CallToolResult, McpError> {
-        data::preview_table(&a.connection_id, &a.table_name, a.limit).await
+        audited(
+            "tablenova_preview_table",
+            Some(&a.connection_id),
+            Some(&a.table_name),
+            data::preview_table(&a.connection_id, &a.table_name, a.limit),
+        )
+        .await
     }
 
     #[tool(
@@ -134,7 +163,13 @@ impl TableNovaMcp {
         &self,
         Parameters(a): Parameters<QueryArgs>,
     ) -> Result<CallToolResult, McpError> {
-        data::query(&a.connection_id, &a.sql, a.limit).await
+        audited(
+            "tablenova_query",
+            Some(&a.connection_id),
+            Some(&a.sql),
+            data::query(&a.connection_id, &a.sql, a.limit),
+        )
+        .await
     }
 }
 
@@ -168,13 +203,56 @@ impl ServerHandler for TableNovaMcp {
 // Shared by the tool bodies
 // ---------------------------------------------------------------------------
 
-/// The parked `AppHandle`, or an error saying the app is not ready.
+/// Run one tool call, time it, and record what happened.
+///
+/// **Every tool goes through here**, which is the point: recording per tool body would be one
+/// forgotten line away from a request that touched a database and left no trace. It is the same
+/// reason `policy::resolve` is the only door to a connection.
+///
+/// The body returns `Refusal` rather than a bare error so the log can say WHICH layer refused;
+/// `?` would convert that away, which is why the conversion happens here and nowhere earlier.
+async fn audited(
+    tool: &str,
+    conn_id: Option<&str>,
+    sql: Option<&str>,
+    run: impl Future<Output = Result<CallToolResult, Refusal>>,
+) -> Result<CallToolResult, McpError> {
+    let started = Instant::now();
+    let outcome = run.await;
+    let ms = started.elapsed().as_millis() as u64;
+    let entry = audit::entry(tool, conn_id, sql, ms);
+
+    match outcome {
+        Ok(result) => {
+            record(entry);
+            Ok(result)
+        }
+        Err(refusal) => {
+            let message = refusal.error.message.to_string();
+            record(entry.denied(refusal.denial, message));
+            Err(refusal.error)
+        }
+    }
+}
+
+/// Put one entry in the log, if the app is up.
+///
+/// A request answered before setup finished is not worth failing over - the client already has its
+/// answer, and there is no window listening to be told about it either.
+fn record(entry: audit::Entry) {
+    if let Some(state) = crate::state::parked_state() {
+        state.mcp.audit.record(entry);
+    }
+}
+
+/// The parked `AppState`, or a refusal saying the app is not ready.
 ///
 /// A tool that runs before setup finished is a client that connected during startup - rare, and
 /// answerable, which is better than a panic in an axum task nobody is watching.
-pub(super) fn app_state() -> Result<crate::AppState, McpError> {
-    crate::state::parked_state()
-        .ok_or_else(|| McpError::internal_error("TableNova is still starting up".to_string(), None))
+pub(super) fn app_state() -> Result<crate::AppState, Refusal> {
+    crate::state::parked_state().ok_or_else(|| {
+        passthrough("TableNova is still starting up".to_string())
+    })
 }
 
 /// Wraps an error string from shared TableNova code.
@@ -183,17 +261,16 @@ pub(super) fn app_state() -> Result<crate::AppState, McpError> {
 /// they arrive in Vietnamese. Translating them here would mean a second copy of
 /// `src/utils/backendErrors.ts` in Rust, which is a worse trade than an AI client occasionally
 /// reading a Vietnamese driver error. Messages this module writes itself are English.
-pub(super) fn passthrough(err: String) -> McpError {
-    McpError::internal_error(err, None)
+pub(super) fn passthrough(err: String) -> Refusal {
+    Refusal::new(audit::Denial::Failed, McpError::internal_error(err, None))
 }
 
 /// A tool result carrying JSON.
 ///
 /// Pretty-printed text rather than a structured payload: every MCP client renders text content, and
 /// the shape is already self-describing. Worth revisiting once structured output is universal.
-pub(super) fn json_result(value: &Value) -> Result<CallToolResult, McpError> {
-    let text = serde_json::to_string_pretty(value)
-        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+pub(super) fn json_result(value: &Value) -> Result<CallToolResult, Refusal> {
+    let text = serde_json::to_string_pretty(value).map_err(|e| passthrough(e.to_string()))?;
     Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
 }
 

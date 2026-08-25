@@ -486,10 +486,13 @@ Kết quả: `app/setup.rs` là chỗ duy nhất ngoài `app/` biết Tauri tồ
 DLL giao diện. Đây cũng là điều kiện cần cho cầu stdio ở V2.
 
 **Bước 3 — UI**
-- [ ] `McpServerSettingsModal.tsx` từ `Modal.tsx`; snippet sinh từ cổng thật (§5.2).
-- [ ] `audit.rs` + bảng log realtime (§5.3).
-- [ ] Blocker `closeGuard` ưu tiên thấp (§2.4).
-- [ ] Khoá i18n cho toàn bộ chuỗi UI mới (en/vi/ja — thiếu key là lỗi biên dịch).
+- [x] `McpServerSettingsModal.tsx` từ `Modal.tsx`; snippet sinh từ cổng thật (§5.2).
+- [x] `audit.rs` + bảng log realtime (§5.3), nhận qua event `mcp-request` chứ không polling.
+- [ ] ~~Blocker `closeGuard` ưu tiên thấp (§2.4)~~ — **cố ý bỏ ở V1.** Mọi request V1 đều là ĐỌC, mất
+      thì chạy lại được; còn blocker thì cần một chủ sở hữu hộp thoại luôn mounted, tức thêm một
+      component thường trực chỉ để cảnh báo về một thứ vô hại. Quay lại khi V2 có ghi.
+- [x] Khoá i18n cho toàn bộ chuỗi UI mới (en/vi/ja).
+- [x] Phân loại `mcp_*` trong `safeMode.ts` — món nợ từ Bước 2, đã trả.
 - [ ] Thử thật với ít nhất hai client khác nhau; ghi lại client nào cần đường tương thích nào.
 
 ### V2 — ghi có phê duyệt (~2–3 tuần, đánh giá lại sau V1)

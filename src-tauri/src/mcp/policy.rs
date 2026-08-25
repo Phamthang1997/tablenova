@@ -6,6 +6,8 @@
 
 use rmcp::ErrorData as McpError;
 
+use super::audit::{Denial, Refusal};
+
 use crate::database::{DbConnection, split_sql_statements, strip_leading_comments};
 use crate::state::AppState;
 
@@ -42,7 +44,7 @@ pub struct Target {
 /// An id that is not exposed gets the SAME error as an id that does not exist. That is deliberate:
 /// distinguishing them would confirm to a caller that a connection it may not see is nonetheless
 /// open, which is a name, a database and a dialect it was never meant to learn.
-pub fn resolve(state: &AppState, connection_id: &str) -> Result<Target, McpError> {
+pub fn resolve(state: &AppState, connection_id: &str) -> Result<Target, Refusal> {
     if !state.connections.is_mcp_exposed(connection_id) {
         return Err(unknown_connection());
     }
@@ -66,26 +68,32 @@ pub fn resolve(state: &AppState, connection_id: &str) -> Result<Target, McpError
 ///
 /// The same shape `restore_backup` and `generate_data` already use (`reject_if_manual_or_open`),
 /// with an English message because the reader here is an AI client.
-pub fn reject_if_manual(connection_id: &str) -> Result<(), McpError> {
+pub fn reject_if_manual(connection_id: &str) -> Result<(), Refusal> {
     if crate::tx::manual_mode(connection_id) || crate::tx::is_open(connection_id) {
-        return Err(McpError::invalid_params(
-            "this connection is in manual-commit mode in TableNova. Ask the user to commit or roll \
-             back and switch back to auto-commit before querying it."
-                .to_string(),
-            None,
+        return Err(Refusal::new(
+            Denial::ManualTransaction,
+            McpError::invalid_params(
+                "this connection is in manual-commit mode in TableNova. Ask the user to commit or \
+                 roll back and switch back to auto-commit before querying it."
+                    .to_string(),
+                None,
+            ),
         ));
     }
     Ok(())
 }
 
-fn unknown_connection() -> McpError {
+fn unknown_connection() -> Refusal {
     // English, and NOT routed through `backendErrors.ts`: this is read by an AI client, not shown in
     // the TableNova UI. Same rule as the comments `compare/` writes into a generated SQL script.
-    McpError::invalid_params(
-        "unknown connection_id, or it is not shared with MCP clients. Call tablenova_list_connections \
-         to see the connections the user shared."
-            .to_string(),
-        None,
+    Refusal::new(
+        Denial::NotShared,
+        McpError::invalid_params(
+            "unknown connection_id, or it is not shared with MCP clients. Call \
+             tablenova_list_connections to see the connections the user shared."
+                .to_string(),
+            None,
+        ),
     )
 }
 
@@ -99,16 +107,17 @@ fn unknown_connection() -> McpError {
 /// The splitter is the SQL editor's own, so a `;` inside a string, a comment or a `$$…$$` body does
 /// not read as two statements - the difference between refusing a valid query and letting a second
 /// one through unnoticed.
-pub fn ensure_single_read(sql: &str) -> Result<(), McpError> {
+pub fn ensure_single_read(sql: &str) -> Result<(), Refusal> {
     let statements = split_sql_statements(sql);
     match statements.len() {
-        0 => return Err(McpError::invalid_params("no SQL statement found".to_string(), None)),
+        0 => {
+            return Err(refuse_read("no SQL statement found".to_string()));
+        }
         1 => {}
         n => {
-            return Err(McpError::invalid_params(
-                format!("expected exactly one statement, got {n}. Send them one call at a time."),
-                None,
-            ));
+            return Err(refuse_read(format!(
+                "expected exactly one statement, got {n}. Send them one call at a time."
+            )));
         }
     }
 
@@ -116,16 +125,18 @@ pub fn ensure_single_read(sql: &str) -> Result<(), McpError> {
     if READ_HEADS.contains(&head.as_str()) {
         Ok(())
     } else {
-        Err(McpError::invalid_params(
-            format!(
-                "this build allows read statements only ({}); got `{}`. \
-                 Ask the user to run writes from TableNova itself.",
-                READ_HEADS.join(", "),
-                if head.is_empty() { "?" } else { &head }
-            ),
-            None,
-        ))
+        Err(refuse_read(format!(
+            "this build allows read statements only ({}); got `{}`. \
+             Ask the user to run writes from TableNova itself.",
+            READ_HEADS.join(", "),
+            if head.is_empty() { "?" } else { &head }
+        )))
     }
+}
+
+/// Every layer-4 refusal, so the denial and the message are built in one place.
+fn refuse_read(message: String) -> Refusal {
+    Refusal::new(Denial::NotReadOnly, McpError::invalid_params(message, None))
 }
 
 /// First keyword of a statement, uppercased, read past leading comments and wrapping parens.

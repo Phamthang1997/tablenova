@@ -10601,7 +10601,7 @@ input.rename-input {
   padding: 10px;
   border-radius: 6px;
   border: 1px solid var(--win-border);
-  background: var(--win-bg-input);
+  background: var(--win-bg-card);
   color: var(--win-text-primary);
   resize: vertical;
   outline: none;
@@ -10702,7 +10702,7 @@ input.rename-input {
   padding: 6px 10px;
   border-radius: 4px;
   border: 1px solid var(--win-border);
-  background: var(--win-bg-input);
+  background: var(--win-bg-card);
   color: var(--win-text-primary);
   font-family: var(--win-font-mono);
   outline: none;
@@ -12886,7 +12886,7 @@ input.rename-input {
 }
 
 .jobs-icon-ok {
-  color: var(--win-success, #22c55e);
+  color: var(--win-status-added);
 }
 
 .jobs-icon-error {
@@ -15331,4 +15331,149 @@ input.rename-input {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+/* ===== MCP Server settings (McpServerSettingsModal.tsx) ===================================== */
+/* Colours come from --win-* tokens only: the app swaps themes through [data-theme], so a literal
+   hex here would be right in at most one of them. */
+.mcp-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.mcp-spacer {
+  flex: 1;
+}
+.mcp-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--win-border);
+}
+.mcp-section-title {
+  margin: 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--win-text-primary);
+}
+.mcp-hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--win-text-secondary);
+}
+.mcp-error {
+  margin: 0;
+  font-size: 11px;
+  color: var(--win-danger, #ef4444);
+}
+.mcp-empty {
+  margin: 0;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--win-text-secondary);
+}
+.mcp-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--win-text-secondary);
+  flex: 0 0 auto;
+}
+.mcp-dot.on {
+  background: var(--win-status-added);
+}
+.mcp-status-text {
+  font-size: 12px;
+  font-weight: 600;
+}
+.mcp-port {
+  width: 74px;
+}
+.mcp-token {
+  flex: 1;
+  font-family: var(--win-font-mono);
+}
+.mcp-conn-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+.mcp-conn-list label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.mcp-conn-list label:hover {
+  background: var(--win-bg-hover);
+}
+.mcp-conn-db {
+  font-weight: 600;
+}
+.mcp-conn-meta {
+  font-size: 10.5px;
+  color: var(--win-text-secondary);
+}
+.mcp-config {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--win-border);
+  border-radius: 6px;
+  background: var(--win-bg-card);
+  font-family: var(--win-font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  /* Wide content scrolls inside its own box; the dialog body must never scroll sideways. */
+  overflow-x: auto;
+}
+.mcp-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  max-height: 220px;
+  overflow-y: auto;
+  font-size: 11px;
+}
+.mcp-log li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--win-border);
+}
+.mcp-log li.denied .mcp-log-outcome {
+  color: var(--win-danger, #ef4444);
+}
+.mcp-log-time {
+  color: var(--win-text-secondary);
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+}
+.mcp-log-tool {
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+.mcp-log-sql {
+  font-family: var(--win-font-mono);
+  color: var(--win-text-secondary);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mcp-log-outcome {
+  margin-left: auto;
+  flex: 0 0 auto;
+  color: var(--win-text-secondary);
 }

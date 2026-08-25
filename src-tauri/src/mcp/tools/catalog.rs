@@ -9,21 +9,22 @@
 //! commit mode: these bodies go through the ROUTED funnel, which would otherwise open the user's
 //! transaction for them. See `policy::reject_if_manual`.
 
-use rmcp::ErrorData as McpError;
+use crate::mcp::audit::Refusal;
 use rmcp::model::CallToolResult;
+
 
 use super::{app_state, json_result, passthrough};
 use crate::mcp::policy;
 
 /// Every connection the user shared, and nothing else - the filtering happens in the registry so no
 /// tool can forget it.
-pub async fn list_connections() -> Result<CallToolResult, McpError> {
+pub async fn list_connections() -> Result<CallToolResult, Refusal> {
     let state = app_state()?;
     let connections = state.connections.list_mcp_exposed().map_err(passthrough)?;
     json_result(&serde_json::json!({ "connections": connections }))
 }
 
-pub async fn list_databases(connection_id: &str) -> Result<CallToolResult, McpError> {
+pub async fn list_databases(connection_id: &str) -> Result<CallToolResult, Refusal> {
     let state = app_state()?;
     policy::resolve(&state, connection_id)?;
     let out = crate::database::introspect::list_databases_inner(&state, connection_id.to_string())
@@ -32,7 +33,7 @@ pub async fn list_databases(connection_id: &str) -> Result<CallToolResult, McpEr
     json_result(&out)
 }
 
-pub async fn list_tables(connection_id: &str) -> Result<CallToolResult, McpError> {
+pub async fn list_tables(connection_id: &str) -> Result<CallToolResult, Refusal> {
     let state = app_state()?;
     policy::resolve(&state, connection_id)?;
     let out = crate::database::introspect::get_tables_inner(&state, connection_id.to_string())
@@ -44,7 +45,7 @@ pub async fn list_tables(connection_id: &str) -> Result<CallToolResult, McpError
 pub async fn describe_table(
     connection_id: &str,
     table_name: &str,
-) -> Result<CallToolResult, McpError> {
+) -> Result<CallToolResult, Refusal> {
     let state = app_state()?;
     policy::resolve(&state, connection_id)?;
     let out = crate::database::introspect::get_table_schema_inner(

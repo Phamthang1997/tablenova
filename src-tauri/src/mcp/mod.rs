@@ -26,6 +26,7 @@
 //! database. The transport is real; the surface is empty on purpose until the layers guarding it are
 //! in place.
 
+mod audit;
 mod auth;
 mod http;
 mod policy;

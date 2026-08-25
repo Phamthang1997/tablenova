@@ -4,7 +4,7 @@
 //! **This is the only file outside `app/` that should touch a Tauri handle.** `tx/` and `state/`
 //! both used to park an `AppHandle` of their own; that linked Tauri's window layer into everything
 //! reachable from the SQL funnels and broke every `cargo test --lib` binary on Windows. See
-//! `tx::set_emitter` for the whole story.
+//! `state::set_emitter` for the whole story.
 
 use tauri::{Emitter, Manager};
 
@@ -13,11 +13,12 @@ use tauri::{Emitter, Manager};
 pub fn init(app: &tauri::App) {
     apply_window_material(app);
 
-    // Transaction state changes deep inside the SQL funnels, which have no `AppHandle` and now no
+    // Backend layers announce things to the UI through this one closure: `tx/` when a transaction
+    // moves, `mcp/` when an AI client makes a request. They have no `AppHandle` and now no
     // knowledge of Tauri at all. They get a closure instead, so the UI can be told by event rather
     // than by threading a transaction-state field through every command's response shape.
     let handle = app.handle().clone();
-    crate::tx::set_emitter(move |event, payload| {
+    crate::state::set_emitter(move |event, payload| {
         let _ = handle.emit(event, payload);
     });
 }

@@ -79,6 +79,8 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         crate::mcp::commands::mcp_stop,
         crate::mcp::commands::mcp_get_token,
         crate::mcp::commands::mcp_regenerate_token,
+        crate::mcp::commands::mcp_audit_log,
+        crate::mcp::commands::mcp_audit_clear,
         crate::app::shell::open_url,
         crate::credentials::oauth::start_google_oauth_flow,
         crate::app::shell::set_app_window_size,

@@ -26,6 +26,7 @@ import { RoutineEditorModal } from './components/RoutineEditorModal';
 import { ViewEditorModal } from './components/ViewEditorModal';
 import { SchemaMigration } from './components/SchemaMigration';
 import { DbCompareDialog } from './components/DbCompareDialog';
+import { McpServerSettingsModal } from './components/McpServerSettingsModal';
 import { DataGeneratorDialog } from './components/DataGeneratorDialog';
 import { RedisSidebarView } from './components/redis/RedisSidebarView';
 import { RedisKeyTab } from './components/redis/RedisKeyTab';
@@ -333,6 +334,7 @@ export const App: React.FC = () => {
   const [dbInfoTab, setDbInfoTab] = useState<'current' | 'all'>('current');
   const [showSchemaMigration, setShowSchemaMigration] = useState(false);
   const [showDbCompare, setShowDbCompare] = useState(false);
+  const [showMcpSettings, setShowMcpSettings] = useState(false);
   // Data Generator: table open sẵn when ando from menu ngữ cảnh of một table.
   const [showDataGen, setShowDataGen] = useState(false);
   const [dataGenTable, setDataGenTable] = useState<string | null>(null);
@@ -2013,6 +2015,7 @@ export const App: React.FC = () => {
                 onOpenAllDbStats={() => { setDbInfoTab('all'); setShowDbInfoModal(true); }}
                 onSchemaMigration={() => setShowSchemaMigration(true)}
                 onCompareDatabases={() => setShowDbCompare(true)}
+                onMcpSettings={() => setShowMcpSettings(true)}
                 onGenerateData={(tableName) => {
                   setDataGenTable(tableName ?? null);
                   setShowDataGen(true);
@@ -2523,6 +2526,10 @@ export const App: React.FC = () => {
       )}
 
       {/* compare 2 database (cấu trúc + dữ liệu) */}
+      {/* Not gated on `connection`: the server, its token and the request log are app-wide, and the
+          screen has to be reachable to turn the thing OFF even with nothing open. */}
+      {showMcpSettings && <McpServerSettingsModal onClose={() => setShowMcpSettings(false)} />}
+
       {showDbCompare && connection && (
         <DbCompareDialog
           connId={activeConnIdState}

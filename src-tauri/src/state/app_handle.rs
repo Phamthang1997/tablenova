@@ -50,3 +50,35 @@ pub fn conn_is_read_only(id: &ConnId) -> bool {
         None => false,
     }
 }
+
+/// How the backend tells the UI something happened, without holding a Tauri type.
+///
+/// One emitter for the whole app: `tx/` announces transaction state, `mcp/` announces requests an AI
+/// client made, and neither needs to know the other exists. `app/setup.rs` installs it - see the
+/// module header for why a closure and not an `AppHandle`.
+type Emitter = Box<dyn Fn(&str, serde_json::Value) + Send + Sync>;
+
+static EMIT: OnceLock<Mutex<Option<Emitter>>> = OnceLock::new();
+
+fn emit_slot() -> &'static Mutex<Option<Emitter>> {
+    EMIT.get_or_init(|| Mutex::new(None))
+}
+
+/// Called once from `app/setup.rs`.
+pub fn set_emitter(emit: impl Fn(&str, serde_json::Value) + Send + Sync + 'static) {
+    if let Ok(mut slot) = emit_slot().lock() {
+        *slot = Some(Box::new(emit));
+    }
+}
+
+/// Fire an event at the UI. A no-op before setup has run, and before any window exists - which is
+/// correct: there is nobody to tell.
+pub fn emit(event: &str, payload: serde_json::Value) {
+    let slot = match emit_slot().lock() {
+        Ok(s) => s,
+        Err(e) => e.into_inner(),
+    };
+    if let Some(emit) = slot.as_ref() {
+        emit(event, payload);
+    }
+}

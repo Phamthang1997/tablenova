@@ -196,6 +196,19 @@ export const COMMAND_KINDS: Record<string, CommandKind> = {
   secret_delete_many: 'internal',
   secret_get_many: 'internal',
   secret_set_many: 'internal',
+  // --- The built-in MCP server. Configuring it is not a statement anyone ran on a database, so
+  //     these are `internal` - gating them would prompt while the user is setting up a guard.
+  //     `mcp_regenerate_token` is the exception: it cuts off every client on the old token and
+  //     restarts the server, which is a consequence worth confirming.
+  mcp_status: 'internal',
+  mcp_start: 'internal',
+  mcp_stop: 'internal',
+  mcp_get_token: 'internal',
+  mcp_regenerate_token: 'write',
+  mcp_audit_log: 'internal',
+  mcp_audit_clear: 'internal',
+  set_connection_mcp_exposed: 'internal',
+
   ai_chat: 'internal',
   open_url: 'internal',
 };

@@ -62,6 +62,33 @@ export interface OpenConnection {
   pending: number;
   /** Kết nối currently from chối mọi câu write. */
   readOnly: boolean;
+  /** Is this connection visible to AI clients through the built-in MCP server? Default false. */
+  mcpExposed: boolean;
+}
+
+/** State of the built-in MCP server. `url` is empty while stopped, so no one copies a dead address. */
+export interface McpStatus {
+  running: boolean;
+  port: number;
+  url: string;
+}
+
+/** One request an AI client made. Mirrors `mcp/audit.rs`. */
+export interface McpAuditEntry {
+  /** Monotonic within one app run — a stable React key for a list that grows at the front. */
+  id: number;
+  at: string;
+  tool: string;
+  connId: string | null;
+  sql: string | null;
+  sqlTruncated: boolean;
+  ms: number;
+  ok: boolean;
+  /** Absent when `ok`. */
+  denial?: 'notShared' | 'notReadOnly' | 'manualTransaction' | 'failed';
+  /** Which defence layer refused; `0` when the database itself failed. */
+  layer?: number;
+  message?: string;
 }
 
 /**
@@ -929,6 +956,48 @@ export const dbHelper = {
   async setConnectionReadOnly(connId: string, enabled: boolean): Promise<boolean> {
     const res = await invoke<{ readOnly: boolean }>('set_connection_read_only', { connId, enabled });
     return !!res.readOnly;
+  },
+
+  /**
+   * Show one connection to AI clients, or hide it again.
+   *
+   * Separate from `setConnectionReadOnly` even though the shape matches: "may this be written to"
+   * and "may an AI client see it at all" are different questions, and a connection can sensibly be
+   * read-only and hidden, or writable and shared.
+   */
+  async setConnectionMcpExposed(connId: string, enabled: boolean): Promise<boolean> {
+    const res = await invoke<{ mcpExposed: boolean }>('set_connection_mcp_exposed', { connId, enabled });
+    return !!res.mcpExposed;
+  },
+
+  async mcpStatus(): Promise<McpStatus> {
+    return invoke<McpStatus>('mcp_status');
+  },
+
+  async mcpStart(port?: number): Promise<McpStatus> {
+    return invoke<McpStatus>('mcp_start', { port });
+  },
+
+  async mcpStop(): Promise<McpStatus> {
+    return invoke<McpStatus>('mcp_stop');
+  },
+
+  async mcpGetToken(): Promise<string> {
+    return invoke<string>('mcp_get_token');
+  },
+
+  /** Mints a new token. The server restarts if it was running, so every client on the old token stops. */
+  async mcpRegenerateToken(): Promise<string> {
+    return invoke<string>('mcp_regenerate_token');
+  },
+
+  /** Newest first. In memory on the Rust side — it does not survive closing the app. */
+  async mcpAuditLog(): Promise<McpAuditEntry[]> {
+    return invoke<McpAuditEntry[]>('mcp_audit_log');
+  },
+
+  async mcpAuditClear(): Promise<void> {
+    await invoke<void>('mcp_audit_clear');
   },
 
   async listConnections(): Promise<OpenConnection[]> {

@@ -55,6 +55,9 @@ struct Running {
 #[derive(Default)]
 pub struct McpServer {
     inner: Mutex<Option<Running>>,
+    /// What AI clients have asked for. Lives with the server rather than beside it in `AppState`:
+    /// both are MCP, and one field is one place to look.
+    pub audit: super::audit::Audit,
 }
 
 impl McpServer {

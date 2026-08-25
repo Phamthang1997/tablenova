@@ -4,7 +4,7 @@ import { clampMenu, type MenuRect } from '../utils/menuPosition';
 import { dbHelper } from '../utils/dbHelper';
 import { isMariaDbVersion } from '../utils/serverFlavor';
 import type { TableItem, SchemaInfo, TriggerInfo, CheckConstraintInfo } from '../utils/dbHelper';
-import { Search, Table, TerminalSquare, RefreshCw, Layers, Plus, ChevronDown, ChevronRight, Braces, Cog, Key, Sliders, FileCode, Trash2, CheckCircle2, Copy, AlertTriangle, History, Bookmark, Columns3, ArrowDownAZ, Link2, Zap, Code2, Database, Sparkles, GitCompare, ArrowLeftRight, HardDriveDownload, HardDriveUpload } from 'lucide-react';
+import { Search, Table, TerminalSquare, RefreshCw, Layers, Plus, ChevronDown, ChevronRight, Braces, Cog, Key, Sliders, FileCode, Trash2, CheckCircle2, Copy, AlertTriangle, History, Bookmark, Columns3, ArrowDownAZ, Link2, Zap, Code2, Database, Sparkles, GitCompare, ArrowLeftRight, HardDriveDownload, HardDriveUpload, Plug } from 'lucide-react';
 import { CreateTableModal } from './CreateTableModal';
 import { Modal, ModalBody, ModalFooter } from './Modal';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -571,6 +571,7 @@ interface SidebarProps {
   onOpenAllDbStats?: () => void;
   onSchemaMigration?: () => void;
   onCompareDatabases?: () => void;
+  onMcpSettings?: () => void;
   /** open Data Generator. Có tên table = open sẵn with table đó (from menu ngữ cảnh of table). */
   onGenerateData?: (tableName?: string) => void;
   onTableRenamed?: (oldName: string, newName: string) => void;
@@ -614,6 +615,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenAllDbStats: _onOpenAllDbStats,
   onSchemaMigration,
   onCompareDatabases,
+  onMcpSettings,
   onGenerateData,
   onTableRenamed,
   onTableDropped,
@@ -1426,6 +1428,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
           onClick: onCompareDatabases,
           visible: !!onCompareDatabases,
         },
+        {
+          id: 'mcpSettings',
+          label: t('mcp.title'),
+          icon: Plug,
+          colorClass: 'emerald',
+          onClick: onMcpSettings,
+          visible: !!onMcpSettings,
+        },
       ],
     },
     {
@@ -1461,7 +1471,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         },
       ],
     },
-  ], [t, onNewQuery, onOpenTerminal, onOpenDbInfo, onSchemaMigration, onCompareDatabases, onGenerateData, onExportDatabase, onImportDatabase, blockedByReadOnly]);
+  ], [t, onNewQuery, onOpenTerminal, onOpenDbInfo, onSchemaMigration, onCompareDatabases, onMcpSettings, onGenerateData, onExportDatabase, onImportDatabase, blockedByReadOnly]);
 
   return (
     <div className="sidebar-navigation" ref={rootRef} style={{ width: `${width}px` }}>

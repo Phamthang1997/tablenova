@@ -134,26 +134,10 @@ impl Session {
 }
 
 static SESSIONS: OnceLock<Mutex<HashMap<crate::state::SessionId, Arc<Session>>>> = OnceLock::new();
-/// How this module tells the UI that a transaction's state moved.
-///
-/// A **closure**, not the `AppHandle` it used to be, and the difference is not cosmetic: holding a
-/// Tauri type here links Tauri's window layer (`tao`/`wry`) into everything that can reach the SQL
-/// funnels. On Windows that put comctl32 v6 imports (`TaskDialogIndirect`, `SetWindowSubclass`)
-/// into every `cargo test --lib` binary, and test binaries carry no application manifest - so the
-/// loader bound comctl32 v5, the symbols were missing, and the whole suite died at startup with
-/// STATUS_ENTRYPOINT_NOT_FOUND. With a closure, `app/setup.rs` is the only place that knows Tauri
-/// exists, which is where that knowledge belonged anyway.
-type Emitter = Box<dyn Fn(&str, Value) + Send + Sync>;
-
-static EMIT: OnceLock<Mutex<Option<Emitter>>> = OnceLock::new();
-
 pub(super) fn sessions() -> &'static Mutex<HashMap<crate::state::SessionId, Arc<Session>>> {
     SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn emit_slot() -> &'static Mutex<Option<Emitter>> {
-    EMIT.get_or_init(|| Mutex::new(None))
-}
 
 /// The session of a connection, **without creating one**.
 ///
@@ -196,14 +180,6 @@ pub(super) fn session_key(conn: &DbConnection) -> Option<&str> {
     }
 }
 
-/// Called once from `app/setup.rs`. The state changes from inside the SQL funnels, which have no
-/// `AppHandle` and — since this became a closure — no knowledge of Tauri at all. The UI is told by
-/// event rather than by threading a transaction-state field through every command's response shape.
-pub fn set_emitter(emit: impl Fn(&str, Value) + Send + Sync + 'static) {
-    if let Ok(mut slot) = emit_slot().lock() {
-        *slot = Some(Box::new(emit));
-    }
-}
 
 /// The status of one connection's session. A connection with no session reports the default —
 /// auto-commit on, nothing open — which is exactly its state.
@@ -244,14 +220,7 @@ fn meta_json(conn_id: &str, m: &Meta) -> Value {
 }
 
 pub(super) fn emit_state(conn_id: &str) {
-    let payload = status_json(conn_id);
-    let slot = match emit_slot().lock() {
-        Ok(s) => s,
-        Err(e) => e.into_inner(),
-    };
-    if let Some(emit) = slot.as_ref() {
-        emit("tx-state-changed", payload);
-    }
+    crate::state::emit("tx-state-changed", status_json(conn_id));
 }
 
 /// Read one field out of a connection's `Meta`. A connection with no session yet has the default
