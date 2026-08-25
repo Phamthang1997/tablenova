@@ -465,10 +465,25 @@ policy, 6 tool, UI, i18n ba ngôn ngữ — không đổi.
 cố tình để trống — chưa có lớp 3 và 4 thì chưa có gì được phép chạm vào database.
 
 **Bước 2 — đường dữ liệu**
-- [ ] Tách `execute_raw_sql_pooled` khỏi `execute_raw_sql_generic` (§2.2). Một nhát, không nhân bản.
-- [ ] Cờ `exposed` trong `ConnEntry` + command đặt cờ, theo khuôn `set_connection_read_only` (§3.3).
-- [ ] `policy.rs`: danh sách trắng câu lệnh đọc, một-câu-một-lần, giới hạn dòng (§3.4, §4.3).
-- [ ] 6 tool (§4.1). Khai command mới vào `app/handlers.rs` **và** phân loại trong `safeMode.ts`.
+- [x] Tách `execute_raw_sql_pooled` khỏi `execute_raw_sql_generic` (§2.2). Một nhát, không nhân bản.
+- [x] Cờ `exposed` trong `ConnEntry` + command đặt cờ, theo khuôn `set_connection_read_only` (§3.3).
+- [x] `policy.rs`: danh sách trắng câu lệnh đọc, một-câu-một-lần, giới hạn dòng (§3.4, §4.3).
+- [x] 6 tool (§4.1). Khai command mới vào `app/handlers.rs`. **Còn thiếu: phân loại trong `safeMode.ts`** —
+      làm cùng Bước 3, khi `dbHelper` thực sự gọi các lệnh `mcp_*` (test chỉ đọc `dbHelper.ts`).
+
+**Bước 2 xong, cộng một khoản nợ kỹ thuật phải trả giữa đường.** Thân tool chạm vào introspection →
+funnel routed → `tx` → `AppHandle::emit`, và thế là **tầng cửa sổ của Tauri bị link vào binary test**:
+exe test import `TaskDialogIndirect`/`SetWindowSubclass` (comctl32 **v6**), mà exe test không có
+manifest nên Windows nạp comctl32 v5 và **cả 101 test cũ chết ngay lúc load** với
+`STATUS_ENTRYPOINT_NOT_FOUND`. Ba việc đã làm để gỡ, và cả ba đều đáng giữ độc lập với MCP:
+
+- `tx/` park một **closure phát event** thay cho `AppHandle` (`tx::set_emitter`).
+- `state/app_handle.rs` bỏ hẳn `AppHandle`, đọc `AppState` đã park (`AppState` thành handle `Arc`).
+- Ba thân introspection dùng chung với UI chuyển sang `database/introspect.rs` — **tệp không chứa
+  `#[tauri::command]` nào**, cùng luật với `src/sql/statements.ts` không import monaco.
+
+Kết quả: `app/setup.rs` là chỗ duy nhất ngoài `app/` biết Tauri tồn tại, và binary test import **0**
+DLL giao diện. Đây cũng là điều kiện cần cho cầu stdio ở V2.
 
 **Bước 3 — UI**
 - [ ] `McpServerSettingsModal.tsx` từ `Modal.tsx`; snippet sinh từ cổng thật (§5.2).

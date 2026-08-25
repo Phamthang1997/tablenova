@@ -19,6 +19,10 @@ pub(crate) fn is_mysql_unprepared_error(err_text: &str) -> bool {
     err_text.contains("1295") || err_text.contains("not supported in the prepared statement protocol")
 }
 
+/// Funnel 1, the routed door: what every command in the app calls.
+///
+/// Three questions in order — may this connection be written to, does this statement belong to a
+/// manual transaction session, and only then, run it.
 pub(crate) async fn execute_raw_sql_generic(conn: &DbConnection, sql: String) -> Result<Vec<Value>, String> {
     reject_if_read_only(conn, &sql)?;
     // Manual transaction mode: the statement must run on the connection the transaction was opened
@@ -26,6 +30,27 @@ pub(crate) async fn execute_raw_sql_generic(conn: &DbConnection, sql: String) ->
     if crate::tx::should_route(conn, &sql) {
         return crate::tx::run_raw(conn, sql).await;
     }
+    execute_raw_sql_pooled(conn, sql).await
+}
+
+/// The same funnel with the routing question removed: always a pooled connection.
+///
+/// This exists for the MCP server (`docs/mcp-server-plan.md` §2.2) and should not be reached for
+/// anything the user typed. `should_route()` answers `true` whenever the connection is in manual
+/// mode — *before* it looks at who sent the statement — so an AI client reading through the routed
+/// door would issue `BEGIN` on the user's session and light up a transaction they never opened. A
+/// third party's read must not be able to do that.
+///
+/// The read-only check is repeated here rather than left to the caller: it is one comparison, and
+/// making it the caller's job is how a door ends up unguarded.
+///
+/// Two consequences, both deliberate and both documented for users. On Postgres and MySQL a caller
+/// coming through here sees only COMMITTED state — the same semantics `compare/` needs, and the
+/// reason it reads through a pool too. On SQLite there is no difference at all: `DbKind::Sqlite` is
+/// a single shared handle, so it observes the open transaction either way, and a second handle on
+/// one file is the `SQLITE_BUSY` that `find_sqlite()` exists to prevent.
+pub(crate) async fn execute_raw_sql_pooled(conn: &DbConnection, sql: String) -> Result<Vec<Value>, String> {
+    reject_if_read_only(conn, &sql)?;
     match &conn.kind {
         DbKind::Sqlite(conn_arc) => sqlite_raw(conn_arc, &sql),
         DbKind::Postgres(pool) => {

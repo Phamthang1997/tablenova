@@ -48,6 +48,8 @@ pub async fn redis_connect(state: tauri::State<'_, crate::AppState>, config: Val
         conn_id.clone(),
         crate::state::ConnEntry {
             read_only,
+            // Redis is out of MCP scope entirely; the field exists because the registry is shared.
+            mcp_exposed: false,
             server,
             db: redis_db_name(db_index),
             conn: crate::state::LiveConn::Redis(crate::state::RedisConn {
@@ -142,6 +144,7 @@ pub(crate) async fn select_db_inner(
             // Inherit the read-only flag of the connection it was opened from: same server, and whoever marked
             // production read-only meant every db index of it. Same reasoning as `open_database`.
             read_only,
+            mcp_exposed: false,
             // The SAME `Arc<ServerHandle>`: a different `ServerHandle` would open its own tunnel and close it as soon
             // as the first connection disappeared.
             server,

@@ -2,6 +2,7 @@
 name = "tablenova"
 version = "0.1.1"
 edition = "2024"
+license = "AGPL-3.0-or-later"
 
 [dependencies]
 tauri = { version = "2.11.5", features = ["macos-private-api"] }

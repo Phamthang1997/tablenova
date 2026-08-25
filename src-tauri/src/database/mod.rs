@@ -15,6 +15,7 @@ mod ident;
 mod read_only;
 mod rows;
 mod splitter;
+pub(crate) mod introspect;
 mod timeout;
 
 pub use commands::*;

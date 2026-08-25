@@ -10,7 +10,9 @@ use std::sync::{Arc, Mutex};
 use super::registry::ConnRegistry;
 use crate::terminal;
 
-pub struct AppState {
+/// Everything `AppState` owns. Reached through `AppState`'s `Deref`, so `state.connections` reads
+/// the same at all 150-odd call sites as it did when this WAS `AppState`.
+pub struct AppStateInner {
     // Every open connection — SQL AND REDIS — keyed by `conn_id`
     // (docs/multi-connection-plan.md §4.3, docs/redis-ui-unification-plan.md §2.3). This is the ONE
     // source of truth: `DatabaseManager` (a single `Option<DbConnection>` for the whole app) and
@@ -28,16 +30,45 @@ pub struct AppState {
     pub mcp: crate::mcp::McpServer,
 }
 
+/// A cheap handle to the one `AppStateInner`, not the state itself.
+///
+/// Tauri `manage()`s one clone and `state::parked()` holds another, which is what lets the MCP
+/// server reach the registry **without touching a single Tauri type**. That mattered concretely: an
+/// earlier version went through `AppHandle`, and pulling Tauri's window layer into the crate made
+/// every `cargo test --lib` binary import comctl32 v6 symbols (`TaskDialogIndirect`,
+/// `SetWindowSubclass`). Test binaries carry no application manifest, so Windows resolved comctl32
+/// v5 and the whole suite died at load with STATUS_ENTRYPOINT_NOT_FOUND - 101 unrelated tests taken
+/// out by a feature that had not shipped yet.
+#[derive(Clone)]
+pub struct AppState {
+    inner: Arc<AppStateInner>,
+}
+
+impl std::ops::Deref for AppState {
+    type Target = AppStateInner;
+
+    fn deref(&self) -> &AppStateInner {
+        &self.inner
+    }
+}
+
 impl AppState {
     /// State at startup: no connection, and no terminal session.
     pub fn new() -> Self {
-        AppState {
-            connections: ConnRegistry::new(),
-            cancel_flags: Mutex::new(HashMap::new()),
-            ssh_terminals: Mutex::new(HashMap::new()),
-            local_terminals: Mutex::new(HashMap::new()),
-            mcp: crate::mcp::McpServer::default(),
-        }
+        let state = AppState {
+            inner: Arc::new(AppStateInner {
+                connections: ConnRegistry::new(),
+                cancel_flags: Mutex::new(HashMap::new()),
+                ssh_terminals: Mutex::new(HashMap::new()),
+                local_terminals: Mutex::new(HashMap::new()),
+                mcp: crate::mcp::McpServer::default(),
+            }),
+        };
+        // Parked here rather than at the `manage()` call site so that nothing in the Tauri
+        // bootstrap has to know this second holder exists - and so `run.rs` keeps referring to no
+        // state machinery at all. See `state/app_handle.rs` for why the MCP server needs it.
+        super::app_handle::park_state(state.clone());
+        state
     }
 }
 

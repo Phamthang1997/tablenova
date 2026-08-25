@@ -28,6 +28,7 @@
 
 mod auth;
 mod http;
+mod policy;
 mod server;
 mod tools;
 

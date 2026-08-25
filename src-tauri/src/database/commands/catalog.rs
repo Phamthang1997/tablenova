@@ -2,10 +2,10 @@
 //! row counts (exact or estimated) and primary keys.
 
 use serde_json::{json, Value};
-use sqlx::Row;
 
+use crate::database::introspect::{get_primary_key_columns, get_tables_inner};
 use crate::database::{
-    all_string_values, cell, execute_raw_sql_generic, first_i64, pg_schema_of, rows_of, sql_str,
+    cell, execute_raw_sql_generic, first_i64, pg_schema_of, rows_of, sql_str,
     DbConnection, DbKind,
 };
 
@@ -89,67 +89,7 @@ pub async fn get_full_catalog(state: tauri::State<'_, crate::AppState>, conn_id:
 
 #[tauri::command]
 pub async fn get_tables(state: tauri::State<'_, crate::AppState>, conn_id: String) -> Result<Value, String> {
-    let (conn_type, schema) = {
-        let ctx = state.connections.acquire(&conn_id)?;
-        let ct = ctx.conn().clone();
-        (ct, ctx.schema().to_string())
-    };
-    let sch = sql_str(&schema);
-
-    let mut tables = Vec::new();
-
-    match conn_type.kind {
-        DbKind::Sqlite(conn_arc) => {
-            let conn = conn_arc.lock().map_err(|e| e.to_string())?;
-            let mut stmt = conn.prepare("SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%'").map_err(|e| e.to_string())?;
-            let rows = stmt.query_map([], |row| {
-                let name: String = row.get(0)?;
-                let table_type: String = row.get(1)?;
-                Ok(json!({
-                    "name": name,
-                    "type": if table_type == "view" { "view" } else { "table" }
-                }))
-            }).map_err(|e| e.to_string())?;
-            for row in rows {
-                if let Ok(val) = row {
-                    tables.push(val);
-                }
-            }
-        }
-        DbKind::Postgres(pool) => {
-            // information_schema.tables has no materialized view in it (it is not in the SQL
-            // standard), so a matview used to be invisible everywhere in the app — sidebar,
-            // export, compare. pg_class.relkind = 'm' is the only place it shows up.
-            let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
-                "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = '{sch}' \
-                 UNION ALL \
-                 SELECT c.relname, 'VIEW' FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
-                 WHERE n.nspname = '{sch}' AND c.relkind = 'm'")))
-                .fetch_all(&pool).await.map_err(|e| e.to_string())?;
-            for r in rows {
-                let name: String = r.get(0);
-                let t_type: String = r.get(1);
-                tables.push(json!({
-                    "name": name,
-                    "type": if t_type == "VIEW" { "view" } else { "table" }
-                }));
-            }
-        }
-        DbKind::Mysql(pool) => {
-            let rows = sqlx::query("SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = DATABASE()")
-                .fetch_all(&pool).await.map_err(|e| e.to_string())?;
-            for r in rows {
-                let name: String = r.get(0);
-                let t_type: String = r.get(1);
-                tables.push(json!({
-                    "name": name,
-                    "type": if t_type == "VIEW" { "view" } else { "table" }
-                }));
-            }
-        }
-    }
-    
-    Ok(json!({ "success": true, "tables": tables }))
+    get_tables_inner(&state, conn_id).await
 }
 
 /// Below this, an exact `COUNT(*)` is cheap enough that the estimate is not worth its inaccuracy.
@@ -205,59 +145,6 @@ pub(super) async fn estimate_row_count(conn: &DbConnection, schema: &Option<Stri
 
 // The list of primary-key columns of a table, per dialect (composite primary keys included).
 //
-// `schema` must be the same one the caller writes through. This feeds `commit_changes`, whose
-// UPDATE/DELETE build their WHERE from the result: reading the PK of `public.film` while writing
-// to `sales.film` produces no error at all, just a wrong WHERE — i.e. the wrong rows changed.
-pub(super) async fn get_primary_key_columns(conn: &DbConnection, schema: &Option<String>, table: &str) -> Vec<String> {
-    match &conn.kind {
-        DbKind::Sqlite(conn_arc) => {
-            let mut cols: Vec<(i32, String)> = Vec::new();
-            if let Ok(c) = conn_arc.lock() {
-                let sql = format!("PRAGMA table_info(\"{}\")", table);
-                if let Ok(mut stmt) = c.prepare(&sql) {
-                    if let Ok(mut rows) = stmt.query([]) {
-                        while let Ok(Some(row)) = rows.next() {
-                            let pk: i32 = row.get("pk").unwrap_or(0);
-                            if pk > 0 {
-                                if let Ok(name) = row.get::<_, String>("name") {
-                                    cols.push((pk, name));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            cols.sort_by_key(|(order, _)| *order);
-            cols.into_iter().map(|(_, name)| name).collect()
-        }
-        DbKind::Postgres(_) => {
-            let sql = format!(
-                "SELECT kcu.column_name FROM information_schema.table_constraints tc \
-                 JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema \
-                 WHERE tc.constraint_type = 'PRIMARY KEY' AND tc.table_name = '{}' AND tc.table_schema = '{}' \
-                 ORDER BY kcu.ordinal_position",
-                table.replace('\'', "''"),
-                sql_str(&pg_schema_of(schema))
-            );
-            match execute_raw_sql_generic(conn, sql).await {
-                Ok(results) => all_string_values(&results),
-                Err(_) => Vec::new(),
-            }
-        }
-        DbKind::Mysql(_) => {
-            let sql = format!(
-                "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE \
-                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{}' AND CONSTRAINT_NAME = 'PRIMARY' \
-                 ORDER BY ORDINAL_POSITION",
-                table.replace('\'', "''")
-            );
-            match execute_raw_sql_generic(conn, sql).await {
-                Ok(results) => all_string_values(&results),
-                Err(_) => Vec::new(),
-            }
-        }
-    }
-}
 
 // Auto-detect the primary-key column name (taking the first one). Returns None when it cannot be determined.
 pub(super) async fn detect_primary_key(conn: &DbConnection, schema: &Option<String>, table: &str) -> Option<String> {

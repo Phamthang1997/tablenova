@@ -43,6 +43,22 @@ pub async fn set_connection_read_only(
     Ok(json!({ "success": true, "readOnly": enabled }))
 }
 
+/// Show one connection to the built-in MCP server, or hide it again.
+///
+/// Separate from `set_connection_read_only` even though the shape is identical: they answer two
+/// different questions ("may this be written to" vs "may an AI client see it at all"), and a
+/// connection can sensibly be read-only AND hidden, or writable AND shared. Default is hidden -
+/// see `ConnEntry::mcp_exposed`.
+#[tauri::command]
+pub async fn set_connection_mcp_exposed(
+    state: tauri::State<'_, crate::AppState>,
+    conn_id: String,
+    enabled: bool,
+) -> Result<Value, String> {
+    state.connections.set_mcp_exposed(&conn_id, enabled)?;
+    Ok(json!({ "success": true, "mcpExposed": enabled }))
+}
+
 /// Every connection currently open, for the left rail (§4.2c).
 ///
 /// Deliberately takes no `conn_id`: it is a question about the whole app, not about one connection —
@@ -136,6 +152,8 @@ pub async fn connect_db(app: tauri::AppHandle, state: tauri::State<'_, crate::Ap
             crate::state::ConnEntry {
                 // A new connection starts writable; the UI turns this on for a production label.
                 read_only: false,
+                // Never exposed to an AI client until the user says so, per connection.
+                mcp_exposed: false,
                 server,
                 db: db_name,
                 conn: crate::state::LiveConn::Sql(conn),

@@ -1,20 +1,25 @@
-//! The work that runs ONCE at app startup: the window's glass material and the `AppHandle`s
-//! parked for the layers that never receive an `AppState`.
+//! The work that runs ONCE at app startup: the window's glass material, and the one bridge from
+//! Tauri into the layers that never see an `AppState`.
+//!
+//! **This is the only file outside `app/` that should touch a Tauri handle.** `tx/` and `state/`
+//! both used to park an `AppHandle` of their own; that linked Tauri's window layer into everything
+//! reachable from the SQL funnels and broke every `cargo test --lib` binary on Windows. See
+//! `tx::set_emitter` for the whole story.
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 /// Runs inside `Builder::setup`. A failure here would be a startup failure, but both pieces of work
 /// inside are best-effort, so the function has no failing branch.
 pub fn init(app: &tauri::App) {
     apply_window_material(app);
 
-    // The transaction state changes deep inside the SQL funnels, which have no AppHandle.
-    // Park one here so it can emit "tx-state-changed" instead of every command's response
-    // shape having to carry the state.
-    crate::tx::set_app_handle(app.handle().clone());
-    // Same trick, different purpose: the SQL funnels read the read-only flag out of the
-    // connection registry, and they have a `&DbConnection` but no `AppState`.
-    crate::state::set_app_handle(app.handle().clone());
+    // Transaction state changes deep inside the SQL funnels, which have no `AppHandle` and now no
+    // knowledge of Tauri at all. They get a closure instead, so the UI can be told by event rather
+    // than by threading a transaction-state field through every command's response shape.
+    let handle = app.handle().clone();
+    crate::tx::set_emitter(move |event, payload| {
+        let _ = handle.emit(event, payload);
+    });
 }
 
 /// The window's glass material is applied ONLY here, never through windowEffects in

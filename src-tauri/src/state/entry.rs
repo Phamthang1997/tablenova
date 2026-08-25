@@ -64,6 +64,14 @@ pub struct ConnEntry {
     /// boundary. Per connection, because the point is holding production open next to dev. Redis
     /// reads this same field — it no longer keeps a second flag of its own.
     pub read_only: bool,
+    /// May the built-in MCP server show this connection to an AI client?
+    ///
+    /// **Default `false`, and that is the feature.** A production connection left open must not
+    /// become visible to an AI client because the user never opened the MCP settings. Unlike
+    /// `read_only`, which is inherited when a sibling database is opened on the same server, this is
+    /// NOT inherited: opening a second database is a new place, and "I shared dev" must not quietly
+    /// become "I shared prod on the same server". See `docs/mcp-server-plan.md` §3.3.
+    pub mcp_exposed: bool,
     pub server: Arc<ServerHandle>,
     /// Database name; the file path for SQLite; `db0`…`db15` for Redis.
     pub db: String,

@@ -11,6 +11,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         crate::database::disconnect_db,
         crate::database::list_connections,
         crate::database::set_connection_read_only,
+        crate::database::set_connection_mcp_exposed,
         crate::database::get_connection_status,
         crate::database::ping_connections,
         crate::database::get_tables,

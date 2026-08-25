@@ -8,7 +8,7 @@ use crate::database::{
     quote_ident, reject_conn_read_only, sql_str, DbConnection, DbKind, Exec,
 };
 
-use super::catalog::get_primary_key_columns;
+use crate::database::introspect::get_primary_key_columns;
 use super::table_alter::generate_alter_sqls;
 
 #[tauri::command]

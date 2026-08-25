@@ -1,5 +1,6 @@
 //! The database and schema level: listing, opening, creating, dropping, renaming — and a database's character set.
 
+use crate::database::introspect::list_databases_inner;
 use serde_json::{json, Value};
 use sqlx::{MySqlPool, PgPool, Row};
 
@@ -105,21 +106,11 @@ pub async fn get_databases_list(config: Value) -> Result<Value, String> {
 // List the databases using the CURRENT CONNECTION (for the switcher inside the workspace)
 #[tauri::command]
 pub async fn list_databases(state: tauri::State<'_, crate::AppState>, conn_id: String) -> Result<Value, String> {
-    let conn_type = {
-        let ctx = state.connections.acquire(&conn_id)?;
-        ctx.conn().clone()
-    };
-
-    let sql = match &conn_type.kind {
-        DbKind::Postgres(_) => "SELECT datname FROM pg_database WHERE datistemplate = false AND datallowconn = true ORDER BY datname".to_string(),
-        DbKind::Mysql(_) => "SHOW DATABASES".to_string(),
-        DbKind::Sqlite(_) => return Ok(json!({ "success": true, "databases": [] })), // SQLite: 1 file = 1 DB
-    };
-    let results = execute_raw_sql_generic(&conn_type, sql).await?;
-    let mut databases = all_string_values(&results);
-    databases.sort();
-    Ok(json!({ "success": true, "databases": databases }))
+    list_databases_inner(&state, conn_id).await
 }
+
+/// The body, reachable without a `tauri::State`.
+///
 
 /// Open another database on the SAME server as a **new connection** (§4.3).
 ///
@@ -196,6 +187,8 @@ pub async fn open_database(
         // server, and someone who marked production read-only means every database on it.
         crate::state::ConnEntry {
             read_only: inherit_read_only,
+            // Deliberately NOT inherited - see `ConnEntry::mcp_exposed`.
+            mcp_exposed: false,
             server,
             db: name.clone(),
             conn: crate::state::LiveConn::Sql(conn),

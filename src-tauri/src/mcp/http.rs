@@ -215,24 +215,62 @@ mod tests {
 /// guard that never runs because it was attached below the nested service, a bind that answers on
 /// the wrong interface - is invisible to a unit test of the predicates above and obvious here.
 #[cfg(test)]
-mod server_tests {
+pub(super) mod server_tests {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::{TcpListener, TcpStream};
 
     use super::*;
 
-    const TOKEN: &str = "test-token-not-from-the-keyring";
+    pub(super) const TOKEN: &str = "test-token-not-from-the-keyring";
 
-    /// One raw HTTP/1.1 request; returns the status line only, so an SSE response cannot hang us.
-    async fn status_line(port: u16, headers: &str, body: &str) -> String {
-        let stream = TcpStream::connect(("127.0.0.1", port)).await.expect("connect");
-        let req = format!(
+    /// Spawns the router on an ephemeral port. Returns the port and the handle to stop it with.
+    pub(super) async fn spawn() -> (u16, CancellationToken, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let cancel = CancellationToken::new();
+        let app = router(port, TOKEN.into(), cancel.child_token());
+        let shutdown = cancel.clone();
+        let task = tokio::spawn(async move {
+            let _ = axum::serve(listener, app)
+                .with_graceful_shutdown(async move { shutdown.cancelled().await })
+                .await;
+        });
+        (port, cancel, task)
+    }
+
+    /// A whole request/response, body included. Bounded by a timeout because a streamable-HTTP
+    /// response can legitimately stay open.
+    pub(super) async fn exchange(port: u16, headers: &str, body: &str) -> String {
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).await.expect("connect");
+        stream.write_all(request(headers, body).as_bytes()).await.expect("write");
+        let mut out = Vec::new();
+        // Bounded: a streamable-HTTP response can legitimately stay open, and a test that hangs is
+        // worse than one that fails.
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            tokio::io::AsyncReadExt::read_to_end(&mut stream, &mut out),
+        )
+        .await;
+        String::from_utf8_lossy(&out).into_owned()
+    }
+
+    /// One well-formed POST to the mount path.
+    ///
+    /// Both `Accept` types are required by streamable HTTP - omit either and the server answers 406
+    /// before any of this file's guards have run, which reads as a security bug that is not there.
+    pub(super) fn request(headers: &str, body: &str) -> String {
+        format!(
             "POST {MOUNT_PATH} HTTP/1.1\r\n{headers}Content-Type: application/json\r\n\
              Accept: application/json, text/event-stream\r\nContent-Length: {}\r\n\
              Connection: close\r\n\r\n{body}",
             body.len()
-        );
-        let mut stream = stream;
+        )
+    }
+
+    /// One raw HTTP/1.1 request; returns the status line only, so an SSE response cannot hang us.
+    async fn status_line(port: u16, headers: &str, body: &str) -> String {
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).await.expect("connect");
+        let req = request(headers, body);
         stream.write_all(req.as_bytes()).await.expect("write");
         let mut line = String::new();
         BufReader::new(stream).read_line(&mut line).await.expect("read");
@@ -285,6 +323,68 @@ mod server_tests {
         // door turned it away.
         let ok = status_line(port, &format!("{host}Authorization: Bearer {TOKEN}\r\n"), init).await;
         assert!(!ok.contains("401") && !ok.contains("403"), "valid request blocked: {ok}");
+
+        cancel.cancel();
+        let _ = task.await;
+    }
+}
+
+/// The full MCP handshake against the real server, ending in `tools/list`.
+///
+/// This is the test that proves the tools are actually REGISTERED. `#[tool_handler]` wires the
+/// router by macro, so a surface that silently lists nothing compiles perfectly well - and the
+/// dead-code warning on the `tool_router` field is not evidence either way.
+#[cfg(test)]
+mod handshake_tests {
+    use super::server_tests::*;
+
+    /// Spec revision 2026-07-28 removed sessions entirely (SEP-2567), so there is no session id to
+    /// carry. What replaces it is this header: rmcp rejects every non-`initialize` request that
+    /// arrives without it.
+    const PROTOCOL: &str = "2026-07-28";
+
+    #[tokio::test]
+    async fn tools_list_reports_every_tool() {
+        let (port, cancel, task) = spawn().await;
+        let auth = format!("Host: 127.0.0.1:{port}\r\nAuthorization: Bearer {TOKEN}\r\n");
+
+        let init = exchange(
+            port,
+            &auth,
+            &format!(
+                r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"protocolVersion":"{PROTOCOL}","capabilities":{{}},"clientInfo":{{"name":"test","version":"0"}}}}}}"#
+            ),
+        )
+        .await;
+        assert!(init.contains(" 200 "), "initialize failed: {init}");
+        // The server has to introduce itself as this app, not as the SDK - see `tablenova_identity`.
+        assert!(init.contains("tablenova"), "wrong server identity: {init}");
+
+        let listed = exchange(
+            port,
+            // `Mcp-Method` is required from 2026-07-28 too: it lets a proxy route or authorise a
+            // call without parsing the JSON body.
+            &format!("{auth}MCP-Protocol-Version: {PROTOCOL}\r\nMcp-Method: tools/list\r\n"),
+            // Stateless mode (SEP-2567) means every request carries its own negotiated context in
+            // `_meta` instead of leaning on a session the server remembers.
+            &format!(
+                r#"{{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{{"_meta":{{"io.modelcontextprotocol/protocolVersion":"{PROTOCOL}","io.modelcontextprotocol/clientCapabilities":{{}}}}}}}}"#
+            ),
+        )
+        .await;
+
+        for tool in [
+            "tablenova_list_connections",
+            "tablenova_list_databases",
+            "tablenova_list_tables",
+            "tablenova_describe_table",
+            "tablenova_preview_table",
+            "tablenova_query",
+        ] {
+            assert!(listed.contains(tool), "{tool} missing from tools/list: {listed}");
+        }
+        // The generated schema has to arrive with them, or a client cannot call anything.
+        assert!(listed.contains("connection_id"), "no parameter schema: {listed}");
 
         cancel.cancel();
         let _ = task.await;

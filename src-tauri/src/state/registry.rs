@@ -79,6 +79,7 @@ impl ConnRegistry {
                         // The rail's badge (§4.2b): the number of WRITE statements waiting to be committed on this connection.
                         "pending": crate::tx::pending_count(id),
                         "readOnly": e.read_only,
+                        "mcpExposed": e.mcp_exposed,
                     }),
                 )
             })
@@ -191,6 +192,59 @@ impl ConnRegistry {
             Err(e) => e.into_inner(),
         };
         map.get(id).map(|e| e.read_only).unwrap_or(false)
+    }
+
+    /// Show this connection to the built-in MCP server, or hide it again.
+    pub fn set_mcp_exposed(&self, id: &str, on: bool) -> Result<(), String> {
+        let mut map = self.inner.lock().map_err(|e| e.to_string())?;
+        if let Some(entry) = map.get_mut(id) {
+            entry.mcp_exposed = on;
+        }
+        Ok(())
+    }
+
+    /// Is this `conn_id` one the user shared with AI clients?
+    ///
+    /// A poisoned lock reads through rather than failing open in the other direction: the answer is
+    /// still whatever the user set, and defaulting to `true` here would expose everything the moment
+    /// any thread panicked. An unknown id is `false` for the same reason.
+    pub fn is_mcp_exposed(&self, id: &str) -> bool {
+        let map = match self.inner.lock() {
+            Ok(m) => m,
+            Err(e) => e.into_inner(),
+        };
+        map.get(id).map(|e| e.mcp_exposed).unwrap_or(false)
+    }
+
+    /// The SQL connections the user shared with AI clients, as the MCP `list_connections` tool needs
+    /// them.
+    ///
+    /// Filtered HERE rather than by the caller: a tool that received the full list and filtered it
+    /// itself would be one forgotten `.filter()` away from listing production. Redis entries are
+    /// dropped too - MCP has no Redis tools, so an exposed Redis connection would be a name an AI
+    /// could see but never use.
+    pub fn list_mcp_exposed(&self) -> Result<Vec<Value>, String> {
+        let map = self.inner.lock().map_err(|e| e.to_string())?;
+        let mut out: Vec<(SessionId, Value)> = map
+            .iter()
+            .filter(|(_, e)| e.mcp_exposed && e.conn.sql().is_some())
+            .map(|(id, e)| {
+                (
+                    id.clone(),
+                    serde_json::json!({
+                        "connectionId": &**id,
+                        "database": e.db,
+                        "dialect": e.conn.dialect(),
+                        "schema": e.current_schema,
+                        // What the AI is allowed to attempt. It cannot write in this build either
+                        // way, but a connection the user has additionally locked is worth saying.
+                        "readOnly": e.read_only,
+                    }),
+                )
+            })
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(out.into_iter().map(|(_, v)| v).collect())
     }
 
     pub fn set_schema(&self, id: &str, schema: Option<String>) -> Result<(), String> {
