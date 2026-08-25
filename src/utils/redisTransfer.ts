@@ -1,65 +1,67 @@
-// Xuất / nhập một phần keyspace Redis theo prefix.
+// Exporting / importing part of a Redis keyspace by prefix.
 //
-// Cùng đường ống với `dumpBuilder.ts` bên SQL: nội dung tệp được dựng Ở ĐÂY, còn truy cập database
-// đi qua tham số `reader`/`writer` chứ không import `dbHelper`. Nhờ vậy module này không phụ thuộc
-// `@tauri-apps/api` và phần dễ hỏng nhất — định dạng tệp và vòng lặp phân lô — kiểm chứng được bằng
-// unit test (`__tests__/redisTransfer.test.ts`).
+// The same pipeline as `dumpBuilder.ts` on the SQL side: the file contents are assembled HERE, while
+// database access comes in through the `reader`/`writer` parameters rather than importing
+// `dbHelper`. That keeps this module free of `@tauri-apps/api` and makes the most fragile part — the
+// file format and the batching loop — checkable by unit test (`__tests__/redisTransfer.test.ts`).
 //
-// ĐỊNH DẠNG: NDJSON, mỗi key một dòng.
+// FORMAT: NDJSON, one key per line.
 //
 //   {"tablenova":"redis-keys","version":1,"createdAt":"…","db":0,"pattern":"user:*"}
 //   {"key":"user:1","type":"string","ttlMs":-1,"payload":"<base64 DUMP>"}
 //   …
 //   {"tablenova":"redis-keys-end","keys":123}
 //
-// Ba quyết định đứng sau nó:
+// Three decisions behind it:
 //
-//  1. **NDJSON chứ không một JSON lớn.** Bản xuất có thể là hàng trăm nghìn key; đọc theo dòng thì
-//     báo được tiến độ và một tệp bị cắt giữa chừng chỉ mất phần đuôi thay vì không parse được gì.
-//  2. **Dòng cuối là footer có số key.** Đó là cách duy nhất để biết một tệp bị cắt: thiếu footer
-//     nghĩa là bản xuất chưa xong, và `parseRedisExport` nói ra điều đó thay vì im lặng nhập thiếu.
-//  3. **Bản ghi dùng đúng tên trường mà `redis_dump_keys` trả về và `redis_restore_keys` nhận.**
-//     Một hình dạng duy nhất từ Redis ra tệp rồi vào lại Redis: không có tầng đổi tên nào để lệch.
+//  1. **NDJSON, not one big JSON.** An export can be hundreds of thousands of keys; read line by
+//     line it can report progress, and a file cut off midway loses only its tail instead of failing
+//     to parse at all.
+//  2. **The last line is a footer carrying the key count.** That is the only way to tell a truncated
+//     file: a missing footer means the export never finished, and `parseRedisExport` says so instead
+//     of silently importing less.
+//  3. **A record uses exactly the field names `redis_dump_keys` returns and `redis_restore_keys`
+//     accepts.** One shape from Redis to the file and back into Redis: no renaming layer to drift.
 //
-// `payload` là byte thô của DUMP, mã hoá base64 — xem chú thích ở `redis_dump_keys` trong
-// `redis_db.rs` giải thích vì sao là DUMP/RESTORE chứ không phải một bộ tuần tự JSON đọc được, và
-// vì sao tệp chỉ nhập lại được vào Redis cùng phiên bản hoặc mới hơn.
+// `payload` is DUMP's raw bytes, base64-encoded — the note on `redis_dump_keys` in `redis_db.rs`
+// explains why DUMP/RESTORE rather than a readable JSON serializer, and why the file only restores
+// into a Redis of the same version or newer.
 
 import { folderMatchPattern } from './redisKeyTree';
 
-/** Nhãn nhận dạng ở dòng đầu. Sai nhãn = không phải tệp của tính năng này. */
+/** The marker on the first line. A different one means this is not a file from this feature. */
 export const TRANSFER_KIND = 'redis-keys';
 
-/** Nhãn ở dòng cuối. Có nó nghĩa là bản xuất đã chạy xong. */
+/** The marker on the last line. Its presence means the export ran to completion. */
 export const TRANSFER_END_KIND = 'redis-keys-end';
 
-/** Phiên bản định dạng. Tăng khi hình dạng bản ghi đổi theo cách không đọc ngược được. */
+/** Format version. Bumped when the record shape changes in a way older readers cannot handle. */
 export const TRANSFER_VERSION = 1;
 
-/** SCAN COUNT mỗi vòng khi xuất. Lớn hơn của trình duyệt key vì ở đây không vẽ gì ra màn hình. */
+/** SCAN COUNT per round while exporting. Higher than the key browser's, because nothing is drawn here. */
 export const EXPORT_SCAN_COUNT = 500;
 
-/** Số key mỗi lượt DUMP. Nhỏ hơn `TRANSFER_BATCH_MAX` của Rust để một lô luôn vừa một message IPC. */
+/** Keys per DUMP round. Below Rust's `TRANSFER_BATCH_MAX` so one batch always fits a single IPC message. */
 export const DUMP_BATCH = 200;
 
-/** Số key mỗi lượt RESTORE. Rust chạy từng key một trong lô này (xem `redis_restore_keys`). */
+/** Keys per RESTORE round. Rust runs them one at a time within the batch (see `redis_restore_keys`). */
 export const RESTORE_BATCH = 200;
 
 /**
- * Trần số key một bản xuất giữ trong bộ nhớ.
+ * The cap on how many keys one export holds in memory.
  *
- * Cùng lý lẽ với `KEY_CAP` của trình duyệt key: nội dung tệp được ghép trong RAM trước khi lưu, nên
- * một prefix khớp hai triệu key sẽ làm sập tab. Chạm trần thì DỪNG VÀ NÓI RA (`capped`), không bao
- * giờ cắt im lặng.
+ * The same reasoning as the key browser's `KEY_CAP`: the file contents are assembled in RAM before
+ * being saved, so a prefix matching two million keys would take the tab down. On hitting the cap it
+ * STOPS AND SAYS SO (`capped`), never truncating silently.
  */
 export const EXPORT_KEY_CAP = 100_000;
 
-/** Một bản ghi trong tệp — cũng chính là hình dạng `redis_dump_keys` trả về. */
+/** One record in the file — also exactly the shape `redis_dump_keys` returns. */
 export interface RedisDumpEntry {
   key: string;
-  /** Kiểu Redis lúc xuất. Không cần cho RESTORE; có để lọc/thống kê mà không phải giải mã payload. */
+  /** The Redis type at export time. Not needed by RESTORE; it is here so filtering and counting need not decode the payload. */
   type: string;
-  /** TTL còn lại theo milli giây. -1 = không có TTL (quy ước của PTTL). */
+  /** Remaining TTL in milliseconds. -1 = no TTL (PTTL's convention). */
   ttlMs: number;
   /** Byte of DUMP, base64. */
   payload: string;
@@ -73,33 +75,33 @@ export interface TransferHeader {
   pattern: string;
 }
 
-/** Giai đoạn đang chạy. Trả về mã chứ không phải câu chữ — dialog mới là chỗ có `t()`. */
+/** The phase currently running. A code, not a sentence — the dialog is the place with `t()`. */
 export type TransferPhase = 'scan' | 'dump' | 'restore';
 
 export interface TransferProgress {
   phase: TransferPhase;
-  /** Số key đã quét (pha `scan`) hoặc đã xử lý (pha `dump`/`restore`). */
+  /** Keys scanned (the `scan` phase) or processed (the `dump`/`restore` phases). */
   done: number;
-  /** Tổng đã biết, nếu biết. Pha `scan` không biết trước — SCAN không nói còn bao nhiêu. */
+  /** The known total, when there is one. The `scan` phase has none — SCAN does not say how many are left. */
   total?: number;
 }
 
 export interface RedisExportSpec {
-  /** Glob gửi cho SCAN. Dựng từ prefix bằng `prefixPattern()`. */
+  /** The glob handed to SCAN. Built from the prefix by `prefixPattern()`. */
   pattern: string;
-  /** Db index, chỉ để ghi vào header. */
+  /** The db index, only ever written into the header. */
   db: number;
-  /** Lọc theo kiểu ở phía client, y như trình duyệt key (SCAN TYPE là Redis 6.0+). */
+  /** Type filtering on the client side, exactly as the key browser does (SCAN TYPE is Redis 6.0+). */
   typeFilter?: string;
-  /** Thời điểm ghi vào header. Tham số chứ không `new Date()` bên trong: test cần tất định. */
+  /** The timestamp written into the header. A parameter rather than `new Date()` inside: tests need determinism. */
   createdAt: string;
   maxKeys?: number;
   onProgress?: (p: TransferProgress) => void;
-  /** Người dùng bấm Dừng. Kiểm giữa hai lô, nên một lô đang chạy vẫn chạy hết. */
+  /** The user pressed Stop. Checked between batches, so a batch already running finishes. */
   shouldStop?: () => boolean;
 }
 
-/** Phần `dbHelper` mà việc xuất cần. `dbHelper` khớp sẵn hình dạng này. */
+/** The part of `dbHelper` an export needs. `dbHelper` already matches this shape. */
 export interface RedisExportReader {
   scan(
     pattern: string,
@@ -112,31 +114,32 @@ export interface RedisExportReader {
 }
 
 export interface RedisExportResult {
-  /** Nội dung tệp. Không khớp key nào thì vẫn có header — xem `keys` để biết nó có gì. */
+  /** The file contents. With no key matched there is still a header — read `keys` to see what is in it. */
   text: string;
-  /** Số bản ghi đã ghi. */
+  /** How many records were written. */
   keys: number;
   /**
-   * Key có trong kết quả SCAN nhưng DUMP trả nil — hết hạn hoặc bị xoá giữa hai lệnh. Không phải
-   * lỗi, nhưng phải nói ra: nó là chênh lệch giữa "đã quét" và "đã ghi".
+   * Keys that SCAN returned but DUMP answered nil for — expired or deleted between the two commands.
+   * Not an error, but it has to be said: it is the gap between "scanned" and "written".
    */
   missing: string[];
-  /** Bị `typeFilter` loại. */
+  /** Dropped by `typeFilter`. */
   filtered: number;
-  /** Chạm `maxKeys` -> bản xuất KHÔNG đầy đủ. */
+  /** Hit `maxKeys` -> the export is NOT complete. */
   capped: boolean;
-  /** Người dùng dừng giữa chừng -> cũng không đầy đủ. */
+  /** The user stopped midway -> also incomplete. */
   stopped: boolean;
 }
 
 /**
- * Glob khớp mọi key dưới một prefix. Prefix rỗng -> `*` (toàn bộ db).
+ * A glob matching every key under a prefix. An empty prefix -> `*` (the whole db).
  *
- * Việc escape đi qua `folderMatchPattern` chứ không có một bản riêng ở đây: nó đã làm đúng việc đó
- * cho menu "xoá cả nhóm" của cây key, và hai bản escape song song là hai thứ phải giữ đồng bộ bằng
- * tay. Escape là bắt buộc chứ không phải cho gọn: prefix là chuỗi người dùng gõ (hoặc một nhánh của
- * cây) nên hoàn toàn có thể chứa `[`, `*`, `?`. Ghép thẳng `prefix + '*'` thì `log[1]:` không tìm
- * key bắt đầu bằng `log[1]:` mà tìm key bắt đầu bằng `log1:` — xuất sai tập key, không báo gì.
+ * Escaping is delegated to `folderMatchPattern` rather than copied here: it already does exactly
+ * this for the key tree's "delete this folder" menu, and two parallel escapers are two things to
+ * keep in sync by hand. Escaping is required, not tidiness: the prefix is a string the user typed
+ * (or a branch of the tree) and can perfectly well contain `[`, `*`, `?`. Concatenating
+ * `prefix + '*'` makes `log[1]:` search not for keys starting with `log[1]:` but for keys starting
+ * with `log1:` — the wrong set of keys exported, with nothing said.
  */
 export function prefixPattern(prefix: string): string {
   const p = prefix.trim();
@@ -144,12 +147,14 @@ export function prefixPattern(prefix: string): string {
 }
 
 /**
- * Prefix suy ra từ một glob, chỉ để điền sẵn ô prefix của dialog. Trả về `''` khi không suy được.
+ * The prefix inferred from a glob, only ever used to pre-fill the dialog's prefix field. Returns
+ * `''` when nothing can be inferred.
  *
- * Ô tìm kiếm của trình duyệt key nhận một *pattern* (`user:*`), còn dialog nhận một *prefix*, nên
- * chỗ nối hai thứ phải bỏ dấu `*` ở cuối. Nhưng chỉ làm vậy khi phần thân KHÔNG còn ký tự đặc biệt:
- * `prefixPattern` sẽ escape lại lần nữa, nên `a\*b*` suy thành prefix `a\*b` rồi bị escape lần hai
- * thành một glob khác hẳn. Không đoán được thì để trống, người dùng tự gõ.
+ * The key browser's search box takes a *pattern* (`user:*`) while the dialog takes a *prefix*, so
+ * whatever joins them has to drop the trailing `*`. But only when the body holds NO glob
+ * metacharacters left: `prefixPattern` will escape it again, so `a\*b*` would infer the prefix
+ * `a\*b`, get escaped a second time, and become a quite different glob. When it cannot be inferred,
+ * leave it empty and let the user type.
  */
 export function patternToPrefix(pattern: string): string {
   const p = pattern.trim();
@@ -158,16 +163,16 @@ export function patternToPrefix(pattern: string): string {
   return /[\\*?[\]]/.test(body) ? '' : body;
 }
 
-/** Base64 chuẩn, có padding — đúng thứ `base64::engine::general_purpose::STANDARD` sinh ra. */
+/** Standard base64, padded — exactly what `base64::engine::general_purpose::STANDARD` produces. */
 const BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
 
 /**
- * Một dòng đã parse có phải bản ghi dùng được không.
+ * Whether a parsed line is a usable record.
  *
- * Kiểm ở đây chứ không để Rust kiểm: một bản ghi khuyết là lỗi của TỆP, và thông báo về nó phải
- * bằng ngôn ngữ đang dùng — Rust chỉ có tiếng Việt và `failed[].error` không đi qua
- * `backendErrors.ts`. Kiểm cả base64 vì `RESTORE` với payload rác trả về lỗi driver khó hiểu hơn
- * nhiều so với "dòng thứ 12 của tệp không hợp lệ".
+ * Checked here rather than left to Rust: a malformed record is a fault of the FILE, and the message
+ * about it has to be in the active language — Rust has only Vietnamese, and `failed[].error` does
+ * not go through `backendErrors.ts`. The base64 is checked too, because `RESTORE` with a garbage
+ * payload returns a driver error far harder to read than "line 12 of the file is invalid".
  */
 export function isValidEntry(v: unknown): v is RedisDumpEntry {
   if (!v || typeof v !== 'object') return false;
@@ -179,7 +184,7 @@ export function isValidEntry(v: unknown): v is RedisDumpEntry {
   return true;
 }
 
-/** Một bản ghi -> một dòng của tệp. */
+/** One record -> one line of the file. */
 function entryLine(e: RedisDumpEntry): string {
   return JSON.stringify({
     key: e.key,
@@ -190,11 +195,12 @@ function entryLine(e: RedisDumpEntry): string {
 }
 
 /**
- * Quét theo pattern rồi DUMP theo lô, trả về nội dung tệp NDJSON.
+ * Scans by pattern and DUMPs in batches, returning the NDJSON file contents.
  *
- * Quét và dump XEN KẼ nhau chứ không quét hết rồi mới dump: một prefix khớp 100.000 key thì "quét
- * hết trước" nghĩa là giữ cả danh sách trong RAM và không báo được tiến độ thật trong suốt pha đầu.
- * Cách này cũng làm cửa sổ giữa SCAN và DUMP hẹp nhất có thể, tức là ít key hết hạn giữa hai lệnh.
+ * Scanning and dumping are INTERLEAVED rather than scan-everything-then-dump: for a prefix matching
+ * 100,000 keys, "scan it all first" means holding the whole list in RAM and reporting no real
+ * progress through the entire first phase. Interleaving also keeps the window between SCAN and DUMP
+ * as narrow as possible, so fewer keys expire between the two commands.
  */
 export async function buildRedisExport(
   spec: RedisExportSpec,
@@ -257,16 +263,16 @@ export async function buildRedisExport(
 
   await flush();
 
-  // Footer chỉ ghi khi bản xuất ĐẦY ĐỦ. Dừng giữa chừng hoặc chạm trần thì tệp cố ý không có footer,
-  // để lúc nhập lại nó hiện ra là "có thể thiếu" thay vì trông như một bản xuất trọn vẹn.
+  // The footer is written only for a COMPLETE export. Stopped midway or capped, the file deliberately
+  // has none, so that on import it shows up as "possibly incomplete" rather than looking whole.
   const complete = !capped && !stopped;
   if (complete) {
     lines.push(JSON.stringify({ tablenova: TRANSFER_END_KIND, keys: written }));
   }
 
   return {
-    // Luôn trả nội dung tệp, kể cả khi không khớp key nào (chỉ còn header): "có nên lưu một tệp
-    // rỗng không" là quyết định của dialog, và nó đã có `keys` để biết.
+    // Always return the file contents, even with no key matched (header only): whether an empty file
+    // is worth saving is the dialog's decision, and it already has `keys` to decide with.
     text: `${lines.join('\n')}\n`,
     keys: written,
     missing,
@@ -279,22 +285,22 @@ export async function buildRedisExport(
 export interface ParsedExport {
   header: TransferHeader | null;
   entries: RedisDumpEntry[];
-  /** Dòng không parse được hoặc không phải bản ghi dùng được, theo số dòng (1-based). */
+  /** Lines that would not parse, or are not usable records, by line number (1-based). */
   badLines: number[];
   /**
-   * Không có dòng footer. Tệp bị cắt, hoặc là bản xuất đã dừng giữa chừng / chạm trần. Vẫn nhập
-   * được phần đang có — chỉ là người dùng phải biết nó không đủ.
+   * There is no footer line. Either the file was truncated, or the export stopped midway / hit its
+   * cap. What is there still imports — the user simply has to know it is not everything.
    */
   truncated: boolean;
-  /** Số key footer khai báo, để đối chiếu với số bản ghi đọc được. */
+  /** The key count the footer declares, to check against the records actually read. */
   declaredKeys: number | null;
 }
 
 /**
- * Đọc một tệp NDJSON đã xuất. Thuần, không IO — đây là phần được test dày nhất của module.
+ * Reads an exported NDJSON file. Pure, no IO — the most heavily tested part of this module.
  *
- * Một dòng hỏng KHÔNG làm cả tệp thất bại: nó vào `badLines` và những dòng còn lại vẫn nhập được.
- * Với 100.000 key thì "cả tệp vô hiệu vì dòng 4 bị lỗi" là kết cục tệ nhất có thể.
+ * A bad line does NOT fail the whole file: it goes into `badLines` and the rest still imports. With
+ * 100,000 keys, "the entire file is void because line 4 is broken" is the worst outcome available.
  */
 export function parseRedisExport(text: string): ParsedExport {
   const out: ParsedExport = {
@@ -350,7 +356,7 @@ export function parseRedisExport(text: string): ParsedExport {
   return out;
 }
 
-/** Phần `dbHelper` mà việc nhập cần. */
+/** The part of `dbHelper` an import needs. */
 export interface RedisImportWriter {
   restore(
     entries: RedisDumpEntry[],
@@ -365,9 +371,9 @@ export interface RedisImportWriter {
 }
 
 export interface RedisImportSpec {
-  /** RESTORE … REPLACE: ghi đè key đã tồn tại. Tắt thì key đã có được đếm vào `skipped`. */
+  /** RESTORE … REPLACE: overwrite an existing key. With it off, existing keys count into `skipped`. */
   replace: boolean;
-  /** Chỉ nhập những kiểu này. Rỗng = mọi kiểu. */
+  /** Import only these types. Empty = every type. */
   types?: string[];
   onProgress?: (p: TransferProgress) => void;
   shouldStop?: () => boolean;
@@ -375,17 +381,18 @@ export interface RedisImportSpec {
 
 export interface RedisImportResult {
   restored: number;
-  /** Key đã tồn tại và không chọn ghi đè. */
+  /** The key already existed and overwriting was not chosen. */
   skipped: number;
   failed: { key: string; error: string }[];
   stopped: boolean;
 }
 
 /**
- * Nạp các bản ghi đã đọc vào Redis, theo lô.
+ * Loads the records already read into Redis, batch by batch.
  *
- * Lỗi của một lô không dừng cả lần nhập (`failed` gom lại và chạy tiếp) — trừ khi cả lệnh thất bại
- * (mất kết nối, chế độ chỉ đọc), lúc đó chạy tiếp chỉ là lặp lại đúng lỗi đó vài trăm lần.
+ * One batch failing does not stop the import (`failed` collects them and it carries on) — unless the
+ * whole command fails (connection lost, read-only mode), where carrying on would only repeat the
+ * same error a few hundred times.
  */
 export async function applyRedisImport(
   entries: RedisDumpEntry[],
@@ -413,7 +420,7 @@ export async function applyRedisImport(
   return out;
 }
 
-/** Đếm bản ghi theo kiểu, cho phần tóm tắt của dialog nhập. */
+/** Counts records by type, for the import dialog's summary. */
 export function countByType(entries: RedisDumpEntry[]): { type: string; n: number }[] {
   const m = new Map<string, number>();
   for (const e of entries) m.set(e.type || '?', (m.get(e.type || '?') ?? 0) + 1);
@@ -421,8 +428,8 @@ export function countByType(entries: RedisDumpEntry[]): { type: string; n: numbe
 }
 
 /**
- * Tên tệp gợi ý. Prefix đi vào tên nên phải bỏ ký tự không hợp lệ trên đường dẫn Windows
- * (`: * ? " < > |` — và `:` thì gần như mọi prefix Redis đều có).
+ * The suggested file name. The prefix goes into it, so characters Windows paths reject have to go
+ * (`: * ? " < > |` — and nearly every Redis prefix contains `:`).
  */
 export function suggestExportFileName(db: number, prefix: string, createdAt: string): string {
   const slug = (prefix.trim() || 'all').replace(/[\\/:*?"<>|]+/g, '_').replace(/^_+|_+$/g, '');
