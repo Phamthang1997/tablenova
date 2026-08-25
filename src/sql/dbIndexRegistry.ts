@@ -17,11 +17,12 @@ export interface TableIndexMeta {
 const MAX_SUGGESTIONS = 3;
 
 /**
- * Damerau-Levenshtein distance with early-exit when exceeding `max` threshold.
+ * Damerau–Levenshtein distance, bailing out as soon as it is certain to exceed `max`.
  *
- * Damerau algorithm supports adjacent character transposition: common typing typo `nmae` <-> `name`
- * is distance 1 in Damerau vs distance 2 in pure Levenshtein.
- 
+ * *Damerau* is needed — it has a transposition of two adjacent characters — rather than plain
+ * Levenshtein: the most common typo is two keys swapped, and `nmae` ↔ `name` is **1** transposition
+ * but **2** ordinary edits, so at a tight threshold plain Levenshtein misses exactly the case that
+ * happens most.
  */
 function editDistance(a: string, b: string, max: number): number {
   if (Math.abs(a.length - b.length) > max) return max + 1;
@@ -51,14 +52,15 @@ function editDistance(a: string, b: string, max: number): number {
 }
 
 /**
- * Ranks names in `pool` by similarity to `search` query.
+ * Ranks the names in `pool` by how close they are to `search`.
  *
- * Substring matching handles partial prefixes (`emai` -> `email`), while Damerau-Levenshtein distance
- * catches transposition and typo mistakes (`nmae` -> `name`). Substrings rank highest, followed by distance.
- 
- 
+ * The previous version compared **substrings** only, so it caught `emai` → `email` but missed
+ * `nmae` → `name` — precisely the kind of mistake a "did you mean…" exists for. Substring matching
+ * is kept (half-typed text is a very common state in an editor) and ranked **above** edit distance,
+ * with names a few keystrokes away coming after.
  *
- * Scaled threshold by string length: short 3-char names tolerate max 1 edit to prevent false positives.
+ * The threshold scales with length: for a 3-character name, allowing 2 edits would match nearly
+ * anything.
  */
 function rankSimilar(search: string, pool: string[]): string[] {
   if (!search) return [];

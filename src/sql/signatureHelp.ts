@@ -12,10 +12,11 @@ import { getDoc, getDocSummary, getParamDesc } from '../utils/docsService';
 import i18n, { currentLanguage } from '../i18n';
 
 /**
- * Registers signature help provider for all 3 SQL dialects.
+ * Registers signature help for all three dialects.
  *
- * Anti-duplicate flag stored on `window` to avoid duplicate registrations during Vite HMR.
- 
+ * The anti-double-registration flag lives on `window` rather than in a module variable, for the
+ * same reason as hover: a Vite HMR reload resets module state and the provider gets registered
+ * again — the same reason as hover and quick fix.
  */
 export function registerSqlSignatureHelp(monacoInstance: typeof monaco): void {
   const w = window as any;

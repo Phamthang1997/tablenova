@@ -37,19 +37,20 @@ interface LogEntry {
 }
 
 /**
- * CLI console — multi-line Monaco editor rather than single-line input.
+ * CLI console — a multi-line Monaco buffer, not a one-line input.
  *
- * Multi-line buffer enables common workflow: keeping a batch of commands to re-run (inspect key,
- * alter TTL, verify) without needing extra history mechanisms.
- 
- 
+ * The shape changed because a one-line input forces exactly one gesture: type a command, Enter,
+ * forget it. What people actually do with `redis-cli` is keep a handful of commands and re-run them
+ * — inspect a key, change its TTL, check again. A buffer does that without any extra feature; it
+ * also replaces the old ↑/↓ history, because the buffer *is* the history and it can be edited.
  *
- * Reuses Monaco configuration from SQL editor — `SQL_EDITOR_OPTIONS`, dual themes — ensuring consistent
- * shortcuts, font sizes, and suggestion behavior, with language set to Redis (`redisLanguage.ts`).
+ * It reuses the SQL side's whole Monaco setup — `SQL_EDITOR_OPTIONS`, both themes — so shortcuts,
+ * font sizes and suggestion behaviour match the query tab exactly. Only the language is Redis's own
+ * (`redisLanguage.ts`).
  *
- * Commands rejected by backend — writes when read-only, and connection-monopolizing commands
- (`SUBSCRIBE`, `MONITOR`, `BLPOP`...) — ensuring displayed errors originate from IPC boundary.
- 
+ * Two classes of command are still refused by the backend rather than here — writes while read-only,
+ * and commands that monopolise the shared connection (`SUBSCRIBE`, `MONITOR`, `BLPOP`…) — so the
+ * message the user sees really is the one from the IPC boundary, not a second guess made in the UI.
  */
 export const Console: React.FC<ConsoleProps> = ({ storageScope, theme, onError, onSelectedDb }) => {
   const { t } = useTranslation();
@@ -70,11 +71,11 @@ export const Console: React.FC<ConsoleProps> = ({ storageScope, theme, onError, 
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
 
   /**
-   * Initial buffer content.
+   * The initial contents.
    *
-   * Migrates legacy command history from localStorage on first launch into initial buffer
-   so users preserve their typed commands across upgrades.
-   
+   * On the first run of a new build there is no buffer yet, but there may be the old ↑/↓ history —
+   * load that as the buffer instead of leaving it stranded in localStorage. The user does not lose
+   * the commands they typed just because the place holding them changed shape.
    */
   const [initialValue] = useState<string>(() => {
     let buf = '';
@@ -101,12 +102,12 @@ export const Console: React.FC<ConsoleProps> = ({ storageScope, theme, onError, 
   }, [bufKey]);
 
   /**
-   * Executes a series of commands sequentially.
+   * Runs a sequence of commands in order.
    *
-   * **Stops at `SELECT n`** instead of continuing. Backend resolves connection for `dbN` and notifies back (§2.2),
-   so remaining commands would execute on OLD db while written for new db. Halting is safer.
-   
-   
+   * **Stops at `SELECT n`** rather than continuing. The backend does not change this connection's db
+   * — it resolves the connection for `dbN` and reports back (§2.2) — so the commands after it, if
+   * they ran, would run on the OLD db while the user wrote them for the new one. Carrying out half
+   * of an intention is worse than stopping and saying so.
    */
   const runCommands = useCallback(async (cmds: string[]) => {
     if (cmds.length === 0 || running) return;

@@ -1,8 +1,8 @@
 /**
- * Generates `JOIN ... ON` suggestions based on table schema metadata.
+ * Builds `JOIN ... ON` suggestions from table metadata.
  *
- * Placed in dedicated module without Monaco dependency for node-based unit testing.
- 
+ * In a module of its own that **imports no monaco**, for the same reason as `statements.ts`: this
+ * logic is a pure function over schema data, so it has to be testable in a node environment.
  */
 
 /** Minimal schema subset needed for JOIN condition inference. */
@@ -15,11 +15,11 @@ export interface JoinSchema {
 const KEY_LIKE = /(^id$|_id$|number$|code$)/i;
 
 /**
- * Suggests JOIN conditions between the **most recently joined table** and preceding tables.
- * Prioritizes foreign keys (bidirectional); falls back to matching key-like column names.
+ * JOIN conditions between the table joined **last** and each table before it.
+ * Foreign keys win (in either direction); with no FK it falls back to same-named, key-looking columns.
  *
- * `scopeTables` reflects statement appearance order — last element is target JOIN table.
- 
+ * `scopeTables` must be in the order the tables appear in the statement — the last element is taken
+ * to be the freshly joined table, i.e. the one the user is writing a condition for.
  */
 export async function buildJoinConditions(
   scopeTables: string[],

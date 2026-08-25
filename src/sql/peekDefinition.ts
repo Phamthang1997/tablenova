@@ -17,11 +17,12 @@ import { LANG_IDS } from './sqlLanguage';
 import { dbHelper } from '../utils/dbHelper';
 
 /**
- * DDL generated from cached catalog metadata.
+ * DDL built from the cached catalog.
  *
- * Fallback when backend cannot retrieve exact DDL (disconnected or dialect lacks DDL statement).
- * Rendering an approximated schema is preferable to an uninformative silent failure.
- 
+ * Used only when the backend cannot return the real DDL (connection lost, or the dialect has no
+ * such statement). Better to show an approximation — no worse than what hover already shows — than
+ * to let Alt+F12 silently do nothing, because silence is indistinguishable from "the feature is
+ * broken".
  */
 function ddlFromCatalog(table: string, schema: ReturnType<typeof catalog.getCachedSchema>): string {
   const cols = schema?.columns || [];

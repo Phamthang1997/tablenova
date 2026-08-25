@@ -144,12 +144,12 @@ function parseAttrs(src: string): Map<string, string> {
 }
 
 /**
- * Parses XML string into `XmlElement` tree.
+ * Parses an XML string into an `XmlElement` tree.
  *
- * Root node is virtual `#document`: use `getElementsByTagName` to query elements at any depth.
- 
+ * What comes back is the virtual root node `#document`: call `getElementsByTagName` on it to find
+ * elements at any depth, including the document's own real root element.
  *
- * Throws `XmlParseError` on malformed XML (unclosed tags, mismatched tags, etc.).
+ * Throws `XmlParseError` on invalid XML (unclosed tags, mismatched closing tags, …).
  */
 export function parseXml(text: string): XmlElement {
   const root = new XmlElement('#document', new Map());

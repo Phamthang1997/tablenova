@@ -17,9 +17,9 @@ export interface RedisToast {
   /** Show success message. */
   onOk: (text: string) => void;
   /**
-   * UI write gate. Returns `true` and shows alert if connection is in read-only mode.
-   
-   
+   * The write gate on the UI side. Returns `true` (and shows a message) while the connection is
+   * read-only, so the caller can `return` early. The real lock is still in Rust — the CLI sends
+   * free-form command text, so a gate in the WebView is a gate on the wrong side of the IPC boundary.
    */
   blocked: () => boolean;
   /** Toast element rendered beneath tab toolbar. `null` when idle. */

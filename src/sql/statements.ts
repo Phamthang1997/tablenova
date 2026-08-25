@@ -18,27 +18,6 @@ function usesDelimiterCommand(sql: string): boolean {
 }
 
 /**
- * Full masking for statement splitting: comments + strings, PLUS Postgres dollar-quotes
- * (`$ ... $`, `$body$ ... $body// Splits SQL text into statements by ';' delimiters OUTSIDE strings/comments/$...$ blocks.
-// Shared by: current statement identification (Ctrl+Enter) and cursor statement highlighting.
-import { maskCommentsAndStrings } from '../utils/queryParamHelper';
-
-// Postgres dollar-quote opening: $ or $tag$ (avoids matching bind param $1
-// or query parameter ${name}).
-const DOLLAR_TAG = /^\$([A-Za-z_]\w*)?\$/;
-
-// MySQL client DELIMITER command (not sent to server): changes statement delimiter
-// allowing trigger/procedure bodies to contain ';'. Must occupy its own line.
-const DELIMITER_CMD = /^[ \t]*DELIMITER[ \t]+(\S+)[ \t]*\r?$/i;
-
-// Script contains DELIMITER -> treated as MySQL dialect; Postgres dollar-quotes are not applied,
-// preventing `DELIMITER $` from erroneously masking trigger bodies.
-
-function usesDelimiterCommand(sql: string): boolean {
-  return /^[ \t]*DELIMITER[ \t]+\S+/im.test(sql);
-}
-
-/**
  * Full masking for statement splitting: comments + strings (via maskCommentsAndStrings), PLUS
  * Postgres dollar-quoted blocks (`$$ ... $$`, `$body$ ... $body$`) — a function or trigger body is
  * full of ';', and without masking them Ctrl+Enter would cut through the middle of one.

@@ -113,12 +113,13 @@ export function reorderTabs(
 }
 
 /**
- * Moves ENTIRE group block (dragging group chip) to position at `targetIndex`.
+ * Moves an ENTIRE group (dragging its chip) to where the tab at `targetIndex` sits.
  *
- * Snaps to edge of target group to avoid splitting contiguous group ranges.
- 
- 
- 
+ * The group's whole run travels together. The part to be careful about: the drop
+ * can land in the middle of ANOTHER group's run, and inserting straight there cuts
+ * that group in two. So when the target tab belongs to a different group, the
+ * insertion point is pushed out to that group's edge: its left edge when dragging
+ * left, its right edge when dragging right.
  */
 export function moveGroup(list: TabInfo[], groupId: string, targetIndex: number): TabInfo[] {
   const start = list.findIndex((tab) => tab.groupId === groupId);

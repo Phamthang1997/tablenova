@@ -20,12 +20,12 @@ export const REDIS_TOOL_TABS: Exclude<RedisTabType, 'redis-key'>[] = [
 ];
 
 /**
- * Label for a tool tab.
+ * The label of a tool tab.
  *
- * Switch returns literal i18n keys ensuring compile-time key verification.
- 
- 
- 
+ * A `switch` returning **literal** keys, not `t(labelKey)` with a key taken from a table: a dynamic
+ * key is something `i18next.d.ts` cannot check, so a mistyped one survives to runtime instead of
+ * failing the build (see CLAUDE.md, the i18n section). `t` is taken as a parameter because this is a
+ * module-level function and cannot call the hook — the same way `formatRestoreEta` does it.
  */
 export function redisToolTabLabel(type: Exclude<RedisTabType, 'redis-key'>, t: TFunction): string {
   switch (type) {
@@ -39,11 +39,11 @@ export function redisToolTabLabel(type: Exclude<RedisTabType, 'redis-key'>, t: T
 }
 
 /**
- * Tab ID for viewing a specific key.
+ * The id of a tab viewing one key.
  *
- * Contains `connId` to ensure unique tab ID across multiple open Redis connections/databases.
- 
- 
+ * It carries `connId` and not just the key name: a tab id is unique across the whole app (see
+ * `handleCloseTab`), and the same key name can perfectly well be open on two different Redis
+ * connections — or on `db0` and `db3` of one server, which are two different `connId`s (§2.1).
  */
 export function redisKeyTabId(connId: string, key: string): string {
   return `rediskey_${connId}_${key}`;
@@ -55,14 +55,14 @@ export function redisToolTabId(connId: string, type: RedisTabType): string {
 }
 
 /**
- * Dispatched when a tab mutates keys and the sidebar tree requires scanning.
+ * A tab has written or deleted keys and the sidebar list needs rescanning.
  *
- * CustomEvent on window bridges ActivePanel tab to Sidebar without prop drilling.
- 
- 
+ * A `CustomEvent` on `window` rather than props: the sender is a tab inside `ActivePanel` and the
+ * receiver is the sidebar — two different branches of the tree, and this is already how
+ * `table-renamed` / `database-restored` travel in this project.
  *
- * `detail.connId` is required to isolate key refresh to the targeted connection only.
- 
+ * `detail.connId` is required: two Redis connections can be open at once, and rescanning the wrong
+ * one both costs a SCAN round and fails to fix the list that actually went stale.
  */
 export const REDIS_KEYS_CHANGED_EVENT = 'redis-keys-changed';
 

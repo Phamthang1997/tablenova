@@ -387,14 +387,16 @@ body {
   cursor: default;
 }
 
-/* ── App title bar: database switcher, environment, safe mode, transaction control.
-   App title bar: database switcher, environment, safe mode, transaction control.
-   App.tsx, nên cách duy nhất để chúng liền một nền là cả hai cùng trong suốt và
-   cùng để lộ --win-bg-window của body — container vốn đã transparent (xem luật
-   ở cuối file), ở đây chỉ gỡ nốt lớp nền + hairline của thanh.
+/* ── The flat title bar of the ConnectionManager screen ─────────────────────
+   The title bar and .connection-manager-container are sibling elements in
+   App.tsx, so the only way to give them one continuous background is for both to
+   be transparent and both to let the body's --win-bg-window show through — the
+   container is transparent already (see the rules at the end of this file), and
+   all that is left here is removing the bar's own background and hairline.
 
-   Mọi luật dưới đây đều phải đứng sau bản gốc và bản theo theme của chúng: các
-   luật gốc ở trên có cùng độ ưu tiên, thắng thua chỉ nhờ thứ tự khai báo. */
+   Every rule below has to come after both its original and its per-theme version:
+   the originals above have the same specificity, so the winner is decided purely
+   by declaration order. */
 .title-bar.title-bar-flat,
 [data-theme='dark'] .title-bar.title-bar-flat {
   background: transparent;

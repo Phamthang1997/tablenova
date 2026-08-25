@@ -8,11 +8,12 @@ import { typeBase, typeFamily } from '../utils/columnType';
 import i18n from '../i18n';
 
 /**
- * Pre-computed Quick Fix payload eliminating runtime heuristic inference in code action providers.
+ * The data a Quick Fix is built from, computed here instead of left for the code action to infer.
  *
- * Separated cleanly from i18n messages to prevent parsing identifier names from localized strings.
- 
- 
+ * Why it is split out at all: `message` has been through i18n, so recovering an identifier name from
+ * its wording would lean on the translation — exactly what the "never branch on user-facing text"
+ * rule forbids. The only place that knows for certain what to replace and what to replace it with is
+ * the place that found the problem.
  */
 export interface QuickFixData {
   /** Replacement range. Can be NARROWER than diagnostic squiggly: `u.nmae` underlines both but replaces `nmae`. */
@@ -37,11 +38,10 @@ export interface DiagnosticIssue {
 const DUMMY_TABLES = new Set(['dual', 'generate_series', 'unnest', 'json_each', 'json_tree', 'information_schema', 'pg_catalog']);
 
 /**
- * Monaco language ID of active editor buffer (`mysql` | `pgsql` | `genericsql`).
+ * The Monaco language id of the buffer being edited (`mysql` | `pgsql` | `genericsql`).
  *
- * Used strictly for dialect-dependent rules; empty string skips dialect-specific checks.
- 
- 
+ * Used only for checks whose **answer depends on the dialect**. Left empty, those checks do not run
+ * rather than assuming a default — assuming wrong means underlining SQL the real server accepts.
  */
 export type SqlDialectId = string | undefined;
 

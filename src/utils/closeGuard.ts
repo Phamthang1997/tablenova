@@ -61,10 +61,10 @@ export function forceClose(): void {
 }
 
 /**
- * Registers window close listener. Called once at app root; returns cleanup function.
+ * Installs the one listener. Called once at the app root; returns a function that removes it.
  *
- * preventDefault() must be called synchronously before awaiting async blockers to prevent premature window closure.
- 
+ * `preventDefault()` comes before anything else: the blockers are async, and waiting on them first
+ * means the window has already closed by the time an answer arrives.
  */
 export function installCloseGuard(): () => void {
   const un = getCurrentWindow().onCloseRequested(async (event) => {

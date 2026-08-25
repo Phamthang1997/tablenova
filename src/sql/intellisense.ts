@@ -61,9 +61,9 @@ function columnMarkdown(colName: string, owners: { table: string; type: string; 
 }
 
 /**
- * Registers hover provider for all 3 SQL dialects.
- * Anti-duplicate flag stored on `window` to prevent duplicate providers during Vite HMR.
- 
+ * Registers the hover provider for all three dialects.
+ * The anti-double-registration flag has to live on `window`, NOT in a module variable: a Vite HMR
+ * reload resets module state -> the provider is registered again -> hover and suggestions double up.
  */
 export function setupSqlHover(): void {
   const w = window as any;

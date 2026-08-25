@@ -22,12 +22,13 @@ interface Span {
 }
 
 /**
- * Does diagnostic range intersect requested cursor position / selection?
+ * Does this diagnostic's range touch the range Monaco is asking about (the caret, or a selection)?
  *
- * Compares against **underlined squiggly range** rather than replacement target.
- * For column typos, squiggly covers `u.nmae` while replacement is `nmae`. Matching the squiggly
- * ensures placing cursor on `u` still surfaces the fix correctly.
- 
+ * Compared against the **underlined** range, not the range that will be replaced. Those differ for
+ * a column typo: the underline covers `u.nmae` while the replacement is only `nmae`. The user sees
+ * the underline and will put the caret anywhere inside it — accepting only the replacement range
+ * would mean Quick Fix on `u` offers nothing, which is indistinguishable from "the feature is
+ * broken".
  */
 function intersects(span: Span, range: monaco.IRange): boolean {
   if (span.endLine < range.startLineNumber || span.startLine > range.endLineNumber) return false;
@@ -37,11 +38,11 @@ function intersects(span: Span, range: monaco.IRange): boolean {
 }
 
 /**
- * Registers code action provider for all 3 SQL dialects.
+ * Registers the code action provider for all three dialects.
  *
- * Deduplication flag stored on `window` to prevent duplicate actions across Vite HMR cycles.
- 
- 
+ * The anti-double-registration flag lives on `window` rather than in a module variable, for the
+ * same reason as hover: a Vite HMR reload resets module state and the provider gets registered
+ * again, which makes every Quick Fix appear as two identical entries.
  */
 export function registerSqlQuickFix(monacoInstance: typeof monaco): void {
   const w = window as any;

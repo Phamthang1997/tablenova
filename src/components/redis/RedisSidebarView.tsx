@@ -123,11 +123,11 @@ export const RedisSidebarView: React.FC<RedisSidebarViewProps> = ({
   }, [blocked, onError, onOk, t]);
 
   /**
-   * Tool tab action buttons embedded into `KeyList` footer (see `footerActions`). Uses icon-only buttons
-   with `title` and `aria-label` tooltips to preserve vertical real estate at the bottom of the sidebar.
-   
-   
-   
+   * The buttons that open the tool tabs, put into `KeyList`'s footer (see `footerActions`) instead
+   * of a bar of their own. Icons only: six text labels wrapped onto two rows, plus the key count
+   * line, took ~103px of fixed height at the bottom of the sidebar and left this footer badly out of
+   * line with the other three 34px ones. The labels still reach the user through `title`, and
+   * `aria-label` keeps each button from being an anonymous icon to a screen reader.
    */
   const toolButtons = (
     <div className="redis-sidebar-actions">

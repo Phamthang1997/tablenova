@@ -12,8 +12,8 @@ import { describeStatement, splitStatements, type StatementKind } from './statem
 import { LANG_IDS } from './sqlLanguage';
 
 /**
- * Icon symbol mapping per statement type.
- 
+ * The icon for each kind of statement. This mapping is **only** for picking an icon — nothing else
+ * reads it, so do not read any further meaning into `select` being a `Method`.
  */
 function symbolKindOf(kind: StatementKind, m: typeof monaco): monaco.languages.SymbolKind {
   switch (kind) {
@@ -25,10 +25,10 @@ function symbolKindOf(kind: StatementKind, m: typeof monaco): monaco.languages.S
 }
 
 /**
- * Registers document symbol and folding providers for all 3 SQL dialects.
+ * Registers the document-symbol and folding providers for all three dialects.
  *
- * Anti-duplicate flag stored on `window` to prevent duplicate providers across Vite HMR cycles.
- 
+ * The anti-double-registration flag lives on `window` for the same reason as in the other
+ * providers: a Vite HMR reload resets module state, and the provider gets registered twice.
  */
 export function registerSqlOutline(monacoInstance: typeof monaco): void {
   const w = window as any;
