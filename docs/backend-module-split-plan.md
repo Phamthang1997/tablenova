@@ -319,7 +319,7 @@ không xảy ra lần nào trong cả 10 đợt; vòng lặp sửa–kiểm ch�
 - Visibility: helper nội bộ được nới lên `pub(super)` (hoặc `pub(crate)` khi vượt một tầng module),
   không nới lên `pub`.
 
-**Đã làm tiếp sau đó (đợt 10–12):**
+**Đã làm tiếp sau đó (đợt 10–14):**
 
 - **Đợt 10 — gom nốt tệp lẻ ở gốc:** `terminal/{local,ssh}.rs` (chung một giao thức message, nên
   frontend chỉ có một component cho cả hai), `credentials/{aws_iam,oauth,secret_store}.rs` (chung một
@@ -336,9 +336,21 @@ không xảy ra lần nào trong cả 10 đợt; vòng lặp sửa–kiểm ch�
   Hai chỗ đáng nói: `redis_db/cmds.rs` là **ranh giới bảo mật** của chế độ chỉ-đọc và trước đó chỉ
   được kiểm bằng mẹo standalone-rustc; `database/splitter.rs` giờ có test hai bên cùng khoá cặp
   sinh đôi với `src/sql/statements.ts`.
+- **Đợt 13 — `lib.rs` còn 17 dòng:** nó đang làm ba việc, và một trong ba mâu thuẫn với chính
+  `app/` — thư mục đó là "vòng đời Tauri" và `app/{setup,handlers}.rs` là hai MẢNH của Builder,
+  nhưng Builder thì lại ở `lib.rs`. Nay: `app/run.rs` (Builder, cạnh hai mảnh của nó),
+  `state/app.rs` (`AppState` + `AppState::new()` — nằm ở `state/` vì trường lớn nhất của nó
+  chính là `ConnRegistry` ngay cạnh đó), còn `lib.rs` chỉ giữ danh sách module cộng hai
+  re-export giữ nguyên `tablenova::run` và `crate::AppState` (152 call site).
 
-**Vẫn chưa làm:**
+**Dọn nốt phần tài liệu lệch từ trước (2026-08-25).** `CLAUDE.md` còn năm chỗ mô tả `DatabaseManager`
+và `RedisState` như thứ đang tồn tại — hai kiểu này bị xoá từ đợt đa kết nối, TRƯỚC đợt tách module.
+Đã viết lại theo đúng cơ chế hiện tại, và mỗi chỗ đều kiểm lại bằng code chứ không suy từ tên:
 
-- `CLAUDE.md` còn vài chỗ nói về `DatabaseManager` — kiểu này đã bị xoá từ đợt đa kết nối, trước
-  đợt tách này. Bản đồ module và mọi đường dẫn tệp đã được cập nhật; phần mô tả `DatabaseManager`
-  thì không, vì nó lệch từ trước và sửa nó là việc khác.
+| Chỗ | Trước | Nay |
+|---|---|---|
+| `DbConnection` | "`DatabaseManager` giữ connection đang active, chỉ một cái cho cả app" | `state::ConnRegistry` khoá theo `conn_id`; **không có "connection đang active"**; `db_type`/`last_config`/tunnel nằm trên `Arc<ServerHandle>` dùng chung theo server |
+| Schema Postgres | `DatabaseManager.current_schema` | `ConnEntry.current_schema` — một `conn_id` là một `(server, database)` nên cũng là một schema. `pg_schema()` không còn; mọi call site đọc `ConnCtx::schema()`, vốn đã default sẵn |
+| Transaction | "chỉ có đúng một phiên; muốn per-tab thì phải chờ refactor đa kết nối" | refactor đó đã xong: `SESSIONS` là `HashMap` theo `conn_id`, một phiên cho mỗi kết nối. `TxControl` nhận `connId` và **bỏ qua event của kết nối khác** |
+| Vòng đời | "`switch_database` từ chối khi transaction đang mở" | `switch_database` **đã bị xoá**; `open_database` THÊM một pool dưới `conn_id` mới nên không phải từ chối gì — transaction trên database cũ vẫn chạy |
+| Redis | `RedisState.config` | `ServerHandle` của Redis giữ config **đã qua tunnel** (khác SQL), vì Redis mở socket mới thường xuyên hơn nhiều |
