@@ -42,10 +42,12 @@ export const StreamPanel: React.FC<StreamPanelProps> = ({
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
   useEffect(() => {
-    setEntries(initial.elements);
-    setCursor(initial.cursor);
-    setDone(initial.done);
-    setAdding(false);
+    queueMicrotask(() => {
+      setEntries(initial.elements);
+      setCursor(initial.cursor);
+      setDone(initial.done);
+      setAdding(false);
+    });
   }, [initial]);
 
   const loadMore = async () => {

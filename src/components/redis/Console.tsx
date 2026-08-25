@@ -76,18 +76,17 @@ export const Console: React.FC<ConsoleProps> = ({ storageScope, theme, onError, 
    so users preserve their typed commands across upgrades.
    
    */
-  const initialRef = useRef<string | null>(null);
-  if (initialRef.current === null) {
+  const [initialValue] = useState<string>(() => {
     let buf = '';
     try {
-      buf = localStorage.getItem(bufKey) ?? '';
-      if (!buf) {
+      buf = typeof localStorage !== 'undefined' ? localStorage.getItem(bufKey) ?? '' : '';
+      if (!buf && typeof localStorage !== 'undefined') {
         const raw = localStorage.getItem(legacyHistoryKey);
         if (raw) buf = (JSON.parse(raw) as string[]).join('\n');
       }
     } catch { /* localStorage corrupt -> fallback to empty */ }
-    initialRef.current = buf;
-  }
+    return buf;
+  });
 
   useEffect(() => { registerRedisLanguage(); defineSqlThemes(); }, []);
   useEffect(() => {
@@ -158,13 +157,14 @@ export const Console: React.FC<ConsoleProps> = ({ storageScope, theme, onError, 
 
   // Handlers invoked by Monaco keybindings retain initial closure — accessed via refs
   // so shortcuts always execute latest handlers. Matches `SqlEditor` action handling.
-  const runHintRef = useRef('');
-  runHintRef.current = t('redis.cliRunThisLine');
-
+  const runHintRef = useRef(t('redis.cliRunThisLine'));
   const runCurrentRef = useRef(runCurrent);
-  runCurrentRef.current = runCurrent;
   const runAllRef = useRef(runAll);
-  runAllRef.current = runAll;
+  useEffect(() => {
+    runHintRef.current = t('redis.cliRunThisLine');
+    runCurrentRef.current = runCurrent;
+    runAllRef.current = runAll;
+  }, [t, runCurrent, runAll]);
 
   /** Cleans up resize drag listeners on tab unmount. */
   const dragCleanupRef = useRef<(() => void) | null>(null);
@@ -281,7 +281,7 @@ export const Console: React.FC<ConsoleProps> = ({ storageScope, theme, onError, 
           height="100%"
           language={REDIS_LANG_ID}
           theme={sqlThemeName(theme)}
-          defaultValue={initialRef.current}
+          defaultValue={initialValue}
           onChange={persist}
           onMount={onMount}
           options={{ ...SQL_EDITOR_OPTIONS, lineNumbersMinChars: 2 }}

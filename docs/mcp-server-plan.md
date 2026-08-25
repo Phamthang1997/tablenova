@@ -13,7 +13,7 @@ Phạm vi đã chốt:
 
 | Hạng mục | Chốt |
 |---|---|
-| Transport | **Streamable HTTP** trên loopback. Không dựng endpoint `/sse` riêng (§2.3) |
+| Transport | **Streamable HTTP** qua SDK chính thức `rmcp`, bind loopback. Không dựng endpoint `/sse` riêng (§2.3) |
 | Ghi dữ liệu qua MCP | **Ngoài phạm vi V1.** Không có `execute_mutation` cho tới khi có lớp 5 (§3.5) |
 | Cầu stdio (`--mcp`) | **Ngoài phạm vi V1** — không chạy được như bản đầu mô tả (§0.4, §7) |
 | Kết nối được phơi cho AI | **Mặc định TẮT**, người dùng tự tích từng kết nối (§3.3) |
@@ -166,17 +166,44 @@ Hai hệ quả phải ghi vào tài liệu người dùng, không phải giấu:
   commit dù có route hay không. Không sửa được mà không mở thêm handle thứ hai, và mở handle thứ hai
   trên cùng một tệp là `SQLITE_BUSY` — đúng thứ `find_sqlite()` sinh ra để tránh.
 
-### 2.3. Transport
+### 2.3. Transport — dùng SDK chính thức, không tự viết giao thức
 
-**Streamable HTTP**, một endpoint `POST /mcp` (kèm `GET /mcp` cho luồng server→client khi cần). Bản
-đầu viết theo transport **HTTP+SSE** với endpoint `/sse` riêng — đó là bản cũ của spec, đã bị thay.
-**Việc đầu tiên của Giai đoạn 1 là chốt đúng revision spec đang hiện hành và implement theo nó**,
-không code theo trí nhớ. Nếu một client mục tiêu còn chỉ nói được HTTP+SSE thì thêm route tương
-thích, và ghi rõ nó là đường tương thích chứ không phải đường chính.
+**Chốt: `rmcp`**, crate chính thức của `modelcontextprotocol/rust-sdk`. Bản 3.1.4 phát hành
+20/08/2026, 21.9M lượt tải, nhịp phát hành dày — không phải một crate bỏ hoang.
 
-Dependency: `axum` (kéo theo hyper/tower). `tokio` đã có `features = ["full"]`. **Không** thêm
-`tower-http`: thứ duy nhất định dùng ở đó là CORS layer, mà §3.1 lại cố tình **không** phát header
-CORS nào.
+Nó implement spec **2026-07-28** (stable, tương thích ngược tới 2025-11-25). Con số đó chính là lý do
+của quyết định: bản đầu tài liệu này viết theo transport **HTTP+SSE**, và ngay cả "Streamable HTTP
+2025-03-26" cũng đã trễ **hai** revision. Thoả thuận version là thứ phải đúng theo spec đang sống,
+không theo trí nhớ của người viết plan.
+
+`rmcp` lo: JSON-RPC 2.0, `initialize` + thoả thuận version, `tools/list`, `tools/call`, session của
+Streamable HTTP. Nó **không** lo phần host: nó cho một `StreamableHttpService` là `tower::Service` và
+**không có helper bind/listen**.
+
+→ `axum` vẫn vào nhưng đổi vai: chỉ để mount service đó và đặt middleware §3.1, không còn là nơi ta
+tự dựng giao thức.
+
+```toml
+rmcp = { version = "3.1", features = ["transport-streamable-http-server"] }
+```
+
+**Cạm bẫy phải tránh: mọi feature `reqwest*`.** Chúng đều là client-side và kéo `reqwest 0.13` cùng
+**một TLS stack thứ hai** bên cạnh rustls mà sqlx và redis đang dùng. Default features
+(`base64, macros, server, schemars, transport-async-rw, uuid`) không gồm reqwest, nên giữ nguyên
+default và chỉ bật thêm transport server là đủ.
+
+Độ khớp phụ thuộc là điểm mạnh nhất của lựa chọn này: `hmac ^0.13`, `sha2 ^0.11`, `chrono ^0.4.38`,
+`thiserror ^2`, `uuid ^1`, `tokio ^1`, `serde`/`serde_json` đều đã có sẵn đúng phiên bản trong cây.
+Thật sự thêm mới chỉ có `hyper 1` + `http` + `tower` + `schemars` (+ `axum`).
+
+`schemars` là default feature, và đó là quà: macro `#[tool]` sinh JSON Schema cho tham số tool **từ
+chính struct Rust**, nên §4.1 không phải viết schema tay và schema không lệch được với struct.
+
+**Pin chặt.** 5 bản trong ~3 tuần nghĩa là API còn chuyển động: khai `3.1`, đọc changelog trước mỗi
+lần nâng, đừng để `cargo update` tự kéo.
+
+Vẫn giữ: **không** thêm `tower-http`. Thứ duy nhất định dùng ở đó là CORS layer, mà §3.1 lại cố tình
+không phát header CORS nào.
 
 ### 2.4. Vòng đời server và cửa sổ
 
@@ -194,18 +221,20 @@ Theo luật của [`backend-module-split-plan.md`](backend-module-split-plan.md)
 
 ```
 src-tauri/src/mcp/
-  mod.rs        — khối comment: giao thức, revision spec đã chốt, và 5 lớp phòng thủ
-  server.rs     — dựng/hạ axum, bind, trạng thái bật/tắt
+  mod.rs        — khối comment: revision spec (do bản rmcp đã pin quy định) và 5 lớp phòng thủ
+  server.rs     — mount StreamableHttpService vào axum, bind, trạng thái bật/tắt
   http.rs       — router, kiểm Origin/Host, middleware bearer token
-  protocol.rs   — JSON-RPC 2.0 + initialize/tools.list/tools.call
   policy.rs     — kết nối nào được phơi, phân loại câu lệnh, giới hạn dòng
   audit.rs      — ring buffer + emit event
   tools/
-    mod.rs
+    mod.rs      — impl ServerHandler của rmcp: khai 6 tool
     catalog.rs  — list_connections / list_databases / list_tables / describe_table
     data.rs     — preview_table / query
   commands.rs   — #[tauri::command] cho UI: bật/tắt, đọc token, regenerate, đọc log
 ```
+
+**Không có `protocol.rs`** — `rmcp` lo phần đó (§2.3). Đang viết một hàm parse JSON-RPC ở thư mục này
+là dấu hiệu đi sai đường.
 
 Khai mọi command mới vào [`app/handlers.rs`](../src-tauri/src/app/handlers.rs) — quên là lỗi runtime
 "unknown command", compiler không bắt được. Và **mỗi command mới phải được phân loại trong
@@ -213,7 +242,6 @@ Khai mọi command mới vào [`app/handlers.rs`](../src-tauri/src/app/handlers.
 command chưa phân loại. Các `mcp_*` command là `internal` (chúng cấu hình app, không phải câu lệnh
 người dùng chạy trên database) — trừ `mcp_regenerate_token`, đáng cân nhắc để `write` vì nó cắt đứt
 mọi client đang kết nối.
-
 **Ngôn ngữ thông báo lỗi**: lỗi MCP trả về cho **AI client**, không phải cho UI TableNova → viết
 **tiếng Anh** và **không** đi qua `backendErrors.ts`. Cùng luật với comment trong SQL script của
 `compare/` và với `failed[].error` của Redis. Chỉ chuỗi hiện trên Settings/audit log mới là key i18n.
@@ -418,14 +446,18 @@ chối** là thứ khiến log này dùng được để gỡ lỗi thay vì ch�
 
 Ước lượng của bản đầu (3 tuần cho cả ghi + phê duyệt + stdio) là lạc quan. Chia lại:
 
-### V1 — chỉ đọc (~2 tuần)
+### V1 — chỉ đọc (~1.5–2 tuần)
+
+Ngắn hơn ước lượng trước một chút vì `rmcp` nuốt trọn phần giao thức (§2.3); phần còn lại — Origin/token,
+policy, 6 tool, UI, i18n ba ngôn ngữ — không đổi.
 
 **Bước 1 — nền và bảo mật** (không có bước này thì không có gì được phép chạy)
-- [ ] Chốt revision spec MCP đang hiện hành; ghi vào `mcp/mod.rs` (§2.3).
-- [ ] Thêm `axum`; dựng `server.rs` + `http.rs` bind loopback.
+- [ ] Tắt `tauri dev` trước khi đụng `Cargo.toml` — thêm dependency là rebuild cả cây.
+- [ ] Thêm `rmcp` (chỉ `transport-streamable-http-server`, **không** feature `reqwest*`) + `axum` (§2.3).
+- [ ] `server.rs`: mount `StreamableHttpService`, bind loopback, bật/tắt qua `AppState`.
 - [ ] Kiểm `Origin`/`Host`, không phát header CORS (§3.1).
 - [ ] Sinh + cất token qua `secret_store.rs`; so sánh constant-time (§3.2).
-- [ ] `protocol.rs`: JSON-RPC 2.0, `initialize`, `tools/list`, `tools/call`.
+- [ ] Ghi bản `rmcp` đã pin + revision spec nó nói vào khối comment của `mcp/mod.rs`.
 
 **Bước 2 — đường dữ liệu**
 - [ ] Tách `execute_raw_sql_pooled` khỏi `execute_raw_sql_generic` (§2.2). Một nhát, không nhân bản.
@@ -466,6 +498,9 @@ chối** là thứ khiến log này dùng được để gỡ lỗi thay vì ch�
   là thứ các client hiện hỗ trợ qua `headers`.
 - **Nhét `LIMIT` vào SQL của AI** — §4.3.
 - **Cho MCP đi qua `#[tauri::command]`** — chúng cần `tauri::State`; §2.1.
+- **Tự viết tầng JSON-RPC / Streamable HTTP** — §2.3. Spec đã đi qua ít nhất hai revision kể từ bản
+  mà tài liệu này ban đầu nhắm tới, và thoả thuận version viết tay là chỗ sai lặng lẽ. `rmcp` là crate
+  chính thức, và độ khớp phụ thuộc với cây hiện có gần như tuyệt đối.
 
 ---
 
@@ -481,3 +516,6 @@ chối** là thứ khiến log này dùng được để gỡ lỗi thay vì ch�
   bộ.
 - **`describe_table` phơi tên cột của schema production cho một dịch vụ bên ngoài.** Đó là bản chất
   của tính năng, không phải lỗi — nhưng nó là lý do §3.3 mặc định TẮT và không có nút "phơi tất cả".
+- **`rmcp` đang ở nhịp phát hành dày** (5 bản trong ~3 tuần lúc khảo sát, major 3.x). Pin `3.1` hãm
+  được, nhưng một thay đổi API ở bản major sau là việc phải làm lại. Đổi lại: tự viết thì mỗi lần
+  spec đổi cũng là làm lại, mà lại không có ai báo cho biết.

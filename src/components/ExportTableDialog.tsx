@@ -80,20 +80,20 @@ export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
   const [rows, setRows] = useState<any[]>([]); // chỉ is row mẫu to preview
   const [totalRows, setTotalRows] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [preview, setPreview] = useState('');
   const [dir, setDir] = useState(getLastExportDir());
   const [progress, setProgress] = useState<ProgressState | null>(null);
   const [done, setDone] = useState<
     { message: string; path?: string; dir?: string; viaDownload: boolean } | null
   >(null);
 
-  // Mỗi lần open is một lượt xuất mới.
+  // Each open is a new export pass.
   useEffect(() => {
     if (!open) return;
-    setStep('options');
-    setFileName(tableName);
-    setRows([]);
-    setPreview('');
+    queueMicrotask(() => {
+      setStep('options');
+      setFileName(tableName);
+      setRows([]);
+    });
   }, [open, tableName]);
 
   // not có ngữ cảnh grid -> lấy column from schema to build header CSV/SQL đúng thứ tự.
@@ -118,7 +118,9 @@ export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
   useEffect(() => {
     if (!open || step !== 'preview') return;
     let cancelled = false;
-    setLoading(true);
+    queueMicrotask(() => {
+      setLoading(true);
+    });
     (async () => {
       const useView = !!grid && applyView;
       const data = await dbHelper.getTableData(connId, 
@@ -176,11 +178,11 @@ export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
     return all;
   };
 
-  // build lại preview when đổi format or when dữ liệu/column change.
-  useEffect(() => {
-    if (!open || step !== 'preview' || loading) return;
+  // Builds preview on format or rows / columns change.
+  const preview = React.useMemo(() => {
+    if (!open || step !== 'preview' || loading) return '';
     const cols = colNames.length ? colNames : (rows[0] ? Object.keys(rows[0]) : []);
-    setPreview(buildPreview(format, tableName, cols, rows, dbType, PREVIEW_ROWS));
+    return buildPreview(format, tableName, cols, rows, dbType, PREVIEW_ROWS);
   }, [open, step, loading, format, rows, colNames, tableName, dbType]);
 
   useEffect(() => {

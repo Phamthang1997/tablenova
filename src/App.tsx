@@ -243,7 +243,9 @@ export const App: React.FC = () => {
   // Read by the window-level listeners below, which register once: putting the id in their deps
   // would tear them down and re-register on every connection switch.
   const activeConnIdRef = React.useRef(activeConnIdState);
-  activeConnIdRef.current = activeConnIdState;
+  React.useEffect(() => {
+    activeConnIdRef.current = activeConnIdState;
+  }, [activeConnIdState]);
   /**
    * Mọi kết nối currently open, kèm config already dùng to open nó.
    *
@@ -290,7 +292,7 @@ export const App: React.FC = () => {
 
   const [queryCount, setQueryCount] = useState(1);
   const [showAi, setShowAi] = useState(false);
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => (typeof localStorage !== 'undefined' && localStorage.getItem('tf_theme') as 'dark' | 'light') || 'dark');
   // mode read-only: chặn mọi thao tác write. Nhớ qua các lần open app (quy ước tf_*) — một công tắc
   // an toàn mà reset về "allows write" mỗi lần khati động thì gần như vô dụng.
   const [readOnly, setReadOnly] = useState(() => localStorage.getItem('tf_readonly') === '1');
@@ -845,13 +847,10 @@ export const App: React.FC = () => {
   }, []);
 
   React.useEffect(() => {
-    const savedTheme = localStorage.getItem('tf_theme') as 'dark' | 'light';
-    if (savedTheme) {
-      setTheme(savedTheme);
-      document.documentElement.setAttribute('data-theme', savedTheme);
-    } else {
-      document.documentElement.setAttribute('data-theme', 'dark');
-    }
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
+
+  React.useEffect(() => {
 
     // Kiểu thanh tiến độ cũng đặt on <html> như theme, xem utils/progressStyle.ts
     applyProgressStyle(getProgressStyle());
@@ -1217,7 +1216,7 @@ export const App: React.FC = () => {
       guardDirty(() => {
         const at = tabs.findIndex((tab) => tab.id === activeTabId);
         const after = tabs.slice(at + 1).find((tab) => tab.groupId !== groupId);
-        const before = [...tabs.slice(0, at)].reverse().find((tab) => tab.groupId !== groupId);
+        const before = tabs.slice(0, at).reverse().find((tab) => tab.groupId !== groupId);
         setActiveTabId((after ?? before ?? outside[0]).id);
         applyCollapse();
       });
@@ -1244,10 +1243,12 @@ export const App: React.FC = () => {
   // tab is close at rất nhiều đường (nút X, chuột giữa, close tab khác, close bên
   // must, close all), sót một đường is còn lại một nhóm ma in bản save.
   React.useEffect(() => {
-    setTabGroups((prev) => {
-      const used = new Set(tabs.map((tab) => tab.groupId).filter(Boolean));
-      const next = prev.filter((g) => used.has(g.id));
-      return next.length === prev.length ? prev : next;
+    queueMicrotask(() => {
+      setTabGroups((prev) => {
+        const used = new Set(tabs.map((tab) => tab.groupId).filter(Boolean));
+        const next = prev.filter((g) => used.has(g.id));
+        return next.length === prev.length ? prev : next;
+      });
     });
   }, [tabs]);
 
@@ -1450,11 +1451,6 @@ export const App: React.FC = () => {
     openInitialTab(activeConnIdState, nextConn?.dbType);
   };
 
-  // `handleDatabaseChanged` fromng at đây: nó is bên receive of `switch_database`, tức of mô hình "thay
-  // pool tại chỗ, preserve conn_id". not còn đường nào đổi database kiểu đó nữa — cả ba (bộ
-  // select on title bar, Sidebar, popup thống kê) đều open add kết nối — nên nó cùng biến mất
-  // with `switch_database`. `handleDatabaseOpened` is bên receive unique.
-
   // Open a specific table in a new or existing tab
   const handleSelectTable = (
     tableName: string,
@@ -1491,7 +1487,9 @@ export const App: React.FC = () => {
   // Ctrl+Click / F12 on tên table or click FK link -> open tab table kèm bộ filter.
   // Dùng ref to listener (đăng ký 1 lần) luôn gọi bản handleSelectTable mới nhất.
   const selectTableRef = React.useRef(handleSelectTable);
-  selectTableRef.current = handleSelectTable;
+  React.useEffect(() => {
+    selectTableRef.current = handleSelectTable;
+  });
   React.useEffect(() => {
     const handleOpenTableTab = (e: any) => {
       const table = e.detail?.table;
@@ -1532,7 +1530,7 @@ export const App: React.FC = () => {
     setActiveTabId(tabId);
   };
 
-  const handleOpenRedisTool = (type: RedisTabType) => {
+  const handleOpenRedisTool = React.useCallback((type: RedisTabType) => {
     if (type === 'redis-key') return;
     const tabId = redisToolTabId(activeConnIdState, type);
     if (!visibleTabs.some((tab) => tab.id === tabId)) {
@@ -1543,7 +1541,7 @@ export const App: React.FC = () => {
       ]);
     }
     setActiveTabId(tabId);
-  };
+  }, [activeConnIdState, visibleTabs, t, tabs]);
 
   /**
    * Đổi db index of một kết nối Redis.
@@ -1595,9 +1593,7 @@ export const App: React.FC = () => {
   };
 
   // Create a new SQL Query tab
-  const handleNewQueryTab = () => {
-    // Nút `+` of tab bar on một kết nối Redis: open CLI Console, not must tab SQL. Đây is thứ
-    // gần nhất with "một chỗ trống to gõ lệnh" mà Redis có.
+  const handleNewQueryTab = React.useCallback(() => {
     if (connection?.dbType === 'redis') {
       handleOpenRedisTool('redis-console');
       return;
@@ -1612,12 +1608,10 @@ export const App: React.FC = () => {
     setTabs([...tabs, { ...newTab, connId: activeConnIdState }]);
     setActiveTabId(tabId);
     setQueryCount(queryCount + 1);
-  };
+  }, [connection?.dbType, handleOpenRedisTool, t, queryCount, tabs, activeConnIdState]);
 
-  // open tab SQL with nội dung có sẵn (script sync from hộp thoại compare 2 database).
-  // not gộp ando handleNewQueryTab vì hàm đó is truyền thẳng ism onClick -> tham số
-  // đầu tiên will is MouseEvent.
-  const openQueryTabWithSql = (sql: string) => {
+  // Open SQL tab with existing content (e.g. sync script from DB compare dialog)
+  const openQueryTabWithSql = React.useCallback((sql: string) => {
     const tabId = `query_${Date.now()}`;
     const newTab = {
       id: tabId,
@@ -1629,7 +1623,7 @@ export const App: React.FC = () => {
     setTabs([...tabs, { ...newTab, connId: activeConnIdState }]);
     setActiveTabId(tabId);
     setQueryCount(queryCount + 1);
-  };
+  }, [t, queryCount, tabs, activeConnIdState]);
 
   // Close tab
   const handleCloseTab = (id: string, e?: React.MouseEvent) => {
@@ -1835,15 +1829,15 @@ export const App: React.FC = () => {
   // `tabs` đổi (tức mỗi lần gõ phím already debounce) nhưng returns đúng Set cũ when not có gì
   // change, nên not kéo theo render thừa.
   React.useEffect(() => {
-    setMountedQueryTabs(prev => {
-      const live = new Set(tabs.filter(tb => tb.type === 'query').map(tb => tb.id));
-      const next = new Set<string>();
-      for (const id of prev) if (live.has(id)) next.add(id);
-      if (activeTabId && live.has(activeTabId)) next.add(activeTabId);
-      // not so mỗi size: close một tab and open một tab khác in cùng một render for ra
-      // hai tập khác nhau mà cùng số phần tử.
-      if (next.size === prev.size && [...next].every(id => prev.has(id))) return prev;
-      return next;
+    queueMicrotask(() => {
+      setMountedQueryTabs(prev => {
+        const live = new Set(tabs.filter(tb => tb.type === 'query').map(tb => tb.id));
+        const next = new Set<string>();
+        for (const id of prev) if (live.has(id)) next.add(id);
+        if (activeTabId && live.has(activeTabId)) next.add(activeTabId);
+        if (next.size === prev.size && [...next].every(id => prev.has(id))) return prev;
+        return next;
+      });
     });
   }, [tabs, activeTabId]);
 

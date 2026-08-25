@@ -36,24 +36,26 @@ export const QueryParamsModal: React.FC<QueryParamsModalProps> = ({
   };
 
   useEffect(() => {
-    const stored = localStorage.getItem('sql_query_param_values');
-    let lastValues: Record<string, TypedParamValue> = {};
-    if (stored) {
-      try { lastValues = JSON.parse(stored); } catch { lastValues = {}; }
-    }
-    const initial: Record<string, TypedParamValue> = {};
-    params.forEach(p => {
-      const prev = lastValues[p];
-      // Tương thích ngược: giá trị cũ save dạng string thuần -> nâng lên {value, type:'auto'}
-      if (typeof prev === 'string') {
-        initial[p] = { value: prev, type: 'auto' };
-      } else if (prev && typeof prev === 'object') {
-        initial[p] = { value: prev.value ?? '', type: prev.type ?? 'auto' };
-      } else {
-        initial[p] = { value: '', type: 'auto' };
+    queueMicrotask(() => {
+      const stored = localStorage.getItem('sql_query_param_values');
+      let lastValues: Record<string, TypedParamValue> = {};
+      if (stored) {
+        try { lastValues = JSON.parse(stored); } catch { lastValues = {}; }
       }
+      const initial: Record<string, TypedParamValue> = {};
+      params.forEach(p => {
+        const prev = lastValues[p];
+        // Backward compatibility: upgrade legacy raw string to {value, type:'auto'}
+        if (typeof prev === 'string') {
+          initial[p] = { value: prev, type: 'auto' };
+        } else if (prev && typeof prev === 'object') {
+          initial[p] = { value: prev.value ?? '', type: prev.type ?? 'auto' };
+        } else {
+          initial[p] = { value: '', type: 'auto' };
+        }
+      });
+      setValues(initial);
     });
-    setValues(initial);
   }, [params]);
 
   const handleChangeValue = (paramName: string, value: string) => {

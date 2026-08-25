@@ -394,7 +394,7 @@ export function columnSpecFromTarget(col: GenColumnTarget): GenColumnSpec {
   const spec: GenColumnSpec = {
     column: col.name,
     generator: col.suggestedGenerator,
-    options: { ...(col.suggestedOptions ?? {}) },
+    options: { ...col.suggestedOptions },
   };
   // A nullable column gets a few NULLs so the generated data exercises them; a NOT NULL one
   // must never get any.

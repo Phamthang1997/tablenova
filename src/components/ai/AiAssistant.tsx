@@ -78,8 +78,10 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
   // Auto-attach current active table if setting is on and session has no tables yet
   useEffect(() => {
     if (tableNameContext && activeSession.attachedTables.length === 0) {
-      updateSessionTables(activeSession.id, [tableNameContext]);
-      setSessions(getAiSessions());
+      queueMicrotask(() => {
+        updateSessionTables(activeSession.id, [tableNameContext]);
+        setSessions(getAiSessions());
+      });
     }
   }, [tableNameContext, activeSession.id, activeSession.attachedTables.length]);
 
@@ -378,7 +380,7 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
               assistantName: activeProfile.name,
               model: activeProfile.model,
               text: streamingText,
-              timestamp: Date.now(),
+              timestamp: 0,
             }}
             provider={activeProfile.provider}
             onInsertSql={onInsertSql}

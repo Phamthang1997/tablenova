@@ -41,7 +41,21 @@ export const SlowLog: React.FC<SlowLogProps> = ({ readOnly, onError, onOk, onBlo
     if (res.maxLen != null) setMaxLen(String(res.maxLen));
   }, [onError, t]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const res = await dbHelper.redisSlowlogGet(128);
+      if (cancelled) return;
+      setLoading(false);
+      if (!res.success) { onError(res.error || t('redis.errSlowlog')); return; }
+      setEntries(res.entries);
+      setLen(res.len);
+      if (res.thresholdUs != null) setThreshold(String(res.thresholdUs));
+      if (res.maxLen != null) setMaxLen(String(res.maxLen));
+    })();
+    return () => { cancelled = true; };
+  }, [onError, t]);
 
   useEffect(() => {
     if (!auto) return;

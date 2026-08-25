@@ -113,11 +113,13 @@ export const DocViewerModal: React.FC<DocViewerModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
-      if (initialQuery) setQuery(initialQuery);
-      if (initialEngine) {
-        const norm = initialEngine === 'all' ? 'all' : normalizeEngine(initialEngine) || 'all';
-        setEngine(norm);
-      }
+      queueMicrotask(() => {
+        if (initialQuery) setQuery(initialQuery);
+        if (initialEngine) {
+          const norm = initialEngine === 'all' ? 'all' : normalizeEngine(initialEngine) || 'all';
+          setEngine(norm);
+        }
+      });
     }
   }, [isOpen, initialQuery, initialEngine]);
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Camera, Trash2, GitCompare, Download, Upload, Copy, Loader } from 'lucide-react';
 import {
@@ -21,7 +21,7 @@ interface SchemaMigrationProps {
 
 export const SchemaMigration: React.FC<SchemaMigrationProps> = ({ dbType, database, onClose }) => {
   const { t, i18n } = useTranslation();
-  const [snapshots, setSnapshots] = useState<SchemaSnapshot[]>([]);
+  const [snapshots, setSnapshots] = useState<SchemaSnapshot[]>(() => listSnapshots());
   const [snapName, setSnapName] = useState('');
   const [busy, setBusy] = useState<string>(''); // thông báo status processing
   // Separate flag for "an operation is running". The spinner used to be driven by
@@ -35,7 +35,6 @@ export const SchemaMigration: React.FC<SchemaMigrationProps> = ({ dbType, databa
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const refresh = () => setSnapshots(listSnapshots());
-  useEffect(() => { refresh(); }, []);
 
   const defaultName = () => {
     const d = new Date();

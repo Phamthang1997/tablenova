@@ -282,7 +282,7 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
   const emitTables = async () => {
     // Automatically assigns alias when inserting tables in FROM/JOIN (excluding INTO/UPDATE/DROP...)
     const stripped = textBefore.replace(/[\w$."`]*$/, '').trimEnd();
-    const wantAlias = /\b(from|join)$/i.test(stripped) || (/,$/.test(stripped) && /\bfrom\b/i.test(textBefore));
+    const wantAlias = /\b(from|join)$/i.test(stripped) || (stripped.endsWith(',') && /\bfrom\b/i.test(textBefore));
     const taken = new Set<string>();
     aliasByTable.forEach(a => taken.add(a.toLowerCase()));
 

@@ -627,13 +627,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const { t } = useTranslation();
 
   // Chặn thao tác write when bật Chỉ read. Gọi at NGAY điểm bấm (trước when open hộp confirm) to người
-  // dùng not must đi hết luồng confirm rồi mới is from chối, and lặp lại at các hàm run*/handle*
-  // execute lệnh to not có đường nào lọt. Dùng alert() for khớp with phần còn lại of file.
-  const blockedByReadOnly = (): boolean => {
+  // Block actions when in read-only mode
+  const blockedByReadOnly = useCallback((): boolean => {
     if (!readOnly) return false;
     alert(t('sidebar.errReadOnly'));
     return true;
-  };
+  }, [readOnly, t]);
 
   const [tables, setTables] = useState<TableItem[]>([]);
   const [schemas, setSchemas] = useState<string[]>([]);
@@ -703,9 +702,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // toggleTableExpanded preserve identity; if to chúng in deps thì mỗi lần open một
   // table is callback đổi -> mọi row re-render and React.memo at ObjectItem thành vô nghĩa.
   const columnsMapRef = useRef(tableSchemaMap);
-  columnsMapRef.current = tableSchemaMap;
   const loadingColumnsRef = useRef(loadingColumns);
-  loadingColumnsRef.current = loadingColumns;
+  useEffect(() => {
+    columnsMapRef.current = tableSchemaMap;
+    loadingColumnsRef.current = loadingColumns;
+  }, [tableSchemaMap, loadingColumns]);
 
   // isExpanded do chính row đó truyền ando, nên not cần read expandedTables at đây.
   const toggleTableExpanded = useCallback(async (tableName: string, isExpanded: boolean, e: React.MouseEvent) => {
@@ -780,7 +781,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [selection, setSelection] = useState<{ section: ObjectSection; names: string[] }>({ section: 'tables', names: [] });
   const selectionSet = useMemo(() => new Set(selection.names), [selection]);
   const selectionRef = useRef(selection);
-  selectionRef.current = selection;
+  useEffect(() => {
+    selectionRef.current = selection;
+  }, [selection]);
   /** Shift+click anchor: index of the last plain/Ctrl click, -1 = none yet. */
   const anchorRef = useRef(-1);
   /** The VISIBLE list of each block — reassigned every render and read from stable
@@ -793,13 +796,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   useLayoutEffect(() => {
     if (!contextMenu) {
-      setMenuPos(null);
+      queueMicrotask(() => setMenuPos(null));
       return;
     }
     const el = menuRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
-    setMenuPos(clampMenu(contextMenu.x, contextMenu.y, r.width, r.height, window.innerWidth, window.innerHeight));
+    queueMicrotask(() => setMenuPos(clampMenu(contextMenu.x, contextMenu.y, r.width, r.height, window.innerWidth, window.innerHeight)));
   }, [contextMenu]);
 
   const [renameState, setRenameState] = useState<{ tableName: string; value: string } | null>(null);
@@ -890,9 +893,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // đổi mỗi render) nên đưa thẳng ando deps is vòng lặp vô tận — read qua ref is khuôn `CLAUDE.md` already
   // write for đúng tình huống này.
   const connIdRef = useRef(connId);
-  connIdRef.current = connId;
   const fetchTablesRef = useRef(fetchTables);
-  fetchTablesRef.current = fetchTables;
+  useEffect(() => {
+    connIdRef.current = connId;
+    fetchTablesRef.current = fetchTables;
+  });
 
   // Danh sách schema for ô select. Rỗng with MySQL/SQLite (backend trả mảng rỗng), nên chỉ cần
   // check độ dài is biết có hiện ô select hay not.
@@ -902,7 +907,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // hai bản sao will lệch nhau ngay lần đổi database đầu tiên.
   useEffect(() => {
     if (dbType !== 'postgres') {
-      setSchemas([]);
+      queueMicrotask(() => setSchemas([]));
       return;
     }
     let alive = true;
@@ -926,7 +931,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // whose every write fails.
   useEffect(() => {
     if (dbType !== 'mysql') {
-      setIsMariaDb(false);
+      queueMicrotask(() => setIsMariaDb(false));
       return;
     }
     let alive = true;
@@ -974,8 +979,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
     fetchTablesRef.current();
     // After a database switch the old selection points at names that no longer exist —
     // clear it, and drop the Shift anchor so no range is taken against the previous list.
-    setSelection({ section: 'tables', names: [] });
-    anchorRef.current = -1;
+    queueMicrotask(() => {
+      setSelection({ section: 'tables', names: [] });
+      anchorRef.current = -1;
+    });
     // `connId` nằm in deps: hai kết nối can trỏ CÙNG tên database (cùng `sakila` on hai
     // server), lúc đó `dbName` not đổi and sidebar will hiện table of kết nối cũ.
   }, [connId, dbName, schema]);
@@ -1048,7 +1055,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // nên truyền thẳng xuống ObjectItem will phá memo mỗi when App render. read qua ref —
   // cùng cách App.tsx already dùng for selectTableRef.
   const onSelectTableRef = useRef(onSelectTable);
-  onSelectTableRef.current = onSelectTable;
+  useEffect(() => {
+    onSelectTableRef.current = onSelectTable;
+  });
 
   /**
    * Clicking a row. Three branches, matching what every file manager does: Shift = the
@@ -1081,7 +1090,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   // blockedByReadOnly read prop readOnly and t nên cũng đổi identity mỗi render.
   const blockedByReadOnlyRef = useRef(blockedByReadOnly);
-  blockedByReadOnlyRef.current = blockedByReadOnly;
+  useEffect(() => {
+    blockedByReadOnlyRef.current = blockedByReadOnly;
+  });
   const handleRowRequestDrop = useCallback((item: TableItem) => {
     if (blockedByReadOnlyRef.current()) return;
     // Delete on a row inside the selection drops the whole selection — what is highlighted.
@@ -1293,16 +1304,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   // The single source for Shift+click and Ctrl+A. A collapsed block is left empty: Ctrl+A
   // must not select rows nobody can see, and Shift+click indices must match what was drawn.
-  sectionListsRef.current = {
-    tables: isOpen('tables') ? filteredTables : [],
-    views: isOpen('views') ? filteredViews : [],
-  };
+  useEffect(() => {
+    sectionListsRef.current = {
+      tables: isOpen('tables') ? filteredTables : [],
+      views: isOpen('views') ? filteredViews : [],
+    };
+  });
 
   const [highlight, setHighlight] = useState(-1);
   const highlightRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    setHighlight(-1);
+    queueMicrotask(() => setHighlight(-1));
   }, [searchTerm]);
 
   useEffect(() => {
@@ -1425,9 +1438,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           icon: Sparkles,
           colorClass: 'rose',
           onClick: () => {
-            // Qua ref: read thẳng thì memo này phụ thuộc một hàm đổi identity mỗi render, tức is
-            // build lại cả danh sách mỗi lần vẽ — xem chú thích at blockedByReadOnlyRef.
-            if (blockedByReadOnlyRef.current()) return;
+            if (blockedByReadOnly()) return;
             onGenerateData?.();
           },
           visible: !!onGenerateData,
@@ -1450,7 +1461,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         },
       ],
     },
-  ], [t, onNewQuery, onOpenTerminal, onOpenDbInfo, onSchemaMigration, onCompareDatabases, onGenerateData, onExportDatabase, onImportDatabase]);
+  ], [t, onNewQuery, onOpenTerminal, onOpenDbInfo, onSchemaMigration, onCompareDatabases, onGenerateData, onExportDatabase, onImportDatabase, blockedByReadOnly]);
 
   return (
     <div className="sidebar-navigation" ref={rootRef} style={{ width: `${width}px` }}>

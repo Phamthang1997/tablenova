@@ -46,10 +46,12 @@ export const ImportFilePicker: React.FC<ImportFilePickerProps> = ({
 
   // Mỗi lần open lại is một lượt nhập mới -> delete tệp/error of lượt trước.
   useEffect(() => {
-    if (open) {
-      setFile(null);
-      setError(null);
-    }
+    queueMicrotask(() => {
+      if (open) {
+        setFile(null);
+        setError(null);
+      }
+    });
   }, [open]);
 
   useEffect(() => {

@@ -63,7 +63,22 @@ export const RedisKeyTab: React.FC<RedisKeyTabProps> = ({
 
   // `connId` in deps: identical key name on two db indices represents two distinct keys, and tab is
   // reconstructed by connId, requiring effect to re-run.
-  useEffect(() => { void load(); }, [load, connId]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setState('loading');
+      const d = await dbHelper.redisGetKey(keyName);
+      if (cancelled) return;
+      if (!d.success) {
+        setDetail(null);
+        setState('gone');
+        return;
+      }
+      setDetail(d);
+      setState('ready');
+    })();
+    return () => { cancelled = true; };
+  }, [keyName, connId]);
 
   const doRename = async (next: string) => {
     setRenaming(false);

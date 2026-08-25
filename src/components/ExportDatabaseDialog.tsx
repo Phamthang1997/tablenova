@@ -145,11 +145,13 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ conn
 
   useEffect(() => {
     if (!open) return;
-    setSearch('');
-    setError(null);
-    setFilenameTouched(false);
-    setStamp(fileStamp());
-    setTablesLoading(true);
+    queueMicrotask(() => {
+      setSearch('');
+      setError(null);
+      setFilenameTouched(false);
+      setStamp(fileStamp());
+      setTablesLoading(true);
+    });
     let cancelled = false;
     (async () => {
       // Ba nguồn: getTables (table+view), getDatabaseObjects (routine), getAllTriggers.

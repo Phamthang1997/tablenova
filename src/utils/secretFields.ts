@@ -50,9 +50,9 @@ export function pickSecrets(config: any): SecretMap {
   return secrets;
 }
 
-/** Ghép bí mật read from kho HĐH trat lại config to đem đi kết nối / xuất file. */
+/** Merges secrets read from OS store back into config for connection / file export. */
 export function mergeSecrets(safe: any, secrets: SecretMap): any {
-  return { ...(safe || {}), ...secrets };
+  return { ...safe, ...secrets };
 }
 
 /** Config có còn bí mật nằm thẳng in đó not (profile cũ, or file import). */

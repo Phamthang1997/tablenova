@@ -213,7 +213,7 @@ export const DataGeneratorDialog: React.FC<DataGeneratorDialogProps> = ({ connId
           ...current,
           columns: current.columns.map((c) => {
             if (c.column !== column) return c;
-            const options = { ...(c.options ?? {}) };
+            const options = { ...c.options };
             if (value === '' || value === undefined) delete options[key];
             else options[key] = value;
             return { ...c, options };

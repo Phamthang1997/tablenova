@@ -52,13 +52,15 @@ export const CollectionTable: React.FC<CollectionTableProps> = ({
 
   // A new key (or a new type for the same name) resets everything, including the open editor.
   useEffect(() => {
-    setElements(initial.elements);
-    setCursor(initial.cursor);
-    setDone(initial.done);
-    setEditingId(null);
-    setAdding(false);
-    setFilter('');
-    setAppliedFilter('');
+    queueMicrotask(() => {
+      setElements(initial.elements);
+      setCursor(initial.cursor);
+      setDone(initial.done);
+      setEditingId(null);
+      setAdding(false);
+      setFilter('');
+      setAppliedFilter('');
+    });
   }, [initial]);
 
   const fetchPage = useCallback(async (from: string, replace: boolean, match: string) => {

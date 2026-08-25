@@ -85,17 +85,19 @@ export const RedisTransferDialog: React.FC<RedisTransferDialogProps> = ({
 
   useEffect(() => {
     if (!open) return;
-    setTab(initialTab);
-    setPrefix(initialPrefix);
-    setTypeFilter(initialTypeFilter);
-    setExported(null);
-    setSavedPath(null);
-    setFileName('');
-    setParsed(null);
-    setReplace(false);
-    setImported(null);
-    setProgress(null);
-    setRunning(false);
+    queueMicrotask(() => {
+      setTab(initialTab);
+      setPrefix(initialPrefix);
+      setTypeFilter(initialTypeFilter);
+      setExported(null);
+      setSavedPath(null);
+      setFileName('');
+      setParsed(null);
+      setReplace(false);
+      setImported(null);
+      setProgress(null);
+      setRunning(false);
+    });
     stopRef.current = false;
   }, [open, initialTab, initialPrefix, initialTypeFilter]);
 

@@ -35,12 +35,14 @@ export const BulkDeleteDialog: React.FC<BulkDeleteDialogProps> = ({
 
   useEffect(() => {
     if (!open) return;
-    setPattern(initialPattern);
-    setTypeFilter(initialTypeFilter);
-    setTyped('');
-    setRunning(false);
-    setProgress({ scanned: 0, deleted: 0 });
-    setResult(null);
+    queueMicrotask(() => {
+      setPattern(initialPattern);
+      setTypeFilter(initialTypeFilter);
+      setTyped('');
+      setRunning(false);
+      setProgress({ scanned: 0, deleted: 0 });
+      setResult(null);
+    });
   }, [open, initialPattern, initialTypeFilter]);
 
   if (!open) return null;

@@ -48,8 +48,10 @@ export const SequenceManagerModal: React.FC<SequenceManagerModalProps> = ({ conn
 
   const fetchSequences = useCallback(async () => {
     if (!connId) return;
-    setLoading(true);
-    setErrorMsg(null);
+    queueMicrotask(() => {
+      setLoading(true);
+      setErrorMsg(null);
+    });
     try {
       const list = await dbHelper.getSequences(connId);
       setSequences(list);
@@ -61,7 +63,7 @@ export const SequenceManagerModal: React.FC<SequenceManagerModalProps> = ({ conn
   }, [connId]);
 
   useEffect(() => {
-    fetchSequences();
+    queueMicrotask(() => void fetchSequences());
   }, [fetchSequences]);
 
   const handleRestart = async () => {

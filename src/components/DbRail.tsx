@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { Database, Lock } from 'lucide-react';
@@ -69,22 +69,27 @@ export const DbRail: React.FC<DbRailProps> = ({
   const [connections, setConnections] = useState<OpenConnection[]>([]);
   const [menu, setMenu] = useState<{ connId: string; top: number; left: number } | null>(null);
 
-  const reload = useCallback(async () => {
-    try {
-      setConnections(await dbHelper.listConnections());
-    } catch {
-      /* not connected yet -> nothing to draw */
-    }
-  }, []);
-
-  // `database-restored` is the existing event Sidebar and DataGrid already listen to; a restore can
-  // rename or drop the database a connection points at, which is what this column displays.
   useEffect(() => {
-    void reload();
-    const onRestored = () => void reload();
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await dbHelper.listConnections();
+        if (!cancelled) setConnections(list);
+      } catch {
+        /* not connected yet -> nothing to draw */
+      }
+    })();
+    const onRestored = () => {
+      void dbHelper.listConnections().then((list) => {
+        if (!cancelled) setConnections(list);
+      }).catch(() => {});
+    };
     window.addEventListener('database-restored', onRestored);
-    return () => window.removeEventListener('database-restored', onRestored);
-  }, [reload, reloadKey, activeConnId]);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('database-restored', onRestored);
+    };
+  }, [reloadKey, activeConnId]);
 
   // Hidden with one connection ONLY when that connection carries no warning.
   //

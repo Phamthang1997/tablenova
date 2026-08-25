@@ -99,14 +99,16 @@ export const AiSettingsModal: React.FC<AiSettingsModalProps> = ({ open, onClose 
   // Auto-fetch live models when modal opens if API key, Google Auth, or Ollama is ready
   useEffect(() => {
     if (!open || !currentProfile) return;
-    setGoogleAuth(getGoogleAuthState());
-    if (
-      currentProfile.provider === 'ollama' ||
-      currentProfile.apiKey ||
-      (currentProfile.provider === 'gemini' && getGoogleAuthState().isLoggedIn)
-    ) {
-      handleFetchLiveModels(currentProfile);
-    }
+    queueMicrotask(() => {
+      setGoogleAuth(getGoogleAuthState());
+      if (
+        currentProfile.provider === 'ollama' ||
+        currentProfile.apiKey ||
+        (currentProfile.provider === 'gemini' && getGoogleAuthState().isLoggedIn)
+      ) {
+        handleFetchLiveModels(currentProfile);
+      }
+    });
   }, [open, selectedProfileId, currentProfile, handleFetchLiveModels]);
 
   const handleUpdateProfile = (updates: Partial<AiAssistantProfile>) => {

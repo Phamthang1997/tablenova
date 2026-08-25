@@ -2197,7 +2197,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     const { pane, rowKey, col } = editingCell;
     setCellEdits(prev => {
       const paneEdits = { ...prev[pane] };
-      const rowEdits = { ...(paneEdits[rowKey] || {}) };
+      const rowEdits = { ...paneEdits[rowKey] };
       // Typed back to the original value -> drop it, so the Save button never counts a no-op.
       if (String(original ?? '') === editValue) delete rowEdits[col];
       else rowEdits[col] = editValue;

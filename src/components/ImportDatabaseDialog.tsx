@@ -171,20 +171,22 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
 
   useEffect(() => {
     if (!open) return;
-    setFile(null);
-    setSqlText('');
-    setTables([]);
-    setSelected([]);
-    setPreviewTables([]);
-    setShowPreviewPicker(false);
-    setSearch('');
-    setError(null);
-    setTab('tables');
-    setViewMode('visual');
-    setTargetDb('');
-    setDbFromFile(null);
-    setOverwrite(false);
-    setConfirming(false);
+    queueMicrotask(() => {
+      setFile(null);
+      setSqlText('');
+      setTables([]);
+      setSelected([]);
+      setPreviewTables([]);
+      setShowPreviewPicker(false);
+      setSearch('');
+      setError(null);
+      setTab('tables');
+      setViewMode('visual');
+      setTargetDb('');
+      setDbFromFile(null);
+      setOverwrite(false);
+      setConfirming(false);
+    });
   }, [open]);
 
   useEffect(() => {

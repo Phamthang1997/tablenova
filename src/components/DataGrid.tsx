@@ -892,7 +892,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
       } else {
         // Revert to original if match
         setUpdates(prev => {
-          const rowUpdates = { ...(prev[rowId] || {}) };
+          const rowUpdates = { ...prev[rowId] };
           delete rowUpdates[colName];
           const newUpdates = { ...prev };
           if (Object.keys(rowUpdates).length === 0) {

@@ -21,7 +21,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ dbIndex, onError }) => {
     else onError(res.error || t('redis.errInfo'));
   }, [onError, t]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const res = await dbHelper.redisInfo();
+      if (cancelled) return;
+      if (res.success) setInfo(res.info);
+      else onError(res.error || t('redis.errInfo'));
+    })();
+    return () => { cancelled = true; };
+  }, [onError, t]);
 
   useEffect(() => {
     if (!auto) return;

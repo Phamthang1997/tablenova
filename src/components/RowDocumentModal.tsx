@@ -129,17 +129,19 @@ export const RowDocumentModal: React.FC<RowDocumentModalProps> = ({
   const currentRow = rows[rowIndex] || null;
   const totalRows = rows.length;
 
-  // Lấy dữ liệu dạng JSON đẹp of row hiện tại
+  // Format clean JSON representation of active row
   useEffect(() => {
     if (currentRow) {
-      // Bỏ các thuộc tính nội bộ như __tempId
-      const cleanRow: Record<string, any> = {};
-      Object.keys(currentRow).forEach(k => {
-        if (!k.startsWith('__')) {
-          cleanRow[k] = currentRow[k];
-        }
+      queueMicrotask(() => {
+        // Strip internal properties like __tempId
+        const cleanRow: Record<string, any> = {};
+        Object.keys(currentRow).forEach(k => {
+          if (!k.startsWith('__')) {
+            cleanRow[k] = currentRow[k];
+          }
+        });
+        setJsonText(JSON.stringify(cleanRow, null, 2));
       });
-      setJsonText(JSON.stringify(cleanRow, null, 2));
     }
   }, [currentRow]);
 

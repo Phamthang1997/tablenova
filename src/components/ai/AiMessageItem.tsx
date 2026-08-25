@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Copy, Check, CornerDownLeft, Play, AlertCircle } from 'lucide-react';
 import { AiProviderIcon } from './AiIcons';
@@ -27,12 +27,12 @@ export const AiMessageItem: React.FC<AiMessageItemProps> = ({
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const formatTime = (ts: number) => {
+  const formatTime = useCallback((ts: number) => {
     const diff = Math.floor((Date.now() - ts) / 1000);
     if (diff < 60) return t('ai.justNow', 'Just Now');
     if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
     return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  };
+  }, [t]);
 
   // Render text with backticks highlighted as tags (like `film`, `category`)
   const renderFormattedText = (rawText: string) => {

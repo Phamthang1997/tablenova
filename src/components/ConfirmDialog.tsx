@@ -48,7 +48,9 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   const [typed, setTyped] = useState('');
 
   useEffect(() => {
-    if (open) setTyped('');
+    queueMicrotask(() => {
+      if (open) setTyped('');
+    });
   }, [open]);
 
   const ready = !requireText || typed.trim() === requireText;

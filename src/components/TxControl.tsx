@@ -39,30 +39,32 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected, connId 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [spName, setSpName] = useState('');
-  // Đồng hồ chỉ to vẽ lại phần "already open bao lâu"; `sinceMs` in status is ảnh chụp lúc backend send.
-  const [tick, setTick] = useState(0);
+  // Elapsed duration in seconds for open transaction
+  const [totalSec, setTotalSec] = useState(0);
   const [askOnClose, setAskOnClose] = useState(false);
-  const openedAtRef = useRef<number>(0);
-  // Handler close window chỉ đăng ký một lần; read status qua ref to not must gỡ/gắn lại
-  // mỗi when bộ đếm statement change.
+  // Handler close window registered once; reads status via ref to avoid re-binding
   const statusRef = useRef<TxStatus | null>(null);
-  statusRef.current = status;
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
 
   const refresh = useCallback(async () => {
     try {
       setStatus(await dbHelper.txStatus());
     } catch {
-      /* chưa kết nối -> preserve */
+      /* not connected -> preserve */
     }
   }, []);
 
   useEffect(() => {
     if (!connected) {
-      setStatus(null);
-      setOpen(false);
+      queueMicrotask(() => {
+        setStatus(null);
+        setOpen(false);
+      });
       return;
     }
-    void refresh();
+    queueMicrotask(() => void refresh());
     const un = listen<TxStatus>(TX_EVENT, (e) => {
       // Drop events belonging to another connection. `connId` is absent only on a backend older
       // than this window (tauri dev keeps the last binary that built), so treat a missing one as
@@ -75,30 +77,28 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected, connId 
     };
   }, [connected, connId, refresh]);
 
-  // Mốc time tính at client: backend chỉ send `sinceMs` tại thời điểm phát sự kiện, còn
-  // transaction can nằm im row phút mà not có sự kiện nào.
+  // Client-side timer: computes elapsed duration from transaction start
   useEffect(() => {
-    if (!status?.open) return;
-    openedAtRef.current = Date.now() - status.sinceMs;
-    const id = setInterval(() => setTick((n) => n + 1), 1000);
+    if (!status?.open) {
+      queueMicrotask(() => setTotalSec(0));
+      return;
+    }
+    const openedAt = Date.now() - status.sinceMs;
+    const update = () => {
+      const elapsedMs = Date.now() - openedAt;
+      setTotalSec(Math.max(0, Math.floor(elapsedMs / 1000)));
+    };
+    update();
+    const id = setInterval(update, 1000);
     return () => clearInterval(id);
   }, [status?.open, status?.sinceMs]);
 
-  // close app when còn change chưa commit = mất trắng. Chặn at `onCloseRequested` chứ not at nút
-  // × of TitleBar: Alt+F4 and nút close of hệ điều hành not đi qua nút đó.
-  //
-  // Listener `onCloseRequested` giờ do `closeGuard.ts` giữ, một cái unique for cả app: hai
-  // listener độc lập thì cái nào resolve trước will gọi `destroy()` and giết luôn hộp thoại of cái
-  // kia. Đây is blocker ưu tiên cao nhất — mất dữ liệu is not lấy lại is.
+  // Prevent data loss on uncommitted transactions during app close
   useEffect(() => registerCloseBlocker(CLOSE_PRIORITY_TX, async () => {
-    // Asks the BACKEND about every connection, not `statusRef` about the one on screen. Closing
-    // the window ends every session, so a per-connection answer would silently discard another
-    // connection's transaction — see `tx_any_pending`.
     let pending = false;
     try {
       pending = await dbHelper.txAnyPending();
     } catch {
-      // Backend unreachable: fall back to what this window knows rather than trapping the user.
       const s = statusRef.current;
       pending = !!s?.open && s.statements > 0;
     }
@@ -109,8 +109,6 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected, connId 
 
   if (!connected || !status) return null;
 
-  const elapsedMs = status.open ? Date.now() - openedAtRef.current : 0;
-  const totalSec = Math.max(0, Math.floor(elapsedMs / 1000));
   const elapsed =
     totalSec < 60
       ? t('tx.elapsedSec', { n: totalSec })
@@ -204,8 +202,8 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected, connId 
           onClick={handleButton}
           disabled={busy}
           title={summaryTitle}
-          // `tick` chỉ to buộc render lại mỗi giây for tooltip time open.
-          data-tick={tick}
+          // `totalSec` ensures re-render every second for elapsed tooltip.
+          data-tick={totalSec}
         >
           {hasPending && (
             <span

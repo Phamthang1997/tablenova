@@ -41,14 +41,16 @@ export const RoutineEditorModal: React.FC<RoutineEditorModalProps> = ({
 
   // Initialize paramValues when parsedParams change
   useEffect(() => {
-    setParamValues(prev => {
-      const initial: Record<string, string> = {};
-      parsedParams.forEach(p => {
-        if (p.mode === 'IN' || p.mode === 'INOUT') {
-          initial[p.name] = prev[p.name] !== undefined ? prev[p.name] : getDefaultValueForType(p.type);
-        }
+    queueMicrotask(() => {
+      setParamValues(prev => {
+        const initial: Record<string, string> = {};
+        parsedParams.forEach(p => {
+          if (p.mode === 'IN' || p.mode === 'INOUT') {
+            initial[p.name] = prev[p.name] !== undefined ? prev[p.name] : getDefaultValueForType(p.type);
+          }
+        });
+        return initial;
       });
-      return initial;
     });
   }, [parsedParams]);
 
