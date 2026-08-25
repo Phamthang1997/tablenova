@@ -1646,7 +1646,7 @@ const ja: typeof en = {
     downloadSql: '.sql をダウンロード',
   },
 
-  // So sánh hai database (DbCompareDialog + db_compare.rs)
+  // Database comparison (DbCompareDialog + db_compare.rs)
   compare: {
     title: '2つのデータベースを比較',
     sourceLabel: 'ソース (A)',
@@ -1772,7 +1772,7 @@ const ja: typeof en = {
     changeOther: 'その他',
   },
 
-  // Sinh dữ liệu test (DataGeneratorDialog + data_generator.rs)
+  // Test data generator (DataGeneratorDialog + data_generator.rs)
   dataGen: {
     title: 'テストデータを生成',
     titleWithDb: 'テストデータを生成 — {{db}}',
@@ -2175,7 +2175,7 @@ const ja: typeof en = {
     bulkDeleteProgress: "{{scanned}} 件スキャン、{{deleted}} 件削除…",
     bulkDeleteDone: "完了: {{scanned}} 件スキャン、{{deleted}} 件削除。",
     bulkDeleteCancelled: "キャンセル: {{scanned}} 件スキャン、{{deleted}} 件削除。",
-    // Xuất / nhập keyspace theo prefix (RedisTransferDialog + utils/redisTransfer.ts)
+    // Keyspace export / import by prefix (RedisTransferDialog + utils/redisTransfer.ts)
     ctxExportGroup: "このプレフィックス配下のキーをすべてエクスポート…",
     transferBtnTitle: "キーのエクスポート / インポート",
     transferTitle: "キーのエクスポート / インポート",
@@ -2481,7 +2481,7 @@ const ja: typeof en = {
     cancelled: 'キャンセルしました — セーフモードが確認を求めました。',
   },
 
-  // Giới hạn thời gian câu lệnh — cùng popover với Safe Mode. Xem stmtTimeout.ts.
+  // Statement timeout setting — shared popover with Safe Mode. See stmtTimeout.ts.
   stmtTimeout: {
     menuTitle: 'ステートメントの制限時間',
     off: 'なし',
@@ -2490,13 +2490,13 @@ const ja: typeof en = {
     hint: 'エディタのクエリやグリッドのページ読み込みがこの時間を超えたら停止します。リストア・データ生成・スキーマ変更は制限されません。',
   },
 
-  // Xem trước SQL trước khi grid lưu — công tắc nằm trong popover Safe Mode. Xem commitPreview.ts.
+  // Preview SQL before saving changes — toggle inside Safe Mode popover. See commitPreview.ts.
   commitPreview: {
     label: '保存前に SQL を確認',
     onDesc: 'グリッドが実行する文を表示し、確認を待ちます。',
     offDesc: 'グリッドはそのまま保存します。Safe Mode が有効なら引き続き確認します。',
   },
-  // Việc chạy nền (xuất/sao lưu, nhập/phục hồi, sinh dữ liệu). Xem utils/jobs.ts.
+  // Background jobs (export/backup, import/restore, data generator). See utils/jobs.ts.
   jobs: {
     panelTitle: 'バックグラウンド処理',
     trayRunning: '{{n}} 件実行中',

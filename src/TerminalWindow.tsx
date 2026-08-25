@@ -3,7 +3,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { TerminalPanel } from './components/TerminalPanel';
 import type { DbConnectionConfig } from './utils/dbHelper';
 
-// Root cho cửa sổ OS riêng chỉ chứa Terminal (mở qua openTerminalWindow -> ?term=<json>).
+// Root for standalone OS window containing only the Terminal (opened via openTerminalWindow -> ?term=<json>).
 export const TerminalWindow: React.FC<{ raw: string }> = ({ raw }) => {
   let config: DbConnectionConfig = { type: 'sqlite' };
   let profileName: string | undefined;
@@ -12,14 +12,14 @@ export const TerminalWindow: React.FC<{ raw: string }> = ({ raw }) => {
     config = parsed.config || config;
     profileName = parsed.profileName;
   } catch {
-    /* payload hỏng -> mở shell local mặc định */
+    /* corrupt payload -> fallback to default local shell */
   }
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#1c1c1e' }}>
       <TerminalPanel
-      // Cửa sổ terminal độc lập không có kết nối SQL nào của riêng nó; các lệnh log sẽ
-      // trả đúng lỗi "chưa kết nối" thay vì đi vào một kết nối tình cờ nào đó.
+      // Standalone terminal window has no SQL connection of its own; log commands will
+      // report "not connected" rather than attaching to an unintended ambient connection.
       connId=""
         config={config}
         profileName={profileName}

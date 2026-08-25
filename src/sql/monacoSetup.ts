@@ -12,7 +12,7 @@ import { loader } from '@monaco-editor/react';
 
 // Import workers directly using Vite's ?worker loader query
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
-// Worker cho monaco-sql-languages (parser + ngữ cảnh caret) theo dialect
+// Web workers for monaco-sql-languages (parser + caret context) by dialect
 import MySQLWorker from 'monaco-sql-languages/esm/languages/mysql/mysql.worker?worker';
 import PgSQLWorker from 'monaco-sql-languages/esm/languages/pgsql/pgsql.worker?worker';
 import GenericSQLWorker from 'monaco-sql-languages/esm/languages/generic/generic.worker?worker';
@@ -42,10 +42,10 @@ import GenericSQLWorker from 'monaco-sql-languages/esm/languages/generic/generic
   }
 };
 
-// Monaco đo bề rộng ký tự lúc khởi tạo. Nếu JetBrains Mono nạp xong SAU đó thì con trỏ
-// sẽ lệch khỏi chữ -> đo lại khi mọi font đã sẵn sàng.
+// Monaco measures font metrics on init. If JetBrains Mono finishes loading later,
+// caret misaligns; remeasures when document fonts are ready.
 if (typeof document !== 'undefined' && (document as any).fonts?.ready) {
-  (document as any).fonts.ready.then(() => monaco.editor.remeasureFonts()).catch(() => { /* bỏ qua */ });
+  (document as any).fonts.ready.then(() => monaco.editor.remeasureFonts()).catch(() => { /* ignore */ });
 }
 
 // Pack monaco directly into the loader config

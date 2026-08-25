@@ -27,7 +27,7 @@ describe('buildSql', () => {
   it('cắt thành nhiều câu khi vượt 500 dòng', () => {
     const sql = buildSql('users', ['id', 'name'], rows(1200), 'mysql');
     expect(sql.match(/INSERT INTO/g)).toHaveLength(3); // 500 + 500 + 200
-    // Mọi câu đều phải kết thúc bằng ';' để splitter cắt đúng.
+    // Mọi câu đều must kết thúc bằng ';' to splitter cắt đúng.
     for (const stmt of sql.split('\n').filter((l) => l.startsWith('INSERT INTO'))) {
       expect(stmt.endsWith('VALUES')).toBe(true);
     }
@@ -51,8 +51,8 @@ describe('buildSql', () => {
     expect(buildSql('t', ['a'], [{ a: 1 }], 'postgres')).toContain('INSERT INTO "t" ("a")');
   });
 
-  // parseInsert (xem trước lúc nhập) và buildSql (lúc xuất) là một cặp song sinh: dump gộp dòng
-  // phải đọc lại được đủ số dòng, nếu không popup Nhập báo sai số lượng.
+  // parseInsert (preview lúc nhập) and buildSql (lúc xuất) is một cặp song sinh: dump gộp row
+  // must read lại is đủ số row, if not popup Nhập báo sai số lượng.
   it('parseInsert đọc lại đúng số dòng của dump đã gộp', () => {
     const data = rows(1200);
     const sql = buildSql('users', ['id', 'name'], data, 'mysql');
@@ -81,8 +81,8 @@ describe('buildSql', () => {
 });
 
 describe('buildSql — cột nhị phân', () => {
-  // Backend giao ô BLOB dưới dạng mảng byte. Không đánh dấu cột thì nó thành chuỗi
-  // '[137,80,78,71,...]' — tệp gốc coi như mất mà không có lỗi nào báo.
+  // Backend giao ô BLOB under dạng mảng byte. not đánh dấu column thì nó thành string
+  // '[137,80,78,71,...]' — tệp gốc coi như mất mà not có error nào báo.
   const png = [137, 80, 78, 71, 13, 10, 26, 10];
 
   it('MySQL/SQLite ghi X\'..\', Postgres ghi \'\\x..\'::bytea', () => {
@@ -93,7 +93,7 @@ describe('buildSql — cột nhị phân', () => {
   });
 
   it('không đánh dấu thì giữ nguyên hành vi cũ (không tự đoán theo giá trị)', () => {
-    // Cột JSON chứa [1,2,3] không được biến thành hex -> phải nhìn KIỂU cột, không nhìn giá trị.
+    // column JSON chứa [1,2,3] not is biến thành hex -> must nhìn KIỂU column, not nhìn giá trị.
     expect(buildSql('t', ['j'], [{ j: [1, 2, 3] }], 'mysql')).toContain("'[1,2,3]'");
   });
 
@@ -114,8 +114,8 @@ describe('isBinaryType', () => {
     expect(isBinaryType('BLOB', 'sqlite')).toBe(true);
   });
 
-  // sakila: `address.location GEOMETRY NOT NULL`. Server trả về byte thô (SRID + WKB); coi nó
-  // là kiểu thường thì dump ghi ra '[0,0,0,...]' và lần nhập lại chết.
+  // sakila: `address.location GEOMETRY NOT NULL`. Server returns byte thô (SRID + WKB); coi nó
+  // is kiểu thường thì dump write ra '[0,0,0,...]' and lần nhập lại chết.
   it('nhận cả kiểu không gian của MySQL', () => {
     expect(isBinaryType('geometry', 'mysql')).toBe(true);
     expect(isBinaryType('point', 'mysql')).toBe(true);
@@ -127,7 +127,7 @@ describe('isBinaryType', () => {
     expect(isBinaryType('varchar(45)', 'mysql')).toBe(false);
     expect(isBinaryType('json', 'mysql')).toBe(false);
     expect(isBinaryType('text', 'postgres')).toBe(false);
-    // 'bytea' chỉ là kiểu của Postgres; ở MySQL không có kiểu nào tên vậy.
+    // 'bytea' chỉ is kiểu of Postgres; at MySQL not có kiểu nào tên vậy.
     expect(isBinaryType('text', 'sqlite')).toBe(false);
     expect(isBinaryType(null, 'mysql')).toBe(false);
   });
@@ -161,8 +161,8 @@ describe('stripDefiner', () => {
 });
 
 describe('wrapMysqlDelimiter', () => {
-  // Thân routine có ';' riêng, nên nếu không đổi delimiter thì bộ tách cắt giữa thân và server
-  // nhận được một câu CREATE PROCEDURE cụt.
+  // Thân routine có ';' riêng, nên if not đổi delimiter thì bộ tách cắt giữa thân and server
+  // receive is một câu CREATE PROCEDURE cụt.
   it('bộ tách đọc lại đúng MỘT câu cho mỗi routine', () => {
     const body = 'CREATE PROCEDURE p() BEGIN INSERT INTO t VALUES (1); INSERT INTO t VALUES (2); END';
     const wrapped = wrapMysqlDelimiter([body, 'CREATE TRIGGER tr AFTER INSERT ON t FOR EACH ROW BEGIN SET @a = 1; END']);
@@ -187,8 +187,8 @@ describe('wrapMysqlDelimiter', () => {
   });
 });
 
-// Bên xuất và bên đọc dump là một cặp: tên routine/trigger phải dò lại được từ chính
-// những câu mà export ghi ra, nếu không chúng không vào danh sách chọn lúc nhập.
+// Bên xuất and bên read dump is một cặp: tên routine/trigger must scan lại is from chính
+// những câu mà export write ra, if not chúng not ando danh sách select lúc nhập.
 describe('export -> parseDumpObjects', () => {
   it('dò lại được routine/trigger sau khi bọc DELIMITER và bỏ DEFINER', () => {
     const dump = wrapMysqlDelimiter([
@@ -248,7 +248,7 @@ describe('orderViewsByDependency', () => {
   const v = (name: string, sql: string) => ({ name, sql });
 
   it('view đọc view khác thì view kia đứng trước', () => {
-    // Đầu vào theo alphabet: `a_list` đọc `z_base` nhưng lại đứng trước.
+    // Đầu ando theo alphabet: `a_list` read `z_base` nhưng lại đứng trước.
     const out = orderViewsByDependency([
       v('a_list', 'CREATE VIEW `a_list` AS SELECT * FROM `z_base`;'),
       v('z_base', 'CREATE VIEW `z_base` AS SELECT * FROM film;'),
@@ -261,7 +261,7 @@ describe('orderViewsByDependency', () => {
       v('film_list', 'CREATE VIEW `film_list` AS SELECT * FROM film;'),
       v('nicer_but_slower_film_list', 'CREATE VIEW `nicer_but_slower_film_list` AS SELECT * FROM film;'),
     ]);
-    // Không view nào phụ thuộc view nào -> giữ nguyên thứ tự đầu vào.
+    // not view nào phụ thuộc view nào -> preserve thứ tự đầu ando.
     expect(out.map((x) => x.name)).toEqual(['film_list', 'nicer_but_slower_film_list']);
   });
 

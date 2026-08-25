@@ -51,7 +51,7 @@ export function formatMicros(us: number): string {
   return `${(us / 1_000_000).toFixed(2)} s`;
 }
 
-// Năm object `CSSProperties` từng ở đây (cellStyle, inlineInput, monoBox, logBox, pillStyle) đã
-// thành class trong `index.css`: `.redis-cell`, `.redis-inline-input`, `.redis-mono-box`,
-// `.redis-log-box`, `.redis-pill`. Chúng là inline CSS y như `style={{...}}`, chỉ khác là được đặt
-// tên — gom vào một object không làm nó bớt là inline style, và :hover/:focus thì vẫn không viết được.
+// CSS properties extracted to classes in `index.css`: `.redis-cell`, `.redis-inline-input`,
+// `.redis-mono-box`, `.redis-log-box`, `.redis-pill` adhering to project CSS guidelines.
+
+

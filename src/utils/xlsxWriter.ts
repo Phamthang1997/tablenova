@@ -1,10 +1,10 @@
-// Trình ghi XLSX tối giản, tự chứa (không phụ thuộc thư viện ngoài).
-// XLSX bản chất là một file ZIP chứa vài file XML. Ở đây ta:
-//   - Dựng ZIP dạng STORED (không nén) -> chỉ cần CRC32, không cần deflate. Excel/LibreOffice đọc bình thường.
-//   - Một sheet duy nhất, dùng inline string cho ô chữ, <v> cho ô số/bool.
-// Đủ dùng cho export dữ liệu bảng; không kèm styles/sharedStrings để giữ tối giản và chắc chắn hợp lệ.
+// Minimalist, self-contained XLSX generator (zero external dependencies).
+// XLSX files are ZIP packages containing structured XML files. Here we:
+//   - Build STORED uncompressed ZIP -> requires only CRC32, no deflate. Natively compatible with Excel/LibreOffice.
+//   - Single sheet using inline strings for text and <v> for numbers/booleans.
+// Optimized for table data exports; omits styles/sharedStrings to maintain minimal spec compliance.
 
-// ---- CRC32 (chuẩn PKZIP) ----
+// ---- CRC32 (PKZIP standard) ----
 let CRC_TABLE: Uint32Array | null = null;
 function crcTable(): Uint32Array {
   if (CRC_TABLE) return CRC_TABLE;
@@ -24,7 +24,7 @@ function crc32(bytes: Uint8Array): number {
   return (c ^ 0xffffffff) >>> 0;
 }
 
-// ---- Tiện ích byte ----
+// ---- Byte utilities ----
 const u16 = (n: number) => new Uint8Array([n & 0xff, (n >>> 8) & 0xff]);
 const u32 = (n: number) => new Uint8Array([n & 0xff, (n >>> 8) & 0xff, (n >>> 16) & 0xff, (n >>> 24) & 0xff]);
 
@@ -45,11 +45,11 @@ export interface ZipEntry {
   data: Uint8Array;
 }
 
-// Dựng archive ZIP dạng STORED từ danh sách file.
+// Builds STORED ZIP archive from file list.
 export function buildZip(entries: ZipEntry[]): Uint8Array {
   const enc = new TextEncoder();
   const DOS_TIME = 0; // 00:00:00
-  const DOS_DATE = 0x21; // 1980-01-01 (0<<9 | 1<<5 | 1) — ngày hợp lệ để tránh cảnh báo
+  const DOS_DATE = 0x21; // 1980-01-01 (0<<9 | 1<<5 | 1) — valid DOS timestamp avoiding warnings
 
   const locals: Uint8Array[] = [];
   const centrals: Uint8Array[] = [];
@@ -125,14 +125,14 @@ function xmlEsc(s: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;')
-    // loại ký tự control không hợp lệ trong XML 1.0 (giữ tab \t, xuống dòng \n, \r).
-    // Khớp thẳng vào ký tự control là CHỦ ĐÍCH ở đây — đó chính là thứ cần loại bỏ,
-    // nếu không Excel sẽ báo file hỏng. Nên tắt rule tại chỗ thay vì đổi regex.
+    // Strips control characters invalid in XML 1.0 (preserves tab \t, newlines \n, \r).
+    // Explicitly matching control characters is intentional to prevent corrupt Excel workbooks.
+    
     // oxlint-disable-next-line no-control-regex
     .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
 }
 
-// Chỉ số cột 0-based -> chữ cái cột Excel (0->A, 25->Z, 26->AA...).
+// 0-based column index -> Excel column letters (0->A, 25->Z, 26->AA...).
 function colLetter(i: number): string {
   let s = '';
   let n = i + 1;
@@ -144,7 +144,7 @@ function colLetter(i: number): string {
   return s;
 }
 
-// Tên sheet hợp lệ: bỏ ký tự cấm, tối đa 31 ký tự.
+// Valid sheet names: strips forbidden characters, max 31 characters.
 function sanitizeSheetName(name: string): string {
   const cleaned = (name || 'Sheet1').replace(/[\\/?*[\]:]/g, '_').slice(0, 31);
   return cleaned || 'Sheet1';
@@ -164,7 +164,7 @@ function cellXml(ref: string, value: any): string {
   return `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${xmlEsc(text)}</t></is></c>`;
 }
 
-// Dựng XML nội dung một worksheet từ tên cột + danh sách dòng.
+// Constructs worksheet XML from column names and row values.
 function buildSheetXml(colNames: string[], rows: any[]): string {
   const rowXmls: string[] = [];
   const headerCells = colNames.map((c, i) => cellXml(`${colLetter(i)}1`, c)).join('');
@@ -189,7 +189,7 @@ export interface XlsxSheet {
 }
 
 /**
- * Dựng workbook .xlsx nhiều sheet. Tên sheet được làm sạch và bảo đảm duy nhất (yêu cầu của Excel).
+ * Builds multi-sheet .xlsx workbook with sanitized, unique sheet names.
  */
 export function buildXlsxWorkbook(sheets: XlsxSheet[]): Uint8Array {
   const enc = new TextEncoder();
@@ -203,7 +203,7 @@ export function buildXlsxWorkbook(sheets: XlsxSheet[]): Uint8Array {
 
   list.forEach((s, i) => {
     const idx = i + 1;
-    // đảm bảo tên sheet duy nhất
+    // ensures unique sheet names
     let nm = sanitizeSheetName(s.name);
     if (used.has(nm.toLowerCase())) {
       const base = nm.slice(0, 27);
@@ -257,7 +257,7 @@ export function buildXlsxWorkbook(sheets: XlsxSheet[]): Uint8Array {
 }
 
 /**
- * Dựng file .xlsx một sheet (tiện dụng cho export một bảng).
+ * Builds single-sheet .xlsx workbook (optimized for single table export).
  */
 export function buildXlsx(sheetName: string, colNames: string[], rows: any[]): Uint8Array {
   return buildXlsxWorkbook([{ name: sheetName, colNames, rows }]);

@@ -1,13 +1,13 @@
-// Sửa tại chỗ tên/màu/môi trường của một profile kết nối đã lưu.
+// edit tại chỗ tên/màu/environment of một profile kết nối already save.
 //
-// Điểm ghi profile chính vẫn là `persistProfiles` trong ConnectionManager.tsx —
-// nó còn phải bóc bí mật ra khỏi config và đẩy sang kho bảo mật của HĐH trước
-// khi chạm localStorage. Hàm ở đây cố tình chỉ đọc-sửa-ghi ba trường nhãn
-// (`name`, `color`, `env`) trên bản ĐÃ nằm trong localStorage, tức bản đã bị bóc
-// bí mật, nên không có đường nào ghi mật khẩu trở lại.
+// Điểm write profile chính vẫn is `persistProfiles` in ConnectionManager.tsx —
+// nó còn must bóc bí mật ra khỏi config and đẩy sang OS secure keystore trước
+// when chạm localStorage. Hàm at đây cố tình read-only-edit-write ba trường nhãn
+// (`name`, `color`, `env`) on bản already nằm in localStorage, tức bản already is bóc
+// bí mật, nên not có đường nào write mật khẩu trat lại.
 //
-// Không có tranh chấp giữa hai chỗ ghi: ConnectionManager chỉ tồn tại khi chưa
-// kết nối, còn popover chi tiết kết nối chỉ mở được khi đã kết nối.
+// not có tranh chấp giữa hai chỗ write: ConnectionManager chỉ tồn tại when chưa
+// kết nối, còn popover chi tiết kết nối chỉ open is when already kết nối.
 
 import type { SavedProfile } from '../components/ConnectionManager';
 import type { ConnEnv } from './connEnv';
@@ -15,9 +15,9 @@ import type { ConnEnv } from './connEnv';
 const PROFILES_KEY = 'tf_connection_profiles';
 
 /**
- * Ghi `patch` vào profile có id tương ứng. Trả về `false` khi không tìm thấy
- * profile (kết nối dựng tay, chưa lưu thành profile) hoặc localStorage lỗi —
- * lúc đó phần hiển thị vẫn đổi được, chỉ là không nhớ sang lần sau.
+ * write `patch` ando profile có id tương ứng. returns `false` when not find thấy
+ * profile (kết nối build tay, chưa save thành profile) or localStorage error —
+ * lúc đó phần display vẫn đổi is, chỉ is not nhớ sang lần sau.
  */
 export function updateProfileDisplay(
   id: string,

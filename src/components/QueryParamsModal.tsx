@@ -44,7 +44,7 @@ export const QueryParamsModal: React.FC<QueryParamsModalProps> = ({
     const initial: Record<string, TypedParamValue> = {};
     params.forEach(p => {
       const prev = lastValues[p];
-      // Tương thích ngược: giá trị cũ lưu dạng chuỗi thuần -> nâng lên {value, type:'auto'}
+      // Tương thích ngược: giá trị cũ save dạng string thuần -> nâng lên {value, type:'auto'}
       if (typeof prev === 'string') {
         initial[p] = { value: prev, type: 'auto' };
       } else if (prev && typeof prev === 'object') {

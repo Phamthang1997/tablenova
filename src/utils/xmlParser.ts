@@ -1,11 +1,11 @@
-// Parser XML tối giản, thuần chuỗi — không dùng DOMParser.
+// Minimal string-based XML parser without DOMParser.
 //
-// Lý do tồn tại: XLSX do người dùng chọn là dữ liệu không tin cậy. Đưa chuỗi đó vào
-// DOMParser.parseFromString() là "diễn giải văn bản thành DOM" (CodeQL js/xss-through-dom).
-// Ở đây ta chỉ cần đọc tên thẻ / thuộc tính / văn bản, nên tự tách chuỗi ra cây dữ liệu
-// thường: không tạo node DOM, không chạy script, không phân giải entity ngoài (không XXE).
+// Rationale: User-uploaded XLSX files are untrusted. Passing raw XML into
+// DOMParser.parseFromString() risks DOM-based XSS (CodeQL js/xss-through-dom).
+// We only need tags, attributes, and text; this pure tokenizer builds a lightweight data tree
+// with zero live DOM nodes, zero script execution, and zero XXE external entity expansion.
 //
-// API bắt chước phần DOM mà xlsxReader cần: getElementsByTagName / getAttribute / textContent.
+// Minimal DOM-like API tailored for xlsxReader: getElementsByTagName / getAttribute / textContent.
 
 import i18n from '../i18n';
 
@@ -17,8 +17,8 @@ const XML_ENTITIES: Record<string, string> = {
   apos: "'",
 };
 
-// Chỉ giải mã 5 entity dựng sẵn của XML + tham chiếu ký tự số.
-// Entity tự định nghĩa (kể cả entity ngoài) được giữ nguyên dạng chữ, không phân giải.
+// Decodes only the 5 standard XML built-in entities + numeric character references.
+// Custom entities (including external entities) are preserved verbatim, preventing XXE.
 export function decodeXmlEntities(s: string): string {
   if (s.indexOf('&') < 0) return s;
   return s.replace(/&(#[0-9]+|#[xX][0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9._-]*);/g, (m, ent: string) => {
@@ -37,7 +37,7 @@ export function decodeXmlEntities(s: string): string {
   });
 }
 
-// Phần tên sau dấu ':' (bỏ prefix namespace), vd 'r:id' -> 'id'.
+// Local name after ':' (strips namespace prefix), e.g. 'r:id' -> 'id'.
 function localPart(name: string): string {
   const i = name.indexOf(':');
   return i < 0 ? name : name.slice(i + 1);
@@ -47,9 +47,9 @@ export class XmlElement {
   readonly name: string;
   readonly localName: string;
   readonly attrs: Map<string, string>;
-  /** Con trực tiếp là phần tử (dùng cho duyệt cây). */
+  /** Direct element children for tree traversal. */
   readonly children: XmlElement[] = [];
-  /** Con trực tiếp gồm cả chuỗi văn bản, giữ đúng thứ tự tài liệu. */
+  /** Direct children including text fragments in document order. */
   readonly nodes: Array<string | XmlElement> = [];
 
   constructor(name: string, attrs: Map<string, string>) {
@@ -58,14 +58,14 @@ export class XmlElement {
     this.attrs = attrs;
   }
 
-  /** Nối toàn bộ văn bản của phần tử này và mọi hậu duệ, theo thứ tự tài liệu. */
+  /** Concatenates text content of element and all descendants in document order. */
   get textContent(): string {
     let out = '';
     for (const n of this.nodes) out += typeof n === 'string' ? n : n.textContent;
     return out;
   }
 
-  /** Khớp tên đầy đủ trước, sau đó khớp phần local (chấp nhận file có prefix namespace). */
+  /** Matches full tag name first, then local name (handles prefixed XML files). */
   getAttribute(name: string): string | null {
     const exact = this.attrs.get(name);
     if (exact !== undefined) return exact;
@@ -76,7 +76,7 @@ export class XmlElement {
     return null;
   }
 
-  /** Hậu duệ khớp tên (đầy đủ hoặc phần local), theo thứ tự tài liệu — như DOM. */
+  /** Descendant elements matching tag name in document order. */
   getElementsByTagName(name: string): XmlElement[] {
     const local = localPart(name);
     const out: XmlElement[] = [];
@@ -93,7 +93,7 @@ export class XmlElement {
 
 export class XmlParseError extends Error {}
 
-// Tìm '>' kết thúc thẻ, bỏ qua '>' nằm trong chuỗi trích dẫn của thuộc tính.
+// Locates closing '>', skipping '>' inside quoted attribute strings.
 function findTagEnd(text: string, start: number): number {
   let quote = '';
   for (let i = start + 1; i < text.length; i++) {
@@ -109,7 +109,7 @@ function findTagEnd(text: string, start: number): number {
   return -1;
 }
 
-// Bỏ qua '<!DOCTYPE ...>' và khai báo '<! ...>' khác, kể cả internal subset '[...]'.
+// Skips '<!DOCTYPE ...>' declarations including internal subsets '[...]'.
 function skipDeclaration(text: string, start: number): number {
   let depth = 0;
   let quote = '';
@@ -144,12 +144,12 @@ function parseAttrs(src: string): Map<string, string> {
 }
 
 /**
- * Phân tích chuỗi XML thành cây `XmlElement`.
+ * Parses XML string into `XmlElement` tree.
  *
- * Phần tử trả về là node gốc ảo `#document`: dùng `getElementsByTagName` trên nó để tìm
- * phần tử ở bất kỳ độ sâu nào (kể cả phần tử gốc thật của tài liệu).
+ * Root node is virtual `#document`: use `getElementsByTagName` to query elements at any depth.
+ 
  *
- * Ném `XmlParseError` khi XML không hợp lệ (thẻ không đóng, thẻ đóng lệch, ...).
+ * Throws `XmlParseError` on malformed XML (unclosed tags, mismatched tags, etc.).
  */
 export function parseXml(text: string): XmlElement {
   const root = new XmlElement('#document', new Map());
@@ -178,7 +178,7 @@ export function parseXml(text: string): XmlElement {
     if (text.startsWith('<![CDATA[', lt)) {
       const end = text.indexOf(']]>', lt + 9);
       if (end < 0) throw new XmlParseError(i18n.t('errors.xmlCdataNotClosed'));
-      addText(text.slice(lt + 9, end), false); // CDATA: giữ nguyên, không giải mã entity
+      addText(text.slice(lt + 9, end), false); // CDATA: preserved verbatim without entity decoding
       i = end + 3;
       continue;
     }

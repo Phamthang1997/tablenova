@@ -96,7 +96,7 @@ describe('splitStatements — lệnh DELIMITER của MySQL', () => {
     const body = stmts[1].text;
     expect(body).toContain('UPDATE stats');
     expect(body).toContain('INSERT INTO audit');
-    expect(body.endsWith('END')).toBe(true); // '//' không bị gửi kèm
+    expect(body.endsWith('END')).toBe(true); // '//' not is send kèm
   });
 
   it('không bao giờ trả chính dòng DELIMITER thành câu lệnh', () => {
@@ -148,13 +148,13 @@ describe('splitStatements — lệnh DELIMITER của MySQL', () => {
   });
 
   it('không nhận DELIMITER khi không ở đầu dòng', () => {
-    // 'SELECT 1 DELIMITER //' là SQL sai, nhưng tuyệt đối không được đổi dấu kết thúc câu
+    // 'SELECT 1 DELIMITER //' is SQL sai, nhưng tuyệt đối not is đổi dấu kết thúc câu
     expect(splitStatements('SELECT 1 DELIMITER //; SELECT 2;')).toHaveLength(2);
   });
 });
 
-// SQLite không có lệnh DELIMITER, nên thân trigger phải được nhận diện ngay ở bộ tách —
-// nếu không, dump xuất ra có trigger sẽ không nhập lại được ("incomplete input").
+// SQLite not có lệnh DELIMITER, nên thân trigger must is receive diện ngay at bộ tách —
+// if not, dump xuất ra có trigger will not nhập lại is ("incomplete input").
 describe('splitStatements — thân trigger BEGIN...END', () => {
   it('giữ nguyên một câu CREATE TRIGGER dù thân có nhiều dấu ;', () => {
     const sql = [
@@ -233,8 +233,8 @@ describe('resolveAliases', () => {
   });
 
   it('bảng ngay sau một bảng không alias vẫn được nhận', () => {
-    // Trước đây nhóm alias khớp rồi mới loại 'JOIN', nên con trỏ regex đã trượt qua và
-    // 'b' bị bỏ hẳn — hover trên b.* không tra được bảng.
+    // Trước đây nhóm alias khớp rồi mới loại 'JOIN', nên con trỏ regex already trượt qua and
+    // 'b' is bỏ hẳn — hover on b.* not tra is table.
     const m = resolveAliases('SELECT * FROM a JOIN b ON a.id = b.id');
     expect(m.get('a')).toBe('a');
     expect(m.get('b')).toBe('b');
@@ -261,9 +261,9 @@ describe('collectTableRefs', () => {
     expect(collectTableRefs('SELECT * FROM orders WHERE x = 1')[0].alias).toBeUndefined();
   });
 
-  // Hai ca dưới đây là lý do hàm này tồn tại: parser ANTLR trả entity thiếu/rỗng khi câu
-  // lệnh còn gõ dở (Postgres bỏ mất bảng vừa JOIN ở ca 1; MySQL trả 0 entity ở ca 2),
-  // làm mất alias -> gợi ý cột rơi về "mọi bảng" và không gợi ý được điều kiện JOIN.
+  // Hai ca under đây is lý do hàm này tồn tại: parser ANTLR trả entity thiếu/rỗng when câu
+  // lệnh còn gõ dat (Postgres bỏ mất table vừa JOIN at ca 1; MySQL trả 0 entity at ca 2),
+  // ism mất alias -> suggestion column rơi về "mọi table" and not suggestion is điều kiện JOIN.
   it('câu JOIN chưa gõ điều kiện: vẫn thấy cả hai bảng', () => {
     const refs = collectTableRefs('SELECT * FROM city c\nJOIN address a on ');
     expect(refs).toEqual([
@@ -315,8 +315,8 @@ describe('statementAt', () => {
 });
 
 describe('analyzeStatements', () => {
-  // Đường tô sáng câu lệnh dùng analyzeStatements (mask 1 lần) thay cho splitStatements + statementAt
-  // -> phải cho cùng kết quả ở MỌI vị trí con trỏ.
+  // Đường tô sáng statement dùng analyzeStatements (mask 1 lần) thay for splitStatements + statementAt
+  // -> must for cùng kết quả at MỌI cursor position.
   const samples = [
     'SELECT 1;\nSELECT 2;\nSELECT 3',
     "SELECT * FROM t WHERE a = 'x;y'; SELECT 2;",
@@ -385,7 +385,7 @@ describe('formatSql', () => {
     const out = formatSql(src, 'postgres');
     expect(out).toContain('WITH');
     expect(out).toContain('JOIN');
-    // Không được mất mệnh đề nào
+    // not is mất mệnh đề nào
     expect(out.toLowerCase()).toContain('recent');
     expect(out.toLowerCase()).toContain('orders');
   });
@@ -399,7 +399,7 @@ describe('formatSql', () => {
   });
 
   it('trả nguyên văn khi đang gõ dở / parser lỗi (không làm hỏng nội dung)', () => {
-    // sql-formatter ném lỗi với ngoặc chưa đóng hoặc chuỗi chưa kết thúc
+    // sql-formatter ném error with ngoặc chưa close or string chưa kết thúc
     for (const broken of ['SELECT * FROM (', "SELECT 'chưa đóng nháy"]) {
       expect(formatSql(broken, 'mysql')).toBe(broken);
     }
@@ -412,7 +412,7 @@ describe('formatSql', () => {
 
 describe('minifySql', () => {
   it('nén về 1 dòng và bỏ comment', () => {
-    const src = 'SELECT a,\n  b -- ghi chú\nFROM t /* khối */\nWHERE a = 1';
+    const src = 'SELECT a,\n  b -- write chú\nFROM t /* khối */\nWHERE a = 1';
     expect(minifySql(src)).toBe('SELECT a, b FROM t WHERE a = 1');
   });
 
@@ -421,7 +421,7 @@ describe('minifySql', () => {
     expect(minifySql(src)).toBe("SELECT 'a   b', c FROM t");
   });
 
-  it('không phá chuỗi có -- hoặc /* bên trong', () => {
+  it('not phá string có -- or /* bên in', () => {
     const src = "SELECT 'a -- b', '/* c */'   FROM t";
     expect(minifySql(src)).toBe("SELECT 'a -- b', '/* c */' FROM t");
   });
@@ -455,7 +455,7 @@ describe('findUnsafeStatements', () => {
     expect(kinds('UPDATE users SET active = 0 WHERE id = 1')).toEqual([]);
   });
 
-  // Cùng luật mask với DELETE: WHERE nằm trong chuỗi không cứu được câu lệnh.
+  // Cùng luật mask with DELETE: WHERE nằm in string not cứu is statement.
   it('vẫn cảnh báo UPDATE khi WHERE chỉ nằm trong chuỗi', () => {
     expect(kinds("UPDATE users SET note = 'no WHERE here'")).toEqual(['updateNoWhere']);
   });
@@ -485,13 +485,13 @@ describe('findUnsafeStatements', () => {
     expect(kinds(sql)).toEqual(['deleteNoWhere', 'dropTable']);
   });
 
-  // WHERE nằm trong comment thì không chạy -> vẫn phải cảnh báo (hướng an toàn).
+  // WHERE nằm in comment thì not run -> vẫn must warning (hướng an toàn).
   it('không bị comment qua mặt', () => {
     expect(kinds('DELETE FROM t -- WHERE id = 1')).toEqual(['deleteNoWhere']);
     expect(kinds('DELETE FROM t /* WHERE id = 1 */')).toEqual(['deleteNoWhere']);
   });
 
-  // Ngược lại: từ khoá nằm trong chuỗi/tên có nháy không được tính là câu lệnh thật.
+  // Ngược lại: from key nằm in string/tên có nháy not is tính is statement thật.
   it('không báo nhầm khi DROP TABLE nằm trong chuỗi', () => {
     expect(kinds("DELETE FROM logs WHERE msg = 'drop table x'")).toEqual([]);
     expect(kinds("INSERT INTO t VALUES ('DELETE FROM u')")).toEqual([]);
@@ -537,7 +537,7 @@ describe('valuePosition', () => {
     expect(valuePosition('SELECT * FROM t WHERE status')).toBeNull();
     expect(valuePosition('SELECT * FROM t WHERE ')).toBeNull();
     expect(valuePosition("SELECT * FROM t WHERE status = 'a'")).toBeNull();
-    expect(valuePosition('SELECT * FROM t WHERE 1 = ')).toBeNull(); // số không phải tên cột
+    expect(valuePosition('SELECT * FROM t WHERE 1 = ')).toBeNull(); // số not must tên column
   });
 });
 
@@ -585,7 +585,7 @@ describe('describeStatement', () => {
 });
 
 describe('enclosingCall', () => {
-  // `|` đánh dấu con trỏ; ký tự đó bị bỏ ra trước khi gọi.
+  // `|` đánh dấu con trỏ; character đó is bỏ ra trước when gọi.
   const at = (marked: string) => {
     const offset = marked.indexOf('|');
     return enclosingCall(marked.slice(0, offset) + marked.slice(offset + 1), offset);
@@ -607,8 +607,8 @@ describe('enclosingCall', () => {
   });
 
   it('ngoặc dùng để nhóm biểu thức không phải lời gọi hàm', () => {
-    // `SELECT` có mục trong bộ tài liệu, nên nới lỏng chỗ này là mỗi lần mở ngoặc lại nhảy ra
-    // bảng cú pháp của SELECT.
+    // `SELECT` có mục in bộ tài liệu, nên nới lỏng chỗ này is mỗi lần open ngoặc lại nhảy ra
+    // table cú pháp of SELECT.
     expect(at('SELECT (a + |')).toBeNull();
     expect(at('SELECT count (|')).toBeNull();
   });

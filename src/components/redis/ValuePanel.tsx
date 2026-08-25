@@ -34,8 +34,8 @@ export const ValuePanel: React.FC<ValuePanelProps> = ({
   const kind: string = v.kind ?? detail.type;
 
   const badge = (
-    // Màu tra theo kiểu key nên phải ở inline: TYPE_COLORS là bảng trong TS, tách thành sáu class
-    // là thêm một cặp phải giữ đồng bộ bằng tay. Cùng lý lẽ với badge trong KeyList.
+    // Dynamic badge color mapped from TYPE_COLORS dictionary based on runtime key type.
+    
     <span className="redis-row-type" style={{ background: TYPE_COLORS[detail.type] || '#64748b' }}>
       {detail.type}
     </span>

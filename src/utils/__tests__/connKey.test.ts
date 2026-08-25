@@ -80,7 +80,7 @@ describe('scopeKey', () => {
   });
 
   it('lets an explicit database win over the one in the config', () => {
-    // Đổi database (USE / switch_database) không dựng lại config, nên phải truyền tay.
+    // Đổi database (USE / switch_database) not build lại config, nên must truyền tay.
     expect(scopeKey(mysql(), 'world')).toBe('mysql:localhost:3306/world');
   });
 
@@ -99,7 +99,7 @@ describe('scopeKey', () => {
   });
 
   it('spells `public` exactly like a key written before schemas existed', () => {
-    // Bỏ hậu tố cho public là cách người dùng cũ không mất tab khi nâng cấp.
+    // Bỏ hậu tố for public is cách user cũ not mất tab when nâng cấp.
     const before = scopeKey(pg(), 'shop');
     expect(scopeKey(pg(), 'shop', 'public')).toBe(before);
     expect(scopeKey(pg(), 'shop', null)).toBe(before);

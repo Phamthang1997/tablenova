@@ -4,7 +4,7 @@ import { dbHelper } from '../utils/dbHelper';
 import { Save, Copy, CheckCircle, AlertTriangle, Eye } from 'lucide-react';
 
 interface ViewEditorModalProps {
-  /** Kết nối mà component này thao tác lên. Truyền tường minh, không đọc id ambient (§4.1). */
+  /** Kết nối mà component này thao tác lên. Truyền tường minh, not read id ambient (§4.1). */
   connId: string;
   name: string;
   initialSql: string;

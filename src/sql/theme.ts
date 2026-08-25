@@ -1,8 +1,8 @@
-// Theme Monaco riêng cho TableNova.
-// Không dùng trực tiếp bộ màu token của monaco-sql-languages (vs-plus) vì ở chế độ Sáng nó
-// đặt comment = #B1B4C5 và dấu/toán tử = #7D98B1 (nhạt tới mức khó đọc), keyword = #3300FF
-// và scope = #E221DA (chói). Ở đây định nghĩa bảng màu riêng: TÊN BẢNG/CỘT (identifier) là
-// thành phần tương phản nhất — đúng thứ tự ưu tiên khi đọc SQL trong một trình quản lý DB.
+// Custom Monaco theme for TableNova.
+// Avoids direct monaco-sql-languages token palette (vs-plus) because in Light mode it
+// sets comment = #B1B4C5 and operators = #7D98B1 (hard to read), keyword = #3300FF
+// and scope = #E221DA (harsh). Custom palette prioritizes TABLE/COLUMN NAMES (identifier) as
+// highest-contrast elements — the natural reading priority for SQL database tools.
 import * as monaco from 'monaco-editor';
 
 export const SQL_THEME_DARK = 'tablenova-sql-dark';
@@ -12,7 +12,7 @@ export function sqlThemeName(theme: 'dark' | 'light' | undefined): string {
   return theme === 'light' ? SQL_THEME_LIGHT : SQL_THEME_DARK;
 }
 
-// token class của monaco-sql-languages có hậu tố '.sql' (vd 'keyword.sql')
+// monaco-sql-languages token classes have '.sql' suffix (e.g. 'keyword.sql')
 const t = (token: string) => `${token}.sql`;
 
 type Rule = monaco.editor.ITokenThemeRule;
@@ -46,20 +46,20 @@ function rulesFor(c: Record<string, string>): Rule[] {
     { token: t('operator.symbol'), foreground: c.punct },
     { token: t('variable'), foreground: c.variable },
   ];
-  // Áp cho cả language 'sql' mặc định của Monaco (token không có hậu tố .sql)
+  // Applies to default Monaco 'sql' language too (tokens without .sql suffix)
   return rules.concat(rules.map(r => ({ ...r, token: String(r.token).replace(/\.sql$/, '') })));
 }
 
 const darkTokens = {
-  keyword: '7fb3ff',    // xanh dịu — từ khoá
-  scope: 'd8a0f0',      // tím nhạt — WITH/UNION/CASE...
-  identifier: 'e6edf7', // tên bảng/cột: sáng nhất, dễ đọc nhất
-  func: 'e5d68a',       // hàm dựng sẵn
-  type: '6fd3c0',       // kiểu dữ liệu
-  string: '7ee2a8',     // chuỗi
-  number: 'f5b97a',     // số
-  comment: '7c8899',    // comment: mờ nhưng vẫn đọc được
-  punct: 'b6c2d1',      // dấu câu / toán tử
+  keyword: '7fb3ff',    // soft blue — keywords
+  scope: 'd8a0f0',      // soft purple — WITH/UNION/CASE...
+  identifier: 'e6edf7', // table/column names: high contrast, most readable
+  func: 'e5d68a',       // built-in functions
+  type: '6fd3c0',       // data types
+  string: '7ee2a8',     // strings
+  number: 'f5b97a',     // numbers
+  comment: '7c8899',    // comment: muted but legible
+  punct: 'b6c2d1',      // punctuation / operators
   variable: '7fd6ff',
 };
 
@@ -76,7 +76,7 @@ const lightTokens = {
   variable: '0f766e',
 };
 
-// Nền editor hơi trong suốt để lộ lớp kính của cửa sổ (app dùng decorations: false + vibrancy).
+// Subtle editor background transparency exposing window vibrancy (decorations: false + vibrancy).
 const darkColors: monaco.editor.IColors = {
   'editor.background': '#10121899',
   'editor.foreground': '#e6edf7',
@@ -103,7 +103,7 @@ const darkColors: monaco.editor.IColors = {
   'editorWidget.background': '#1c202af7',
   'editorWidget.foreground': '#e6edf7',
   'editorWidget.border': '#ffffff29',
-  // Panel gợi ý: chữ phải rõ ở cả dòng thường và dòng đang chọn
+  // Suggestion panel: crisp text on both normal and active rows
   'editorSuggestWidget.background': '#181b23fc',
   'editorSuggestWidget.border': '#ffffff29',
   'editorSuggestWidget.foreground': '#dbe4f0',
@@ -176,7 +176,7 @@ const lightColors: monaco.editor.IColors = {
   'menu.border': '#0f172a26',
 };
 
-/** Đăng ký 2 theme (defineTheme ghi đè theo tên nên gọi lại khi HMR là an toàn). */
+/** Registers 2 themes (defineTheme overwrites by name, safe across HMR). */
 export function defineSqlThemes(): void {
   monaco.editor.defineTheme(SQL_THEME_DARK, {
     base: 'vs-dark',

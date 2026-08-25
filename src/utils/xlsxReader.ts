@@ -1,7 +1,7 @@
-// Đọc file .xlsx phía client (không phụ thuộc thư viện ngoài) -> mảng object keyed theo header hàng đầu.
-// Tự giải nén ZIP: entry STORED copy thẳng, entry DEFLATE giải nén bằng DecompressionStream('deflate-raw') native.
-// Parse XML bằng parser chuỗi tự viết (./xmlParser) — cố tình KHÔNG dùng DOMParser: nội dung
-// file do người dùng chọn là dữ liệu không tin cậy, không nên diễn giải thành DOM.
+// Client-side .xlsx reader (zero dependencies) -> array of objects keyed by first row headers.
+// Pure ZIP decompressor: STORED entries copied directly, DEFLATE unpacked via native DecompressionStream('deflate-raw').
+// Parses XML using lightweight custom parser (./xmlParser) — deliberately avoids DOMParser:
+// user-provided files are untrusted data and must not be parsed into live DOM nodes.
 
 import { parseXml, XmlParseError, type XmlElement } from './xmlParser';
 import i18n from '../i18n';
@@ -20,10 +20,10 @@ interface ZipEntry {
   offset: number;
 }
 
-// Đọc central directory của ZIP để liệt kê entry.
+// Reads ZIP central directory to enumerate entries.
 function readZipEntries(buf: Uint8Array): ZipEntry[] {
   const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
-  // Tìm End Of Central Directory (0x06054b50) từ cuối file.
+  // Finds End Of Central Directory record (0x06054b50) from end of file.
   let eocd = -1;
   const minPos = Math.max(0, buf.length - 22 - 65536);
   for (let i = buf.length - 22; i >= minPos; i--) {
@@ -53,7 +53,7 @@ function readZipEntries(buf: Uint8Array): ZipEntry[] {
   return entries;
 }
 
-// Lấy dữ liệu (đã giải nén) của một entry.
+// Retrieves uncompressed entry payload.
 async function readEntryData(buf: Uint8Array, entry: ZipEntry): Promise<Uint8Array> {
   const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
   if (dv.getUint32(entry.offset, true) !== 0x04034b50) throw new Error(i18n.t('errors.zipLocalHeader'));
@@ -66,7 +66,7 @@ async function readEntryData(buf: Uint8Array, entry: ZipEntry): Promise<Uint8Arr
   throw new Error(i18n.t('errors.zipMethodUnsupported', { method: entry.method }));
 }
 
-// Bọc parser để lỗi cú pháp hiện ra dưới dạng thông báo quen thuộc của luồng import.
+// Wraps parser so syntax errors surface as user-friendly import validation messages.
 function parseXmlPart(text: string): XmlElement {
   try {
     return parseXml(text);
@@ -76,7 +76,7 @@ function parseXmlPart(text: string): XmlElement {
   }
 }
 
-// Bảng sharedStrings: mỗi <si> có thể chứa nhiều <t> (rich text) -> nối lại.
+// sharedStrings table: concatenates multiple rich text <t> nodes within each <si>.
 function parseSharedStrings(doc: XmlElement): string[] {
   const out: string[] = [];
   const sis = doc.getElementsByTagName('si');
@@ -89,7 +89,7 @@ function parseSharedStrings(doc: XmlElement): string[] {
   return out;
 }
 
-// Ref ô ("B3") -> chỉ số cột 0-based.
+// Cell reference ("B3") -> 0-based column index.
 function colIndexFromRef(ref: string): number {
   let i = 0;
   for (let k = 0; k < ref.length; k++) {
@@ -101,18 +101,18 @@ function colIndexFromRef(ref: string): number {
   return i - 1;
 }
 
-// numFmtId dựng sẵn của Excel thuộc nhóm ngày/giờ.
+// Built-in Excel date/time format IDs.
 const BUILTIN_DATE_FMT = new Set([
   14, 15, 16, 17, 18, 19, 20, 21, 22, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 45, 46, 47, 50, 51, 52, 53, 54, 55, 56, 57, 58,
 ]);
 
-// Heuristic: formatCode tuỳ biến có ký tự y/m/d/h/s (ngoài chuỗi trích dẫn/escape) -> định dạng ngày giờ.
+// Heuristic: custom formatCodes containing unescaped y/m/d/h/s characters denote datetime.
 function looksLikeDateFormat(code: string): boolean {
   const stripped = code.replace(/"[^"]*"/g, '').replace(/\\./g, '');
   return /[ymdhs]/i.test(stripped);
 }
 
-// Parse styles.xml -> mảng boolean theo chỉ số cellXfs: cột (style) đó có phải định dạng ngày không.
+// Parses styles.xml -> boolean array for cellXfs indices: whether style represents date format.
 function parseStyles(doc: XmlElement): boolean[] {
   const customIsDate = new Map<number, boolean>();
   const numFmts = doc.getElementsByTagName('numFmt');
@@ -134,9 +134,9 @@ function parseStyles(doc: XmlElement): boolean[] {
   return result;
 }
 
-// Đổi số serial ngày của Excel sang chuỗi 'YYYY-MM-DD' (hoặc kèm giờ nếu có phần thập phân).
+// Converts Excel serial date numbers to 'YYYY-MM-DD' strings (with time if fractional).
 function excelSerialToDate(serial: number, date1904: boolean): string {
-  const epoch = date1904 ? Date.UTC(1904, 0, 1) : Date.UTC(1899, 11, 30); // baseline xử lý bug năm nhuận 1900
+  const epoch = date1904 ? Date.UTC(1904, 0, 1) : Date.UTC(1899, 11, 30); // handles Excel 1900 leap year bug baseline
   const d = new Date(epoch + Math.round(serial * 86400000));
   const pad = (n: number) => String(n).padStart(2, '0');
   const ymd = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
@@ -157,11 +157,11 @@ function cellValue(c: XmlElement, shared: string[], xfIsDate: boolean[], date190
   if (t === 's') return shared[parseInt(raw, 10)] ?? '';
   if (t === 'b') return raw === '1';
   if (t === 'str') return raw;
-  // số hoặc rỗng
+  // number or empty
   if (raw === '') return null;
   const num = Number(raw);
   if (!Number.isFinite(num)) return raw;
-  // Ô số có style định dạng ngày -> đổi serial sang chuỗi ngày.
+  // Numeric cell with date format style -> converts serial number to date string.
   const s = c.getAttribute('s');
   if (s !== null && xfIsDate[parseInt(s, 10)]) return excelSerialToDate(num, date1904);
   return num;
@@ -188,7 +188,7 @@ function parseSheet(doc: XmlElement, shared: string[], xfIsDate: boolean[], date
   const rows: any[] = [];
   for (let r = 1; r < matrix.length; r++) {
     const arr = matrix[r] || [];
-    // bỏ hàng hoàn toàn rỗng
+    // skip completely empty rows
     if (arr.every((v) => v === null || v === undefined || v === '')) continue;
     const obj: any = {};
     header.forEach((h, i) => {
@@ -201,7 +201,7 @@ function parseSheet(doc: XmlElement, shared: string[], xfIsDate: boolean[], date
 }
 
 /**
- * Parse buffer .xlsx -> mảng object (dòng dữ liệu, keyed theo header ở hàng đầu của sheet đầu tiên).
+ * Parses .xlsx buffer -> array of row objects (keyed by headers in first row of first sheet).
  */
 export async function parseXlsx(buffer: ArrayBuffer): Promise<any[]> {
   const buf = new Uint8Array(buffer);
@@ -214,16 +214,16 @@ export async function parseXlsx(buffer: ArrayBuffer): Promise<any[]> {
     return new TextDecoder().decode(await readEntryData(buf, e));
   };
 
-  // sharedStrings (nếu có)
+  // sharedStrings (if present)
   let shared: string[] = [];
   const ssText = await textOf('xl/sharedStrings.xml');
   if (ssText) shared = parseSharedStrings(parseXmlPart(ssText));
 
-  // styles.xml -> nhận biết cột định dạng ngày
+  // styles.xml -> date column detection
   const stylesText = await textOf('xl/styles.xml');
   const xfIsDate = stylesText ? parseStyles(parseXmlPart(stylesText)) : [];
 
-  // Xác định đường dẫn worksheet của sheet đầu tiên qua workbook + rels; fallback sheet1.xml.
+  // Resolves first worksheet path via workbook + rels; falls back to sheet1.xml.
   let sheetPath = 'xl/worksheets/sheet1.xml';
   let date1904 = false;
   const wbText = await textOf('xl/workbook.xml');
@@ -234,14 +234,14 @@ export async function parseXlsx(buffer: ArrayBuffer): Promise<any[]> {
       const d = pr?.getAttribute('date1904');
       date1904 = d === '1' || d === 'true';
     } catch {
-      /* mặc định hệ 1900 */
+      /* default 1900 date system */
     }
   }
   if (wbText && relsText) {
     try {
       const wb = parseXmlPart(wbText);
       const firstSheet = wb.getElementsByTagName('sheet')[0];
-      // getAttribute khớp cả tên đầy đủ 'r:id' lẫn phần local 'id' -> không cần bản NS riêng.
+      // getAttribute matches both full 'r:id' and local 'id' without namespace complexity.
       const rid = firstSheet?.getAttribute('r:id') || '';
       const rels = parseXmlPart(relsText);
       const relEls = rels.getElementsByTagName('Relationship');
@@ -253,7 +253,7 @@ export async function parseXlsx(buffer: ArrayBuffer): Promise<any[]> {
         }
       }
     } catch {
-      /* dùng fallback sheet1.xml */
+      /* use fallback sheet1.xml */
     }
   }
 

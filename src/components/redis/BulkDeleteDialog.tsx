@@ -174,8 +174,8 @@ export const BulkDeleteDialog: React.FC<BulkDeleteDialogProps> = ({
                 className="btn btn-primary redis-danger-btn"
                 onClick={start}
                 disabled={!ready}
-                // Bốn thuộc tính từng tính theo `ready` ở đây đã thành `.redis-danger-btn` +
-                // `:disabled` — `ready` vốn đã đi vào `disabled` ngay trên, nên CSS tự suy ra được.
+                // Four properties previously calculated via `ready` were refactored into `.redis-danger-btn` +
+                // `:disabled` — `ready` binds to `disabled` attribute directly, allowing CSS to infer state.
               >
                 {t('redis.bulkDeleteRun')}
               </button>

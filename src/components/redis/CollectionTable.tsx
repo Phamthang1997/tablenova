@@ -177,8 +177,8 @@ export const CollectionTable: React.FC<CollectionTableProps> = ({
     </td>
   ));
 
-  // Con trỏ và độ mờ lúc bận đã do `.redis-cell-btn:disabled` lo, nên chúng rời khỏi style. Chỉ
-  // `color` ở lại: mỗi nút một màu do chỗ gọi quyết định, không phải một tập hữu hạn để đặt tên class.
+  // Cursor and busy opacity handled by `.redis-cell-btn:disabled`. Only `color` stays inline,
+  // as it is parameterized by caller rather than a fixed set of classes.
   const iconBtn = (title: string, Icon: typeof Pencil, onClick: () => void, color?: string) => (
     <button
       className="redis-cell-btn"

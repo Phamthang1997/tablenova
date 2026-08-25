@@ -33,8 +33,8 @@ interface KeyListProps {
   onFlush: () => void;
   onBulkDelete: (pattern: string, typeFilter: string) => void;
   /**
-   * Mở dialog xuất/nhập. Nhận PREFIX (không phải pattern): ô tìm kiếm ở đây là một glob, còn dialog
-   * làm việc theo prefix, và `patternToPrefix` là chỗ chuyển giữa hai thứ.
+   * Opens export/import dialog. Accepts PREFIX (not pattern): search box is a glob, while dialog
+   * operates on prefixes; `patternToPrefix` converts between the two.
    */
   onTransfer: (prefix: string, typeFilter: string) => void;
   onError: (msg: string) => void;
@@ -131,7 +131,7 @@ export const KeyList = React.forwardRef<KeyListHandle, KeyListProps>(function Ke
     setCapped(false);
     setStreaming(true);
     dbHelper.redisScanStream(pat || '*', SCAN_COUNT, id, (msg: any) => {
-      if (scanIdRef.current !== id) return; // batch của scan cũ -> bỏ
+      if (scanIdRef.current !== id) return; // stale scan batch -> discard
       if (msg.type === 'keys') {
         if (typeof msg.cursor === 'number') cursorRef.current = msg.cursor;
         // Type filtering is client-side: `SCAN TYPE` is Redis 6.0+ and KeyDB/Dragonfly
@@ -188,9 +188,9 @@ export const KeyList = React.forwardRef<KeyListHandle, KeyListProps>(function Ke
     }),
   }), [refresh]);
 
-  // Tải lần đầu + khi đổi db index. `refresh` đổi identity theo pattern/typeFilter nên
-  // không đưa vào deps — nếu không, mỗi ký tự gõ vào ô pattern sẽ tự quét lại.
-  // Đổi db là sang một keyspace khác hẳn, nên đây là chỗ duy nhất thu gọn lại cây.
+  // Initial load + db index switch. `refresh` identity changes on pattern/typeFilter,
+  // so it is excluded from deps to prevent re-scanning on every keystroke.
+  // Switching db changes keyspace completely; collapses tree nodes.
   useEffect(() => {
     setExpanded(new Set());
     runScan(pattern, typeFilter, 0, false);
@@ -283,17 +283,15 @@ export const KeyList = React.forwardRef<KeyListHandle, KeyListProps>(function Ke
   };
 
   return (
-    // Bề rộng, viền và nền đã chuyển lên `.redis-sidebar` (khung sidebar chứa nó) — ở đây chỉ
-    // còn việc lấp đầy khung đó. `min-height: 0` là bắt buộc: không có nó, con cuộn bên trong một
-    // flex column sẽ đẩy cao container thay vì tự cuộn.
+    // Width, border, and background delegated to `.redis-sidebar`. `min-height: 0` is essential to allow inner flex child to scroll properly.
     <div className="redis-keylist">
       <div className="redis-keylist-header">
         <div className="redis-keylist-row">
           <Database size={14} className="redis-keylist-db-icon" />
           <span className="redis-keylist-dbname">{dbName}</span>
-          {/* FLUSHDB đứng cạnh bộ chọn database vì nó tác động lên đúng db đang chọn —
-              đặt ở đây thì phạm vi của lệnh nằm ngay bên cạnh thứ quyết định phạm vi đó,
-              và nó không nằm cạnh Refresh/New key là hai nút bấm liên tục. */}
+          {/* FLUSHDB placed next to database selector since its scope is scoped to active db.
+              
+              Separate from frequent Refresh/New Key buttons. */}
           <button
             className="btn btn-secondary redis-icon-btn danger"
             onClick={onFlush}
@@ -352,9 +350,9 @@ export const KeyList = React.forwardRef<KeyListHandle, KeyListProps>(function Ke
           <button className="btn btn-secondary redis-keylist-grow" onClick={onNewKey} disabled={readOnly}>
             <Plus size={11} /> {t('redis.newKey')}
           </button>
-          {/* Xuất/nhập đứng cạnh xoá theo pattern vì cả hai đọc cùng một thứ: ô tìm kiếm phía
-              trên. Đây là đường vào cho một pattern bất kỳ; đường vào theo nhánh cây key nằm ở
-              menu chuột phải của nhánh. */}
+          {/* Export/import placed alongside pattern delete since both operate on search input.
+              Context menu on tree nodes provides branch-specific export entry points. */}
+              
           <button
             className="btn btn-secondary redis-icon-btn"
             onClick={() => onTransfer(patternToPrefix(pattern), typeFilter)}
@@ -435,10 +433,7 @@ export const KeyList = React.forwardRef<KeyListHandle, KeyListProps>(function Ke
                 setFolderMenu({ x: e.clientX, y: e.clientY, path: row.path, count: row.count });
               }}
               className="sidebar-item redis-row redis-row-folder"
-              // Hai giá trị này phải ở inline vì chúng động theo từng dòng: độ thụt tính từ độ sâu
-              // trong cây, và chiều cao PHẢI đúng bằng `ROW_HEIGHT` mà `windowSlice` dùng để tính
-              // cửa sổ hiển thị. Để chiều cao trong CSS là mở đường cho hai con số lệch nhau, và
-              // khi đó danh sách cuộn sai chỗ chứ không báo lỗi.
+              // Dynamic row height matches `ROW_HEIGHT` for virtualization calculations
               style={{ '--redis-depth': row.depth, height: ROW_HEIGHT } as React.CSSProperties}
             >
               {row.expanded ? <ChevronDown size={11} className="redis-row-chevron" /> : <ChevronRight size={11} className="redis-row-chevron" />}
@@ -463,8 +458,8 @@ export const KeyList = React.forwardRef<KeyListHandle, KeyListProps>(function Ke
                   <Clock size={9} />{ttlText(row.item.ttl)}
                 </span>
               )}
-              {/* Màu badge tra theo kiểu key nên phải ở inline — TYPE_COLORS là bảng trong TS,
-                  nhân bản nó thành sáu class CSS là thêm một cặp phải giữ đồng bộ bằng tay. */}
+              {/* Badge color looked up dynamically by key type: TYPE_COLORS is a TS dictionary;
+                  duplicating it into classes adds synchronization overhead. */}
               <span className="redis-row-type" style={{ background: TYPE_COLORS[row.item.type] || '#64748b' }}>
                 {row.item.type}
               </span>
@@ -486,9 +481,9 @@ export const KeyList = React.forwardRef<KeyListHandle, KeyListProps>(function Ke
         <div
           ref={menuRef}
           className="ws-menu redis-folder-menu"
-          // Toạ độ là kết quả đo lúc chạy nên buộc phải inline. `visibility` đi kèm ở đây chứ không
-          // tách sang class: nó phụ thuộc đúng vào việc đã đo xong hay chưa, và tách ra thì hai thứ
-          // luôn phải đổi cùng lúc.
+          // Coordinates are measured dynamically at runtime so inline style is required. `visibility` accompanies it here
+          // rather than in CSS: it depends directly on measurement completion, and separating them
+          // would require dual updates.
           style={{
             top: menuPos ? menuPos.top : folderMenu.y,
             left: menuPos ? menuPos.left : folderMenu.x,
@@ -505,9 +500,9 @@ export const KeyList = React.forwardRef<KeyListHandle, KeyListProps>(function Ke
               {t('redis.ctxFolderShown', { n: folderMenu.count.toLocaleString() })}
             </div>
           </div>
-          {/* Đường vào theo prefix: `folderMenu.path` ĐÃ là một prefix thật, không phải glob, nên
-              nó đi thẳng vào dialog mà không cần `patternToPrefix` đoán gì. Không bị `readOnly`
-              chặn — xuất là chỉ đọc. */}
+          {/* Prefix entry point: `folderMenu.path` IS already a concrete prefix (not a glob), so
+              it feeds directly into the dialog without requiring `patternToPrefix` heuristic. Not blocked
+              by `readOnly` — export is read-only. */}
           <div
             onClick={(e) => {
               e.stopPropagation();
@@ -529,9 +524,9 @@ export const KeyList = React.forwardRef<KeyListHandle, KeyListProps>(function Ke
         document.body,
       )}
 
-      {/* Chân panel: số lượng key, cộng phần `footerActions` mà sidebar đưa vào (các nút mở tab
-          công cụ). FLUSHDB đã chuyển lên cạnh bộ chọn db, còn Disconnect bỏ hẳn vì TitleBar có sẵn
-          ở menu Connection và nút capsule. */}
+      {/* Panel footer: key count plus `footerActions` supplied by sidebar (tool tab buttons).
+          FLUSHDB moved next to db selector, while Disconnect was dropped since TitleBar provides it
+          in Connection menu and capsule pill. */}
       <div className="redis-keylist-footer">
         <span className="redis-keylist-count">
           {streaming

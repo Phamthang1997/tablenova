@@ -2,16 +2,16 @@ import { invoke } from '@tauri-apps/api/core';
 import i18n from '../i18n';
 
 /**
- * Chọn thư mục lưu và ghi tệp xuất ra đó.
+ * select thư mục save and write tệp xuất ra đó.
  *
- * Không dùng npm wrapper của plugin dialog/fs (dự án chỉ có phần Rust của hai plugin
+ * not dùng npm wrapper of plugin dialog/fs (dự án chỉ có phần Rust of hai plugin
  * này) nên gọi thẳng command `plugin:dialog|open` / `plugin:fs|write_file`.
- * Nếu ghi trực tiếp bị chặn (quyền/scope) thì lùi về tải qua WebView để không mất tệp.
+ * if write trực tiếp is chặn (quyền/scope) thì lùi về download qua WebView to not mất tệp.
  */
 
 const LAST_DIR_KEY = 'tablenova.export.lastDir';
 
-/** Thư mục xuất dùng lần trước (hiện sẵn trong popup cho lần sau). */
+/** Thư mục xuất dùng lần trước (hiện sẵn in popup for lần sau). */
 export function getLastExportDir(): string {
   try {
     return localStorage.getItem(LAST_DIR_KEY) || '';
@@ -24,13 +24,13 @@ function rememberExportDir(dir: string): void {
   try {
     localStorage.setItem(LAST_DIR_KEY, dir);
   } catch {
-    /* localStorage bị chặn -> bỏ qua, chỉ mất tiện lợi */
+    /* localStorage is chặn -> skip, chỉ mất tiện lợi */
   }
 }
 
 /**
- * Mở hộp thoại chọn tệp của hệ điều hành.
- * Trả về đường dẫn tệp đã chọn, hoặc null nếu người dùng huỷ / không có backend Tauri.
+ * open hộp thoại select tệp of hệ điều hành.
+ * returns đường dẫn tệp already select, or null if user cancel / not có backend Tauri.
  */
 export async function pickOpenFile(options?: {
   title?: string;
@@ -55,7 +55,7 @@ export async function pickOpenFile(options?: {
 }
 
 /**
- * Chọn tệp cơ sở dữ liệu SQLite (.db, .sqlite, .sqlite3, .db3, .s3db).
+ * select tệp database SQLite (.db, .sqlite, .sqlite3, .db3, .s3db).
  */
 export async function pickSqliteDatabaseFile(defaultPath?: string): Promise<string | null> {
   return pickOpenFile({
@@ -75,8 +75,8 @@ export async function pickSqliteDatabaseFile(defaultPath?: string): Promise<stri
 }
 
 /**
- * Mở hộp thoại chọn thư mục của hệ điều hành.
- * Trả về đường dẫn đã chọn, hoặc null nếu người dùng huỷ / không có backend Tauri.
+ * open hộp thoại select thư mục of hệ điều hành.
+ * returns đường dẫn already select, or null if user cancel / not có backend Tauri.
  */
 export async function pickExportFolder(defaultPath?: string): Promise<string | null> {
   try {
@@ -99,8 +99,8 @@ export async function pickExportFolder(defaultPath?: string): Promise<string | n
 }
 
 /**
- * Mở hộp thoại "Lưu tệp" (Save As) của hệ điều hành.
- * Cho phép người dùng chọn thư mục VÀ đặt/sửa tên tệp.
+ * open hộp thoại "save tệp" (Save As) of hệ điều hành.
+ * allows user select thư mục and đặt/edit tên tệp.
  */
 export async function pickSaveFilePath(
   defaultName: string,
@@ -136,7 +136,7 @@ export async function pickSaveFilePath(
   }
 }
 
-/** Ghi dữ liệu trực tiếp tới đường dẫn đầy đủ do Save As dialog trả về. */
+/** write dữ liệu trực tiếp tới đường dẫn đầy đủ do Save As dialog returns. */
 export async function saveExportFileAtPath(
   filePath: string,
   data: Uint8Array | string,
@@ -159,13 +159,13 @@ export async function saveExportFileAtPath(
   }
 }
 
-/** Nối thư mục + tên tệp, giữ đúng dấu phân cách của đường dẫn đang dùng. */
+/** Nối thư mục + tên tệp, giữ đúng dấu phân cách of đường dẫn currently dùng. */
 export function joinPath(dir: string, name: string): string {
   const sep = dir.includes('\\') && !dir.includes('/') ? '\\' : '/';
   return dir.endsWith('\\') || dir.endsWith('/') ? `${dir}${name}` : `${dir}${sep}${name}`;
 }
 
-/** Tải tệp qua WebView (thư mục Downloads / hộp thoại của WebView2). */
+/** download tệp qua WebView (thư mục Downloads / hộp thoại of WebView2). */
 function downloadViaWebview(name: string, data: Uint8Array | string, mime: string): void {
   const blob = typeof data === 'string'
     ? new Blob([data], { type: mime })
@@ -181,17 +181,17 @@ function downloadViaWebview(name: string, data: Uint8Array | string, mime: strin
 }
 
 export interface SaveResult {
-  /** 'folder' = đã ghi vào thư mục đã chọn; 'download' = phải lùi về tải qua WebView. */
+  /** 'folder' = already write ando thư mục already select; 'download' = must lùi về download qua WebView. */
   savedTo: 'folder' | 'download';
-  /** Đường dẫn đầy đủ khi ghi được vào thư mục. */
+  /** Đường dẫn đầy đủ when write is ando thư mục. */
   path?: string;
-  /** Thư mục chứa tệp (thư mục đã chọn, hoặc thư mục tải xuống của hệ thống). */
+  /** Thư mục chứa tệp (thư mục already select, or thư mục download xuống of hệ thống). */
   dir?: string;
-  /** Lý do không ghi được vào thư mục (nếu có). */
+  /** Lý do not write is ando thư mục (if có). */
   fallbackReason?: string;
 }
 
-/** Nén text thành gzip bằng CompressionStream của WebView (Chromium). */
+/** Nén text thành gzip bằng CompressionStream of WebView (Chromium). */
 export async function gzipText(text: string): Promise<Uint8Array> {
   const CS = (globalThis as any).CompressionStream;
   if (!CS) throw new Error(i18n.t('errors.noGzipSupport'));
@@ -199,7 +199,7 @@ export async function gzipText(text: string): Promise<Uint8Array> {
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
-/** Thư mục tải xuống của hệ thống (để mở khi tệp đi qua WebView). Rỗng nếu không lấy được. */
+/** Thư mục download xuống of hệ thống (to open when tệp đi qua WebView). Rỗng if not lấy is. */
 export async function resolveDownloadDir(): Promise<string> {
   try {
     const { downloadDir } = await import('@tauri-apps/api/path');
@@ -209,7 +209,7 @@ export async function resolveDownloadDir(): Promise<string> {
   }
 }
 
-/** Mở thư mục (hoặc tệp) bằng trình quản lý tệp của hệ thống. */
+/** open thư mục (or tệp) bằng trình quản lý tệp of hệ thống. */
 export async function openInFileManager(pathOrDir: string): Promise<boolean> {
   try {
     await invoke('open_url', { url: pathOrDir });
@@ -220,7 +220,7 @@ export async function openInFileManager(pathOrDir: string): Promise<boolean> {
 }
 
 /**
- * Ghi tệp xuất: có thư mục thì ghi thẳng vào đó, không thì tải qua WebView.
+ * write tệp xuất: có thư mục thì write thẳng ando đó, not thì download qua WebView.
  */
 export async function saveExportFile(
   dir: string | null,
@@ -236,7 +236,7 @@ export async function saveExportFile(
   const path = joinPath(dir, name);
   try {
     const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;
-    // Cùng dạng gọi với @tauri-apps/plugin-fs: nội dung đi ở body, path/options ở headers.
+    // Cùng dạng gọi with @tauri-apps/plugin-fs: nội dung đi at body, path/options at headers.
     await invoke('plugin:fs|write_file', bytes, {
       headers: {
         path: encodeURIComponent(path),

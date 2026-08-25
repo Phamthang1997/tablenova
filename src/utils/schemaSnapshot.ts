@@ -1,14 +1,14 @@
 // Snapshot & Diff schema -> sinh migration SQL.
-// Chụp toàn bộ cấu trúc DB hiện tại thành "ảnh chụp" (lưu localStorage / xuất file JSON),
-// so sánh ảnh chụp (baseline) với schema hiện tại (current), sinh script migration.
-// Tái dùng backend previewAlterTableSchema để sinh ALTER cho bảng thay đổi.
+// Chụp toàn bộ cấu trúc DB hiện tại thành "ảnh chụp" (save localStorage / xuất file JSON),
+// compare ảnh chụp (baseline) with schema hiện tại (current), sinh script migration.
+// Tái dùng backend previewAlterTableSchema to sinh ALTER for table change.
 
 import { dbHelper, type SchemaInfo, type ColumnInfo } from './dbHelper';
 import { editorConnId } from '../sql/editorScope';
 
 export interface TableSnapshot {
   schema: SchemaInfo;
-  ddl: string; // CREATE TABLE gốc, dùng để sinh migration cho bảng mới
+  ddl: string; // CREATE TABLE gốc, dùng to sinh migration for table mới
 }
 
 export interface SchemaSnapshot {
@@ -44,12 +44,12 @@ export function deleteSnapshot(name: string): void {
   persist(listSnapshots().filter((s) => s.name !== name));
 }
 
-// Chụp schema hiện tại: duyệt các bảng, lấy cấu trúc + DDL từng bảng.
+// Chụp schema hiện tại: duyệt các table, lấy cấu trúc + DDL fromng table.
 export async function captureCurrentSchema(name: string, dbType: string, database?: string): Promise<SchemaSnapshot> {
   const items = await dbHelper.getTables(editorConnId());
   const tables: Record<string, TableSnapshot> = {};
   for (const it of items) {
-    if (it.type !== 'table') continue; // chỉ bảng (bỏ view) cho migration
+    if (it.type !== 'table') continue; // chỉ table (bỏ view) for migration
     const schema = await dbHelper.getTableSchema(editorConnId(), it.name);
     const def = await dbHelper.getTableDefinition(editorConnId(), it.name);
     tables[it.name] = { schema, ddl: def.sql || '' };
@@ -76,8 +76,8 @@ export interface TableChange {
 }
 
 export interface SchemaDiff {
-  addedTables: string[]; // có ở current, không ở baseline -> CREATE
-  droppedTables: string[]; // có ở baseline, không ở current -> DROP
+  addedTables: string[]; // có at current, not at baseline -> CREATE
+  droppedTables: string[]; // có at baseline, not at current -> DROP
   changedTables: TableChange[];
   identical: boolean;
 }
@@ -86,7 +86,7 @@ function fkKey(fk: { column: string; refTable: string; refColumn: string }): str
   return `${fk.column}->${fk.refTable}.${fk.refColumn}`;
 }
 
-// Diff một bảng: dựng payload để biến baseline (b) thành current (c).
+// Diff một table: build payload to biến baseline (b) thành current (c).
 function diffTable(b: SchemaInfo, c: SchemaInfo): TableAlterPayload {
   const bCols = new Map((b.columns || []).map((col) => [col.name, col]));
   const cCols = new Map((c.columns || []).map((col) => [col.name, col]));
@@ -124,7 +124,7 @@ function summarize(p: TableAlterPayload): string[] {
   return out;
 }
 
-// So sánh baseline (ảnh chụp cũ) với current (hiện tại). Migration biến baseline -> current.
+// compare baseline (ảnh chụp cũ) with current (hiện tại). Migration biến baseline -> current.
 export function diffSchemas(baseline: SchemaSnapshot, current: SchemaSnapshot): SchemaDiff {
   const bNames = Object.keys(baseline.tables);
   const cNames = Object.keys(current.tables);
@@ -143,7 +143,7 @@ export function diffSchemas(baseline: SchemaSnapshot, current: SchemaSnapshot): 
   return { addedTables, droppedTables, changedTables, identical };
 }
 
-// Sinh script migration từ diff. Bảng mới dùng DDL đã lưu; bảng xóa -> DROP; bảng đổi -> ALTER (qua backend).
+// Sinh script migration from diff. table mới dùng DDL already save; table delete -> DROP; table đổi -> ALTER (qua backend).
 export async function buildMigrationSql(
   diff: SchemaDiff,
   current: SchemaSnapshot,

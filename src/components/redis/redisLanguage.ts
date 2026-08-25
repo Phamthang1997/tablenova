@@ -1,12 +1,12 @@
-// Ngôn ngữ `redis` cho Monaco: tô màu, gợi ý lệnh, và hover.
+// `redis` language for Monaco: syntax highlighting, command autocompletion, and hover docs.
 //
-// Vì sao tự viết chứ không dùng `monaco-sql-languages` như phía SQL: gói đó dựng trên ANTLR và chỉ
-// có ba dialect SQL. Giao thức Redis thì không có ngữ pháp để phân tích — mỗi dòng là một lệnh, các
-// từ còn lại là tham số. Một monarch tokenizer ~20 dòng nói đúng chừng đó, còn một parser sẽ giả vờ
-// biết nhiều hơn thực tế.
+// Why custom implementation instead of `monaco-sql-languages`: that package is ANTLR-based for SQL dialects.
+// Redis protocol has no complex grammar — one command per line, followed by space-separated arguments.
+// A ~20-line monarch tokenizer accurately models this without pretending to parse AST.
+
 //
-// Nguồn dữ liệu là `COMMANDS` trong `commandHelp.ts` — bảng đã có sẵn cho console cũ (149 lệnh kèm
-// tham số, độ phức tạp, phiên bản). Không có bảng thứ hai để lệch.
+// Data source is `COMMANDS` in `commandHelp.ts` — pre-existing table (149 commands with parameters,
+// complexity, versions), preventing duplicate registry drift.
 
 import * as monaco from 'monaco-editor';
 import { COMMANDS, commandSyntax } from './commandHelp';
@@ -14,13 +14,13 @@ import { commandNameOf } from './redisScript';
 
 export const REDIS_LANG_ID = 'redis';
 
-/** Tên lệnh đã biết, dùng cho cả tokenizer lẫn `commandNameOf`. */
+/** Known command names, used by both tokenizer and `commandNameOf`. */
 const KNOWN = COMMANDS.map((c) => c.name);
 
-/** Từ đầu tiên của mỗi lệnh — tokenizer chỉ nhìn được một từ tại một thời điểm. */
+/** First word of each command — tokenizer processes one token at a time. */
 const HEADS = Array.from(new Set(KNOWN.map((n) => n.split(' ')[0])));
 
-/** Từ thứ hai của các lệnh hai từ (GET trong CONFIG GET, LIST trong CLIENT LIST…). */
+/** Second word of two-word commands (GET in CONFIG GET, LIST in CLIENT LIST...). */
 const SUBS = Array.from(
   new Set(KNOWN.filter((n) => n.includes(' ')).map((n) => n.split(' ')[1])),
 );
@@ -28,10 +28,10 @@ const SUBS = Array.from(
 let registered = false;
 
 /**
- * Đăng ký một lần cho cả app.
+ * Registers once globally for the app.
  *
- * Monaco là singleton toàn cục: gọi `register` lần thứ hai cho cùng một id sẽ chồng thêm provider,
- * nên mỗi tab CLI mở ra lại nhân đôi số gợi ý. Cờ ở cấp module là cách `sqlLanguage.ts` cũng dùng.
+ * Monaco is a global singleton: calling `register` repeatedly on same id stacks duplicate providers,
+ * multiplying suggestions. Module-level flag mirrors `sqlLanguage.ts` pattern.
  */
 export function registerRedisLanguage(): void {
   if (registered) return;
@@ -54,9 +54,9 @@ export function registerRedisLanguage(): void {
     subCommands: SUBS,
     tokenizer: {
       root: [
-        // Chú thích chỉ tính khi đứng ĐẦU dòng — `SET k a#b` là một giá trị hợp lệ, tô nửa sau
-        // thành chú thích sẽ khiến người dùng tưởng phần đó không được gửi đi. Cùng luật với
-        // `splitRedisCommands`, và đó là chủ ý: hai chỗ này phải nói cùng một điều.
+        // Comments only recognized at line START — `SET k a#b` is a valid string value; highlighting second half
+        // as comment misleads user into thinking it is ignored. Matches `splitRedisCommands` rule.
+        
         [/^\s*#.*$/, 'comment'],
         [/"([^"\\]|\\.)*"/, 'string'],
         [/'([^'\\]|\\.)*'/, 'string'],
@@ -83,11 +83,11 @@ export function registerRedisLanguage(): void {
         endLineNumber: position.lineNumber,
         endColumn: position.column,
       });
-      // Chỉ gợi ý khi đang gõ chính tên lệnh. Có khoảng trắng rồi tức là đang ở phần tham số —
-      // key và giá trị là dữ liệu của người dùng, app không biết gì để gợi ý, và một danh sách 149
-      // tên lệnh bật lên giữa lúc gõ tên key chỉ tổ vướng.
+      // Only triggers suggestions when typing command name. Whitespace denotes argument position —
+      // keys and values are user data where auto-suggesting 149 command names
+      // would obstruct typing.
       //
-      // Ngoại lệ: lệnh hai từ. Sau `CONFIG ` thì từ tiếp theo vẫn là tên lệnh.
+      // Exception: two-word commands. After `CONFIG `, subsequent word is still a command keyword.
       const word = model.getWordUntilPosition(position);
       const head = upto.trim().split(/\s+/)[0]?.toUpperCase() ?? '';
       const typingSecondWord =
@@ -105,7 +105,7 @@ export function registerRedisLanguage(): void {
         suggestions: COMMANDS.map((c) => ({
           label: c.name,
           kind: monaco.languages.CompletionItemKind.Function,
-          // Chèn tên lệnh + một khoảng trắng khi lệnh có tham số: gợi ý xong là gõ tiếp được ngay.
+          // Inserts command name + trailing space when command takes arguments for seamless typing.
           insertText: c.args ? `${c.name} ` : c.name,
           detail: c.args,
           documentation: c.description

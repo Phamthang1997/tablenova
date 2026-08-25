@@ -1,9 +1,9 @@
-// Dòng thông báo ok/lỗi mà mọi panel Redis đều cần.
+// Shared error/success toast notification hook for Redis panels.
 //
-// Trước đây `RedisBrowser` giữ đúng một dòng này cho cả workspace và truyền `onError`/`onOk`/
-// `onBlocked` xuống từng panel. Giờ mỗi panel là một tab độc lập, nên hoặc mỗi tab tự có dòng của
-// nó, hoặc phải dựng một toast toàn cục. Chọn cái thứ nhất: thông báo "đã lưu key" thuộc về tab vừa
-// lưu, và một toast toàn cục sẽ hiện trên tab khác với thứ nó không làm.
+// Scoped per panel tab to isolate notifications to the originating tab.
+
+
+
 
 import React, { useCallback, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -12,25 +12,25 @@ import { AlertTriangle, CheckCircle2 } from 'lucide-react';
 const AUTO_HIDE_MS = 3500;
 
 export interface RedisToast {
-  /** Báo lỗi. */
+  /** Show error message. */
   onError: (text: string) => void;
-  /** Báo thành công. */
+  /** Show success message. */
   onOk: (text: string) => void;
   /**
-   * Cổng chặn ghi phía UI. Trả `true` (và hiện thông báo) khi kết nối đang chỉ đọc, để chỗ gọi
-   * `return` sớm. Chốt thật vẫn ở Rust — CLI gửi lệnh dạng văn bản tự do nên cổng ở WebView là cổng
-   * đặt sai phía biên IPC.
+   * UI write gate. Returns `true` and shows alert if connection is in read-only mode.
+   
+   
    */
   blocked: () => boolean;
-  /** Dòng thông báo, render ngay dưới toolbar của tab. `null` khi không có gì để hiện. */
+  /** Toast element rendered beneath tab toolbar. `null` when idle. */
   node: React.ReactNode;
 }
 
 export function useRedisToast(readOnly: boolean): RedisToast {
   const { t } = useTranslation();
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
-  // Hẹn giờ được huỷ trước khi đặt lại: hai thông báo liền nhau thì cái sau phải được xem đủ
-  // AUTO_HIDE_MS, chứ không bị bộ đếm của cái trước tắt sớm.
+  // Clears pending timeout so consecutive messages receive full display duration.
+  
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const flash = useCallback((kind: 'ok' | 'err', text: string) => {

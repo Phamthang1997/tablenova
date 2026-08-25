@@ -1,10 +1,10 @@
-// Gợi ý tham số hàm (Monaco gọi là "parameter hints"): gõ `DATE_ADD(` thì hiện cú pháp và
-// mô tả của từng tham số, và đánh dấu tham số đang gõ dở.
+// Parameter hints (Signature Help): typing `DATE_ADD(` displays syntax signature and
+// parameter descriptions, highlighting the active parameter index.
 //
-// Dữ liệu lấy nguyên từ `docsService` — cùng nguồn mà hover và completion đang dùng, nên không
-// sinh thêm một bảng thứ hai để lệch. Phần duy nhất phải tự tính là "đang ở trong lời gọi nào,
-// tham số thứ mấy", và phần đó nằm ở `enclosingCall()` trong `statements.ts` (thuần văn bản, có
-// test) chứ không nằm ở đây.
+// Data sourced from `docsService`, matching hover and completion documentation.
+// Active argument index resolved by `enclosingCall()` in `statements.ts`.
+
+
 import type * as monaco from 'monaco-editor';
 import { enclosingCall } from './statements';
 import { LANG_IDS } from './sqlLanguage';
@@ -12,21 +12,21 @@ import { getDoc, getDocSummary, getParamDesc } from '../utils/docsService';
 import i18n, { currentLanguage } from '../i18n';
 
 /**
- * Đăng ký signature help cho cả 3 dialect.
+ * Registers signature help provider for all 3 SQL dialects.
  *
- * Cờ chống-đăng-ký-trùng nằm trên `window` chứ không phải biến module, cùng lý do như hover và
- * quick fix: Vite HMR nạp lại module thì biến module reset và provider bị đăng ký chồng.
+ * Anti-duplicate flag stored on `window` to avoid duplicate registrations during Vite HMR.
+ 
  */
 export function registerSqlSignatureHelp(monacoInstance: typeof monaco): void {
   const w = window as any;
   if (Array.isArray(w.__sqlSignatureDisposables)) {
     for (const d of w.__sqlSignatureDisposables) {
-      try { d.dispose(); } catch { /* đã huỷ */ }
+      try { d.dispose(); } catch { /* already disposed */ }
     }
   }
 
   const provider: monaco.languages.SignatureHelpProvider = {
-    // `,` để nhảy sang tham số kế; `)` retrigger để bảng ẩn đi khi lời gọi đã đóng.
+    // `,` advances parameter index; `)` retriggers to dismiss hints when function call closes.
     signatureHelpTriggerCharacters: ['(', ','],
     signatureHelpRetriggerCharacters: [')'],
 
@@ -39,8 +39,8 @@ export function registerSqlSignatureHelp(monacoInstance: typeof monaco): void {
 
       const lang = currentLanguage();
       const parameters = (doc.params || []).map((p) => ({
-        // Nhãn dạng chuỗi: Monaco tự tìm nó trong `label` của chữ ký để tô đậm phần đang gõ.
-        // Không khớp thì chỉ mất phần tô đậm, bảng vẫn hiện — nên không cần tính offset tay.
+        // Parameter labels: Monaco highlights active argument matching substring in signature label.
+        
         label: p.name,
         documentation: {
           value: `${p.type ? `\`${p.type}\`${p.optional ? ` _(${i18n.t('sqlEditor.paramOptional')})_` : ''} — ` : ''}${getParamDesc(p, lang)}`,
@@ -55,8 +55,8 @@ export function registerSqlSignatureHelp(monacoInstance: typeof monaco): void {
             parameters,
           }],
           activeSignature: 0,
-          // Kẹp lại: hàm biến thiên số tham số (`CONCAT(a, b, c, …)`) thì dấu phẩy thứ 5 vẫn
-          // phải trỏ vào tham số cuối cùng được mô tả, chứ không trỏ ra ngoài mảng.
+          // Clamps index: variadic functions (`CONCAT(a, b, c, ...)`) clamp extra arguments to final parameter.
+          
           activeParameter: Math.min(call.activeParam, Math.max(0, parameters.length - 1)),
         },
         dispose: () => {},

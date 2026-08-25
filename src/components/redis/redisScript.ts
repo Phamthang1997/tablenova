@@ -1,26 +1,25 @@
-// Tách một buffer nhiều dòng của CLI Console thành từng lệnh Redis.
+// Splits a multi-line buffer in CLI Console into individual Redis commands.
 //
-// **Không import monaco** — cùng lý do `src/sql/statements.ts` không import: bất cứ thứ gì kéo theo
-// `monaco-editor` đều không chạy được dưới môi trường `node` của Vitest. Editor quyết định cái gì
-// được tô sáng, file này quyết định cái gì thật sự chạy; giữ nó thuần là cách duy nhất để kiểm được
-// phần thứ hai.
+// **Do not import Monaco** — same reason `src/sql/statements.ts` avoids it: anything pulling in
+// `monaco-editor` fails under Vitest's `node` environment. Editor controls syntax highlighting,
+// this file controls execution; keeping it pure is essential for unit testing.
 //
-// Quy tắc tách đơn giản hơn SQL rất nhiều và đó là điều đúng: giao thức Redis là **một lệnh một
-// dòng**. Không có dấu kết câu, không có khối lồng nhau, không có `$$…$$`. Cố dựng một bộ tách
-// giống `split_sql_statements` ở đây là bịa ra độ phức tạp mà giao thức không có.
+// Rules are much simpler than SQL: Redis protocol operates on **one command per
+// line**. No statement terminators, no nested blocks, no `$...$`. Using a complex parser
+// like `split_sql_statements` here would add unnecessary complexity.
 
 export interface RedisCommandLine {
-  /** Nội dung lệnh, đã cắt khoảng trắng hai đầu. */
+  /** Command text, trimmed of leading/trailing whitespace. */
   text: string;
-  /** Số dòng trong buffer, đếm từ 1 — để đặt con trỏ và đánh dấu dòng lỗi. */
+  /** 1-based line number in buffer for caret placement and error indicators. */
   line: number;
 }
 
 /**
- * Mọi lệnh chạy được trong buffer, theo thứ tự.
+ * Returns all executable commands in buffer in sequential order.
  *
- * Bỏ qua dòng trống và dòng chú thích. `#` là ký tự chú thích của chính `redis.conf` và của
- * `redis-cli`, nên người dùng Redis đã quen với nó; `//` không phải.
+ * Skips empty lines and comment lines. `#` is the native comment character for `redis.conf` and
+ * `redis-cli`, matching standard Redis conventions.
  */
 export function splitRedisCommands(text: string): RedisCommandLine[] {
   const out: RedisCommandLine[] = [];
@@ -34,11 +33,9 @@ export function splitRedisCommands(text: string): RedisCommandLine[] {
 }
 
 /**
- * Lệnh mà con trỏ đang đứng trên, cho Ctrl+Enter.
+ * Command located under caret line, used by Ctrl+Enter.
  *
- * Con trỏ ở dòng trống hoặc dòng chú thích thì lùi lên lệnh gần nhất phía trên, thay vì không làm
- * gì: gõ xong một lệnh rồi Enter xuống dòng mới là thói quen phổ biến, và ở trạng thái đó "không có
- * lệnh nào" là câu trả lời vô ích.
+ * If caret sits on an empty line or comment line, falls back to closest preceding command.
  */
 export function commandAtLine(text: string, line: number): RedisCommandLine | null {
   const cmds = splitRedisCommands(text);
@@ -52,11 +49,10 @@ export function commandAtLine(text: string, line: number): RedisCommandLine | nu
 }
 
 /**
- * Tên lệnh của một dòng, viết hoa — có tính tới các lệnh hai từ (`CONFIG GET`, `CLIENT LIST`,
- * `XINFO STREAM`…).
+ * Command name of a line in uppercase, supporting multi-word commands (`CONFIG GET`, `CLIENT LIST`,
+ * `XINFO STREAM`...).
  *
- * Nhận danh sách tên đã biết thay vì tự đoán: chỉ nhìn văn bản thì không phân biệt được `CONFIG GET`
- * (một lệnh hai từ) với `GET key` (một lệnh một từ kèm tham số). Bảng lệnh là thứ biết điều đó.
+ * Uses known command dictionary to distinguish `CONFIG GET` (2-word command) from `GET key` (1-word command + arg).
  */
 export function commandNameOf(line: string, known: string[]): string {
   const parts = line.trim().split(/\s+/);

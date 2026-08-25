@@ -17,22 +17,22 @@ export interface HistoryEntry {
   timestamp: string;
   conn?: string;
   db?: string;
-  /** Kết quả lần chạy — ghi bổ sung khi chạy xong (xem `recordHistoryResult`). */
+  /** Kết quả lần run — write bổ sung when run xong (xem `recordHistoryResult`). */
   ok?: boolean;
-  /** Thời gian chạy, ms. */
+  /** time run, ms. */
   ms?: number;
   rows?: number;
   affected?: number;
-  /** Thông điệp lỗi đã cắt ngắn; chỉ có khi `ok === false`. */
+  /** Thông điệp error already cắt ngắn; chỉ có when `ok === false`. */
   error?: string;
 }
 
 /**
- * Kết quả của MỘT LẦN CHẠY (có thể gồm nhiều câu lệnh), nên `ok: false` nghĩa là
- * "có ít nhất một câu lệnh lỗi" — giống mô hình một dòng một lần chạy của UI.
+ * Kết quả of MỘT LẦN run (can gồm nhiều statement), nên `ok: false` nghĩa is
+ * "có ít nhất một statement error" — giống mô hình một row một lần run of UI.
  */
 export interface HistoryRunResult {
-  /** Bỏ trống khi lần chạy bị người dùng dừng giữa chừng: không thành công, cũng không lỗi. */
+  /** Bỏ trống when lần run is user stop giữa chừng: not successful, cũng not error. */
   ok?: boolean;
   ms: number;
   rows?: number;
@@ -47,7 +47,7 @@ export interface SavedQueryEntry extends HistoryEntry {
 export const HISTORY_KEY = 'sql_query_history';
 export const SAVED_KEY = 'sql_saved_queries';
 
-/** Lỗi driver có thể dài cả nghìn ký tự; lịch sử chỉ cần đủ để nhận ra chuyện gì. */
+/** error driver can dài cả nghìn character; lịch sử chỉ cần đủ to receive ra chuyện gì. */
 export const ERROR_MAX_LENGTH = 200;
 
 /** Kept per connection, not globally — a chatty database must not evict the others. */
@@ -186,8 +186,8 @@ export function addHistoryEntry(
 }
 
 /**
- * Ghi kết quả lên dòng lịch sử đã tạo lúc bắt đầu chạy. Dòng có thể đã bị xoá
- * (tab khác) trong lúc câu lệnh chạy — khi đó không tạo lại, chỉ bỏ qua.
+ * write kết quả lên row lịch sử already create lúc bắt đầu run. row can already is delete
+ * (tab khác) in lúc statement run — when đó not create lại, chỉ skip.
  */
 export function recordHistoryResult(id: string, result: HistoryRunResult): HistoryEntry[] {
   const list = loadHistory();

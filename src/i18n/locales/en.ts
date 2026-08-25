@@ -193,7 +193,7 @@ const en = {
     tabQueries: 'Queries',
     tabHistory: 'History',
     tabTools: 'Tools',
-    // Nhãn nhóm: số lượng hiển thị ở huy hiệu riêng bên phải nên không nhúng vào chuỗi.
+    // Group label: item count displayed in separate badge on the right, not embedded in string.
     tablesSection: 'Tables',
     viewsSection: 'Views',
     loadingColumns: 'Loading columns...',
@@ -1664,7 +1664,7 @@ const en = {
     downloadSql: 'Download .sql',
   },
 
-  // So sánh hai database (DbCompareDialog + db_compare.rs)
+  // Database comparison (DbCompareDialog + db_compare.rs)
   compare: {
     title: 'Compare 2 databases',
     sourceLabel: 'Source (A)',
@@ -1790,7 +1790,7 @@ const en = {
     changeOther: 'other',
   },
 
-  // Sinh dữ liệu test (DataGeneratorDialog + data_generator.rs)
+  // Test data generator (DataGeneratorDialog + data_generator.rs)
   dataGen: {
     title: 'Generate test data',
     titleWithDb: 'Generate test data — {{db}}',
@@ -2078,8 +2078,8 @@ const en = {
     errScan: 'SCAN failed',
     errReadOnly: 'Read-only mode: cannot write to Redis. Turn off "Read-only" first.',
     errReadKey: 'Could not read the key',
-    // Tab `redis-key` mở lại mà key không còn — hết TTL hoặc bị xoá từ chỗ khác. Là chuyện
-    // bình thường của Redis, nên là trạng thái rỗng chứ không phải lỗi (kế hoạch §2.5).
+    // `redis-key` tab reopened after key expired via TTL or deleted externally — rendered as empty state.
+    
     keyGone: 'The key “{{key}}” no longer exists',
     keyGoneHint: 'It may have expired or been deleted from elsewhere.',
     retry: 'Look again',
@@ -2091,8 +2091,8 @@ const en = {
     cliResultEmpty: 'Press “Run” to see the result here.',
     cliPosition: 'line {{line}}, column {{col}}',
     cliStatusRunning: 'Running…',
-    // Dừng batch ở `SELECT n`: sau lệnh đó workspace đã sang kết nối của db khác, nên các lệnh
-    // còn lại nếu chạy tiếp sẽ chạy trên db CŨ — xem kế hoạch §2.2.
+    // Halts batch execution at `SELECT n` to avoid running remaining statements on stale db index.
+    
     cliStoppedAtSelect: 'Switched to db{{db}}. {{n}} remaining command(s) were not run — they would have run against the previous database.',
     cliNothingToRun: 'No command on this line',
     closeTab: 'Close tab',
@@ -2198,7 +2198,7 @@ const en = {
     bulkDeleteProgress: "Scanned {{scanned}} keys, deleted {{deleted}}…",
     bulkDeleteDone: "Done: scanned {{scanned}} keys, deleted {{deleted}}.",
     bulkDeleteCancelled: "Cancelled: scanned {{scanned}} keys, deleted {{deleted}}.",
-    // Xuất / nhập keyspace theo prefix (RedisTransferDialog + utils/redisTransfer.ts)
+    // Keyspace export / import by prefix (RedisTransferDialog + utils/redisTransfer.ts)
     ctxExportGroup: "Export every key under this prefix…",
     transferBtnTitle: "Export / import keys",
     transferTitle: "Export / import keys",
@@ -2513,7 +2513,7 @@ const en = {
     cancelled: 'Cancelled — Safe Mode asked for confirmation.',
   },
 
-  // Giới hạn thời gian câu lệnh — cùng popover với Safe Mode. Xem stmtTimeout.ts.
+  // Statement timeout setting — shared popover with Safe Mode. See stmtTimeout.ts.
   stmtTimeout: {
     menuTitle: 'Statement timeout',
     off: 'Off',
@@ -2522,13 +2522,13 @@ const en = {
     hint: 'Stops an editor query or a grid page read that runs longer than this. Restores, data generation and schema changes are never limited.',
   },
 
-  // Xem trước SQL trước khi grid lưu — công tắc nằm trong popover Safe Mode. Xem commitPreview.ts.
+  // Preview SQL before saving changes — toggle inside Safe Mode popover. See commitPreview.ts.
   commitPreview: {
     label: 'Preview SQL before saving',
     onDesc: 'The grid shows the statements and waits for confirmation.',
     offDesc: 'The grid saves straight away. Safe Mode still asks if it is on.',
   },
-  // Việc chạy nền (xuất/sao lưu, nhập/phục hồi, sinh dữ liệu). Xem utils/jobs.ts.
+  // Background jobs (export/backup, import/restore, data generator). See utils/jobs.ts.
   jobs: {
     panelTitle: 'Background jobs',
     trayRunning: '{{n}} running',

@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import { createConnPref } from '../connPrefs';
 
-// Cùng lý do như `safeMode.test.ts`: Vitest chạy `environment: 'node'`, không có localStorage, nên
+// Cùng lý do như `safeMode.test.ts`: Vitest run `environment: 'node'`, not có localStorage, nên
 // cài bản nhỏ nhất hành xử giống nó.
 const memory = new Map<string, string>();
 (globalThis as { localStorage?: unknown }).localStorage = {
@@ -15,13 +15,13 @@ const memory = new Map<string, string>();
   },
 } satisfies Storage;
 
-/** Bản sao của thiết lập "giới hạn thời gian": số > 0, mặc định 0. */
+/** Bản sao of thiết lập "limit time": số > 0, default 0. */
 const makeSecs = (storageKey: string) =>
   createConnPref<number>(storageKey, 'test-secs-changed', 0, (raw) =>
     typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : null,
   );
 
-/** Bản sao của thiết lập "xem trước SQL": chỉ `false` được lưu, mặc định `true`. */
+/** Bản sao of thiết lập "preview SQL": chỉ `false` is save, default `true`. */
 const makeFlag = (storageKey: string) =>
   createConnPref<boolean>(storageKey, 'test-flag-changed', true, (raw) => (raw === false ? false : null));
 
@@ -41,7 +41,7 @@ describe('createConnPref', () => {
   });
 
   it('DELETES the entry when the value is the default, instead of writing it', () => {
-    // Nếu không thì localStorage phình lên một dòng cho mỗi server người dùng từng mở.
+    // if not thì localStorage phình lên một row for mỗi server user fromng open.
     const p = makeSecs('k4');
     p.set('pg:a:5432', 30);
     p.set('pg:a:5432', 0);
@@ -50,7 +50,7 @@ describe('createConnPref', () => {
   });
 
   it('ignores a key it cannot attribute to a server', () => {
-    // Key rỗng = "chưa biết đây là server nào"; ghi vào đó là ghi cho mọi server một lúc.
+    // Key rỗng = "chưa biết đây is server nào"; write ando đó is write for mọi server một lúc.
     const p = makeFlag('k5');
     p.set('', false);
     expect(memory.get('k5')).toBeUndefined();

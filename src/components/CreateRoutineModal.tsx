@@ -4,7 +4,7 @@ import { dbHelper } from '../utils/dbHelper';
 import { Plus, Trash2, Save, AlertTriangle, CheckCircle } from 'lucide-react';
 
 interface CreateRoutineModalProps {
-  /** Kết nối mà component này thao tác lên. Truyền tường minh, không đọc id ambient (§4.1). */
+  /** Kết nối mà component này thao tác lên. Truyền tường minh, not read id ambient (§4.1). */
   connId: string;
   dbType: 'sqlite' | 'postgres' | 'mysql';
   onClose: () => void;

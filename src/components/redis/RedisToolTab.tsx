@@ -1,8 +1,8 @@
-// Khung chung cho sáu tab công cụ Redis (CLI, Dashboard, SlowLog, Pub/Sub, Profiler, Analysis).
+// Container component for the 6 Redis tool tabs (CLI, Dashboard, SlowLog, Pub/Sub, Profiler, Analysis).
 //
-// Sáu panel bên trong không đổi — chúng vẫn nhận đúng bộ `onError`/`onOk`/`onBlocked` như khi còn
-// nằm trong `RedisBrowser`. File này chỉ cấp cho mỗi tab một dòng thông báo của riêng nó và dịch
-// một `type` thành panel tương ứng, để `App.tsx` không phải mang sáu nhánh JSX.
+// Encapsulates shared error/success toast state and routes tool types to corresponding panels.
+
+
 
 import React from 'react';
 import { Analysis } from './Analysis';
@@ -20,14 +20,14 @@ import type { RedisTabType } from './redisTabs';
 
 interface RedisToolTabProps {
   type: Exclude<RedisTabType, 'redis-key'>;
-  /** localStorage scope — định danh server, dùng cho lịch sử lệnh của CLI. */
+  /** localStorage scope — server identifier used for CLI command history. */
   storageScope: string;
-  /** Db index của kết nối, chỉ để Dashboard hiển thị. Nguồn là `connId`, xem §2.1. */
+  /** Connection database index for Dashboard display. Sourced from `connId`. */
   dbIndex: number;
   readOnly: boolean;
-  /** Theme của app — Console dùng chung hai theme Monaco với tab truy vấn SQL. */
+  /** Active app theme — Console shares Monaco themes with SQL query tabs. */
   theme: 'dark' | 'light';
-  /** `SELECT n` gõ trong CLI: backend phân giải ra kết nối của db đó và báo lại (§2.2). */
+  /** `SELECT n` in CLI: backend resolves connection for target db index. */
   onSwitchDb: (index: number, connId?: string) => void;
 }
 

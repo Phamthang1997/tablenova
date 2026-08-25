@@ -1,11 +1,11 @@
-// Dialog xuất / nhập keyspace theo prefix.
+// Keyspace export / import dialog by prefix.
 //
-// Toàn bộ phần "làm gì" nằm ở `utils/redisTransfer.ts` (thuần, có test); file này chỉ là giao diện
-// cho nó: hai tab, một thanh tiến độ, một bản tóm tắt kết quả. Cùng cách chia như
-// `dumpBuilder.ts` ↔ `ExportDatabaseDialog.tsx` bên SQL.
+// Core logic resides in `utils/redisTransfer.ts`; this file provides the two-tab modal UI.
+
+
 //
-// Hai tab trong MỘT dialog chứ không phải hai dialog: chúng dùng chung định dạng tệp, và một người
-// vừa xuất xong hay muốn nhập ngay sang db khác để kiểm — tách ra thì phải đóng cái này mở cái kia.
+// Both transfer modes share unified file format within a single dialog.
+
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
@@ -27,23 +27,23 @@ import {
 } from '../../utils/redisTransfer';
 import { Modal, ModalBody, ModalFooter } from '../Modal';
 
-/** Kiểu key mà bộ lọc của dialog biết tới — cùng danh sách với trình duyệt key. */
+/** Supported key type filters matching the key browser list. */
 const TYPES = ['string', 'hash', 'list', 'set', 'zset', 'stream'];
 
-/** Số key lỗi hiện ra trước khi gộp phần còn lại thành một dòng "và N nữa". */
+/** Error list threshold before truncating with "...and N more". */
 const FAILED_SHOWN = 8;
 
 interface RedisTransferDialogProps {
   open: boolean;
-  /** Tab mở sẵn. Menu chuột phải của một nhánh cây key mở thẳng vào `export`. */
+  /** Initial active tab. Context menu on key tree branches opens directly to `export`. */
   initialTab?: 'export' | 'import';
-  /** Prefix điền sẵn (nhánh cây key, hoặc suy ra từ ô tìm kiếm). */
+  /** Pre-filled key prefix (from selected tree branch or search filter). */
   initialPrefix: string;
   initialTypeFilter: string;
   dbIndex: number;
   readOnly: boolean;
   onClose: () => void;
-  /** Đã nhập xong -> danh sách key phải quét lại. */
+  /** Import completed callback -> triggers key list refresh. */
   onImported: () => void;
   onError: (msg: string) => void;
 }
@@ -63,11 +63,11 @@ export const RedisTransferDialog: React.FC<RedisTransferDialogProps> = ({
   const [tab, setTab] = useState<'export' | 'import'>(initialTab);
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<TransferProgress | null>(null);
-  // Cờ dừng đọc trong vòng lặp nên phải là ref: một `useState` chỉ đổi ở lần render sau, tức là
-  // vòng lặp đang chạy sẽ đọc giá trị cũ và không bao giờ dừng.
+  // Abort flag stored in ref to ensure immediate visibility inside the async transfer loop.
+  
   const stopRef = useRef(false);
 
-  // ---- Xuất ----
+  // ---- Export ----
   const [prefix, setPrefix] = useState(initialPrefix);
   const [typeFilter, setTypeFilter] = useState(initialTypeFilter);
   const [exported, setExported] = useState<{
@@ -75,7 +75,7 @@ export const RedisTransferDialog: React.FC<RedisTransferDialogProps> = ({
   } | null>(null);
   const [savedPath, setSavedPath] = useState<string | null>(null);
 
-  // ---- Nhập ----
+  // ---- Import ----
   const [fileName, setFileName] = useState('');
   const [parsed, setParsed] = useState<ParsedExport | null>(null);
   const [replace, setReplace] = useState(false);
@@ -112,8 +112,8 @@ export const RedisTransferDialog: React.FC<RedisTransferDialogProps> = ({
           pattern,
           db: dbIndex,
           typeFilter: typeFilter || undefined,
-          // `createdAt` là tham số của builder (nó phải tất định để test được), nên thời điểm
-          // được chốt ở đây — chỗ duy nhất biết "bây giờ" là lúc nào.
+          // `createdAt` timestamp fixed at export initiation for deterministic testing.
+          
           createdAt: new Date().toISOString(),
           onProgress: setProgress,
           shouldStop: () => stopRef.current,
@@ -177,8 +177,8 @@ export const RedisTransferDialog: React.FC<RedisTransferDialogProps> = ({
       { n: parsed.entries.length.toLocaleString(), db: dbIndex },
     );
     try {
-      // Cả vòng lặp là MỘT hành động dưới mắt Safe Mode. Không có lớp bọc này thì mỗi lô
-      // `redis_restore_keys` là một hộp thoại riêng — 10.000 key thành 50 lần hỏi.
+      // Batch wrapped under a single Safe Mode approval to avoid repeated modal prompts.
+      
       const res = await runApproved('redis_restore_keys', activeConnId(), detail, () =>
         applyRedisImport(
           parsed.entries as RedisDumpEntry[],
@@ -186,7 +186,7 @@ export const RedisTransferDialog: React.FC<RedisTransferDialogProps> = ({
           { replace, onProgress: setProgress, shouldStop: () => stopRef.current },
         ));
       setImported(res);
-      // Gọi kể cả khi bị dừng giữa chừng: những key đã nạp thì đã có thật trong db.
+      // Invokes callback even on abort: keys already restored are persisted in database.
       if (res.restored > 0) onImported();
     } catch (e: any) {
       onError(String(e?.message ?? e));
@@ -229,8 +229,7 @@ export const RedisTransferDialog: React.FC<RedisTransferDialogProps> = ({
           </button>
         </div>
 
-        {/* Đánh đổi của DUMP/RESTORE, nói ngay chứ không để người dùng gặp lỗi checksum rồi mới
-            đoán: payload mang footer phiên bản RDB nên chỉ nhập được vào Redis bằng hoặc mới hơn. */}
+        {/* DUMP/RESTORE trade-offs: payload contains RDB version footer; importable into equal or newer Redis versions only. */}
         <div className="redis-dialog-warn">
           <AlertTriangle size={12} className="redis-dialog-warn-icon" />
           <span>{t('redis.transferVersionNote')}</span>
@@ -248,8 +247,7 @@ export const RedisTransferDialog: React.FC<RedisTransferDialogProps> = ({
               placeholder={t('redis.transferPrefixPlaceholder')}
               spellCheck={false}
             />
-            {/* Hiện luôn glob sẽ gửi cho SCAN. Prefix có ký tự đặc biệt (`log[1]:`) được escape,
-                nên không hiện ra thì người dùng không có cách nào biết mình sắp xuất tập key nào. */}
+            {/* Displays exact glob pattern sent to SCAN with special characters escaped */}
             <div className="redis-dialog-label">
               <Trans
                 i18nKey="redis.transferPatternPreview"
@@ -342,8 +340,7 @@ export const RedisTransferDialog: React.FC<RedisTransferDialogProps> = ({
                   )}
                 </div>
 
-                {/* Thiếu footer = bản xuất bị dừng, chạm trần, hoặc tệp bị cắt. Vẫn nhập được
-                    phần đang có, nhưng người dùng phải biết nó không đủ. */}
+                {/* Missing footer indicates interrupted export or truncated file; keys remain importable */}
                 {parsed.truncated && (
                   <div className="redis-dialog-warn">
                     <AlertTriangle size={12} className="redis-dialog-warn-icon" />
@@ -449,8 +446,8 @@ export const RedisTransferDialog: React.FC<RedisTransferDialogProps> = ({
               <button
                 className="btn btn-primary redis-value-save"
                 onClick={runImport}
-                // Chế độ chỉ đọc: chốt thật ở Rust (`ensure_writable`), nút này chỉ để không mời
-                // người dùng bấm vào một việc chắc chắn bị từ chối.
+                // Read-only check: enforced in backend; disabled in UI to prevent failing requests.
+                
                 disabled={readOnly || !validFile || parsed.entries.length === 0}
                 title={readOnly ? t('redis.errReadOnly') : undefined}
               >

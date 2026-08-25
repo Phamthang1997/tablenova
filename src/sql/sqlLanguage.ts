@@ -1,6 +1,6 @@
-// Tích hợp monaco-sql-languages (parser ANTLR + gợi ý theo caret) với catalog của app.
-// monaco-sql-languages tính ngữ cảnh tại con trỏ (cần table? column? keyword?...); ta cấp nội dung
-// thật (bảng/cột+kiểu, alias-scope) qua completionService.
+// Integrates monaco-sql-languages (ANTLR parser + caret context) with database catalog.
+// Context computed by monaco-sql-languages; completionService supplies catalog metadata.
+
 import * as monaco from 'monaco-editor';
 import { setupLanguageFeatures, LanguageIdEnum, EntityContextType } from 'monaco-sql-languages';
 import type { CompletionService, ICompletionItem, CompletionSnippet } from 'monaco-sql-languages';
@@ -18,11 +18,11 @@ import i18n from '../i18n';
 
 const BUMP_CMD = 'tablenova.bumpUsage';
 
-/** Nhãn loại đối tượng trong popup gợi ý — dùng chung khoá với hover để hai nơi không lệch chữ. */
+/** Type labels in suggest popup matching hover documentation keys. */
 const tableKind = (type: string) =>
   i18n.t(type === 'view' ? 'sqlEditor.hoverKindView' : 'sqlEditor.hoverKindTable');
 
-// Từ khoá dùng thường xuyên nhất -> ưu tiên hiển thị trước các từ khoá lạ.
+// Frequently used keywords prioritized over uncommon statements.
 const COMMON_KEYWORDS = new Set([
   'SELECT', 'FROM', 'WHERE', 'JOIN', 'LEFT JOIN', 'INNER JOIN', 'RIGHT JOIN', 'ON',
   'GROUP BY', 'ORDER BY', 'HAVING', 'LIMIT', 'OFFSET', 'INSERT', 'INSERT INTO',
@@ -30,20 +30,20 @@ const COMMON_KEYWORDS = new Set([
   'DISTINCT', 'COUNT', 'SUM', 'AVG', 'MIN', 'MAX', 'CASE', 'WHEN', 'THEN', 'ELSE',
   'END', 'WITH', 'UNION', 'IS NULL', 'IS NOT NULL', 'ASC', 'DESC', 'BETWEEN', 'EXISTS',
 ]);
-// Lệnh chạy sau khi chọn 1 item -> tăng tần suất dùng của tên đó
+// Callback on item selection -> increments usage frequency count.
 const bumpCommand = (name: string) => ({ id: BUMP_CMD, title: '', arguments: [name] });
 
 export function langIdForDbType(dbType: string): string {
   if (dbType === 'postgres') return LanguageIdEnum.PG;
   if (dbType === 'mysql') return LanguageIdEnum.MYSQL;
-  return LanguageIdEnum.GENERIC; // sqlite: dùng grammar SQL chung (sát hơn MySQL-mode)
+  return LanguageIdEnum.GENERIC; // sqlite: uses generic SQL grammar
 }
 
-// Mọi language id mà editor SQL có thể dùng (để đăng ký hover/format cho đủ 3 dialect).
+// Supported language IDs registered for hover/formatting providers.
 export const LANG_IDS: string[] = [LanguageIdEnum.MYSQL, LanguageIdEnum.PG, LanguageIdEnum.GENERIC];
 
-// Sinh alias ngắn cho bảng: snake_case -> initials (order_details -> od);
-// camelCase -> chữ đầu + các chữ hoa (orderDetails -> od); còn lại -> chữ cái đầu. Bảo đảm không trùng.
+// Generates short table aliases: snake_case -> initials (order_details -> od);
+// camelCase -> uppercase letters (orderDetails -> od); single words -> first letter.
 function genAlias(table: string, taken: Set<string>): string {
   let base: string;
   const parts = table.split(/[_\s]+/).filter(Boolean);
@@ -61,17 +61,17 @@ function genAlias(table: string, taken: Set<string>): string {
 const completionService: CompletionService = async (model, position, _ctx, suggestions, entities, snippets) => {
   const items: ICompletionItem[] = [];
 
-  // `suggestions` là null khi parser ANTLR bỏ cuộc hẳn ("no viable alternative" —
-  // rất hay gặp giữa lúc gõ dở). Trước đây ta return luôn, tức KHÔNG gợi ý gì cả.
-  // Giờ chạy tiếp ở chế độ suy giảm: scope lấy từ văn bản nên vẫn gợi ý được cột của
-  // các bảng trong câu, tên bảng, và điều kiện JOIN.
+  // Fallback degradation mode when ANTLR parser fails on mid-typed queries:
+  // scopes from text scanner still provide table/column suggestions and JOIN conditions.
+  
+  
   const parserFailed = !suggestions;
   const keywords = suggestions?.keywords ?? [];
   const syntaxHints = suggestions?.syntax ?? [];
 
-  // 1) Từ khoá (đã đúng dialect do parser tính). Từ khoá hay dùng lên tier trước
-  // (nếu không, gõ 'S' sẽ ra SAVEPOINT/SECURITY trước cả SELECT), trong cùng tier
-  // thì cái nào dùng nhiều xếp trước.
+  // 1) Keywords (dialect-specific from parser). Common keywords ranked first.
+  
+  
   const keywordSet = new Set<string>();
   const langId = model.getLanguageId();
   for (const kw of keywords) {
@@ -90,10 +90,10 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
     });
   }
 
-  // 2) Mẫu câu (snippet) theo dialect — do monaco-sql-languages cấp, ta phải tự trả về
-  // (nếu bỏ tham số `snippets` thì chúng bị mất hoàn toàn).
-  // Xếp CUỐI danh sách và bỏ snippet 1 từ trùng đúng một từ khoá (vd 'SELECT', 'UPDATE')
-  // để không hiện 2 dòng giống nhau và không chiếm mất lựa chọn mặc định của từ khoá.
+  // 2) Dialect snippets from monaco-sql-languages returned with deduped keyword collisions.
+  
+  
+  
   for (const sn of (snippets || []) as CompletionSnippet[]) {
     if (keywordSet.has(sn.prefix.toUpperCase())) continue;
     const body = Array.isArray(sn.body) ? sn.body.join('\n') : sn.body;
@@ -109,16 +109,16 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
     });
   }
 
-  // 2) alias -> bảng, và danh sách bảng trong scope.
+  // 2) Table aliases and scoped tables.
   //
-  // Hai nguồn, cố ý KHÔNG chỉ dùng parser: `entities` của ANTLR chính xác khi câu lệnh
-  // hợp lệ, nhưng lúc đang gõ dở thì thiếu/rỗng và sai khác theo từng dialect — đo được:
-  // với `... JOIN address a on ` parser Postgres trả 2 entity (bỏ mất `address`), còn
-  // với `... on c.` parser MySQL trả 0 entity. Khi đó alias mất sạch nên gợi ý cột rơi
-  // về "mọi bảng" và gợi ý điều kiện JOIN không chạy. Quét văn bản (collectTableRefs)
-  // bù đúng những trạng thái đó; entities vẫn được ưu tiên khi có.
-  const aliasMap = new Map<string, string>(); // alias|tên (lower) -> tên bảng
-  const aliasByTable = new Map<string, string>(); // tên bảng -> alias (nếu có) để hiện prefix
+  // Combines ANTLR entities and text-based scanning (`collectTableRefs`) to survive incomplete syntax.
+  
+  
+  
+  
+  
+  const aliasMap = new Map<string, string>(); // alias|name (lower) -> table name
+  const aliasByTable = new Map<string, string>(); // table name -> alias for prefixing
   const scopeTables: string[] = [];
   const addTableRef = (tbl: string, alias?: string) => {
     if (!tbl) return;
@@ -144,18 +144,18 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
     endLineNumber: position.lineNumber, endColumn: position.column,
   });
 
-  // Bù từ văn bản của CÂU chứa caret (không phải cả tài liệu, để câu khác không lọt vào scope).
+  // Scoped strictly to statement containing caret.
   const currentStmt = statementAt(fullText, model.getOffsetAt(position));
   for (const ref of collectTableRefs(currentStmt?.text ?? textBefore)) {
     addTableRef(ref.table, ref.alias);
   }
 
-  // 2b) B3 — Gợi ý điều kiện JOIN ON theo FOREIGN KEY (hoặc cột trùng tên) khi caret nằm sau ON
+  // 2b) Suggests `JOIN ON` conditions from foreign keys or matching column names after ON keyword.
   const inOnClause = /\bON\s+[\w.`"]*$/i.test(textBefore);
   let joinConds: string[] = [];
   if (inOnClause) {
-    // `buildJoinConditions` nhận `getSchema` đã tiêm để test được (xem joinConditions.test.ts), nên
-    // bọc lại thay vì truyền thẳng — nó không biết và không cần biết về kết nối.
+    // `buildJoinConditions` receives injected `getSchema` for isolated unit testing.
+    
     joinConds = await buildJoinConditions(scopeTables, aliasByTable, (tbl) =>
       catalog.getSchema(editorConnId(), tbl),
     );
@@ -164,13 +164,13 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
       kind: monaco.languages.CompletionItemKind.Snippet,
       detail: i18n.t('sqlEditor.cmplJoinCondition'),
       insertText: c,
-      sortText: '0_' + i, // ưu tiên cao nhất
+      sortText: '0_' + i, // highest priority
     }));
   }
 
-  // Bật bằng `window.__sqlCompletionDebug = true` trong DevTools rồi gõ lại để xem vì sao
-  // một gợi ý không xuất hiện. Gợi ý phụ thuộc parser + metadata từ DB nên rất khó tái hiện
-  // ngoài app; đây là cách nhanh nhất để biết mắt xích nào hụt.
+  // Debug via `window.__sqlCompletionDebug = true` in DevTools to inspect completion candidates.
+  
+  
   if ((globalThis as any).__sqlCompletionDebug) {
     const entityTables = (entities || [])
       .filter(e => (e as any).entityContextType === EntityContextType.TABLE)
@@ -191,22 +191,22 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
     );
   }
 
-  // 2b) Chỗ điền giá trị (`WHERE status = `, `IN (`, `LIKE `) -> gợi ý chính các giá trị hợp lệ.
+  // 2b) Value position completion (`WHERE status = `, `IN (`, `LIKE `) -> enum/boolean values.
   //
-  // **Không hỏi database câu nào.** Nguồn duy nhất là chuỗi kiểu đã có sẵn trong catalog: MySQL
-  // trả `COLUMN_TYPE` nên `enum('active','banned')` mang theo luôn danh sách giá trị, và cột
-  // BOOLEAN thì chỉ có hai. Đó cũng là lý do `WHERE id = ` không gợi ý gì — `int` không có tập
-  // giá trị nào để liệt kê, nên nó tự rơi ra ngoài mà không cần luật riêng.
+  // Sourced strictly from catalog schema types without live database queries.
+  
+  
+  
   //
-  // Cố ý dừng ở đây, không mở rộng sang `SELECT DISTINCT col FROM t`: câu đó là một lần quét
-  // toàn bảng do một phím gõ kích hoạt, và trên một kết nối production thì đó không phải gợi ý
-  // nữa mà là sự cố.
+  // Avoids table scan queries on production connections.
+  
+  
   const valueAt = valuePosition(textBefore);
   if (valueAt) {
     const dot = valueAt.column.lastIndexOf('.');
     const colName = dot >= 0 ? valueAt.column.slice(dot + 1) : valueAt.column;
     const prefix = dot >= 0 ? valueAt.column.slice(0, dot).toLowerCase() : null;
-    // Có tiền tố thì chỉ tra đúng bảng của tiền tố đó; không thì tra mọi bảng trong scope.
+    // Qualified prefix -> lookup specific table; otherwise check all scope tables.
     const owners = prefix
       ? scopeTables.filter(tb => tb.toLowerCase() === prefix || aliasByTable.get(tb)?.toLowerCase() === prefix)
       : Array.from(new Set(scopeTables));
@@ -221,24 +221,24 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
       if (!values.length) continue;
 
       values.forEach((v, i) => {
-        // Giá trị boolean là từ khoá, không phải chuỗi -> không bọc nháy.
+        // Boolean literals are keywords -> unquoted.
         const literal = family === 'bool' ? v : `'${v.replace(/'/g, "''")}'`;
         items.push({
           label: v,
           kind: monaco.languages.CompletionItemKind.Value,
           detail: i18n.t('sqlEditor.cmplColumnValue', { table: tbl }),
-          // Đã gõ nháy mở thì chèn phần ruột thôi, nếu không sẽ thành `''active''`.
+          // Opening quote already typed -> inserts unquoted content.
           insertText: valueAt.quoted && family !== 'bool' ? `${v.replace(/'/g, "''")}'` : literal,
           filterText: v,
           sortText: '00_value_' + String(i).padStart(3, '0'),
         });
       });
-      break; // cột đầu tiên khớp là đủ; hai bảng cùng tên cột thì đã là chuyện của kiểm tra mơ hồ
+      break; // first matching column is sufficient
     }
   }
 
-  // 2c) Ngay sau SELECT (chưa gõ gì) -> '*' là gợi ý ưu tiên số 1, rồi mới tới cột/bảng.
-  // Nếu đã biết bảng trong scope thì thêm luôn phương án liệt kê tường minh các cột.
+  // 2c) Directly following SELECT -> '*' is top suggestion before columns/tables.
+  // Adds explicit column list snippet when scope tables are known.
   if (/\bselect\s+(distinct\s+|all\s+)?$/i.test(textBefore)) {
     items.push({
       label: '*',
@@ -246,7 +246,7 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
       detail: i18n.t('sqlEditor.cmplAllColumns'),
       insertText: '*',
       filterText: '*',
-      sortText: '00_star', // trên cả điều kiện JOIN ('0_...')
+      sortText: '00_star', // ranks above JOIN conditions ('0_...')
       preselect: true,
     });
     for (const tbl of Array.from(new Set(scopeTables))) {
@@ -268,7 +268,7 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
     }
   }
 
-  // 3) Có tiền tố "alias." ngay trước caret không?
+  // 3) Checks for "alias." prefix directly before caret.
   const line = model.getValueInRange({
     startLineNumber: position.lineNumber,
     startColumn: 1,
@@ -278,9 +278,9 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
   const dot = line.match(/([A-Za-z_][\w$]*)\s*\.\s*[\w$]*$/);
   const prefixAlias = dot ? dot[1].toLowerCase() : null;
 
-  // 4) Gợi ý ngữ nghĩa theo loại mà parser yêu cầu tại caret
+  // 4) Semantic suggestions according to parser request at caret.
   const emitTables = async () => {
-    // Tự đặt alias khi chèn bảng trong FROM/JOIN (không áp cho INTO/UPDATE/DROP...)
+    // Automatically assigns alias when inserting tables in FROM/JOIN (excluding INTO/UPDATE/DROP...)
     const stripped = textBefore.replace(/[\w$."`]*$/, '').trimEnd();
     const wantAlias = /\b(from|join)$/i.test(stripped) || (/,$/.test(stripped) && /\bfrom\b/i.test(textBefore));
     const taken = new Set<string>();
@@ -291,9 +291,9 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
       let insertText = tb.name;
       let alias: string | null = null;
       if (wantAlias) {
-        alias = genAlias(tb.name, new Set(taken)); // set riêng mỗi item để không "ăn" alias lẫn nhau
-        // Chèn alias như VĂN BẢN THƯỜNG, không dùng placeholder ${1:...}: placeholder giữ
-        // alias ở trạng thái đang-chọn nên ký tự gõ tiếp theo (vd ';') sẽ ghi đè mất alias.
+        alias = genAlias(tb.name, new Set(taken)); // isolated set per item to avoid alias collision
+        // Inserts alias as plain text rather than snippet placeholder to prevent accidental overwrites.
+        
         insertText = `${tb.name} ${alias}`;
       }
       items.push({
@@ -310,11 +310,11 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
   };
 
   const emitColumns = async () => {
-    // Xác định bảng cần lấy cột: theo alias trước dấu chấm > các bảng trong scope > tất cả
+    // Resolves target tables: dot alias > scope tables > all cached tables
     let targetTables: string[];
-    // cacheOnly: nhánh "tất cả bảng" (câu lệnh chưa có FROM) chỉ đọc schema ĐÃ cache,
-    // không gọi backend từng bảng — nếu không, mỗi lần gõ/xoá một ký tự (Monaco gọi lại
-    // provider) có thể sinh hàng trăm lời gọi xuống Rust và làm editor giật.
+    // cacheOnly: scanning all tables reads from cache only to avoid hundreds of IPC calls.
+    
+    
     let cacheOnly = false;
     if (prefixAlias && aliasMap.has(prefixAlias)) {
       targetTables = [aliasMap.get(prefixAlias)!];
@@ -325,10 +325,10 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
       cacheOnly = true;
     }
     const multi = targetTables.length > 1;
-    // Nhiều bảng và chưa gõ "alias." -> tự gắn tiền tố bảng/alias vào cột (customers.customerName)
+    // Multi-table without alias prefix: auto-prefixes table/alias to columns (customers.customerName)
     const qualify = multi && !prefixAlias;
-    // Chặn trần số gợi ý cột: DB lớn (vài trăm bảng) sẽ tạo hàng chục nghìn item mỗi lần
-    // gõ, vừa tốn CPU dựng object vừa tốn CPU cho Monaco lọc/xếp hạng.
+    // Caps column suggestions to avoid CPU overhead on large schemas with hundreds of tables.
+    
     const MAX_COLUMN_ITEMS = 1500;
     let columnCount = 0;
     for (const tb of targetTables) {
@@ -350,7 +350,7 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
         });
       }
     }
-    // Cũng gợi ý TÊN BẢNG trong scope (để gõ tiếp "bảng." lấy cột) khi chưa có tiền tố
+    // Also suggests table names in scope for dot completion when no prefix is typed
     if (!prefixAlias) {
       for (const tb of Array.from(new Set(scopeTables))) {
         const p = aliasByTable.get(tb) || tb;
@@ -367,8 +367,8 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
   };
 
   if (parserFailed) {
-    // Không biết caret đang cần gì -> suy ra từ văn bản. Sau "FROM|JOIN" thì cần bảng,
-    // còn lại (kể cả sau "ON", sau "alias.") thì cần cột.
+    // Infer completion context from preceding text: FROM/JOIN -> tables, otherwise columns/keywords.
+    
     const wantsTable = /\b(from|join)\s+[\w$."`]*$/i.test(textBefore);
     if (wantsTable) await emitTables();
     else await emitColumns();
@@ -387,10 +387,10 @@ let initialized = false;
 export function setupSqlCompletion(): void {
   if (initialized) return;
   initialized = true;
-  // Lệnh tăng tần suất dùng khi 1 gợi ý được chọn
+  // Increments usage frequency when a suggestion is accepted
   try {
     (monaco.editor as any).registerCommand(BUMP_CMD, (_accessor: any, name: string) => bumpUsage(name));
-  } catch { /* đã đăng ký */ }
+  } catch { /* already registered */ }
   const config = {
     completionItems: {
       enable: true,

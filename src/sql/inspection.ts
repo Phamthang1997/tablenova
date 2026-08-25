@@ -8,19 +8,19 @@ import { typeBase, typeFamily } from '../utils/columnType';
 import i18n from '../i18n';
 
 /**
- * Dữ liệu để dựng Quick Fix, tính sẵn ở đây thay vì để code action tự suy ra.
+ * Pre-computed Quick Fix payload eliminating runtime heuristic inference in code action providers.
  *
- * Lý do tách hẳn ra: `message` đã đi qua i18n, nên đọc ngược tên định danh từ câu chữ là bám vào
- * bản dịch — đúng cái mà quy ước "không rẽ nhánh theo văn bản hiển thị" cấm. Chỗ duy nhất biết
- * chắc cần thay gì và thay bằng gì là chỗ phát hiện ra lỗi.
+ * Separated cleanly from i18n messages to prevent parsing identifier names from localized strings.
+ 
+ 
  */
 export interface QuickFixData {
-  /** Vùng sẽ thay. Có thể HẸP HƠN vùng gạch chân: `u.nmae` gạch cả cụm nhưng chỉ thay `nmae`. */
+  /** Replacement range. Can be NARROWER than diagnostic squiggly: `u.nmae` underlines both but replaces `nmae`. */
   startLine: number;
   startColumn: number;
   endLine: number;
   endColumn: number;
-  /** Tên thay thế, đã xếp theo độ gần. */
+  /** Replacement candidates ranked by similarity. */
   candidates: string[];
 }
 
@@ -37,15 +37,15 @@ export interface DiagnosticIssue {
 const DUMMY_TABLES = new Set(['dual', 'generate_series', 'unnest', 'json_each', 'json_tree', 'information_schema', 'pg_catalog']);
 
 /**
- * Id ngôn ngữ Monaco của khung đang soạn (`mysql` | `pgsql` | `genericsql`).
+ * Monaco language ID of active editor buffer (`mysql` | `pgsql` | `genericsql`).
  *
- * Chỉ dùng cho những kiểm tra mà **kết quả phụ thuộc dialect**. Bỏ trống thì các kiểm tra đó
- * không chạy, chứ không đoán một dialect mặc định — đoán sai nghĩa là gạch đỏ một câu SQL mà
- * máy chủ thật sự chấp nhận.
+ * Used strictly for dialect-dependent rules; empty string skips dialect-specific checks.
+ 
+ 
  */
 export type SqlDialectId = string | undefined;
 
-/** Dialect coi "cột mơ hồ" là lỗi. SQLite thì không: nó tự chọn cột đầu tiên và chạy tiếp. */
+/** Dialects treating ambiguous columns as hard errors (Postgres/MySQL vs SQLite). */
 const AMBIGUITY_IS_ERROR = new Set(['mysql', 'pgsql']);
 
 /**
@@ -71,8 +71,8 @@ export function inspectSqlText(text: string, dialect?: SqlDialectId): Diagnostic
   };
 
   const maskedText = maskForSplit(text);
-  // Tên CTE trông y hệt tên bảng ở `FROM`/`JOIN` nhưng không có trong catalog. Gom trước để
-  // vòng dưới bỏ qua, nếu không mọi câu `WITH … SELECT * FROM <cte>` đều bị báo đỏ oan.
+  // CTE names appear like physical tables in FROM/JOIN but lack catalog entries; gathered beforehand.
+  
   const cteNames = collectCteNames(text);
 
   // 1. Table Reference Validation
@@ -132,16 +132,16 @@ export function inspectSqlText(text: string, dialect?: SqlDialectId): Diagnostic
         const endPos = getPosition(matchOffset + fullMatch.length);
 
         const realTbl = dbIndexRegistry.getRealTableName(targetTbl) || targetTbl;
-        // `findSimilarColumns` đã tính sẵn gợi ý; trước đây chuỗi nối nó vào chỉ có ở nhánh
-        // tiếng Việt, nên người dùng EN/JA thấy lỗi mà không thấy tên cột đúng.
+        // `findSimilarColumns` pre-computes suggestions for all locales.
+        
         const suggestions = dbIndexRegistry.findSimilarColumns(colName, targetTbl);
         const hint =
           suggestions.length > 0
             ? i18n.t('sqlEditor.inspectDidYouMean', { n: suggestions.join(', ') })
             : '';
 
-        // Gạch chân cả `alias.cột` cho dễ thấy, nhưng Quick Fix chỉ được đụng vào phần tên cột —
-        // regex khớp không cho phép khoảng trắng nên vị trí dấu chấm là xác định.
+        // Underlines `alias.column` for visibility while Quick Fix modifies only the column token.
+        
         const colStart = getPosition(matchOffset + aliasOrTbl.length + 1);
         issues.push({
           severity: 'warning',
@@ -165,30 +165,30 @@ export function inspectSqlText(text: string, dialect?: SqlDialectId): Diagnostic
     }
   }
 
-  // 3. Cột KHÔNG có tiền tố trong danh sách SELECT — `SELECT ids FROM test`.
+  // 3. Unqualified columns in SELECT list — `SELECT ids FROM test`.
   //
-  // Chạy theo TỪNG câu lệnh chứ không trên cả buffer: phạm vi bảng của câu này không nói gì về
-  // câu kế bên. Và chỉ chạy khi biết chắc toàn bộ phạm vi — thiếu một mảnh nào thì im lặng, vì
-  // một cảnh báo sai ở đây dạy người dùng bỏ qua mọi đường gạch chân, kể cả đường đúng.
+  // Evaluated per statement to isolate table scopes.
+  
+  
   for (const stmt of splitStatements(text)) {
     const refs = collectTableRefs(stmt.text);
-    if (!refs.length) continue;                              // không có FROM -> không có phạm vi
-    if (collectCteNames(stmt.text).size) continue;           // cột của CTE không nằm trong catalog
-    // Truy vấn con trong FROM/JOIN: `collectTableRefs` chui vào trong ngoặc và báo về bảng của
-    // truy vấn con, nên "phạm vi" thu được là của tầng khác — `SELECT x FROM (SELECT id FROM
-    // users) t` trông như thể `x` phải là cột của `users`. Không đủ hiểu thì không nói gì.
+    if (!refs.length) continue;                              // no FROM clause -> unresolvable scope
+    if (collectCteNames(stmt.text).size) continue;           // CTE columns are outside catalog
+    // Subqueries in FROM/JOIN: nested scopes omitted to prevent false squigglies.
+    
+    
     const stmtMasked = maskForSplit(stmt.text);
     if (/\b(?:from|join)\s*\(/i.test(stmtMasked)) continue;
 
     const scope = Array.from(new Set(refs.map((r) => r.table.replace(/[`"[\]]/g, ''))));
-    if (!scope.every((tbl) => dbIndexRegistry.hasTable(tbl))) continue; // một bảng lạ -> bó tay
+    if (!scope.every((tbl) => dbIndexRegistry.hasTable(tbl))) continue; // unknown table -> skip
 
-    // Ai "sở hữu" một tên cột. Giữ theo TỪNG nguồn chứ không gộp thành một tập tên: chính số
-    // nguồn của một cột là thứ nói lên nó có mơ hồ hay không. Khoá là bí danh (hoặc tên bảng khi
-    // không có bí danh) nên `FROM users a JOIN users b` cho hai nguồn khác nhau — đúng như SQL
-    // hiểu, và cũng đúng là lúc mọi cột đều mơ hồ.
+    // Column source ownership mapping to detect ambiguous columns.
+    
+    
+    
     const ownersOf = new Map<string, string[]>();
-    /** `bí danh.cột` -> kiểu khai báo. Khoá theo nguồn vì hai bảng có thể khai hai kiểu khác nhau. */
+    /** `alias.column` -> declared type. Keyed by source to differentiate column types across tables. */
     const typeOfCol = new Map<string, string>();
     const seenQualifier = new Set<string>();
     for (const ref of refs) {
@@ -204,7 +204,7 @@ export function inspectSqlText(text: string, dialect?: SqlDialectId): Diagnostic
         typeOfCol.set(`${qualifier.toLowerCase()}.${key}`, col.type);
       }
     }
-    // Alias của bảng cũng hợp lệ ở vị trí này (`SELECT t FROM test t` hiếm nhưng đúng cú pháp).
+    // Table alias is valid in this position (`SELECT t FROM test t`).
     const aliasNames = new Set(resolveAliases(stmt.text).keys());
 
     for (const ref of collectSelectListRefs(stmt.text)) {
@@ -215,9 +215,9 @@ export function inspectSqlText(text: string, dialect?: SqlDialectId): Diagnostic
       const startPos = getPosition(stmt.start + ref.offset);
       const endPos = getPosition(stmt.start + ref.offset + ref.name.length);
 
-      // 3a. Có ở nhiều nguồn -> mơ hồ. MySQL/Postgres từ chối hẳn câu lệnh; SQLite lặng lẽ lấy
-      // cột đầu tiên, nên với dialect đó im lặng mới đúng — cảnh báo một câu SQL chạy được là
-      // cách nhanh nhất khiến người dùng tắt hết gạch chân.
+      // 3a. Multiple sources -> ambiguous. MySQL/Postgres reject; SQLite resolves to first match,
+      // so suppressing for SQLite avoids false positives.
+      
       if (owners && owners.length > 1) {
         if (!dialect || !AMBIGUITY_IS_ERROR.has(dialect)) continue;
         issues.push({
@@ -226,8 +226,8 @@ export function inspectSqlText(text: string, dialect?: SqlDialectId): Diagnostic
             column: ref.name,
             n: owners.join(', '),
           }),
-          // Sửa = định danh nó. Ứng viên là chính các nguồn đang tranh chấp, nên danh sách
-          // Quick Fix trùng khít với danh sách trong thông báo.
+          // Fix: qualify column identifier with candidate table sources.
+          
           fix: {
             startLine: startPos.line,
             startColumn: startPos.col,
@@ -243,7 +243,7 @@ export function inspectSqlText(text: string, dialect?: SqlDialectId): Diagnostic
         continue;
       }
 
-      if (owners) continue; // 3b. đúng một nguồn -> hợp lệ
+      if (owners) continue; // 3b. Single source -> valid
 
       const similar = Array.from(
         new Set(scope.flatMap((tbl) => dbIndexRegistry.findSimilarColumns(ref.name, tbl))),
@@ -268,17 +268,17 @@ export function inspectSqlText(text: string, dialect?: SqlDialectId): Diagnostic
       });
     }
 
-    // 4. So sánh cột với một giá trị không cùng nhóm kiểu — `WHERE int_col = 'abc'`.
+    // 4. Type mismatch comparison — `WHERE int_col = 'abc'`.
     //
-    // Chỉ bắt những ca sai rõ ràng ở CẢ BA dialect. Cố tình KHÔNG đụng tới:
-    //  - `int_col = '5'`: cả ba đều tự ép kiểu, đây là cách viết bình thường;
-    //  - `date_col = '2024-01-01'`: chuỗi là cách duy nhất để viết hằng ngày tháng;
-    //  - `text_col = 5`: MySQL/SQLite chạy được, chỉ Postgres từ chối — mà đúng/sai theo dialect
-    //    thì phải gắn cờ dialect, và giá trị nó mang lại không xứng với rủi ro báo nhầm.
+    // Catches clear errors across all 3 dialects without flagging implicit casts:
+    //  - `int_col = '5'`: implicit type coercion is valid SQL;
+    //  - `date_col = '2024-01-01'`: string literals are standard for dates;
+    //  - `text_col = 5`: MySQL/SQLite allow this; omitted to avoid false alarms.
+    
     const cmp = /([`"[]?[A-Za-z_]\w*[`"\]]?(?:\.[`"[]?[A-Za-z_]\w*[`"\]]?)?)\s*(?:=|<>|!=|>=|<=|<|>)\s*('(?:[^']|'')*')/g;
     let cm: RegExpExecArray | null;
     while ((cm = cmp.exec(stmt.text)) !== null) {
-      // Vế trái phải là code thật, không phải chữ nằm trong một chuỗi hay comment.
+      // Left-hand expression must be real code, outside strings and comments.
       if (stmtMasked[cm.index] !== stmt.text[cm.index]) continue;
 
       const parts = cm[1].replace(/[`"[\]]/g, '').split('.');
@@ -290,7 +290,7 @@ export function inspectSqlText(text: string, dialect?: SqlDialectId): Diagnostic
         type = typeOfCol.get(`${qualifier.toLowerCase()}.${colName.toLowerCase()}`);
       } else {
         const owners = ownersOf.get(colName.toLowerCase());
-        // Cột mơ hồ thì hai bảng có thể khai hai kiểu khác nhau — không kết luận.
+        // Ambiguous column types across tables -> skip type comparison.
         if (owners?.length === 1) type = typeOfCol.get(`${owners[0].toLowerCase()}.${colName.toLowerCase()}`);
       }
       if (!type) continue;
@@ -298,8 +298,8 @@ export function inspectSqlText(text: string, dialect?: SqlDialectId): Diagnostic
       const family = typeFamily(type);
       const inner = cm[2].slice(1, -1).replace(/''/g, "'");
       const badNumber = family === 'number' && !/^\s*-?\d+(?:\.\d+)?\s*$/.test(inner);
-      // "Không giống ngày tháng" ở đây chỉ có nghĩa là **không có chữ số nào** — mỗi dialect
-      // nhận một tập định dạng khác nhau, nên chặt hơn thế là báo nhầm.
+      // "Non-date literal" defined as having zero numeric digits to avoid false diagnostics.
+      
       const badDate = family === 'date' && inner.length > 0 && !/\d/.test(inner);
       if (!badNumber && !badDate) continue;
 
@@ -319,14 +319,14 @@ export function inspectSqlText(text: string, dialect?: SqlDialectId): Diagnostic
       });
     }
 
-    // 5. Cột trong danh sách SELECT không được gom nhóm và cũng không nằm trong hàm tổng hợp.
+    // 5. Non-aggregated SELECT column missing from GROUP BY clause.
     //
-    // Postgres và MySQL (ONLY_FULL_GROUP_BY, mặc định từ 5.7) đều từ chối hẳn; SQLite thì chạy
-    // và trả về một giá trị bất kỳ trong nhóm, nên với dialect đó im lặng mới đúng.
+    // Rejected by Postgres and MySQL (ONLY_FULL_GROUP_BY); permitted in SQLite.
+    
     const grouped = groupByRefs(stmt.text);
     if (grouped && grouped.length && dialect && AMBIGUITY_IS_ERROR.has(dialect)) {
-      // Gom nhóm theo khoá chính thì cả hai đều cho chọn các cột phụ thuộc hàm vào nó
-      // (`GROUP BY u.id` rồi `SELECT u.name`) — hợp lệ, nên bỏ qua cả câu.
+      // Functionally dependent columns allowed when grouping by primary key.
+      
       const groupsByKey = grouped.some((g) =>
         scope.some((tbl) => dbIndexRegistry.getColumn(tbl, g.name)?.isPrimaryKey));
 
@@ -336,7 +336,7 @@ export function inspectSqlText(text: string, dialect?: SqlDialectId): Diagnostic
         for (const ref of collectSelectListRefs(stmt.text)) {
           const lower = ref.name.toLowerCase();
           if (groupedNames.has(lower) || aliasNames.has(lower)) continue;
-          if (!ownersOf.has(lower)) continue;   // không phải cột đã biết -> mục 3 lo rồi
+          if (!ownersOf.has(lower)) continue;   // unknown column -> handled by check 3
 
           const item = items.find((it) => ref.offset >= it.offset && ref.offset < it.offset + it.text.length);
           if (!item || hasAggregate(item.text)) continue;
@@ -369,7 +369,7 @@ export function runMonacoInspection(
   if (!model || model.isDisposed()) return;
 
   const text = model.getValue();
-  // Dialect lấy từ chính model — quyết định những kiểm tra chỉ đúng với một số dialect.
+  // Dialect resolved from active editor model.
   const issues = inspectSqlText(text, model.getLanguageId());
 
   const markers: monaco.editor.IMarkerData[] = issues.map((issue) => ({

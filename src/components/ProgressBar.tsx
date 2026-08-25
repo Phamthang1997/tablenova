@@ -1,13 +1,13 @@
 import React from 'react';
 
 export interface ProgressState {
-  /** Nhãn mô tả bước đang chạy. */
+  /** Nhãn mô tả bước currently run. */
   label: string;
-  /** Đã xong bao nhiêu phần việc. Bỏ trống -> thanh chạy vô định (không biết tiến độ). */
+  /** already xong bao nhiêu phần việc. Bỏ trống -> thanh run vô định (not biết tiến độ). */
   current?: number;
   /** Tổng số phần việc. */
   total?: number;
-  /** Dòng phụ: chi tiết bên trong phần việc đang chạy (ví dụ % dòng của bảng hiện tại). */
+  /** row phụ: chi tiết bên in phần việc currently run (ví dụ % row of table hiện tại). */
   detail?: string;
 }
 
@@ -16,11 +16,11 @@ interface ProgressBarProps {
 }
 
 /**
- * Thanh tiến độ dùng chung cho các luồng Import/Export.
+ * Thanh tiến độ dùng chung for các luồng Import/Export.
  *
- * Dùng thẳng <progress> của HTML (dự án không có UI library nào; WebView2 là Chromium
- * nên tự có animation cho trạng thái vô định khi bỏ thuộc tính value). Phần tạo hình
- * nằm ở .tn-progress trong index.css.
+ * Dùng thẳng <progress> of HTML (dự án not có UI library nào; WebView2 is Chromium
+ * nên tự có animation for status vô định when bỏ thuộc tính value). Phần create hình
+ * nằm at .tn-progress in index.css.
  */
 export const ProgressBar: React.FC<ProgressBarProps> = ({ progress }) => {
   const { label, current, total, detail } = progress;
@@ -37,7 +37,7 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({ progress }) => {
           </span>
         )}
       </div>
-      {/* Không truyền value -> <progress> tự chạy vô định */}
+      {/* not truyền value -> <progress> tự run vô định */}
       <progress
         className="tn-progress"
         {...(determinate ? { value: current, max: total } : {})}

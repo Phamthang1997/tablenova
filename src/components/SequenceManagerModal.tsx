@@ -283,7 +283,7 @@ export const SequenceManagerModal: React.FC<SequenceManagerModalProps> = ({ conn
         </ModalFooter>
       </Modal>
 
-      {/* Sub-modal: Tạo Sequence Mới */}
+      {/* Sub-modal: create Sequence Mới */}
       {showCreateModal && (
         <Modal
           title="Tạo Sequence Mới"

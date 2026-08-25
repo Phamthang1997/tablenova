@@ -66,7 +66,7 @@ export const Analysis: React.FC<AnalysisProps> = ({ onError }) => {
                   <td className="redis-cell">{r.count.toLocaleString()}</td>
                   <td className="redis-cell">{formatBytes(r.bytes)}</td>
                   <td>
-                    {/* Bề rộng là tỉ lệ bytes/max: động theo dữ liệu, không đặt tên class được. */}
+                    {/* Bar width is bytes/max ratio: dynamic based on data, cannot use static CSS class. */}
                     <div className="redis-bar" style={{ width: `${Math.max(2, (r.bytes / max) * 100)}%` }} />
                   </td>
                 </tr>

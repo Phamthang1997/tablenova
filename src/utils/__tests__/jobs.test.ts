@@ -11,7 +11,7 @@ import {
   type JobProgress,
 } from '../jobs';
 
-/** Chờ cho tới khi `check()` đúng — job settle sau vài microtask, không sau một tick cố định. */
+/** wait for tới when `check()` đúng — job settle sau andi microtask, not sau một tick cố định. */
 const until = async (check: () => boolean, tries = 200): Promise<void> => {
   for (let i = 0; i < tries; i++) {
     if (check()) return;
@@ -23,7 +23,7 @@ const until = async (check: () => boolean, tries = 200): Promise<void> => {
 
 const jobById = (id: string) => listJobs().find((j) => j.id === id);
 
-/** Một promise mở, để test giữ job ở trạng thái running bao lâu cũng được. */
+/** Một promise open, to test giữ job at status running bao lâu cũng is. */
 function gate() {
   let resolve!: () => void;
   let reject!: (e: unknown) => void;
@@ -61,7 +61,7 @@ describe('vòng đời một job', () => {
     await until(() => jobById(id)?.state === 'done');
     const rec = jobById(id)!;
     expect(rec.result).toEqual({ message: 'xong', path: 'C:/tmp/bk.sql' });
-    // Tiến độ bị xoá khi settle: thanh bar không được đứng lại ở 50% sau khi đã xong.
+    // Tiến độ is delete when settle: thanh bar not is đứng lại at 50% sau when already xong.
     expect(rec.progress).toBeNull();
     expect(rec.endedAt).toBeTruthy();
     expect(hasActiveJobs()).toBe(false);
@@ -72,7 +72,7 @@ describe('vòng đời một job', () => {
       kind: 'restore',
       title: 'Restore',
       db: 'db1',
-      // dbHelper rethrow một *string*, không phải Error — xem invoke nội bộ của nó.
+      // dbHelper rethrow một *string*, not must Error — xem invoke nội bộ of nó.
       run: async () => {
         throw 'Không kết nối được máy chủ';
       },
@@ -238,11 +238,11 @@ describe('subscriber', () => {
           await g.promise;
         },
       });
-      // startJob (thêm job) + launch (running) là hai lần thông báo tức thì.
+      // startJob (add job) + launch (running) is hai lần thông báo tức thì.
       const afterStart = notify.mock.calls.length;
       await vi.advanceTimersByTimeAsync(0);
       for (let i = 0; i < 50; i++) {
-        // 50 lần report chỉ tạo ra MỘT lần thông báo sau cửa sổ gộp.
+        // 50 lần report chỉ create ra MỘT lần thông báo sau window gộp.
       }
       await vi.advanceTimersByTimeAsync(200);
       expect(notify.mock.calls.length).toBeLessThanOrEqual(afterStart + 3);

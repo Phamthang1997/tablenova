@@ -1,19 +1,19 @@
-// Outline (breadcrumb + panel Outline) và gập từng câu lệnh.
+// Document outline (breadcrumbs + Outline tree panel) and per-statement folding.
 //
-// Cả hai đọc cùng một nguồn: `splitStatements()` đã biết ranh giới câu lệnh — kể cả những chỗ
-// khó như `$$…$$` của Postgres, `DELIMITER` của MySQL và thân trigger — nên ở đây không có
-// bộ tách thứ hai để lệch. Tên hiển thị do `describeStatement()` đặt (thuần văn bản, có test).
+// Sourced from `splitStatements()` which identifies statement boundaries including $ blocks,
+// MySQL custom DELIMITERs, and trigger bodies.
+// Display labels produced by `describeStatement()`.
 //
-// Vì sao đáng làm: một script nhập/khôi phục dài vài trăm dòng thì thanh cuộn là cách duy nhất
-// để đi lại, và Monaco tự gập theo thụt lề — mà SQL thì gần như không thụt lề, nên chức năng
-// gập mặc định gần như vô dụng.
+// Essential for multi-hundred line migration/dump scripts where default indentation-based
+// folding is ineffective for SQL.
+
 import type * as monaco from 'monaco-editor';
 import { describeStatement, splitStatements, type StatementKind } from './statements';
 import { LANG_IDS } from './sqlLanguage';
 
 /**
- * Biểu tượng cho từng loại câu lệnh. Ánh xạ này **chỉ** để chọn icon — không có quyết định nào
- * khác đọc nó, nên đừng đọc ý nghĩa gì thêm vào việc `select` là `Method`.
+ * Icon symbol mapping per statement type.
+ 
  */
 function symbolKindOf(kind: StatementKind, m: typeof monaco): monaco.languages.SymbolKind {
   switch (kind) {
@@ -25,16 +25,16 @@ function symbolKindOf(kind: StatementKind, m: typeof monaco): monaco.languages.S
 }
 
 /**
- * Đăng ký document symbol + folding cho cả 3 dialect.
+ * Registers document symbol and folding providers for all 3 SQL dialects.
  *
- * Cờ chống-đăng-ký-trùng nằm trên `window`, cùng lý do như các provider khác (Vite HMR nạp lại
- * module thì biến module reset và provider bị đăng ký chồng).
+ * Anti-duplicate flag stored on `window` to prevent duplicate providers across Vite HMR cycles.
+ 
  */
 export function registerSqlOutline(monacoInstance: typeof monaco): void {
   const w = window as any;
   if (Array.isArray(w.__sqlOutlineDisposables)) {
     for (const d of w.__sqlOutlineDisposables) {
-      try { d.dispose(); } catch { /* đã huỷ */ }
+      try { d.dispose(); } catch { /* already disposed */ }
     }
   }
 
@@ -57,8 +57,8 @@ export function registerSqlOutline(monacoInstance: typeof monaco): void {
           kind: symbolKindOf(kind, monacoInstance),
           tags: [],
           range,
-          // Nhảy tới đầu câu lệnh chứ không bôi đen cả câu: click trong outline là để đi tới,
-          // không phải để chọn.
+          // Moves cursor to statement start rather than selecting full range.
+          
           selectionRange: {
             startLineNumber: start.lineNumber,
             startColumn: start.column,
@@ -77,7 +77,7 @@ export function registerSqlOutline(monacoInstance: typeof monaco): void {
       for (const stmt of splitStatements(text)) {
         const start = model.getPositionAt(stmt.start).lineNumber;
         const end = model.getPositionAt(stmt.end).lineNumber;
-        // Câu lệnh một dòng không có gì để gập; thêm vào chỉ tạo mũi tên gập bấm không ra gì.
+        // Single-line statements cannot be folded; omitted from folding ranges.
         if (end > start) ranges.push({ start, end });
       }
       return ranges;

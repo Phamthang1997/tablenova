@@ -1,7 +1,7 @@
-// Logo chính thức của từng hệ quản trị CSDL.
-// Path data lấy từ simple-icons v16.27.1 (path data: CC0-1.0). Nhãn hiệu và logo
-// thuộc chủ sở hữu tương ứng — dùng ở đây chỉ để nhận diện sản phẩm.
-// Vendor sẵn 4 path thay vì thêm dependency runtime: mỗi logo là một <path> trong
+// Logo chính thức of fromng hệ quản trị DB.
+// Path data lấy from simple-icons v16.27.1 (path data: CC0-1.0). Nhãn hiệu and logo
+// thuộc chủ sat hữu tương ứng — dùng at đây chỉ to receive diện sản phẩm.
+// Vendor sẵn 4 path thay vì add dependency runtime: mỗi logo is một <path> in
 // viewBox 24x24, tô bằng currentColor nên tự đổi màu theo chỗ đặt.
 import React from 'react';
 

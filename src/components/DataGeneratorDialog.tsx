@@ -34,7 +34,7 @@ import { ProgressBar } from './ProgressBar';
 import { cancelJob, startJob } from '../utils/jobs';
 
 interface DataGeneratorDialogProps {
-  /** Kết nối đích. Tường minh vì lần sinh dữ liệu chạy như job nền — xem dbHelper.generateData. */
+  /** Kết nối đích. Tường minh vì lần generate data run như job nền — xem dbHelper.generateData. */
   connId: string;
   /** Server + database the data will be written to — shown in the footer, since this writes. */
   dbName?: string;
@@ -99,7 +99,7 @@ export const DataGeneratorDialog: React.FC<DataGeneratorDialogProps> = ({ connId
   const [result, setResult] = useState<GenResult | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
   const startedAtRef = useRef(0);
-  /** Job của lần chạy hiện tại — nút Huỷ ở footer nhắm vào nó. */
+  /** Job of lần run hiện tại — nút cancel at footer nhắm ando nó. */
   const jobIdRef = useRef<string | null>(null);
 
   // ---- load targets ----
@@ -259,12 +259,12 @@ export const DataGeneratorDialog: React.FC<DataGeneratorDialogProps> = ({ connId
 
   // ---- run ----
   /**
-   * Sinh dữ liệu chạy như một **job nền** (xem utils/jobs.ts): người dùng đóng hộp thoại này rồi
-   * đi làm việc khác, tiến độ và nút huỷ vẫn còn ở `JobsTray`.
+   * generate data run như một **job nền** (xem utils/jobs.ts): user close hộp thoại này rồi
+   * đi ism việc khác, tiến độ and nút cancel vẫn còn at `JobsTray`.
    *
-   * Hộp thoại vẫn giữ `progress`/`result` của riêng nó để hiện đúng như trước **khi còn mở** — hai
-   * chỗ cùng đọc một lần chạy, không phải hai lần chạy. Sau khi đóng thì các `setState` này thành
-   * no-op, còn job thì không đụng tới.
+   * Hộp thoại vẫn giữ `progress`/`result` of riêng nó to hiện đúng như trước **when còn open** — hai
+   * chỗ cùng read một lần run, not must hai lần run. Sau when close thì các `setState` này thành
+   * no-op, còn job thì not đụng tới.
    */
   const run = useCallback(() => {
     setRunning(true);
@@ -279,7 +279,7 @@ export const DataGeneratorDialog: React.FC<DataGeneratorDialogProps> = ({ connId
       db: dbName ?? '',
       write: true,
       lockKey: `${connId}|${dbName ?? ''}`,
-      // Cờ huỷ bên Rust khoá theo `conn_id`, nên phải nhắm đúng kết nối đang sinh dữ liệu.
+      // Cờ cancel bên Rust key theo `conn_id`, nên must nhắm đúng kết nối currently generate data.
       onCancel: () => void dbHelper.cancelDataGeneration(connId),
       run: async (ctx) => {
         try {
@@ -296,8 +296,8 @@ export const DataGeneratorDialog: React.FC<DataGeneratorDialogProps> = ({ connId
             });
           }, connId);
           setResult(res);
-          // Số dòng đã đổi -> Sidebar/DataGrid nạp lại, kể cả khi hộp thoại đã đóng từ lâu.
-          // Schema không đổi nên KHÔNG gọi invalidateCatalog.
+          // Số row already đổi -> Sidebar/DataGrid load lại, kể cả when hộp thoại already close from lâu.
+          // Schema not đổi nên not gọi invalidateCatalog.
           window.dispatchEvent(new CustomEvent('database-restored', { detail: { connId } }));
           const inserted = res.inserted ? Object.values(res.inserted).reduce((a, b) => a + b, 0) : 0;
           return {

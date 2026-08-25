@@ -5,24 +5,24 @@ import type { ConnectionStatus } from '../utils/dbHelper';
 import { CONN_ENVS, envLabelKey, normalizeEnv, type ConnEnv } from '../utils/connEnv';
 
 /**
- * Bảng chi tiết kết nối, mở khi bấm vào cụm trạng thái giữa thanh tiêu đề.
+ * table chi tiết kết nối, open when bấm ando cụm status giữa title bar.
  *
- * Không dựng từ Modal.tsx: đây là popover neo theo cụm trạng thái chứ không
- * phải hộp thoại giữa màn hình, và nó không chặn thao tác phía sau. Vẫn render
- * qua portal vì thanh tiêu đề nằm trong nhánh có backdrop-filter — position:
- * fixed trong đó chỉ phủ được phần thanh tiêu đề (xem ghi chú ở Modal.tsx).
+ * not build from Modal.tsx: đây is popover neo theo cụm status chứ not
+ * must hộp thoại giữa màn hình, and nó not chặn thao tác phía sau. Vẫn render
+ * qua portal vì title bar nằm in nhánh có backdrop-filter — position:
+ * fixed in đó chỉ phủ is phần title bar (xem write chú at Modal.tsx).
  */
 
 interface ConnectionInfoPopoverProps {
-  /** Vị trí đã tính sẵn từ getBoundingClientRect của cụm trạng thái. */
+  /** position already tính sẵn from getBoundingClientRect of cụm status. */
   anchor: { top: number; left: number };
   status: ConnectionStatus | null;
-  /** Tên + màu của profile đang kết nối (rỗng khi kết nối không đến từ profile nào). */
+  /** Tên + màu of profile currently kết nối (rỗng when kết nối not đến from profile nào). */
   profileName: string;
   profileColor: string;
-  /** Môi trường của profile đang kết nối. Trường riêng, không suy từ màu. */
+  /** environment of profile currently kết nối. Trường riêng, not suy from màu. */
   profileEnv: ConnEnv;
-  /** Đổi tên/màu/môi trường -> ghi thẳng vào profile trong localStorage (App.tsx làm việc đó). */
+  /** rename/màu/environment -> write thẳng ando profile in localStorage (App.tsx ism việc đó). */
   onProfileChange: (patch: { name?: string; color?: string; env?: ConnEnv }) => void;
   onDisconnect: () => void;
   onReconnect: () => Promise<{ success: boolean; message?: string }>;
@@ -30,8 +30,8 @@ interface ConnectionInfoPopoverProps {
   onClose: () => void;
 }
 
-// Bảng màu nhãn kết nối. Chuỗi rỗng = không gắn màu; giữ ở vị trí thứ hai cho
-// khớp thứ tự của thiết kế (xanh lá trước, rồi ô trắng "bỏ màu").
+// table màu nhãn kết nối. string rỗng = not gắn màu; giữ at position thứ hai for
+// khớp thứ tự of thiết kế (xanh lá trước, rồi ô trắng "bỏ màu").
 const TAG_COLORS = [
   { value: '#86efac', labelKey: 'connInfo.colorGreen' },
   { value: '', labelKey: 'connInfo.colorNone' },
@@ -146,9 +146,9 @@ export const ConnectionInfoPopover: React.FC<ConnectionInfoPopoverProps> = ({
           display: 'flex',
           flexDirection: 'column',
           gap: '12px',
-          // --win-bg-popover, KHÔNG phải --win-bg-modal: biến đó chưa từng được khai báo
-          // trong index.css nên nó luôn rơi về #ffffff, làm thẻ này trắng ở giao diện tối
-          // và mọi nhãn --win-text-secondary bên trong thành gần như vô hình.
+          // --win-bg-popover, not must --win-bg-modal: biến đó chưa fromng is khai báo
+          // in index.css nên nó luôn rơi về #ffffff, ism thẻ này trắng at UI tối
+          // and mọi nhãn --win-text-secondary bên in thành gần như vô hình.
           background: 'var(--win-bg-popover)',
           border: '1px solid var(--win-border-strong)',
           borderRadius: '12px',
@@ -187,7 +187,7 @@ export const ConnectionInfoPopover: React.FC<ConnectionInfoPopoverProps> = ({
                   padding: 0,
                   borderRadius: '5px',
                   cursor: 'pointer',
-                  // Ô "không màu" lấy đúng nền popover để nó đọc là trống, không phải trắng.
+                  // Ô "not màu" lấy đúng nền popover to nó read is trống, not must trắng.
                   background: c.value || 'var(--win-bg-popover)',
                   border:
                     profileColor === c.value
@@ -199,8 +199,8 @@ export const ConnectionInfoPopover: React.FC<ConnectionInfoPopoverProps> = ({
           </div>
         </div>
 
-        {/* Môi trường. Ngay dưới tên + màu vì đó là bộ ba "kết nối này là cái gì", nhưng là ô riêng:
-            màu bên trên thuần trang trí, còn ô này bật chỉ-đọc và xác nhận hai bước. */}
+        {/* environment. Ngay under tên + màu vì đó is bộ ba "kết nối này is cái gì", nhưng is ô riêng:
+            màu bên on thuần trang trí, còn ô này bật chỉ-read and confirm hai bước. */}
         <div style={{ ...cardStyle, display: 'flex', alignItems: 'center', gap: '8px' }}>
           <span style={{ fontSize: '11px', color: 'var(--win-text-secondary)', flexShrink: 0 }}>
             {t('connEnv.label')}

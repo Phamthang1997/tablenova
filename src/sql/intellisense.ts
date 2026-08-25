@@ -1,5 +1,5 @@
-// Hover (xem cột/kiểu ngay trong editor) + "nhảy tới bảng" (Ctrl+Click / F12).
-// Dữ liệu lấy từ catalog cache (không gọi backend mỗi lần hover).
+// Hover provider (column/type inspection) + "jump to table" (Ctrl+Click / F12).
+// Data sourced from catalog cache (avoids backend calls on every hover).
 import * as monaco from 'monaco-editor';
 import * as catalog from './catalog';
 import { editorConnId } from './editorScope';
@@ -8,7 +8,7 @@ import { statementAt, resolveAliases } from './statements';
 import { getDoc, formatDocMarkdown } from '../utils/docsService';
 import i18n, { currentLanguage } from '../i18n';
 
-/** Tìm bảng theo tên, không phân biệt hoa/thường. Chỉ đọc cache đã nạp. */
+/** Finds table by name (case-insensitive) from loaded cache only. */
 export async function findTable(name: string): Promise<{ name: string; type: string } | null> {
   if (!name) return null;
   const bare = name.replace(/^[`"[]|[`"\]]$/g, '');
@@ -16,19 +16,19 @@ export async function findTable(name: string): Promise<{ name: string; type: str
   return tables.find(t => t.name.toLowerCase() === bare.toLowerCase()) || null;
 }
 
-/** Yêu cầu App mở tab bảng (App.tsx lắng nghe sự kiện này). */
+/** Requests App to open table tab (App.tsx listens for this event). */
 export function openTableTab(table: string, viewMode: 'data' | 'structure' = 'data'): void {
   window.dispatchEvent(new CustomEvent('open-table-tab', { detail: { table, viewMode } }));
 }
 
-// Markdown của hover. Chỉ phần chữ đi qua i18n; dấu markdown (`**`, `_`, `|`) và các nhãn kỹ
-// thuật `PK` / `NOT NULL` ở lại trong code — chúng là cú pháp và từ khoá SQL, không phải câu văn,
-// nên dịch chúng chỉ tạo thêm chỗ để lệch.
+// Hover markdown formatting. Technical keywords (`PK`, `NOT NULL`) are kept as standard SQL symbols.
+
+
 function tableMarkdown(tableName: string, type: string, schema: Awaited<ReturnType<typeof catalog.getSchema>>): string {
   const kind = type === 'view' ? i18n.t('sqlEditor.hoverKindView') : i18n.t('sqlEditor.hoverKindTable');
   const lines: string[] = [`**${tableName}** · ${kind}`];
   const cols = schema?.columns || [];
-  // Giới hạn 12 dòng: bảng nhiều cột sẽ làm popup cao quá khung editor
+  // 12-row limit: tables with many columns would otherwise overflow editor viewport.
   const MAX_COLS = 12;
   if (cols.length) {
     lines.push('', `| ${i18n.t('sqlEditor.hoverColHeader')} | ${i18n.t('sqlEditor.hoverTypeHeader')} |`, '| --- | --- |');
@@ -61,16 +61,16 @@ function columnMarkdown(colName: string, owners: { table: string; type: string; 
 }
 
 /**
- * Đăng ký hover provider cho cả 3 dialect.
- * Cờ chống-đăng-ký-trùng phải nằm trên `window`, KHÔNG dùng biến module: khi Vite HMR nạp lại
- * module thì biến module reset -> provider bị đăng ký thêm lần nữa -> hover/gợi ý bị nhân đôi.
+ * Registers hover provider for all 3 SQL dialects.
+ * Anti-duplicate flag stored on `window` to prevent duplicate providers during Vite HMR.
+ 
  */
 export function setupSqlHover(): void {
   const w = window as any;
-  // Huỷ provider của lần nạp trước (chỉ xảy ra khi HMR trong lúc dev)
+  // Disposes provider from previous HMR cycle during development
   if (Array.isArray(w.__sqlHoverDisposables)) {
     for (const d of w.__sqlHoverDisposables) {
-      try { d.dispose(); } catch { /* đã huỷ */ }
+      try { d.dispose(); } catch { /* already disposed */ }
     }
   }
 
@@ -81,14 +81,14 @@ export function setupSqlHover(): void {
       const range = new monaco.Range(position.lineNumber, word.startColumn, position.lineNumber, word.endColumn);
       const name = word.word;
 
-      // 1) Chính là tên bảng/view?
+      // 1) Matches table/view name?
       const table = await findTable(name);
       if (table) {
         const schema = await catalog.getSchema(editorConnId(), table.name);
         return { range, contents: [{ value: tableMarkdown(table.name, table.type, schema) }] };
       }
 
-      // 1.5) Là hàm hoặc lệnh SQL/Database? (không có tiền tố dot alias)
+      // 1.5) Matches function or SQL command? (lacks dot prefix)
       const lineStart = model.getValueInRange({
         startLineNumber: position.lineNumber, startColumn: 1,
         endLineNumber: position.lineNumber, endColumn: word.startColumn,
@@ -104,14 +104,14 @@ export function setupSqlHover(): void {
         }
       }
 
-      // 2) Là cột — ưu tiên bảng suy ra từ tiền tố "alias." rồi tới các bảng trong câu lệnh
+      // 2) Matches column — prioritizes table inferred from "alias." prefix then tables in statement
       const text = model.getValue();
       const stmt = statementAt(text, model.getOffsetAt(position));
       const aliases = stmt ? resolveAliases(stmt.text) : new Map<string, string>();
 
       let candidates: string[];
-      // cacheOnly: khi phải quét TOÀN BỘ bảng (câu lệnh chưa có FROM) thì chỉ đọc cache,
-      // không gọi backend từng bảng — nếu không, hover 1 lần có thể sinh hàng trăm lời gọi.
+      // cacheOnly: when scanning ALL tables (query lacks FROM clause), reads from cache only
+      // to avoid triggering hundreds of IPC calls on a single hover.
       let cacheOnly = false;
       if (prefix && aliases.has(prefix)) {
         candidates = [aliases.get(prefix)!];

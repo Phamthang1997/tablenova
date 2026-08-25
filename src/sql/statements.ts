@@ -1,36 +1,57 @@
-// Tách văn bản SQL thành các câu lệnh theo dấu ';' NGOÀI chuỗi/comment/khối $$...$$.
-// Dùng chung cho: xác định "câu lệnh hiện tại" (Ctrl+Enter) và tô sáng câu lệnh dưới con trỏ.
+// Splits SQL text into statements by ';' delimiters OUTSIDE strings/comments/$...$ blocks.
+// Shared by: current statement identification (Ctrl+Enter) and cursor statement highlighting.
 import { maskCommentsAndStrings } from '../utils/queryParamHelper';
 
-// Mở đầu một khối dollar-quote của Postgres: $$ hoặc $tag$ (KHÔNG khớp $1 của bind param
-// hay ${name} của tham số truy vấn).
+// Postgres dollar-quote opening: $ or $tag$ (avoids matching bind param $1
+// or query parameter ${name}).
 const DOLLAR_TAG = /^\$([A-Za-z_]\w*)?\$/;
 
-// Lệnh DELIMITER của client mysql (KHÔNG phải SQL gửi xuống server): đổi dấu kết thúc câu
-// để có thể viết thân trigger/procedure chứa dấu ';'. Bắt buộc nằm riêng một dòng.
+// MySQL client DELIMITER command (not sent to server): changes statement delimiter
+// allowing trigger/procedure bodies to contain ';'. Must occupy its own line.
 const DELIMITER_CMD = /^[ \t]*DELIMITER[ \t]+(\S+)[ \t]*\r?$/i;
 
-// Script có dùng lệnh DELIMITER -> đây là script kiểu MySQL, không áp dụng dollar-quote của
-// Postgres. Cần thiết vì `DELIMITER $$` rất phổ biến: nếu vẫn coi '$$' là mở khối dollar-quote
-// thì toàn bộ thân trigger sẽ bị mask sai.
+// Script contains DELIMITER -> treated as MySQL dialect; Postgres dollar-quotes are not applied,
+// preventing `DELIMITER $` from erroneously masking trigger bodies.
+
 function usesDelimiterCommand(sql: string): boolean {
   return /^[ \t]*DELIMITER[ \t]+\S+/im.test(sql);
 }
 
 /**
- * Mask đầy đủ cho việc tách câu lệnh: comment + chuỗi (nhờ maskCommentsAndStrings), CỘNG THÊM
- * khối dollar-quote của Postgres (`$$ ... $$`, `$body$ ... $body$`) — thân function/trigger
- * chứa rất nhiều ';' và nếu không mask thì Ctrl+Enter sẽ cắt giữa thân hàm.
+ * Full masking for statement splitting: comments + strings, PLUS Postgres dollar-quotes
+ * (`$ ... $`, `$body$ ... $body// Splits SQL text into statements by ';' delimiters OUTSIDE strings/comments/$...$ blocks.
+// Shared by: current statement identification (Ctrl+Enter) and cursor statement highlighting.
+import { maskCommentsAndStrings } from '../utils/queryParamHelper';
+
+// Postgres dollar-quote opening: $ or $tag$ (avoids matching bind param $1
+// or query parameter ${name}).
+const DOLLAR_TAG = /^\$([A-Za-z_]\w*)?\$/;
+
+// MySQL client DELIMITER command (not sent to server): changes statement delimiter
+// allowing trigger/procedure bodies to contain ';'. Must occupy its own line.
+const DELIMITER_CMD = /^[ \t]*DELIMITER[ \t]+(\S+)[ \t]*\r?$/i;
+
+// Script contains DELIMITER -> treated as MySQL dialect; Postgres dollar-quotes are not applied,
+// preventing `DELIMITER $` from erroneously masking trigger bodies.
+
+function usesDelimiterCommand(sql: string): boolean {
+  return /^[ \t]*DELIMITER[ \t]+\S+/im.test(sql);
+}
+
+/**
+ * Full masking for statement splitting: comments + strings, PLUS Postgres dollar-quotes
+ ) where bodies contain embedded semicolons.
+ 
  *
- * Chuỗi trả về cùng độ dài với `sql`; ký tự thuộc vùng cần bỏ qua được thay bằng khoảng trắng.
+ * Returns string of equal length with masked regions replaced by spaces.
  */
 export function maskForSplit(sql: string): string {
   const base = maskCommentsAndStrings(sql);
-  if (usesDelimiterCommand(sql)) return base; // script MySQL -> '$$' là delimiter, không phải khối
+  if (usesDelimiterCommand(sql)) return base; // MySQL script -> '$' is delimiter, not quote block
   const out = base.split('');
   let i = 0;
   while (i < sql.length) {
-    // Chỉ xét vị trí là code thật (không nằm trong chuỗi/comment theo pass đầu)
+    // Only considers positions that are real code (outside strings/comments from first pass)
     if (sql[i] === '$' && base[i] === '$') {
       const m = DOLLAR_TAG.exec(sql.slice(i));
       if (m) {
@@ -48,62 +69,62 @@ export function maskForSplit(sql: string): string {
 }
 
 export interface StatementRange {
-  /** offset ký tự đầu (đã bỏ khoảng trắng ở đầu) */
+  /** Start character offset (leading whitespace trimmed) */
   start: number;
-  /** offset ký tự cuối, KHÔNG bao gồm dấu ';' (đã bỏ khoảng trắng ở cuối) */
+  /** End character offset, excluding delimiter (trailing whitespace trimmed) */
   end: number;
   text: string;
 }
 
-// Cắt khoảng trắng 2 đầu; trả null nếu đoạn chỉ có khoảng trắng hoặc chỉ có comment.
+// Trims boundaries; returns null if segment is only whitespace or comments.
 function trimRange(text: string, mask: string, from: number, to: number): StatementRange | null {
   let s = from;
   let e = to;
   while (s < e && /\s/.test(text[s])) s++;
   while (e > s && /\s/.test(text[e - 1])) e--;
   if (s >= e) return null;
-  // Chỉ có comment -> mask toàn khoảng trắng -> không phải câu lệnh chạy được
+  // Comment-only -> masked to spaces -> not an executable statement
   if (!mask.slice(s, e).trim()) return null;
   return { start: s, end: e, text: text.slice(s, e) };
 }
 
-/** Một bảng được tham chiếu trong FROM/JOIN/UPDATE/INTO. */
+/** Table reference in FROM/JOIN/UPDATE/INTO. */
 export interface TableRef {
   table: string;
   alias?: string;
 }
 
-// Từ có thể đứng ngay sau tên bảng nhưng KHÔNG phải alias.
+// Keywords that may follow table name without being aliases.
 const ALIAS_STOP_WORDS = [
   'on', 'where', 'inner', 'left', 'right', 'full', 'outer', 'cross', 'join', 'group',
   'order', 'limit', 'set', 'using', 'values', 'select', 'having', 'union', 'and', 'or',
 ];
 
 /**
- * `FROM|JOIN|UPDATE|INTO <bảng> [AS] [alias]`.
+ * `FROM|JOIN|UPDATE|INTO <table> [AS] [alias]`.
  *
- * Từ khoá bị loại bằng LOOKAHEAD, không phải kiểm tra sau khi khớp: nếu để nhóm alias
- * khớp rồi mới bỏ, con trỏ regex đã trượt qua từ khoá đó — `FROM a JOIN b` nuốt mất
- * `JOIN` và bảng `b` không bao giờ được nhìn thấy (bug này có từ trước, xem test).
+ * Keywords excluded via lookahead to prevent skipping subsequent JOIN clauses.
+ 
+ 
  */
 const TABLE_REF_SOURCE =
   '\\b(?:from|join|update|into)\\s+([`"\\[\\]\\w.]+)' +
   `(?:\\s+(?:as\\s+)?(?!(?:${ALIAS_STOP_WORDS.join('|')})\\b)([a-zA-Z_]\\w*))?`;
 
 /**
- * Các bảng được tham chiếu trong một câu lệnh, **theo đúng thứ tự xuất hiện**.
+ * Tables referenced in statement in appearance order.
  *
- * Đây là nguồn dự phòng cho cả hover và completion. Lý do cần nó dù đã có parser ANTLR:
- * khi câu lệnh còn gõ dở, `getAllEntities()` không đáng tin và sai theo từng dialect —
- * đo được: với `... JOIN address a on ` parser Postgres bỏ mất chính bảng `address`
- * (2 entity thay vì 3), còn với `... on c.` parser MySQL trả về 0 entity. Regex trên
- * văn bản không hiểu SQL sâu nhưng lại ổn định đúng ở những trạng thái dở dang đó.
+ * Fallback source for hover and completion during mid-typing when AST parsers fail.
+ 
+ 
+ 
+ 
  *
- * Thứ tự được giữ vì gợi ý điều kiện JOIN cần biết bảng nào vừa được JOIN sau cùng.
+ * Order preserved for JOIN condition inference on the latest table.
  */
 export function collectTableRefs(statement: string): TableRef[] {
   const out: TableRef[] = [];
-  // RegExp mới mỗi lần gọi: cờ /g mang lastIndex, dùng chung một instance sẽ lẫn state.
+  // Fresh RegExp instance per call to isolate global state across calls.
   const re = new RegExp(TABLE_REF_SOURCE, 'gi');
   let m: RegExpExecArray | null;
   while ((m = re.exec(statement)) !== null) {
@@ -114,29 +135,29 @@ export function collectTableRefs(statement: string): TableRef[] {
   return out;
 }
 
-// `WITH` mở đầu một danh sách CTE; các mảnh dưới đây đọc lần lượt từng phần của
-// `name [(cols)] AS [[NOT] MATERIALIZED] ( body )`. Dùng cờ dính (`y`) để so khớp tại
-// đúng một vị trí thay vì cắt chuỗi con ở mỗi bước — văn bản ở đây là cả buffer editor.
+// `WITH` starts CTE list; parses `name [(cols)] AS [[NOT] MATERIALIZED] ( body )`.
+// Uses sticky regex (`y`) for positional matching on buffer.
+
 const CTE_RECURSIVE = /recursive\b/iy;
 const CTE_NAME = /[`"[]?([A-Za-z_]\w*)[`"\]]?/y;
 const CTE_AS = /as\b/iy;
 const CTE_MATERIALIZED = /(?:not\s+)?materialized\b/iy;
 
 /**
- * Tên của các CTE khai báo trong `WITH … AS ( … )`, đã hạ về chữ thường.
+ * Lowercase names of CTEs declared in `WITH ... AS (...)`.
  *
- * Vì sao cần: `collectTableRefs()` nhìn `FROM recent` và báo về một bảng tên `recent`, nhưng CTE
- * là cái tên chỉ sống trong câu lệnh chứ không có trong CSDL — nên `inspection.ts` tra catalog
- * không thấy rồi gạch đỏ "bảng không tồn tại" trên một câu lệnh hoàn toàn hợp lệ. Văn bản là nơi
- * duy nhất biết được những cái tên này.
+ * Distinguishes local CTE aliases from actual database catalog tables.
+ 
+ 
+ 
  *
- * Quét trên bản đã mask nên `WITH` nằm trong chuỗi hay comment không tính, và thân CTE được nhảy
- * qua bằng đếm ngoặc (dấu ngoặc trong literal đã bị mask nên không làm lệch bộ đếm). Mọi `WITH`
- * tìm được đều xử lý, kể cả `WITH` lồng trong thân một CTE khác: con trỏ của vòng ngoài chỉ nhảy
- * qua đúng từ khoá vừa khớp, không nhảy qua phần thân mà vòng trong vừa đọc.
+ * Scans masked text; jumps over CTE body via balanced parenthesis counting.
+ 
+ 
+ 
  *
- * Dừng ngay khi gặp thứ không khớp khuôn thay vì đoán tiếp — `SELECT * FROM t WITH (NOLOCK)` phải
- * ra tập rỗng, chứ đoán bừa ở đây nghĩa là im lặng bỏ qua một bảng sai tên thật.
+ * Halts on unexpected syntax (`SELECT * FROM t WITH (NOLOCK)`).
+ 
  */
 export function collectCteNames(sql: string): Set<string> {
   const out = new Set<string>();
@@ -148,7 +169,7 @@ export function collectCteNames(sql: string): Set<string> {
     while (i < masked.length && /\s/.test(masked[i])) i++;
     return i;
   };
-  /** Vị trí của ')' đóng cho '(' tại `open`, hoặc -1 nếu câu lệnh còn dở. */
+  /** Offset of matching ')' for '(' at `open`, or -1 if incomplete. */
   const closeParen = (open: number) => {
     let depth = 0;
     for (let i = open; i < masked.length; i++) {
@@ -157,7 +178,7 @@ export function collectCteNames(sql: string): Set<string> {
     }
     return -1;
   };
-  /** Khớp `re` tại đúng vị trí `i`; trả về chỉ số ngay sau phần khớp, hoặc -1. */
+  /** Matches `re` at offset `i`; returns offset after match, or -1. */
   const eat = (re: RegExp, i: number) => {
     re.lastIndex = i;
     const m = re.exec(masked);
@@ -171,14 +192,14 @@ export function collectCteNames(sql: string): Set<string> {
     const afterRecursive = eat(CTE_RECURSIVE, i);
     if (afterRecursive >= 0) i = skipWs(afterRecursive);
 
-    // Danh sách CTE ngăn bằng dấu phẩy.
+    // Comma-separated CTE list.
     for (;;) {
       CTE_NAME.lastIndex = i;
       const name = CTE_NAME.exec(masked);
       if (!name) break;
       i = skipWs(CTE_NAME.lastIndex);
 
-      // Danh sách cột tuỳ chọn: `WITH t (a, b) AS (…)`.
+      // Optional column list: `WITH t (a, b) AS (...)`.
       if (masked[i] === '(') {
         const cols = closeParen(i);
         if (cols < 0) break;
@@ -206,11 +227,11 @@ export function collectCteNames(sql: string): Set<string> {
 }
 
 /**
- * Từ có thể đứng ở vị trí của một cột trong danh sách SELECT nhưng KHÔNG phải tên cột.
+ * Non-column tokens in SELECT list (clauses, keywords, literals).
  *
- * Danh sách này là thứ giữ cho kiểm tra "cột trần" khỏi báo bừa. Nó cố tình thừa hơn là thiếu:
- * bỏ sót một cột sai tên chỉ là mất một cảnh báo, còn gạch đỏ một câu SQL đúng thì người dùng
- * mất niềm tin vào toàn bộ phần gạch chân.
+ * Prevents false squigglies on subqueries and expressions.
+ 
+ 
  */
 const NON_COLUMN_WORDS = new Set([
   'distinct', 'all', 'as', 'case', 'when', 'then', 'else', 'end', 'null', 'true', 'false',
@@ -219,62 +240,62 @@ const NON_COLUMN_WORDS = new Set([
   'partition', 'by', 'order', 'filter', 'within', 'group', 'separator', 'escape', 'using',
   'current_date', 'current_time', 'current_timestamp', 'localtime', 'localtimestamp',
   'default', 'unknown', 'div', 'mod', 'binary', 'from',
-  // Từ khoá mệnh đề: chúng xuất hiện khi một mục của danh sách SELECT chứa truy vấn con
-  // (`SELECT (SELECT count(*) FROM orders) AS n FROM users`), lúc đó bộ dò định danh nhìn thấy
-  // cả `select`/`where`/`join`… bên trong ngoặc. Tên cột trùng những từ này gần như không có,
-  // nên bỏ qua chúng an toàn hơn nhiều so với việc gạch đỏ một truy vấn con hợp lệ.
+  // Clause keywords: appear when SELECT item contains subquery; safely ignored.
+  
+  
+  
   'select', 'where', 'having', 'limit', 'offset', 'fetch', 'join', 'on', 'inner', 'left',
   'right', 'outer', 'cross', 'natural', 'union', 'except', 'intersect', 'lateral', 'returning',
 ]);
 
-/** Một định danh trong danh sách SELECT, kèm vị trí ký tự trong câu lệnh đã cho. */
+/** SELECT list identifier with character offsets in statement. */
 export interface BareColumnRef {
   name: string;
   offset: number;
 }
 
 /**
- * Các định danh **không có tiền tố** trong danh sách SELECT, tức những thứ đang được đọc như một
- * cột: `SELECT ids FROM test` -> `ids`.
+ * Unqualified column identifiers in SELECT list.
+ * column: `SELECT ids FROM test` -> `ids`.
  *
- * Vì sao chỉ danh sách SELECT chứ không phải cả câu: đây là vùng dễ khoanh nhất và cũng là nơi
- * lỗi gõ tên cột hay xảy ra nhất. Mở rộng sang `WHERE`/`ORDER BY` cần hiểu thêm về hàm, toán tử
- * và giá trị, mà mỗi thứ hiểu sai là một lần gạch đỏ oan.
+ * Scopes strictly to SELECT list where typos commonly occur while avoiding false positives in complex WHERE/ORDER BY clauses.
+ 
+ 
  *
- * Bốn thứ bị loại, mỗi thứ là một nguồn báo nhầm thật:
- *  - có dấu chấm hai bên (`t.id`, `db.t`) — đã có kiểm tra riêng cho dạng đủ tiêu chuẩn;
- *  - đứng ngay trước `(` — là lời gọi hàm, không phải cột;
- *  - từ khoá / hằng (`NULL`, `CASE`, `DISTINCT`…) — xem `NON_COLUMN_WORDS`;
- *  - **bí danh đang được đặt**: cả `expr AS x` lẫn `expr x` viết tắt. Bí danh là tên mới do câu
- *    lệnh sinh ra nên không thể có trong catalog; không loại nó thì mọi `SELECT count(*) total`
- *    đều bị báo sai.
+ * Four exclusions preventing false diagnostics:
+ *  - dot-qualified identifiers (`t.id`, `db.t`) — handled by qualified checks;
+ *  - tokens followed by `(` — function calls;
+ *  - keywords and literals (`NULL`, `CASE`, `DISTINCT`...) — see `NON_COLUMN_WORDS`;
+ *  - **defined aliases**: both `expr AS x` and implicit `expr x` shorthand.
+ 
+ 
  *
- * Trả về mảng rỗng khi không khoanh được vùng — không có `SELECT`, hoặc không có `FROM` ở cấp
- * ngoài cùng. Im lặng ở đây là đúng: người gọi chỉ muốn biết những cái nó chắc chắn.
+ * Returns empty array when unresolvable (lacks SELECT or top-level FROM).
+ 
  */
-/** Một mục của danh sách SELECT, kèm vị trí ký tự trong câu lệnh đã cho. */
+/** SELECT list item with character offsets in statement. */
 export interface SelectListItem {
   text: string;
   offset: number;
 }
 
 /**
- * Cắt danh sách SELECT thành từng mục theo dấu phẩy ở tầng ngoặc 0.
+ * Splits SELECT list into items by top-level commas at depth 0.
  *
- * Tách riêng khỏi `collectSelectListRefs` vì kiểm tra GROUP BY phải nhìn theo **từng mục**: một
- * mục có hàm tổng hợp là hợp lệ dù cột bên trong không được gom nhóm, và danh sách định danh
- * phẳng thì không nói được điều đó.
+ * Separated from `collectSelectListRefs` because GROUP BY validation operates per item.
+ 
+ 
  *
- * Văn bản trả về lấy từ bản đã mask: định danh còn nguyên, còn nội dung chuỗi và comment đã
- * thành khoảng trắng — đúng thứ các bộ dò định danh cần. Trả mảng rỗng khi không khoanh được
- * vùng (không có `SELECT`, hoặc không có `FROM` ở tầng ngoài cùng).
+ * Text extracted from masked copy: identifiers preserved while strings/comments are whitespace.
+ 
+ 
  */
 export function selectListItems(statement: string): SelectListItem[] {
   const masked = maskForSplit(statement);
   const head = /^\s*select\s+(?:distinct\s+|all\s+)?/i.exec(masked);
   if (!head) return [];
 
-  // `FROM` ở độ sâu ngoặc 0 — `FROM` trong một truy vấn con không kết thúc danh sách SELECT.
+  // `FROM` at paren depth 0 — `FROM` inside a subquery does not terminate top-level SELECT list.
   let depth = 0;
   let fromAt = -1;
   const scan = /[()]|\bfrom\b/gi;
@@ -315,14 +336,14 @@ export function collectSelectListRefs(statement: string): BareColumnRef[] {
       const at = m.index;
       const before = item.slice(0, at).trimEnd();
       const after = item.slice(at + m[0].length);
-      if (before.endsWith('.')) continue;              // `t.id` -> phần đủ tiêu chuẩn
+      if (before.endsWith('.')) continue;              // `t.id` -> qualified column
       if (/^\s*\./.test(after)) continue;              // `t` trong `t.id`
-      if (/^\s*\(/.test(after)) continue;              // lời gọi hàm
+      if (/^\s*\(/.test(after)) continue;              // function call
       toks.push({ name: m[0], at });
     }
     if (!toks.length) continue;
 
-    // Bí danh: token cuối cùng của mục, nếu nó đứng sau `AS` hoặc sau một biểu thức đã kết thúc.
+    // Alias: trailing token of item following `AS` or completed expression.
     const last = toks[toks.length - 1];
     const between = item.slice(0, last.at).trimEnd();
     const isAlias =
@@ -338,9 +359,9 @@ export function collectSelectListRefs(statement: string): BareColumnRef[] {
   return out;
 }
 
-// Hàm tổng hợp: một mục SELECT chứa lời gọi loại này thì hợp lệ trong câu có GROUP BY dù cột
-// bên trong nó không được gom nhóm. Danh sách gộp cả ba dialect — nhận dư một cái tên chỉ làm
-// mất một cảnh báo, còn thiếu một cái tên là gạch đỏ một câu SQL đúng.
+// Aggregate functions: SELECT item containing aggregate is valid under GROUP BY.
+
+
 const AGGREGATE_FUNCTIONS = new Set([
   'count', 'sum', 'avg', 'min', 'max', 'total',
   'group_concat', 'string_agg', 'array_agg', 'json_agg', 'jsonb_agg', 'json_arrayagg',
@@ -349,7 +370,7 @@ const AGGREGATE_FUNCTIONS = new Set([
   'percentile_disc', 'corr', 'covar_pop', 'covar_samp',
 ]);
 
-/** Mục của danh sách SELECT có chứa lời gọi hàm tổng hợp không? */
+/** Does SELECT item contain an aggregate function call? */
 export function hasAggregate(item: string): boolean {
   const re = /([A-Za-z_]\w*)\s*\(/g;
   let m: RegExpExecArray | null;
@@ -360,16 +381,16 @@ export function hasAggregate(item: string): boolean {
 }
 
 /**
- * Các định danh liệt kê trong `GROUP BY`, hoặc `null` khi câu lệnh không có mệnh đề đó.
+ * Identifiers listed in `GROUP BY` clause, or `null` if clause is absent.
  *
- * Phân biệt `null` với mảng rỗng là có chủ đích: không có GROUP BY thì không có gì để kiểm tra,
- * còn có GROUP BY mà không đọc ra định danh nào (`GROUP BY 1`) là trường hợp phải **bỏ qua** —
- * gom nhóm theo số thứ tự thì không đối chiếu được với tên, và đoán ở đó là gạch đỏ oan.
+ * Distinguishes `null` (no GROUP BY) from `[]` (unresolvable GROUP BY like `GROUP BY 1`).
+ 
+ 
  */
 export function groupByRefs(statement: string): BareColumnRef[] | null {
   const masked = maskForSplit(statement);
 
-  // `GROUP BY` ở tầng ngoặc 0 — trong truy vấn con thì không phải của câu này.
+  // `GROUP BY` at paren depth 0 — subquery clauses belong to subquery.
   let depth = 0;
   let at = -1;
   const scan = /[()]|\bgroup\s+by\b/gi;
@@ -381,37 +402,37 @@ export function groupByRefs(statement: string): BareColumnRef[] | null {
   }
   if (at < 0) return null;
 
-  // Mệnh đề kết thúc ở từ khoá kế tiếp cùng tầng.
+  // Clause terminates at next top-level keyword.
   const tail = masked.slice(at);
   const stop = /\b(having|order\s+by|limit|offset|window|union|except|intersect|fetch|for)\b/i.exec(tail);
   const clause = tail.slice(0, stop ? stop.index : tail.length);
 
-  if (/(^|,)\s*\d+\s*(,|$)/.test(clause)) return []; // GROUP BY theo số thứ tự -> không kết luận
+  if (/(^|,)\s*\d+\s*(,|$)/.test(clause)) return []; // Positional GROUP BY 1 -> skip
 
   const out: BareColumnRef[] = [];
   const ident = /[A-Za-z_]\w*/g;
   let m: RegExpExecArray | null;
   while ((m = ident.exec(clause)) !== null) {
     const after = clause.slice(m.index + m[0].length);
-    if (/^\s*\(/.test(after)) continue;                       // lời gọi hàm
+    if (/^\s*\(/.test(after)) continue;                       // function call
     if (NON_COLUMN_WORDS.has(m[0].toLowerCase())) continue;
     out.push({ name: m[0], offset: at + m.index });
   }
   return out;
 }
 
-/** Loại câu lệnh, đủ để chọn biểu tượng trong outline. Không dùng cho quyết định nào khác. */
+/** Statement type used solely for outline icon selection. */
 export type StatementKind = 'select' | 'write' | 'ddl' | 'other';
 
 export interface StatementOutline {
   kind: StatementKind;
-  /** Nhãn hiển thị: động từ + đối tượng chính, ví dụ `SELECT users`, `CREATE TABLE orders`. */
+  /** Display label: verb + primary target, e.g. `SELECT users`, `CREATE TABLE orders`. */
   label: string;
 }
 
-// Động từ mở đầu một câu lệnh. `with` nằm trong danh sách để vòng quét nhận ra rồi **đi tiếp**:
-// `WITH x AS (…) SELECT …` phải được gọi tên theo `SELECT`, chứ nhãn "WITH" thì mọi truy vấn
-// dùng CTE đều trông giống hệt nhau trong outline.
+// Leading statement verb. `with` is recognized to scan past CTE and find core verb.
+
+
 const STATEMENT_VERBS = new Set([
   'with', 'select', 'insert', 'update', 'delete', 'merge', 'replace',
   'create', 'alter', 'drop', 'truncate', 'rename', 'comment',
@@ -419,32 +440,32 @@ const STATEMENT_VERBS = new Set([
   'explain', 'analyze', 'show', 'describe', 'desc', 'call', 'do', 'vacuum', 'pragma',
 ]);
 
-/** Loại đối tượng đứng sau CREATE/ALTER/DROP, để nhãn đọc là `CREATE TABLE x` chứ không chỉ `CREATE x`. */
+/** Object type following CREATE/ALTER/DROP for clear outline labels (`CREATE TABLE x`). */
 const DDL_OBJECTS = new Set([
   'table', 'view', 'index', 'trigger', 'function', 'procedure', 'schema', 'database',
   'sequence', 'type', 'event', 'user', 'role', 'extension', 'materialized',
 ]);
 
-/** Từ đệm giữa động từ DDL và loại đối tượng — bỏ qua khi tìm loại đối tượng. */
+/** Filler tokens between DDL verb and object type — skipped during parsing. */
 const DDL_FILLERS = new Set([
   'or', 'replace', 'temporary', 'temp', 'unique', 'if', 'not', 'exists', 'global', 'local',
   'fulltext', 'spatial', 'clustered', 'nonclustered', 'concurrently', 'recursive', 'unlogged',
 ]);
 
 /**
- * Tên gọi ngắn của một câu lệnh, cho outline và breadcrumb.
+ * Short descriptive statement label for outline and breadcrumbs.
  *
- * Tìm động từ đầu tiên nằm ở **tầng ngoặc 0** trên bản đã mask, nên `SELECT (SELECT …)` vẫn là
- * một câu SELECT và động từ nằm trong chuỗi hay comment không tính. Rồi lấy đối tượng chính:
- * bảng của FROM/INTO/UPDATE với DML, và `<loại> <tên>` với DDL.
+ * Finds leading verb at paren depth 0 on masked text, extracting primary table/object target.
+ 
+ 
  *
- * Không nhận ra được thì trả về đoạn đầu của chính câu lệnh — một nhãn xấu vẫn định vị được
- * dòng cần tìm, còn một mục trống thì không.
+ * Fallback returns statement prefix rather than empty string.
+ 
  */
 export function describeStatement(statement: string): StatementOutline {
   const masked = maskForSplit(statement);
 
-  // Động từ đầu tiên ở tầng 0. `with` không kết thúc vòng lặp: nó chỉ mở đầu danh sách CTE.
+  // First verb at depth 0. `with` continues search past CTE definitions.
   let depth = 0;
   let verb = '';
   let verbEnd = 0;
@@ -486,7 +507,7 @@ export function describeStatement(statement: string): StatementOutline {
     return { kind: 'write', label: m ? `${upper} ${clean(m[1])}` : upper };
   }
   if (verb === 'create' || verb === 'alter' || verb === 'drop' || verb === 'comment') {
-    // Bỏ qua các từ đệm (`OR REPLACE`, `IF NOT EXISTS`…) để tới loại đối tượng rồi tới tên.
+    // Skips qualifier tokens (`OR REPLACE`, `IF NOT EXISTS`...) to extract object type and name.
     const words = rest.trim().split(/\s+/);
     let object = '';
     let name = '';
@@ -511,33 +532,33 @@ export function describeStatement(statement: string): StatementOutline {
   return { kind: 'other', label: firstWords };
 }
 
-/** Bỏ dấu trích dẫn định danh và dấu chấm phẩy bám đuôi. */
+/** Strips identifier quotes and trailing semicolons. */
 function clean(raw: string): string {
   return raw.replace(/[`"[\]();]/g, '').trim();
 }
 
-/** Con trỏ đang ở chỗ điền **giá trị** cho một cột. */
+/** Cursor is at position for filling column **value**. */
 export interface ValuePosition {
-  /** Cột ở vế trái, giữ nguyên tiền tố nếu có (`u.status`). */
+  /** Left-hand column identifier, preserving table prefix (`u.status`). */
   column: string;
-  /** Người dùng đã gõ dấu nháy mở hay chưa — quyết định gợi ý có tự thêm nháy không. */
+  /** Has user typed opening quote — determines whether completion auto-inserts quotes. */
   quoted: boolean;
 }
 
-// Ba dạng đưa con trỏ tới chỗ điền giá trị. Tách thành ba mẫu thay vì một mẫu khổng lồ vì
-// `IN (…)` còn phải nhảy qua các giá trị đã liệt kê trước đó.
+// Value completion patterns (equality, IN list, LIKE).
+
 const VALUE_AFTER_OP = /([`"[\]\w.]+)\s*(?:=|<>|!=|>=|<=|<|>)\s*(')?$/;
 const VALUE_AFTER_LIKE = /([`"[\]\w.]+)\s+(?:not\s+)?like\s*(')?$/i;
 const VALUE_IN_LIST = /([`"[\]\w.]+)\s+(?:not\s+)?in\s*\(\s*(?:'(?:[^']|'')*'\s*,\s*)*(')?$/i;
 
 /**
- * Con trỏ có đang ở vị trí điền giá trị cho một cột không, và cột nào.
+ * Detects if cursor is in value position for a column, and identifies the column.
  *
- * Nhận `WHERE status = `, `WHERE status = '`, `WHERE status IN (`, `IN ('a', ` và `LIKE `.
- * Chỉ nhìn phần văn bản **trước** con trỏ, nên gọi được trong lúc gõ dở.
+ * Matches `WHERE status = `, `WHERE status = '`, `WHERE status IN (`, `IN ('a', `, `LIKE `.
+ * Inspects text preceding cursor; reliable during mid-typing.
  *
- * Cắt bớt phần đuôi trước khi khớp: các mẫu này có thể quét ngược khá xa trên một câu lệnh dài,
- * mà thứ cần biết luôn nằm trong vài chục ký tự cuối.
+ * Slices trailing buffer before regex evaluation for performance.
+ 
  */
 export function valuePosition(textBefore: string): ValuePosition | null {
   const tail = textBefore.slice(-200);
@@ -545,34 +566,34 @@ export function valuePosition(textBefore: string): ValuePosition | null {
     const m = re.exec(tail);
     if (!m) continue;
     const column = m[1].replace(/[`"[\]]/g, '');
-    // Số thuần không phải tên cột (`WHERE 1 = `), và đuôi rỗng thì không có gì để tra.
+    // Numeric literals are not columns (`WHERE 1 = `); skipped.
     if (!column || /^\d+$/.test(column)) return null;
     return { column, quoted: m[2] === "'" };
   }
   return null;
 }
 
-/** Lời gọi hàm đang bao quanh con trỏ. */
+/** Function call enclosing the cursor position. */
 export interface EnclosingCall {
-  /** Tên hàm, đúng như đã gõ. */
+  /** Function name as typed. */
   name: string;
-  /** Tham số thứ mấy đang được gõ, đếm từ 0. */
+  /** Active argument index, 0-indexed. */
   activeParam: number;
 }
 
 /**
- * Hàm nào đang bao quanh vị trí `offset`, và con trỏ đang ở tham số thứ mấy.
+ * Identifies function enclosing `offset` and the active argument index.
  *
- * Đi ngược từ con trỏ và đếm ngoặc: gặp `)` thì sâu thêm một tầng, gặp `(` ở tầng 0 thì đó chính
- * là ngoặc mở của lời gọi đang bao quanh. Dấu phẩy chỉ được đếm khi ở tầng 0 nên
- * `concat(a, foo(b, c), | )` cho đúng tham số thứ 3 thay vì thứ 5.
+ * Scans backward counting parentheses: depth 0 opening paren marks the enclosing call.
+ Commas at depth 0 count argument positions: `concat(a, foo(b, c), |)` resolves to index 2.
+ 
  *
- * Chạy trên bản đã mask nên dấu ngoặc và dấu phẩy nằm trong chuỗi hay comment không tính. Gặp
- * `;` ở tầng 0 là dừng: đã sang câu lệnh khác, không thể còn ở trong lời gọi nào.
+ * Runs on masked copy so parens/commas inside strings or comments are ignored.
+ Semicolons at depth 0 halt search.
  *
- * Tên hàm phải **dính liền** ngoặc mở. Đây không phải chuyện thẩm mỹ: `SELECT (a + b` có `SELECT`
- * đứng trước dấu ngoặc, và trong bộ tài liệu thì `SELECT` là một mục có `syntax` hẳn hoi — nới
- * lỏng chỗ này là mỗi lần mở ngoặc để nhóm biểu thức lại bị nhảy ra bảng cú pháp của `SELECT`.
+ * Function name must directly precede opening paren without whitespace to avoid false matches (`SELECT (a + b)`).
+ 
+ 
  */
 export function enclosingCall(text: string, offset: number): EnclosingCall | null {
   const masked = maskForSplit(text);
@@ -594,9 +615,9 @@ export function enclosingCall(text: string, offset: number): EnclosingCall | nul
 }
 
 /**
- * Bản đồ alias -> tên bảng trong một câu lệnh. Cùng một bộ dò với `collectTableRefs`
- * để hover và completion không bao giờ hiểu alias khác nhau.
- * Để ở đây (module không phụ thuộc monaco) nên test được độc lập.
+ * Alias -> table map in statement. Reuses parser logic from `collectTableRefs`.
+ * so hover and completion resolve aliases consistently.
+ * Placed here (independent of Monaco) for isolated testing.
  */
 export function resolveAliases(statement: string): Map<string, string> {
   const map = new Map<string, string>();
@@ -608,12 +629,12 @@ export function resolveAliases(statement: string): Map<string, string> {
 }
 
 /**
- * Câu lệnh có làm đổi cấu trúc DB (DDL) hay đổi database/schema đang dùng?
- * Dùng để xoá cache catalog ngay sau khi chạy, cho autocomplete/hover thấy bảng mới.
+ * Does the statement alter DB schema (DDL) or switch database/schema?
+ * Used to invalidate catalog cache immediately after execution to expose new tables to autocomplete/hover.
  *
- * `USE db` (MySQL) và `SET search_path` (Postgres) cũng phải tính: backend chuyển sang
- * database/schema khác nên toàn bộ danh sách bảng đã cache trở thành sai.
- * Dò trên bản đã mask nên từ khoá nằm trong chuỗi/comment không tính.
+ * `USE db` (MySQL) and `SET search_path` (Postgres) are included: backend switches to
+ * another database/schema, making cached tables stale.
+ * Scanned on masked copy so keywords inside strings/comments are ignored.
  */
 export function isSchemaChangingSql(text: string): boolean {
   if (!text) return false;
@@ -624,10 +645,10 @@ export function isSchemaChangingSql(text: string): boolean {
 }
 
 /**
- * Lõi chung: mask văn bản 1 lần rồi cắt thành các ĐOẠN theo ';' (kể cả đoạn trống, vì cần
- * chúng để biết con trỏ đang ở giữa hai ';' — lúc đó không có câu lệnh nào để chạy).
+ * Shared core: masks text once, then splits into SEGMENTS by ';' (including empty segments,
+ * needed to detect when cursor sits between semicolons with no statement to run).
  */
-// `text[i..]` có đúng là dấu kết thúc câu đang dùng, và nằm ngoài chuỗi/comment/khối $$?
+// Is `text[i..]` the active delimiter, located outside strings/comments/$ blocks?
 function matchesDelimiter(text: string, mask: string, i: number, delim: string): boolean {
   for (let k = 0; k < delim.length; k++) {
     const c = text[i + k];
@@ -636,7 +657,7 @@ function matchesDelimiter(text: string, mask: string, i: number, delim: string):
   return true;
 }
 
-// Ở đầu dòng tại `i` có phải lệnh `DELIMITER <token>`? Trả về token mới + offset sau dòng đó.
+// Is line start at `i` a `DELIMITER <token>` command? Returns new token + offset after line.
 function matchDelimiterCommand(
   text: string,
   mask: string,
@@ -647,23 +668,23 @@ function matchDelimiterCommand(
   const line = text.slice(i, lineEnd);
   const m = DELIMITER_CMD.exec(line);
   if (!m) return null;
-  // Từ 'DELIMITER' phải là code thật (nằm trong chuỗi/comment thì không phải lệnh)
+  // 'DELIMITER' token must be real code (inside strings/comments is not a command)
   const lead = line.length - line.trimStart().length;
   if (mask[i + lead] !== text[i + lead]) return null;
   return { delim: m[1], end: nl === -1 ? text.length : nl + 1 };
 }
 
-// Đầu một câu CREATE TRIGGER (SQLite/MySQL/Postgres đều cùng dạng mở đầu này).
-// Khớp trên văn bản GỐC chứ không phải bản mask: MySQL viết `DEFINER=`root`@`localhost``,
-// mà mask xoá ruột hai cặp backtick thành khoảng trắng nên `\S+` không còn khớp được.
+// Start of a CREATE TRIGGER statement (SQLite/MySQL/Postgres share this prefix).
+// Matches against ORIGINAL text: MySQL allows `DEFINER=`root`@`localhost``,
+// where masking clears backtick contents to spaces, breaking `\S+`.
 const TRIGGER_HEAD = /^CREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMP(?:ORARY)?\s+)?(?:DEFINER\s*=\s*\S+\s+)?TRIGGER\b/i;
-// `BEGIN` như một TỪ trong phần code (đã mask nên BEGIN trong chuỗi/comment không tính).
+// `BEGIN` as a distinct token in code (masked so BEGIN in strings/comments is ignored).
 const BEGIN_WORD = /\bBEGIN\b/i;
 
 /**
- * Đoạn [from, to) có kết thúc bằng từ khoá `END` không (bỏ qua khoảng trắng/comment ở cuối).
+ * Does [from, to) end with `END` keyword (ignoring trailing whitespace/comments).
  *
- * Đọc trên bản đã mask nên `-- END` hay chuỗi 'END' không tính.
+ * Read on masked text so `-- END` or string 'END' is ignored.
  */
 function endsWithEndKeyword(mask: string, from: number, to: number): boolean {
   let e = to;
@@ -675,36 +696,36 @@ function endsWithEndKeyword(mask: string, from: number, to: number): boolean {
 }
 
 /**
- * Dấu ';' này có nằm GIỮA thân một trigger không?
+ * Does this ';' sit INSIDE a trigger body?
  *
- * Thân trigger dạng `BEGIN ... END` chứa dấu ';' của riêng nó, nên cắt theo ';' sẽ tạo ra một
- * câu `CREATE TRIGGER ... BEGIN UPDATE t SET ...;` cụt — SQLite báo "incomplete input" và cả
- * lần nhập dump bị rollback. MySQL né chuyện này bằng lệnh `DELIMITER`, còn SQLite thì không
- * có, nên phải nhận diện ngay ở đây: đây đúng là quy tắc của `sqlite3_complete()` — một câu
- * mở đầu bằng CREATE TRIGGER chỉ kết thúc ở dấu ';' đứng ngay sau từ khoá `END`.
+ * A `BEGIN ... END` trigger body contains internal ';', so splitting on ';' produces
+ * truncated `CREATE TRIGGER ... BEGIN UPDATE t SET ...;` — SQLite errors with "incomplete input" and
+ * the entire dump import rolls back. MySQL avoids this via `DELIMITER`, but SQLite lacks it,
+ * so we detect it here: matching `sqlite3_complete()` rules — a statement
+ * starting with CREATE TRIGGER only ends at ';' directly following the `END` keyword.
  *
- * Điều kiện `BEGIN` là bắt buộc: trigger của Postgres (`... EXECUTE FUNCTION f();`) và dạng
- * một lệnh của MySQL (`... FOR EACH ROW SET NEW.a = 1;`) không có thân BEGIN...END, và nếu
- * bắt chúng chờ `END` thì dấu ';' thật bị bỏ qua và phần còn lại của dump bị nuốt sạch.
+ * `BEGIN` requirement is mandatory: Postgres triggers (`... EXECUTE FUNCTION f();`) and
+ * single-statement MySQL triggers (`... FOR EACH ROW SET NEW.a = 1;`) lack BEGIN...END,
+ * and waiting for `END` would skip the real delimiter and consume the rest of the dump.
  */
 function insideTriggerBody(text: string, mask: string, from: number, to: number): boolean {
-  // Ký tự code thật đầu tiên: mask đã biến comment thành khoảng trắng nên bỏ qua luôn được
-  // phần comment đứng trước câu lệnh.
+  // First real code character: mask converted comments to spaces, skipping leading comments.
+  // preceding the statement.
   let s = from;
   while (s < to && /\s/.test(mask[s])) s++;
   if (!TRIGGER_HEAD.test(text.slice(s, to))) return false;
-  // BEGIN/END thì đọc trên bản mask: chữ 'BEGIN' trong chuỗi hay comment không tính.
+  // BEGIN/END read on masked copy: 'BEGIN' in strings or comments ignored.
   if (!BEGIN_WORD.test(mask.slice(s, to))) return false;
   return !endsWithEndKeyword(mask, s, to);
 }
 
 /**
- * Lõi chung: mask văn bản 1 lần rồi cắt thành các ĐOẠN theo dấu kết thúc câu đang hiệu lực
- * (mặc định ';', đổi được bằng lệnh `DELIMITER` của MySQL). Giữ cả đoạn trống vì cần chúng
- * để biết con trỏ đang ở giữa hai dấu kết thúc câu — lúc đó không có câu lệnh nào để chạy.
+ * Shared core: masks text once, then splits into SEGMENTS by active statement delimiter
+ * (default ';', changeable via MySQL `DELIMITER`). Retains empty segments to detect
+ * if cursor sits between delimiters where no executable statement exists.
  *
- * Bản thân dòng `DELIMITER ...` KHÔNG bao giờ nằm trong đoạn nào: nó là lệnh của client
- * mysql, gửi xuống server sẽ báo lỗi cú pháp.
+ * The `DELIMITER ...` line itself is NEVER included in any segment: client-only command,
+ * sending it to server causes syntax error.
  */
 function scanSegments(text: string): { mask: string; segments: [number, number][] } {
   const mask = maskForSplit(text);
@@ -718,7 +739,7 @@ function scanSegments(text: string): { mask: string; segments: [number, number][
     if (atLineStart) {
       const cmd = matchDelimiterCommand(text, mask, i);
       if (cmd) {
-        segments.push([from, i]); // phần trước lệnh (thường chỉ là khoảng trắng -> bị bỏ)
+        segments.push([from, i]); // portion before statement (typically whitespace -> skipped)
         delim = cmd.delim;
         from = cmd.end;
         i = cmd.end;
@@ -727,8 +748,8 @@ function scanSegments(text: string): { mask: string; segments: [number, number][
       }
     }
     if (matchesDelimiter(text, mask, i, delim)) {
-      // Chỉ áp dụng khi delimiter vẫn là ';': script MySQL đã đổi delimiter thì thân trigger
-      // được bảo vệ bằng chính cơ chế đó rồi.
+      // Only applies when delimiter is ';': MySQL scripts with custom delimiter protect
+      // trigger bodies through that mechanism directly.
       if (delim === ';' && insideTriggerBody(text, mask, from, i)) {
         i += 1;
         atLineStart = false;
@@ -737,7 +758,7 @@ function scanSegments(text: string): { mask: string; segments: [number, number][
       segments.push([from, i]);
       i += delim.length;
       from = i;
-      atLineStart = false; // dấu kết thúc câu không bao giờ là ký tự xuống dòng
+      atLineStart = false; // statement delimiter is never a newline character
       continue;
     }
     atLineStart = text[i] === '\n';
@@ -748,7 +769,7 @@ function scanSegments(text: string): { mask: string; segments: [number, number][
   return { mask, segments };
 }
 
-// Đoạn chứa `offset`: con trỏ đứng NGAY SAU ';' thuộc đoạn kế tiếp (giống DataGrip/DBeaver).
+// Segment containing `offset`: cursor DIRECTLY AFTER ';' belongs to next segment (like DataGrip/DBeaver).
 function pickCurrent(
   text: string,
   mask: string,
@@ -761,7 +782,7 @@ function pickCurrent(
   return null;
 }
 
-/** Danh sách câu lệnh trong văn bản (bỏ đoạn trống / chỉ có comment). */
+/** List of statements in text (excluding empty / comment-only segments). */
 export function splitStatements(text: string): StatementRange[] {
   if (!text) return [];
   const { mask, segments } = scanSegments(text);
@@ -773,52 +794,52 @@ export function splitStatements(text: string): StatementRange[] {
   return out;
 }
 
-/** Loại câu lệnh bị cảnh báo trước khi chạy. */
+/** Statement type subject to confirmation before execution. */
 export type UnsafeStatementKind = 'deleteNoWhere' | 'dropTable' | 'updateNoWhere' | 'truncate';
 
 export interface UnsafeStatement {
   kind: UnsafeStatementKind;
-  /** Câu lệnh nguyên văn (đã trim) để hiện trong hộp cảnh báo. */
+  /** Verbatim statement (trimmed) shown in warning modal. */
   text: string;
 }
 
 /**
- * Tìm các câu lệnh có thể xoá sạch dữ liệu do gõ thiếu điều kiện:
- *   - `DELETE FROM ...` không có `WHERE` -> xoá mọi dòng của bảng
- *   - `DROP TABLE ...`                   -> xoá luôn cả bảng
+ * Finds statements that may erase data due to missing conditions:
+ *   - `DELETE FROM ...` without `WHERE` -> deletes all rows in table
+ *   - `DROP TABLE ...`                   -> drops the entire table
  *
- * Chỉ để CẢNH BÁO, không phải để chặn: `DELETE FROM tmp_import` không WHERE là hoàn toàn hợp
- * lệ, nên quyết định cuối cùng thuộc người dùng (muốn chặn hẳn thì bật chế độ Chỉ đọc).
+ * For WARNING only, not blocking: unconditional `DELETE FROM tmp_import` is completely valid,
+ * so final decision rests with user (to strictly block writes, enable Read-Only mode).
  *
- * Dò trên bản đã mask (`maskForSplit`) nên từ khoá nằm trong chuỗi/comment/tên có dấu nháy
- * đều không tính. Hai hệ quả đáng chú ý, cả hai đều là hướng an toàn:
- *   - `DELETE FROM t -- WHERE id=1` VẪN bị cảnh báo (WHERE nằm trong comment, không chạy).
- *   - `DELETE FROM t WHERE note='drop table x'` KHÔNG bị cảnh báo (chuỗi đã bị mask).
+ * Scanned on masked text (`maskForSplit`) so keywords in strings/comments/quoted identifiers
+ * are ignored. Two notable outcomes, both following the safe path:
+ *   - `DELETE FROM t -- WHERE id=1` IS warned (WHERE inside comment, does not run).
+ *   - `DELETE FROM t WHERE note='drop table x'` is NOT warned (string masked).
  */
 export function findUnsafeStatements(text: string): UnsafeStatement[] {
   if (!text) return [];
   const out: UnsafeStatement[] = [];
   for (const stmt of splitStatements(text)) {
     const masked = maskForSplit(stmt.text);
-    // Bao cả dạng nhiều bảng của MySQL (`DELETE t1 FROM t1 JOIN t2 ...`) vì vẫn mở đầu bằng DELETE.
+    // Covers multi-table MySQL syntax (`DELETE t1 FROM t1 JOIN t2 ...`) starting with DELETE.
     if (/^\s*DELETE\b/i.test(masked)) {
       if (!/\bWHERE\b/i.test(masked)) out.push({ kind: 'deleteNoWhere', text: stmt.text });
     } else if (/^\s*UPDATE\b/i.test(masked)) {
-      // Cùng lý do với DELETE: thiếu WHERE là ghi đè MỌI dòng, và cũng không rollback được nếu
-      // đang ở chế độ tự động commit.
+      // Same rationale as DELETE: missing WHERE overwrites ALL rows, non-rollbackable if
+      // in auto-commit mode.
       if (!/\bWHERE\b/i.test(masked)) out.push({ kind: 'updateNoWhere', text: stmt.text });
     } else if (/^\s*DROP\s+(TEMPORARY\s+)?TABLE\b/i.test(masked)) {
       out.push({ kind: 'dropTable', text: stmt.text });
     } else if (/^\s*TRUNCATE\b/i.test(masked)) {
-      // TRUNCATE xoá sạch bảng và trên MySQL còn commit ngầm, nên ngay cả transaction thủ công
-      // đang mở cũng không gỡ lại được — nguy hiểm hơn `DELETE` không WHERE chứ không kém.
+      // TRUNCATE erases table and implicitly commits on MySQL, so even open manual
+      // transactions cannot rollback — equally or more destructive than unconstrained `DELETE`.
       out.push({ kind: 'truncate', text: stmt.text });
     }
   }
   return out;
 }
 
-/** Câu lệnh chứa con trỏ tại `offset` (null nếu chỗ đó không có câu lệnh chạy được). */
+/** Statement under cursor at `offset` (null if no executable statement at cursor). */
 export function statementAt(text: string, offset: number): StatementRange | null {
   if (!text) return null;
   const { mask, segments } = scanSegments(text);
@@ -826,9 +847,9 @@ export function statementAt(text: string, offset: number): StatementRange | null
 }
 
 /**
- * Vừa danh sách câu lệnh vừa câu dưới con trỏ, CHỈ mask văn bản 1 lần.
- * Dùng cho đường tô sáng (chạy mỗi lần gõ) — gọi splitStatements + statementAt riêng lẻ
- * sẽ mask 2 lần và gây giật khi giữ Backspace trên script dài.
+ * Both statement list and cursor statement, masking text ONCE only.
+ * Used for syntax highlighting (runs on keystrokes) — calling splitStatements + statementAt separately
+ * would mask twice and cause lag when holding Backspace on large scripts.
  */
 export function analyzeStatements(
   text: string,

@@ -8,7 +8,7 @@ import { ProgressBar, type ProgressState } from './ProgressBar';
 import { ConfirmDialog } from './ConfirmDialog';
 import { Modal, ModalBody, ModalFooter } from './Modal';
 
-/** Ngữ cảnh grid — chỉ có khi mở từ tab đang xem bảng (thanh dưới DataGrid). */
+/** Ngữ cảnh grid — chỉ có when open from tab currently xem table (thanh under DataGrid). */
 export interface ExportGridContext {
   columns: string[];
   visibleColumns: string[];
@@ -16,22 +16,22 @@ export interface ExportGridContext {
   sortDir?: 'asc' | 'desc';
   filter?: string;
   /**
-   * Số dòng ĐẾM CHÍNH XÁC của grid, hoặc `null` khi grid chỉ có số ước lượng.
+   * Số row ĐẾM CHÍNH XÁC of grid, or `null` when grid chỉ có số ước lượng.
    *
-   * `fetchAllRows` dừng khi `all.length >= total`, nên một số thiếu ở đây là một tệp xuất bị cắt
-   * mà không có lỗi nào. `null` thì vòng lặp lấy tổng từ lần đọc trang đầu của chính nó — lần đó
-   * luôn đếm chính xác (`countMode` mặc định của `dbHelper.getTableData`).
+   * `fetchAllRows` stop when `all.length >= total`, nên một số thiếu at đây is một tệp xuất is cắt
+   * mà not có error nào. `null` thì vòng lặp lấy tổng from lần read trang đầu of chính nó — lần đó
+   * luôn đếm chính xác (`countMode` default of `dbHelper.getTableData`).
    */
   totalCount?: number | null;
 }
 
 interface ExportTableDialogProps {
-  /** Kết nối mà component này thao tác lên. Truyền tường minh, không đọc id ambient (§4.1). */
+  /** Kết nối mà component này thao tác lên. Truyền tường minh, not read id ambient (§4.1). */
   connId: string;
   open: boolean;
   tableName: string;
   dbType: string;
-  /** Bỏ trống (mở từ context menu Sidebar) -> tự đọc danh sách cột từ schema. */
+  /** Bỏ trống (open from context menu Sidebar) -> tự read danh sách column from schema. */
   grid?: ExportGridContext;
   onClose: () => void;
   onSuccess?: (msg: string) => void;
@@ -40,9 +40,9 @@ interface ExportTableDialogProps {
 
 const FORMATS: ExportFormat[] = ['csv', 'json', 'sql', 'xlsx'];
 
-/** Số dòng mỗi lần gọi khi tải toàn bộ bảng để xuất (để báo được tiến độ). */
+/** Số row mỗi lần gọi when download toàn bộ table to xuất (to báo is tiến độ). */
 const FETCH_PAGE_SIZE = 2000;
-/** Số dòng mẫu lấy cho bước xem trước. */
+/** Số row mẫu lấy for bước preview. */
 const PREVIEW_ROWS = 20;
 
 const labelStyle: React.CSSProperties = {
@@ -54,9 +54,9 @@ const labelStyle: React.CSSProperties = {
 };
 
 /**
- * Xuất MỘT bảng: bước 1 chọn tuỳ chọn, bước 2 xem trước rồi tải tệp.
- * Dùng chung cho nút Export ở thanh dưới grid và mục "Xuất dữ liệu (Export...)"
- * trong menu chuột phải ở Sidebar, để hai đường đi cho ra cùng một popup.
+ * Xuất MỘT table: bước 1 select option, bước 2 preview rồi download tệp.
+ * Dùng chung for nút Export at thanh under grid and mục "Xuất dữ liệu (Export...)"
+ * in menu right click / context menu at Sidebar, to hai đường đi for ra cùng một popup.
  */
 export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
   connId,
@@ -75,9 +75,9 @@ export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
   const [format, setFormat] = useState<ExportFormat>('csv');
   const [fileName, setFileName] = useState(tableName);
   const [visibleOnly, setVisibleOnly] = useState(false);
-  const [applyView, setApplyView] = useState(true); // dùng sort/filter đang áp dụng trên grid
+  const [applyView, setApplyView] = useState(true); // dùng sort/filter currently áp dụng on grid
   const [schemaCols, setSchemaCols] = useState<string[]>([]);
-  const [rows, setRows] = useState<any[]>([]); // chỉ là dòng mẫu để xem trước
+  const [rows, setRows] = useState<any[]>([]); // chỉ is row mẫu to preview
   const [totalRows, setTotalRows] = useState(0);
   const [loading, setLoading] = useState(false);
   const [preview, setPreview] = useState('');
@@ -87,7 +87,7 @@ export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
     { message: string; path?: string; dir?: string; viaDownload: boolean } | null
   >(null);
 
-  // Mỗi lần mở là một lượt xuất mới.
+  // Mỗi lần open is một lượt xuất mới.
   useEffect(() => {
     if (!open) return;
     setStep('options');
@@ -96,7 +96,7 @@ export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
     setPreview('');
   }, [open, tableName]);
 
-  // Không có ngữ cảnh grid -> lấy cột từ schema để dựng header CSV/SQL đúng thứ tự.
+  // not có ngữ cảnh grid -> lấy column from schema to build header CSV/SQL đúng thứ tự.
   useEffect(() => {
     if (!open || grid) return;
     let cancelled = false;
@@ -113,8 +113,8 @@ export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
     return all.filter((n) => grid.visibleColumns.includes(n));
   }, [grid, schemaCols, visibleOnly]);
 
-  // Bước xem trước chỉ lấy ÍT DÒNG LÀM MẪU cho nhanh; toàn bộ dữ liệu chỉ được tải
-  // khi bấm xuất (xem fetchAllRows) — lúc đó mới có thanh tiến độ.
+  // Bước preview chỉ lấy ÍT row isM MẪU for nhanh; toàn bộ dữ liệu chỉ is download
+  // when bấm xuất (xem fetchAllRows) — lúc đó mới có thanh tiến độ.
   useEffect(() => {
     if (!open || step !== 'preview') return;
     let cancelled = false;
@@ -137,7 +137,7 @@ export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
     return () => { cancelled = true; };
   }, [connId, open, step, tableName, grid, applyView]);
 
-  /** Tải TOÀN BỘ dòng theo trang, báo tiến độ thật theo số dòng đã lấy. */
+  /** download TOÀN BỘ row theo trang, báo tiến độ thật theo số row already lấy. */
   const fetchAllRows = async (): Promise<any[]> => {
     const useView = !!grid && applyView;
     const all: any[] = [];
@@ -176,7 +176,7 @@ export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
     return all;
   };
 
-  // Dựng lại preview khi đổi format hoặc khi dữ liệu/cột thay đổi.
+  // build lại preview when đổi format or when dữ liệu/column change.
   useEffect(() => {
     if (!open || step !== 'preview' || loading) return;
     const cols = colNames.length ? colNames : (rows[0] ? Object.keys(rows[0]) : []);
@@ -199,7 +199,7 @@ export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
 
   const download = async () => {
     try {
-      // Tới đây mới tải hết dữ liệu — trước đó preview chỉ dùng vài dòng mẫu.
+      // Tới đây mới download hết dữ liệu — trước đó preview chỉ dùng andi row mẫu.
       const allRows = await fetchAllRows();
       const cols = colNames.length ? colNames : (allRows[0] ? Object.keys(allRows[0]) : []);
       setProgress({ label: t('exportDialog.building', { format: format.toUpperCase() }) });
@@ -228,7 +228,7 @@ export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
     onClose();
   };
 
-  // Xuất xong: hỏi luôn có mở thư mục chứa tệp không (thay vì đóng ngay).
+  // Xuất xong: hỏi luôn có open thư mục chứa tệp not (thay vì close ngay).
   if (done) {
     return (
       <ConfirmDialog

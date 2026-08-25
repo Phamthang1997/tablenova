@@ -1,269 +1,483 @@
-# Tài liệu Thiết kế & Kế hoạch Triển khai: TableNova Internal MCP Server (Model Context Protocol)
+# Kế hoạch: MCP Server nội bộ (Model Context Protocol)
 
-Tài liệu này đặc tả kiến trúc kỹ thuật, giao thức, cơ chế bảo mật và lộ trình triển khai tính năng **Tích hợp MCP Server nội bộ (Built-in Model Context Protocol Server)** cho TableNova.
+Mở một **Local MCP Server** trong tiến trình TableNova để các AI client (Claude Desktop, Claude Code,
+Cursor, Raycast, VS Code Copilot) truy vấn được database qua chính những kết nối người dùng đã mở
+trong app — không phải khai lại connection string, password hay private key SSH ở từng IDE.
+
+Bản này viết lại bản đầu tiên. Bản đầu đúng về mục tiêu nhưng sai ở năm chỗ va thẳng vào kiến trúc
+hiện tại; §0 ghi lại cả năm để khỏi đề xuất lại. Thay đổi lớn nhất về phạm vi: **V1 chỉ đọc**. Lớp
+phê duyệt tương tác (Human-in-the-Loop) chính là thứ máy móc mà `src/utils/safeMode.ts` đã **cố ý từ
+chối xây**, nên nó không thể là một gạch đầu dòng trong tuần 2 — nó là cả V2.
+
+Phạm vi đã chốt:
+
+| Hạng mục | Chốt |
+|---|---|
+| Transport | **Streamable HTTP** trên loopback. Không dựng endpoint `/sse` riêng (§2.3) |
+| Ghi dữ liệu qua MCP | **Ngoài phạm vi V1.** Không có `execute_mutation` cho tới khi có lớp 5 (§3.5) |
+| Cầu stdio (`--mcp`) | **Ngoài phạm vi V1** — không chạy được như bản đầu mô tả (§0.4, §7) |
+| Kết nối được phơi cho AI | **Mặc định TẮT**, người dùng tự tích từng kết nối (§3.3) |
+| Đường thực thi | Pooled connection, **không** nhảy vào transaction thủ công của người dùng (§2.2) |
+| Redis | Ngoài phạm vi (§7) |
 
 ---
 
-## 📌 1. Tổng quan & Mục tiêu
+## 0. Năm điều bản đầu nói sai
 
-### 1.1. Khái niệm Model Context Protocol (MCP)
-**Model Context Protocol (MCP)** là một tiêu chuẩn mở do Anthropic khởi xướng, cho phép các mô hình ngôn ngữ lớn (LLM) và các trợ lý AI (như **Claude Desktop, Cursor, Raycast, Antigravity, Windsurf**) giao tiếp hai chiều an toàn với các nguồn dữ liệu và công cụ cục bộ (Local Tools & Data Sources).
+### 0.1. "Connection Safe Mode Filter" không tồn tại ở Rust
 
-### 1.2. Mục tiêu của TableNova MCP Server
-- **Biến TableNova thành Data Hub cho AI**: Cho phép các AI Client bên ngoài truy vấn danh mục cơ sở dữ liệu (Database Schema, Tables, Columns, Indexes), xem dữ liệu mẫu và thực thi truy vấn SQL trực tiếp qua các phiên kết nối đang mở trong TableNova.
-- **Không cần cấu hình lại kết nối ở AI Client**: Thay vì phải chia sẻ connection string, password hay private key SSH với từng AI IDE, AI IDE chỉ cần gọi MCP Server cục bộ của TableNova.
-- **Bảo mật tuyệt đối (Human-in-the-Loop & Safe Mode)**: Mọi thao tác ghi/sửa dữ liệu (`INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`) đều phải qua cơ chế phê duyệt hoặc bị chặn nếu kết nối ở chế độ Read-Only.
-- **Nâng tầm trải nghiệm cạnh tranh**: Đưa TableNova trở thành Database Client mã nguồn mở đầu tiên hỗ trợ MCP đa nền tảng (Windows, macOS, Linux).
+Bản đầu vẽ lớp 3 như một bộ lọc trong backend. Không có bộ lọc đó. Có **hai** thứ khác nhau bị gộp
+làm một:
+
+| | Safe Mode | Read-only |
+|:--|:--|:--|
+| Ở đâu | Frontend, `localStorage` (`tf_safe_mode`) | Rust, `ConnEntry.read_only` |
+| Phạm vi | Per-**server** (`connKey`) | Per-**connection** (`conn_id`) |
+| Cổng chặn | Trước `invoke()` duy nhất của `dbHelper` | [`read_only.rs`](../src-tauri/src/database/read_only.rs), trong ba funnel |
+| MCP thấy được? | **Không** | Có |
+
+[`safeMode.ts`](../src/utils/safeMode.ts) nói rõ lý do gate nằm ở frontend: nó cần một hộp thoại, và
+nó ngồi đúng chỗ mọi lời gọi đi qua. Request MCP không đi qua `dbHelper`, và chính sách lại nằm trong
+`localStorage` mà Rust không đọc. Kết luận: **MCP thừa hưởng read-only miễn phí, và không thừa hưởng
+gì từ Safe Mode.**
+
+### 0.2. `execute_query` sẽ tự động nhảy vào transaction thủ công của người dùng
+
+[`should_route()`](../src-tauri/src/tx/route.rs#L30) được hỏi ở đầu cả ba funnel, và nó trả `true`
+khi `!autocommit || open` — **trước khi** xét ai là người gửi câu lệnh. Hệ quả nếu MCP dùng thẳng
+`execute_raw_sql_generic` với `conn_id` của người dùng:
+
+- Người dùng đang bật commit thủ công → một câu `SELECT` của AI **tự phát `BEGIN`** trên phiên của
+  họ. `TxControl` trên thanh tiêu đề sáng lên một transaction họ không mở.
+- Khi có ghi (V2), câu lệnh của AI nằm **trong** transaction người dùng và đếm vào pending counter.
+  Người dùng bấm Commit là commit luôn thứ AI viết.
+
+Đây là loại tác dụng phụ vô hình mà repo viết cả đoạn văn để tránh. Xử lý ở §2.2.
+
+### 0.3. Chặn theo từ khóa là cơ chế sai, và "AST" thì không có
+
+"Nếu câu lệnh **chứa** `DROP DATABASE` / `TRUNCATE`" là substring-match: một comment hay một string
+literal cũng trigger, còn `/*x*/DROP` thì lọt. Repo đã có bản đúng và đã dùng ở nhiều nơi —
+[`is_write_stmt()`](../src-tauri/src/tx/effect.rs#L146) đọc 4 token đầu trên text đã bỏ comment,
+`statementHead()`/`maskForSplit()` mask string và comment trước khi đọc keyword,
+`findUnsafeStatements()` bắt đúng cái "UPDATE không có WHERE".
+
+Bản đầu còn viết "kiểm tra cú pháp **AST**" ở Giai đoạn 2. **Backend không có SQL AST.** Parser ANTLR
+chỉ tồn tại ở frontend qua `monaco-sql-languages`. Kéo một AST vào Rust là một dependency lớn và một
+quyết định riêng, không phải một gạch đầu dòng.
+
+### 0.4. `tablenova.exe --mcp` mở một app thứ hai, không phải một cầu stdio
+
+[`main.rs`](../src-tauri/src/main.rs) chỉ gọi `tablenova::run()`; [`run.rs`](../src-tauri/src/app/run.rs)
+dựng thẳng `tauri::Builder` + webview. Không có arg parsing ở bất kỳ đâu, và app không cài plugin
+single-instance. Chạy `tablenova.exe --mcp` sẽ **mở cửa sổ thứ hai với `ConnRegistry` rỗng** — không
+thấy một kết nối nào của instance đang chạy. Bản đầu có nhắc "IPC / Named Pipe" nhưng đó là cơ chế
+thứ ba chưa đặc tả, và nó lại phải xuyên qua đúng cái HTTP server mà Lựa chọn 1 định thay thế.
+
+### 0.5. Loopback **không** chặn được trang web
+
+Bản đầu ghi "Loopback-only Binding ➔ Chặn 100% truy cập từ mạng ngoài". Chặn được máy khác, không
+chặn được **trình duyệt của chính người dùng**: một trang web bất kỳ có thể `fetch('http://127.0.0.1:45124/…')`,
+và với DNS rebinding thì cả `Host` cũng giả được. Bearer token chặn được, nhưng token là thứ có thể
+rò. Lớp thiếu là **kiểm `Origin`/`Host`** — §3.1.
 
 ---
 
-## 🏗️ 2. Kiến trúc Kỹ thuật (System Architecture)
+## 1. Phạm vi
+
+### 1.1. V1 — chỉ đọc
+
+Đủ để phục vụ đúng use case ở phần kết của bản đầu ("kiểm tra bảng orders xem có đơn nào lỗi hôm
+nay"), và gần như chỉ là một lớp vỏ JSON-RPC bọc quanh command đã có.
+
+- Transport Streamable HTTP trên `127.0.0.1`, kiểm `Origin`/`Host`, bearer token trong keyring OS.
+- 5 tool đọc + `tablenova_query` giới hạn ở câu lệnh đọc.
+- Kết nối phải được người dùng **tích chọn** mới thấy được.
+- Giới hạn số dòng trả về, áp `statement_timeout` sẵn có.
+- Audit log sống trong bộ nhớ, hiện realtime trên Settings.
+
+### 1.2. V2 — ghi có phê duyệt
+
+- `tablenova_mutate` + lớp phê duyệt tương tác (§3.5), **và** việc hòa giải nó với Safe Mode để
+  repo không có hai chính sách phê duyệt lệch nhau.
+- Cầu stdio cho client chỉ nói stdio.
+- Audit log ghi ra tệp.
+
+### 1.3. Ngoài phạm vi (§7 ghi lý do)
+
+Redis, truy vấn liên-kết-nối, MCP Resources/Prompts, OAuth.
+
+---
+
+## 2. Kiến trúc
+
+### 2.1. Handler MCP gọi tầng nào
+
+**Không gọi các hàm `#[tauri::command]`.** Chúng nhận `state: tauri::State<'_, AppState>`, thứ chỉ
+tồn tại trong ngữ cảnh một lời gọi IPC. Handler MCP chạy trong task axum của riêng nó, nên nó đi
+đường mà `state/app_handle.rs` đã mở sẵn cho đúng tình huống này:
+
+```rust
+use tauri::Manager;
+let state = app.state::<crate::AppState>();
+let ctx = state.connections.acquire(&conn_id)?;   // cùng một cửa duy nhất
+```
+
+`AppHandle` đã được park trong [`app_handle.rs`](../src-tauri/src/state/app_handle.rs) từ setup, cho
+đúng lý do này: "các tầng nhận `&DbConnection` mà không nhận `AppState`". MCP là tầng thứ ba như vậy.
+Ba tầng đọc chung một `AppHandle` đã park, không dựng bản sao thứ hai của registry.
+
+### 2.2. Một funnel mới, không nhân bản một dòng nào
+
+Quyết định: **truy vấn của MCP chạy trên pooled connection, không bao giờ route vào phiên thủ công**
+(lý do ở §0.2). AI là bên thứ ba, không phải phiên của người dùng; để một request từ ngoài mở
+transaction của người dùng là tác dụng phụ vô hình.
+
+Hiện `execute_raw_sql_generic` gộp ba việc trong một hàm ([`exec/raw.rs:22`](../src-tauri/src/database/exec/raw.rs#L22)):
+kiểm read-only → hỏi route → chạy trên pool. Tách đúng một nhát, không nhân bản thân hàm:
+
+```rust
+// Cửa cũ, chữ ký không đổi — mọi call site hiện tại giữ nguyên.
+pub(crate) async fn execute_raw_sql_generic(conn: &DbConnection, sql: String) -> Result<Vec<Value>, String> {
+    reject_if_read_only(conn, &sql)?;
+    if crate::tx::should_route(conn, &sql) {
+        return crate::tx::run_raw(conn, sql).await;
+    }
+    execute_raw_sql_pooled(conn, sql).await
+}
+
+// Cửa của MCP: cùng thân, bỏ đúng một câu hỏi route.
+pub(crate) async fn execute_raw_sql_pooled(conn: &DbConnection, sql: String) -> Result<Vec<Value>, String> {
+    reject_if_read_only(conn, &sql)?;
+    match &conn.kind { /* ba nhánh y như cũ, gọi sqlite_raw / pg_raw / mysql_raw */ }
+}
+```
+
+Ba thân dựng row (`sqlite_raw`/`pg_raw`/`mysql_raw`) vốn đã tách sẵn đúng vì lý do này, nên hai luật
+bắt buộc ở mọi row-building site (`uniquify_columns` trước khi dựng row, decode **theo chỉ số**)
+không bị nhân đôi. `reject_if_read_only` được gọi ở cả hai cửa — rẻ, và không phụ thuộc vào việc ai
+nhớ gọi.
+
+Hai hệ quả phải ghi vào tài liệu người dùng, không phải giấu:
+
+- **Postgres / MySQL**: AI chỉ đọc được trạng thái **đã commit**. Dữ liệu người dùng vừa ghi mà chưa
+  commit thì AI không thấy. Đúng ngữ nghĩa — cùng lý do `compare/` đọc qua pool riêng.
+- **SQLite**: `DbConnection::Sqlite` là **một** handle dùng chung, nên AI vẫn thấy dữ liệu chưa
+  commit dù có route hay không. Không sửa được mà không mở thêm handle thứ hai, và mở handle thứ hai
+  trên cùng một tệp là `SQLITE_BUSY` — đúng thứ `find_sqlite()` sinh ra để tránh.
+
+### 2.3. Transport
+
+**Streamable HTTP**, một endpoint `POST /mcp` (kèm `GET /mcp` cho luồng server→client khi cần). Bản
+đầu viết theo transport **HTTP+SSE** với endpoint `/sse` riêng — đó là bản cũ của spec, đã bị thay.
+**Việc đầu tiên của Giai đoạn 1 là chốt đúng revision spec đang hiện hành và implement theo nó**,
+không code theo trí nhớ. Nếu một client mục tiêu còn chỉ nói được HTTP+SSE thì thêm route tương
+thích, và ghi rõ nó là đường tương thích chứ không phải đường chính.
+
+Dependency: `axum` (kéo theo hyper/tower). `tokio` đã có `features = ["full"]`. **Không** thêm
+`tower-http`: thứ duy nhất định dùng ở đó là CORS layer, mà §3.1 lại cố tình **không** phát header
+CORS nào.
+
+### 2.4. Vòng đời server và cửa sổ
+
+- Server bật/tắt bằng command, trạng thái nằm trong `AppState`. Mặc định **tắt** ở lần chạy đầu.
+- Server sống theo **tiến trình**, không theo cửa sổ — nó phục vụ được cả khi cửa sổ bị thu nhỏ.
+- Đóng cửa sổ khi MCP đang chạy: thêm một blocker vào [`closeGuard.ts`](../src/utils/closeGuard.ts)
+  chỉ khi **đang có request dở dang**, ưu tiên **thấp hơn** transaction chưa commit và job đang chạy
+  — một truy vấn đọc của AI mất đi thì chạy lại được, dữ liệu chưa commit thì không. Không chặn chỉ
+  vì server đang bật: người dùng sẽ không đóng nổi app.
+
+### 2.5. Cây module
+
+Theo luật của [`backend-module-split-plan.md`](backend-module-split-plan.md): mỗi tệp một nhiệm vụ,
+`mod.rs` chỉ có `mod` + `pub use` và khối comment đầu tệp giải thích giao thức.
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                          EXTERNAL AI CLIENTS                            │
-│  (Cursor IDE, Claude Desktop, Raycast, Antigravity, VS Code Copilot)    │
-└────────────────────────────────────┬────────────────────────────────────┘
-                                     │ JSON-RPC 2.0 (HTTP / SSE / Stdio)
-                                     │ Token: Bearer <local_auth_token>
-                                     ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                        TABLENOVA DESKTOP APP                            │
-│                                                                         │
-│  ┌───────────────────────────────────────────────────────────────────┐  │
-│  │                    Rust Backend (Tauri Core)                      │  │
-│  │                                                                   │  │
-│  │   ┌──────────────────────┐        ┌───────────────────────────┐   │  │
-│  │   │  Local MCP Server    │ ◄────► │   Security & Safe Gate    │   │  │
-│  │   │ (127.0.0.1:45124)    │        │  (Read-Only & Confirm UI) │   │  │
-│  │   └──────────┬───────────┘        └───────────────────────────┘   │  │
-│  │              │                                                    │  │
-│  │              ▼                                                    │  │
-│  │   ┌───────────────────────────────────────────────────────────┐   │  │
-│  │   │  Connection Manager & Pool (PostgreSQL, MySQL, SQLite...) │   │  │
-│  │   └──────────────────────────┬────────────────────────────────┘   │  │
-│  └──────────────────────────────┼────────────────────────────────────┘  │
-│                                 │ Query / Schema Fetch                  │
-│                                 ▼                                       │
-│  ┌───────────────────────────────────────────────────────────────────┐  │
-│  │             Target Databases (Remote / Local / SSH)               │  │
-│  └───────────────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────────────┘
+src-tauri/src/mcp/
+  mod.rs        — khối comment: giao thức, revision spec đã chốt, và 5 lớp phòng thủ
+  server.rs     — dựng/hạ axum, bind, trạng thái bật/tắt
+  http.rs       — router, kiểm Origin/Host, middleware bearer token
+  protocol.rs   — JSON-RPC 2.0 + initialize/tools.list/tools.call
+  policy.rs     — kết nối nào được phơi, phân loại câu lệnh, giới hạn dòng
+  audit.rs      — ring buffer + emit event
+  tools/
+    mod.rs
+    catalog.rs  — list_connections / list_databases / list_tables / describe_table
+    data.rs     — preview_table / query
+  commands.rs   — #[tauri::command] cho UI: bật/tắt, đọc token, regenerate, đọc log
 ```
 
-### 2.1. Phương thức Giao tiếp (Transport Protocol)
-MCP hỗ trợ 2 cơ chế truyền tải chính:
-1. **Server-Sent Events (SSE) qua HTTP**:
-   - Chạy một HTTP/JSON-RPC Server nhẹ bên trong Rust backend (sử dụng `axum` / `tokio`).
-   - Lắng nghe duy nhất trên giao tiếp Loopback cục bộ: `http://127.0.0.1:45124/sse`.
-   - Phù hợp nhất cho các client chạy độc lập như Cursor, Raycast, web hooks.
-2. **Standard I/O (Stdio) qua CLI Bridge (Tùy chọn)**:
-   - Một executable nhỏ gọn `tablenova-mcp-cli` (hoặc cờ `--mcp` từ chính binary TableNova) kết nối với instance TableNova đang chạy qua IPC / Local Named Pipe.
-   - Phù hợp cho **Claude Desktop** (vốn mặc định dùng stdio).
+Khai mọi command mới vào [`app/handlers.rs`](../src-tauri/src/app/handlers.rs) — quên là lỗi runtime
+"unknown command", compiler không bắt được. Và **mỗi command mới phải được phân loại trong
+[`safeMode.ts`](../src/utils/safeMode.ts)**: `safeMode.test.ts` đọc `dbHelper.ts` và fail khi có
+command chưa phân loại. Các `mcp_*` command là `internal` (chúng cấu hình app, không phải câu lệnh
+người dùng chạy trên database) — trừ `mcp_regenerate_token`, đáng cân nhắc để `write` vì nó cắt đứt
+mọi client đang kết nối.
+
+**Ngôn ngữ thông báo lỗi**: lỗi MCP trả về cho **AI client**, không phải cho UI TableNova → viết
+**tiếng Anh** và **không** đi qua `backendErrors.ts`. Cùng luật với comment trong SQL script của
+`compare/` và với `failed[].error` của Redis. Chỉ chuỗi hiện trên Settings/audit log mới là key i18n.
 
 ---
 
-## 🛠️ 3. Danh sách MCP Tools & Resources Cung cấp
-
-TableNova MCP Server sẽ đăng ký các công cụ chuẩn sau:
-
-### 3.1. Danh mục Tools (Callable Functions)
-
-| Tên Tool (MCP Name) | Mô tả chức năng | Quyền hạn & Bảo mật |
-| :--- | :--- | :---: |
-| `tablenova_list_connections` | Lấy danh sách các kết nối Database đang mở và trạng thái sẵn sàng. | `Read-Only` |
-| `tablenova_list_databases` | Liệt kê các database / schema thuộc một connection. | `Read-Only` |
-| `tablenova_list_tables` | Lấy toàn bộ danh sách bảng, view trong database được chỉ định. | `Read-Only` |
-| `tablenova_describe_table` | Xem chi tiết cấu trúc bảng (Cột, Data Type, Nullable, Primary Key, Foreign Key, Indexes). | `Read-Only` |
-| `tablenova_preview_table` | Lấy dữ liệu mẫu (ví dụ: 10 - 50 dòng đầu tiên) từ bảng để AI hiểu phân bố dữ liệu. | `Read-Only` |
-| `tablenova_execute_query` | Thực thi một câu lệnh SQL tuỳ ý (`SELECT`, `EXPLAIN`,...). | `Safe Mode Filter` |
-| `tablenova_execute_mutation` | Thực thi các câu lệnh thay đổi (`INSERT`, `UPDATE`, `DELETE`, `DDL`). | `Cần Human Confirm` |
-
-### 3.2. Đặc tả Chi tiết Tham số của Tool
-
-#### 1. `tablenova_list_tables`
-- **Inputs**:
-  ```json
-  {
-    "connection_id": "conn_prod_pg_01",
-    "schema": "public" // Tùy chọn, mặc định theo schema hiện tại
-  }
-  ```
-- **Returns**: Danh sách tên bảng, loại (`table` / `view`), tổng số cột, ước lượng số dòng.
-
-#### 2. `tablenova_describe_table`
-- **Inputs**:
-  ```json
-  {
-    "connection_id": "conn_prod_pg_01",
-    "table_name": "users",
-    "schema": "public"
-  }
-  ```
-- **Returns**: Toàn bộ DDL rút gọn, metadata cột, quan hệ Foreign Key nối tới các bảng khác.
-
-#### 3. `tablenova_execute_query`
-- **Inputs**:
-  ```json
-  {
-    "connection_id": "conn_prod_pg_01",
-    "sql": "SELECT id, email, created_at FROM users WHERE is_active = true LIMIT 20;",
-    "database": "ecommerce_db"
-  }
-  ```
-- **Returns**:
-  ```json
-  {
-    "columns": ["id", "email", "created_at"],
-    "rows": [
-      [1, "alex@example.com", "2026-01-15T08:30:00Z"],
-      [2, "maria@example.com", "2026-02-01T10:15:00Z"]
-    ],
-    "execution_time_ms": 12,
-    "row_count": 2
-  }
-  ```
-
----
-
-## 🔒 4. Cơ chế An toàn & Bảo mật (Security & Human-in-the-Loop)
-
-An ninh cơ sở dữ liệu là ưu tiên số 1 khi cho phép AI tương tác. TableNova thiết lập 4 lớp phòng thủ:
+## 3. Năm lớp phòng thủ
 
 ```
 [ AI Request ]
       │
-      ▼
-┌────────────────────────────────────────┐
-│  1. Loopback-only Binding (127.0.0.1)  │ ➔ Chặn 100% truy cập từ mạng ngoài
-└──────────────────┬─────────────────────┘
-                   ▼
-┌────────────────────────────────────────┐
-│  2. Local Auth Token Validation        │ ➔ Chỉ Client có API Key mới được gọi
-└──────────────────┬─────────────────────┘
-                   ▼
-┌────────────────────────────────────────┐
-│  3. Connection Safe Mode Filter        │ ➔ Nếu connection ở "Read-Only", chặn
-└──────────────────┬─────────────────────┘   mọi INSERT/UPDATE/DELETE/DROP ngay lập tức
-                   ▼
-┌────────────────────────────────────────┐
-│  4. Human-In-The-Loop Approval         │ ➔ Hiện popup xác nhận trên TableNova UI
-│     (Cho các câu lệnh Mutation)        │   khi AI muốn ghi/xóa dữ liệu
-└────────────────────────────────────────┘
+      ▼  1. Bind 127.0.0.1  +  kiểm Origin/Host      ➔ máy khác không tới được, trang web không tới được
+      ▼  2. Bearer token (keyring OS)                 ➔ chỉ client được cấu hình mới gọi được
+      ▼  3. Kết nối phải được tích phơi (mặc định TẮT)➔ prod không lộ vì quên
+      ▼  4. read_only + phân loại câu lệnh            ➔ V1 chặn mọi thứ không phải đọc
+      ▼  5. Phê duyệt tương tác  (V2)                 ➔ ghi thì hỏi người
 ```
 
-1. **Loopback Only (`127.0.0.1`)**:
-   - Server tuyệt đối **không** lắng nghe trên `0.0.0.0` hay public IP.
-2. **Local Token Authentication**:
-   - Khi khởi động MCP Server, TableNova tự sinh một chuỗi bí mật `bearer_token` (có thể regenerate trong Settings). Mọi request từ AI Client bắt buộc phải có header: `Authorization: Bearer <token>`.
-3. **Phân loại Truy vấn & Safe Mode**:
-   - Mặc định: Chỉ cho phép các câu lệnh **Idempotent / Read-Only** (`SELECT`, `EXPLAIN`, `SHOW`, `DESCRIBE`).
-   - Nếu câu lệnh chứa từ khóa phá hủy (`DROP DATABASE`, `TRUNCATE`, `ALTER TABLE`, `UPDATE/DELETE` không có `WHERE`), TableNova sẽ tự động từ chối với mã lỗi `PERMISSION_DENIED`.
-4. **Hộp thoại Duyệt tương tác (Interactive Approval Toast/Modal)**:
-   - Khi AI yêu cầu thực thi `execute_mutation`, TableNova sẽ bắn Toast thông báo trên giao diện desktop:
-     > ⚠️ **AI Agent (Cursor) đang yêu cầu chạy lệnh:**
-     > `UPDATE users SET status = 'verified' WHERE id = 42;`
-     > `[ Từ chối ]` `[ Cho phép 1 lần ]`
+### 3.1. Loopback + kiểm `Origin`/`Host`
+
+Bind `127.0.0.1`, không bao giờ `0.0.0.0`. Thêm vào đó, vì lý do ở §0.5:
+
+- **Từ chối request có `Origin`** trỏ tới một website (chỉ chấp nhận không có `Origin`, hoặc các
+  origin đã whitelist cho client desktop). Trình duyệt luôn gắn `Origin` cho cross-origin fetch;
+  một client desktop thì không.
+- **Kiểm `Host`** đúng là `127.0.0.1:<port>` hoặc `localhost:<port>` → chặn DNS rebinding.
+- **Không phát bất kỳ header CORS nào.** Không có `Access-Control-Allow-Origin` thì kể cả request
+  lọt qua, trình duyệt cũng không đọc được response.
+
+### 3.2. Token trong keyring OS
+
+Không có crate `rand` trong cây phụ thuộc và không cần thêm: `uuid` đã bật feature `v4`, nên
+`Uuid::new_v4()` hai lần cho 256 bit entropy từ nguồn của HĐH.
+
+Cất ở [`credentials/secret_store.rs`](../src-tauri/src/credentials/secret_store.rs) (keyring OS,
+`SERVICE = "TableNova"`) với `profile_id = "__mcp__"`, `field = "token"` — **không** ở `localStorage`,
+vì file profile của Tauri đọc bằng tay được. Module đã tồn tại; không thêm kho thứ hai.
+
+So sánh token bằng vòng lặp **constant-time** (hoặc so sánh digest SHA-256 — `sha2` đã có sẵn trong
+`Cargo.toml`), không phải `==` trên `String`.
+
+### 3.3. Danh sách kết nối được phơi — mặc định TẮT
+
+Đây là lớp bản đầu ghi đúng nhưng để lẫn trong mục UI. Nó là một lớp bảo mật, và nó có **khuôn sẵn
+trong repo**: `set_connection_read_only`.
+
+- Cờ nằm cạnh `read_only` trong `ConnEntry`, đặt qua `mcp_set_connection_exposed(conn_id, bool)`.
+- Chính sách bền được frontend giữ trong `localStorage` khóa theo **`connKey`** (server), y hệt
+  `tf_safe_mode`, rồi đẩy xuống Rust lúc connect. Lý do khóa theo server chứ không theo `conn_id`:
+  `conn_id` được mint mới mỗi lần connect, một lựa chọn khóa theo nó sẽ bốc hơi sau mỗi lần
+  reconnect.
+- **Mặc định `false`.** Một kết nối production mở sẵn không được lộ cho AI chỉ vì người dùng chưa
+  vào Settings bao giờ.
+- `tablenova_list_connections` chỉ liệt kê kết nối đã phơi; mọi tool khác từ chối `conn_id` chưa
+  phơi bằng **cùng một thông báo** như `conn_id` không tồn tại — không xác nhận cho client biết có
+  một kết nối tồn tại mà nó không được thấy.
+
+### 3.4. Read-only + phân loại câu lệnh (không grep từ khóa)
+
+Hai tầng, cả hai đã có code:
+
+1. `reject_if_read_only` trong funnel (§2.2) — bắt kết nối người dùng đã đánh dấu chỉ đọc.
+2. Ở `policy.rs`, trước khi gửi đi: tách câu lệnh bằng `split_sql_statements()` (cùng splitter của
+   SQL editor, hiểu `DELIMITER`, `$$…$$`, thân trigger), rồi mỗi câu phải là đọc.
+
+Định nghĩa "đọc" trong V1 là **danh sách trắng**, dùng lại đúng tập của `READ_HEADS` trong
+`safeMode.ts` (`SELECT`, `EXPLAIN`, `SHOW`, `DESCRIBE`, `DESC`) đọc trên text đã strip comment. Mọi
+thứ khác — kể cả `WITH` và mọi dạng không nhận ra — bị từ chối, cùng hướng bảo thủ với
+`is_write_stmt()`: từ chối nhầm thì tốn một câu giải thích cho AI, cho lọt nhầm thì mất dữ liệu.
+
+Nhiều câu lệnh trong một lần gọi: **từ chối**. Một tool call là một câu lệnh. Nới ra thì việc phân
+loại phải đúng với từng câu trong một chuỗi mà AI ghép, và đó là bề mặt tấn công không cần thiết cho
+một tính năng chỉ đọc.
+
+### 3.5. Phê duyệt tương tác — V2, và tại sao nó không thể ở V1
+
+Cơ chế cần: park request trong Rust → emit event → hộp thoại hỏi → trả lời qua channel → re-enter.
+`safeMode.ts` mô tả đúng chuỗi đó và ghi rõ nó **cố ý không xây**. Xây nó là công việc chính của V2,
+kèm hai câu hỏi phải trả lời trước khi viết dòng đầu tiên:
+
+- **Hợp nhất hay song song với Safe Mode?** Hai chính sách phê duyệt lệch nhau (một per-server ở
+  localStorage, một per-request ở Rust) là thứ người dùng chỉnh cái này rồi tưởng cái kia cũng đổi.
+- **Timeout khi không ai trả lời?** Client MCP sẽ chờ. Phải có hạn và một câu trả lời rõ ràng cho
+  client ("người dùng không phản hồi"), không để treo.
+
+Và khi có ghi thì §0.2 quay lại thành câu hỏi thật: một `UPDATE` của AI chạy trên pooled connection
+(§2.2) **không** nằm trong transaction người dùng — nghĩa là nó tự commit ngay, không rollback được
+bằng nút Rollback của người dùng. Hộp thoại phê duyệt phải nói ra điều đó.
 
 ---
 
-## 🖥️ 5. Thiết kế Giao diện Người dùng (UI/UX) trên TableNova
+## 4. Tools
 
-### 5.1. Màn hình Cài đặt MCP (`McpServerSettingsModal.tsx`)
-- **Toggle Bật/Tắt MCP Server**:
-  - Trạng thái: `🟢 Đang chạy trên 127.0.0.1:45124` | `🔴 Đã dừng`.
-- **Cấu hình Cổng (Port)**:
-  - Mặc định: `45124` (tự động chuyển port tiếp theo nếu bị chiếm dụng).
-- **Mã xác thực (Auth Token)**:
-  - Hiển thị dạng ẩn `••••••••••••`, có nút **Copy Token** và nút **Regenerate Token**.
-- **Cấu hình Quyền hạn (Permissions Scope)**:
-  - `[x]` Cho phép đọc danh sách Table & Schema.
-  - `[x]` Cho phép thực thi câu lệnh `SELECT`.
-  - `[ ]` Cho phép câu lệnh `INSERT/UPDATE/DELETE` (yêu cầu Human Confirm).
-  - Giới hạn dòng tối đa trả về cho AI (mặc định: `100 rows`).
-- **Danh sách Kết nối được phép chia sẻ cho AI**:
-  - Người dùng có thể tích chọn từng Connection cụ thể (ví dụ: chỉ share `Local Dev SQLite`, không share `Production Postgres`).
-- **Audit Logs / Live Requests**:
-  - Bảng log thời gian thực: Thời gian, AI Client, Công cụ gọi, Câu lệnh SQL, Thời gian thực thi, Trạng thái (Thành công / Từ chối).
+### 4.1. Bảng ánh xạ
 
-### 5.2. Hướng dẫn Tích hợp 1-Click (1-Click Config Copy)
-Giao diện cung cấp sẵn snippet cấu hình để người dùng copy trực tiếp vào AI Editor của mình:
+Sáu tool V1, gần như toàn bộ đã có command tương ứng — phần việc thật là vỏ JSON-RPC và policy.
 
-#### Cấu hình cho **Cursor** (`.cursor/mcp.json`):
+| Tool | Nguồn dữ liệu đã có | Ghi chú |
+|:--|:--|:--|
+| `tablenova_list_connections` | `ConnRegistry::list()` | Đã trả sẵn `connId`/`db`/`dialect`/`serverId`/`schema`/`readOnly`. Lọc theo §3.3, **bỏ** `pending` (rò rỉ hoạt động của người dùng) |
+| `tablenova_list_databases` | `list_databases` | |
+| `tablenova_list_tables` | `get_tables` | Đã phân biệt table/view, gồm cả matview của Postgres |
+| `tablenova_describe_table` | `get_table_schema` + `get_full_catalog` | Cột, kiểu, nullable, PK, FK, index |
+| `tablenova_preview_table` | `get_table_data` | SQL do ta dựng → `LIMIT` đặt vào SQL được (§4.3) |
+| `tablenova_query` | `execute_raw_sql_pooled` | Chỉ câu lệnh đọc (§3.4) |
+
+Đặt tên `tablenova_query` chứ không phải `tablenova_execute_query`: tên tool là thứ AI đọc để chọn,
+và ở V1 không có tool "execute" nào khác để phân biệt.
+
+**Không** tách `execute_query` / `execute_mutation` làm hàng rào. Tách hai tool là tốt cho mô tả,
+nhưng AI hoàn toàn gửi được `UPDATE` qua tool đọc — hàng rào phải là classifier ở server (§3.4), và
+khi đã có classifier thì việc tách chỉ còn là chuyện đặt tên.
+
+### 4.2. Hình dạng kết quả
+
 ```json
 {
-  "mcpServers": {
-    "tablenova": {
-      "url": "http://127.0.0.1:45124/sse",
-      "headers": {
-        "Authorization": "Bearer YOUR_TABLENOVA_TOKEN"
-      }
-    }
-  }
+  "columns": ["id", "email", "created_at"],
+  "rows": [[1, "alex@example.com", "2026-01-15T08:30:00Z"]],
+  "row_count": 1,
+  "truncated": false,
+  "execution_time_ms": 12
 }
 ```
 
-#### Cấu hình cho **Claude Desktop** (`claude_desktop_config.json`):
+**Mảng-của-mảng, không phải object keyed by column name.** Bản đầu chọn đúng, và lý do đáng ghi lại:
+`SELECT *` qua vài JOIN trả về nhiều cột trùng tên (sakila trả 5 cột `last_update`), và một object
+JSON sẽ nuốt mất tất cả trừ một. Funnel trả về `{columns, data:[{col: val}]}` với `columns` đã qua
+`uniquify_columns()` (`last_update (2)`, `last_update (3)`…), nên MCP chiếu theo thứ tự `columns` là
+đủ và an toàn — không phải sửa gì trong funnel.
 
-**Lựa chọn 1: Chạy Native qua Binary TableNova (Khuyên dùng - 100% Native Rust, giống Serena/Postgres MCP)**:
-```json
-{
-  "mcpServers": {
-    "tablenova": {
-      "command": "C:\\Program Files\\TableNova\\tablenova.exe",
-      "args": ["--mcp"]
-    }
-  }
-}
-```
-*(Trên macOS: `/Applications/TableNova.app/Contents/MacOS/tablenova` với args `["--mcp"]`)*
+`truncated` là trường bắt buộc, không phải tuỳ chọn: AI kết luận "chỉ có 100 đơn lỗi" từ một kết quả
+bị cắt âm thầm là sai lệch tệ hơn hẳn một lỗi.
 
-**Lựa chọn 2: Chạy qua NPX / Node Bridge**:
-```json
-{
-  "mcpServers": {
-    "tablenova": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@tablenova/mcp",
-        "--port",
-        "45124",
-        "--token",
-        "YOUR_TABLENOVA_TOKEN"
-      ]
-    }
-  }
-}
-```
+### 4.3. Giới hạn dòng
+
+Hai đường khác nhau, và không được làm giống nhau:
+
+- **`preview_table`**: SQL do ta dựng → đặt `LIMIT` thẳng vào SQL. Rẻ, database làm việc cắt.
+- **`query`**: SQL do AI viết → **cắt sau khi decode**, không chèn `LIMIT`. Chèn `LIMIT` vào câu lệnh
+  người khác viết là sai với câu đã có `LIMIT`, sai với `UNION`, sai với CTE, và làm đúng thì cần
+  đúng cái AST mà §0.3 nói là không có.
+
+Cái giá của lựa chọn thứ hai — kết quả đầy đủ vẫn được decode vào bộ nhớ trước khi cắt — là có thật
+và được chấp nhận ở V1. Nếu nó thành vấn đề, đường ra đã có sẵn: `stream_sql_statements()` đẩy theo
+từng lô và dừng được giữa chừng bằng cờ cancel; chuyển sang nó là một thay đổi khu trú, không phải
+thiết kế lại.
+
+Mặc định 100 dòng, chỉnh được trong Settings, trần cứng 1000.
+
+### 4.4. Timeout
+
+Dùng lại `stmt_timeout(&ctx.server().config())` + `with_timeout(...)` y như
+[`execute_query`](../src-tauri/src/database/commands/query.rs#L15) — giới hạn người dùng đã đặt cho
+server đó áp cho cả AI, không có đường vòng. Không cần cơ chế hủy riêng ở V1: không có UI nào để bấm
+Stop cho một truy vấn của AI, và timeout đã là cái hãm.
 
 ---
 
-## 📅 6. Lộ trình Triển khai Kỹ thuật (Implementation Plan)
+## 5. Cấu hình & UI
 
-### Giai đoạn 1: Core Backend & HTTP/SSE Server (Tuần 1)
-- [ ] Thêm crate `axum`, `tokio`, `tower-http` vào `src-tauri/Cargo.toml`.
-- [ ] Tạo module backend `src-tauri/src/mcp/`:
-  - `server.rs`: Khởi tạo axum server, SSE endpoint, Token validation middleware.
-  - `protocol.rs`: JSON-RPC 2.0 parser và MCP Schema definitions.
-  - `tools.rs`: Triển khai các handler cho `list_connections`, `list_tables`, `describe_table`, `execute_query`.
-- [ ] Tích hợp trạng thái Server vào `AppState` của Tauri (Bật/Tắt/Đổi Port).
+### 5.1. `McpServerSettingsModal.tsx`
 
-### Giai đoạn 2: UI Quản lý & Bảo mật (Tuần 2)
-- [ ] Thiết kế `McpServerSettingsModal.tsx` và `McpStatusPill.tsx` trên thanh trạng thái (Footer hoặc TitleBar).
-- [ ] Xây dựng cơ chế duyệt `Human-in-the-Loop` (`McpApprovalDialog.tsx`).
-- [ ] Viết bộ lọc bảo vệ Safe Mode trong Rust để kiểm tra cú pháp AST của câu lệnh SQL trước khi thực thi.
+Dựng từ [`Modal.tsx`](../src/components/Modal.tsx) như mọi hộp thoại khác — không tự viết overlay.
 
-### Giai đoạn 3: Audit Log & Packaging (Tuần 3)
-- [ ] Xây dựng màn hình hiển thị Audit Log các truy vấn do AI gọi.
-- [ ] Tạo package helper CLI (nếu cần cho Claude Desktop stdio bridge).
-- [ ] Viết tài liệu hướng dẫn và video demo kết nối với Cursor / Claude Desktop.
+- Công tắc bật/tắt + trạng thái (`🟢 127.0.0.1:45124` / `🔴 Đã dừng`).
+- Token: hiện dạng ẩn, nút Copy, nút Regenerate (cảnh báo rõ: mọi client đang kết nối sẽ đứt).
+- Danh sách kết nối đang mở, mỗi dòng một checkbox "phơi cho AI" (§3.3). Đây là phần quan trọng
+  nhất của màn hình này — đặt nó **trên** phần snippet.
+- Giới hạn dòng trả về.
+- Audit log realtime.
+
+Một `McpStatusPill` trên thanh tiêu đề chỉ nên xuất hiện **khi server đang bật**, và nhấp nháy khi
+có request — thanh tiêu đề đã chật (xem lý do `TxControl` gom hết vào một nút).
+
+### 5.2. Port: không tự nhảy
+
+Bản đầu ghi "tự động chuyển port tiếp theo nếu bị chiếm dụng" ở §5.1, rồi in cứng `45124` vào snippet
+`.cursor/mcp.json` ở §5.2. Hai điều đó đánh nhau: app nhảy sang 45125 là file người dùng đã copy
+thành sai, và không có gì báo cho họ biết.
+
+Chốt: **port cố định, chỉnh được trong Settings, bị chiếm thì báo lỗi rõ ràng** ("cổng 45124 đang bị
+tiến trình khác dùng — đổi cổng trong Cài đặt"). Và snippet 1-click được **sinh ra từ cổng đang bind
+thật**, không phải từ hằng số.
+
+### 5.3. Audit log sống ở Rust
+
+Log sinh ra trong Rust, còn `queryHistory.ts`/`jobs.ts` đều là store của frontend — nếu chọn khuôn
+đó, mọi request đến lúc không có cửa sổ nào lắng nghe sẽ mất, mà đó đúng là lúc log cần nhất.
+
+Chốt V1: **ring buffer trong `AppState`** (cap 500 mục), emit event `mcp-request` cho UI vẽ realtime.
+Không ghi tệp ở V1 — và **nói rõ trong UI** rằng log mất khi tắt app, chứ không để người dùng tự
+tưởng là nó bền. Ghi tệp là việc của V2.
+
+Mỗi mục: thời gian, tên tool, `conn_id`, câu SQL (cắt bớt, có cờ `truncated` như `pendingSql` của
+`tx/` đã làm), số dòng trả, thời gian chạy, kết quả (OK / bị từ chối ở lớp mấy). Ghi rõ **lớp nào từ
+chối** là thứ khiến log này dùng được để gỡ lỗi thay vì chỉ để nhìn.
 
 ---
 
-## 🎯 7. Kết luận & Tác động
+## 6. Lộ trình
 
-Khi hoàn thành tính năng **TableNova Internal MCP Server**:
-1. **TableNova sẽ trở thành database client đầu tiên trên Windows/Linux sở hữu sức mạnh kết nối trực tiếp với AI IDE hàng đầu thế giới.**
-2. Người dùng chỉ cần gõ trong Cursor: *"Hãy kiểm tra bảng orders trong db của tôi xem có đơn hàng nào bị lỗi hôm nay không"*, Cursor sẽ tự động gọi TableNova để lấy dữ liệu chính xác 100% trong thời gian thực.
-3. Tạo ra lợi thế cạnh tranh vượt trội hoàn toàn trước các đối thủ như TablePro (chỉ có trên Mac), DBeaver hay TablePlus.
+Ước lượng của bản đầu (3 tuần cho cả ghi + phê duyệt + stdio) là lạc quan. Chia lại:
+
+### V1 — chỉ đọc (~2 tuần)
+
+**Bước 1 — nền và bảo mật** (không có bước này thì không có gì được phép chạy)
+- [ ] Chốt revision spec MCP đang hiện hành; ghi vào `mcp/mod.rs` (§2.3).
+- [ ] Thêm `axum`; dựng `server.rs` + `http.rs` bind loopback.
+- [ ] Kiểm `Origin`/`Host`, không phát header CORS (§3.1).
+- [ ] Sinh + cất token qua `secret_store.rs`; so sánh constant-time (§3.2).
+- [ ] `protocol.rs`: JSON-RPC 2.0, `initialize`, `tools/list`, `tools/call`.
+
+**Bước 2 — đường dữ liệu**
+- [ ] Tách `execute_raw_sql_pooled` khỏi `execute_raw_sql_generic` (§2.2). Một nhát, không nhân bản.
+- [ ] Cờ `exposed` trong `ConnEntry` + command đặt cờ, theo khuôn `set_connection_read_only` (§3.3).
+- [ ] `policy.rs`: danh sách trắng câu lệnh đọc, một-câu-một-lần, giới hạn dòng (§3.4, §4.3).
+- [ ] 6 tool (§4.1). Khai command mới vào `app/handlers.rs` **và** phân loại trong `safeMode.ts`.
+
+**Bước 3 — UI**
+- [ ] `McpServerSettingsModal.tsx` từ `Modal.tsx`; snippet sinh từ cổng thật (§5.2).
+- [ ] `audit.rs` + bảng log realtime (§5.3).
+- [ ] Blocker `closeGuard` ưu tiên thấp (§2.4).
+- [ ] Khoá i18n cho toàn bộ chuỗi UI mới (en/vi/ja — thiếu key là lỗi biên dịch).
+- [ ] Thử thật với ít nhất hai client khác nhau; ghi lại client nào cần đường tương thích nào.
+
+### V2 — ghi có phê duyệt (~2–3 tuần, đánh giá lại sau V1)
+
+- [ ] Quyết hợp nhất hay song song với Safe Mode (§3.5) — **trước khi** viết code.
+- [ ] Cơ chế park request → event → hộp thoại → channel, có timeout.
+- [ ] `tablenova_mutate` + hộp thoại nói rõ "không nằm trong transaction của bạn".
+- [ ] Audit log ghi tệp.
+- [ ] Cầu stdio: một proxy mỏng stdio↔HTTP loopback, cờ xử lý **trước** `tauri::Builder`, cộng
+      plugin single-instance (§0.4).
+
+---
+
+## 7. Đã cân nhắc và KHÔNG làm
+
+- **Endpoint `/sse` như transport chính** — bản cũ của spec (§2.3). Chỉ thêm nếu một client mục tiêu
+  thực sự cần, và khi đó nó là đường tương thích.
+- **`tablenova.exe --mcp` ở V1** — §0.4. Cần arg parsing trước `tauri::Builder` + single-instance +
+  một proxy; cả ba đều là thay đổi ở tầng bootstrap, không đáng để chặn V1.
+- **Tool Redis** — 40+ command với mô hình quyền riêng. Sau V1, nếu có nhu cầu thật.
+- **Truy vấn liên-kết-nối** — cùng lý do `multi-connection-plan.md` đã loại: không có engine nào để
+  join hai kết nối, và giả vờ có là hứa sai với AI.
+- **MCP Resources / Prompts** — Tools đã phủ hết use case; thêm hai khái niệm nữa là thêm bề mặt mà
+  chưa có ai xin.
+- **OAuth cho MCP** — dành cho server từ xa. Bearer token trên loopback là đúng tầm mối đe dọa, và
+  là thứ các client hiện hỗ trợ qua `headers`.
+- **Nhét `LIMIT` vào SQL của AI** — §4.3.
+- **Cho MCP đi qua `#[tauri::command]`** — chúng cần `tauri::State`; §2.1.
+
+---
+
+## 8. Rủi ro còn mở
+
+- **Một AI client cấu hình sai có thể quét cả database.** Timeout + giới hạn dòng hãm được tác động,
+  không hãm được số lượng lời gọi. Nếu thành vấn đề: rate limit trong `policy.rs`, đo trước rồi làm.
+- **Token nằm trong file cấu hình của AI client** (`.cursor/mcp.json` và tương đương) — thường là
+  plaintext, và có khi bị commit vào repo. Settings nên nói thẳng điều này cạnh nút Copy.
+- **`exposed` là per-`conn_id` trong Rust nhưng bền theo `connKey` ở frontend.** Đó là hai nơi giữ
+  một sự thật — đúng khuôn `read_only`/Safe Mode đang dùng, nhưng vẫn là chỗ dễ lệch. Đường ghi phải
+  đúng một chiều: frontend là nguồn bền, Rust là bản đang hiệu lực, và connect là lúc duy nhất đồng
+  bộ.
+- **`describe_table` phơi tên cột của schema production cho một dịch vụ bên ngoài.** Đó là bản chất
+  của tính năng, không phải lỗi — nhưng nó là lý do §3.3 mặc định TẮT và không có nút "phơi tất cả".

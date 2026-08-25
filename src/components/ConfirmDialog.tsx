@@ -6,17 +6,17 @@ import { Modal, ModalBody, ModalFooter } from './Modal';
 interface ConfirmDialogProps {
   open: boolean;
   title: string;
-  /** Nội dung chính — mô tả hành động sẽ xảy ra. */
+  /** Nội dung chính — mô tả hành động will xảy ra. */
   message: React.ReactNode;
-  /** Dòng nhỏ phía dưới, ví dụ "Không thể hoàn tác." */
+  /** row nhỏ phía under, ví dụ "not thể hoàn tác." */
   note?: React.ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
-  /** Nút xác nhận màu đỏ (hành động phá huỷ dữ liệu). */
+  /** Nút confirm màu đỏ (hành động phá cancel dữ liệu). */
   danger?: boolean;
-  /** Sắc thái icon/nút: 'danger' (mặc định khi danger), 'success' hoặc 'info'. */
+  /** Sắc thái icon/nút: 'danger' (default when danger), 'success' or 'info'. */
   tone?: 'danger' | 'success' | 'info';
-  /** Nếu có: người dùng phải gõ đúng chuỗi này mới bấm được nút xác nhận. */
+  /** if có: user must gõ đúng string này mới bấm is nút confirm. */
   requireText?: string;
   /** Override the stacking order. The default sits above the 9999/10000 dialogs, but a
    *  caller opened from a modal that raised itself higher (Sidebar, SequenceManagerModal
@@ -27,8 +27,8 @@ interface ConfirmDialogProps {
 }
 
 /**
- * Hộp xác nhận trong app cho các hành động phá huỷ dữ liệu (Drop / Truncate / Flush...),
- * thay cho window.confirm() để trông đồng bộ với các popup còn lại.
+ * Hộp confirm in app for các hành động phá cancel dữ liệu (Drop / Truncate / Flush...),
+ * thay for window.confirm() to trông sync with các popup còn lại.
  */
 export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   open,
@@ -53,8 +53,8 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
 
   const ready = !requireText || typed.trim() === requireText;
 
-  // Escape đã do Modal xử lý; ở đây chỉ cần Enter để xác nhận nhanh,
-  // và chỉ khi không phải nhập xác nhận bằng tay.
+  // Escape already do Modal handle; at đây chỉ cần Enter to confirm nhanh,
+  // and chỉ when not must nhập confirm bằng tay.
   useEffect(() => {
     if (!open || requireText) return;
     const onKey = (e: KeyboardEvent) => {

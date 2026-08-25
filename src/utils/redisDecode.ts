@@ -1,10 +1,10 @@
-// Giải mã value chuỗi của Redis để hiển thị đẹp:
-//   1) Nếu gzip (magic 1f 8b) hoặc zlib (PHP gzcompress) -> giải nén bằng DecompressionStream native.
-//   2) Nếu là PHP serialize (Laravel cache/model, Neos Flow VariableFrontend) -> unserialize -> JSON.
-//   3) Nếu là igbinary (magic 00 00 00 02) -> unserialize -> JSON.
-//   4) Nếu là JSON -> format.
+// Giải mã value string of Redis to display đẹp:
+//   1) if gzip (magic 1f 8b) or zlib (PHP gzcompress) -> giải nén bằng DecompressionStream native.
+//   2) if is PHP serialize (Laravel cache/model, Neos Flow VariableFrontend) -> unserialize -> JSON.
+//   3) if is igbinary (magic 00 00 00 02) -> unserialize -> JSON.
+//   4) if is JSON -> format.
 //   5) Còn lại -> text thô.
-// Không phụ thuộc thư viện ngoài.
+// not phụ thuộc thư viện ngoài.
 
 import i18n from '../i18n';
 
@@ -40,8 +40,8 @@ async function decompressIfNeeded(
   }
 }
 
-// Tách tên prop PHP: protected/private có dạng <NUL>*<NUL>name hoặc <NUL>Class<NUL>name.
-// Dùng fromCharCode(0) để không đưa ký tự null vào mã nguồn.
+// Tách tên prop PHP: protected/private có dạng <NUL>*<NUL>name or <NUL>Class<NUL>name.
+// Dùng fromCharCode(0) to not đưa character null ando mã nguồn.
 function cleanPropName(k: string): string {
   const parts = k.split(String.fromCharCode(0));
   return parts.length > 1 ? parts[parts.length - 1] : k;
@@ -60,7 +60,7 @@ function arrayFromEntries(entries: [unknown, unknown][]): any {
   return obj;
 }
 
-// Parser PHP serialize -> giá trị JS. Hoạt động trên byte (đúng với s:LEN là độ dài BYTE, hỗ trợ UTF-8).
+// Parser PHP serialize -> giá trị JS. Hoạt động on byte (đúng with s:LEN is độ dài BYTE, hỗ trợ UTF-8).
 export function phpUnserialize(bytes: Uint8Array): any {
   const td = new TextDecoder();
   let i = 0;
@@ -69,7 +69,7 @@ export function phpUnserialize(bytes: Uint8Array): any {
     const s = i;
     while (i < bytes.length && bytes[i] !== stop) i++;
     const n = parseInt(td.decode(bytes.subarray(s, i)), 10);
-    i++; // bỏ ký tự stop
+    i++; // bỏ character stop
     return n;
   };
   const readNumSemicolon = (): number => {
@@ -79,12 +79,12 @@ export function phpUnserialize(bytes: Uint8Array): any {
     i++; // bỏ ';'
     return n;
   };
-  // Đọc phần LEN:"...." — với s: kết thúc bằng '";', với O: kết thúc bằng '":' (đều 2 byte -> bỏ 2 byte).
+  // read phần LEN:"...." — with s: kết thúc bằng '";', with O: kết thúc bằng '":' (đều 2 byte -> bỏ 2 byte).
   const readLenString = (): string => {
     const len = readIntUntil(0x3a /* : */);
     i++; // bỏ '"'
     const start = i;
-    i += len; // LEN là số byte
+    i += len; // LEN is số byte
     const str = td.decode(bytes.subarray(start, i));
     i += 2; // bỏ 2 byte kết thúc
     return str;

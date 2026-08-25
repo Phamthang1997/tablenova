@@ -48,14 +48,14 @@ interface SafeModeControlProps {
   readOnly: boolean;
   onToggleReadOnly?: () => void;
   /**
-   * Kết nối đang xem — cần cho lệnh đổi giới hạn thời gian câu lệnh, thứ áp vào *phiên* đang chạy
-   * chứ không phải vào một server nào đó đã lưu.
+   * Kết nối currently xem — cần for lệnh đổi limit time statement, thứ áp ando *phiên* currently run
+   * chứ not must ando một server nào đó already save.
    */
   connId?: string;
   /**
-   * Dialect của kết nối. Hàng "giới hạn thời gian" chỉ hiện với `postgres`/`mysql`: SQLite chạy
-   * đồng bộ trên tệp cục bộ nên không có chỗ chen một hạn chót vào, và bày ra một ô cài đặt không
-   * có tác dụng thì tệ hơn là không bày.
+   * Dialect of kết nối. row "limit time" chỉ hiện with `postgres`/`mysql`: SQLite run
+   * sync on tệp cục bộ nên not có chỗ chen một hạn chót ando, and bày ra một ô cài đặt not
+   * có tác dụng thì tệ hơn is not bày.
    */
   dbType?: string;
 }
@@ -84,8 +84,8 @@ export const SafeModeControl: React.FC<SafeModeControlProps> = ({
     return () => window.removeEventListener(SAFE_MODE_CHANGED_EVENT, read);
   }, [connKey]);
 
-  // Cùng lối với Safe Mode ở trên: nguồn sự thật là localStorage, nên hai cửa sổ hoặc hai lần mount
-  // không hiện hai con số khác nhau.
+  // Cùng lối with Safe Mode at on: nguồn sự thật is localStorage, nên hai window or hai lần mount
+  // not hiện hai con số khác nhau.
   useEffect(() => {
     const read = () => setStmtSecs(getStmtTimeoutForKey(connKey));
     read();
@@ -93,8 +93,8 @@ export const SafeModeControl: React.FC<SafeModeControlProps> = ({
     return () => window.removeEventListener(STMT_TIMEOUT_CHANGED_EVENT, read);
   }, [connKey]);
 
-  // Cái ô "đừng hiện lại" nằm trong chính hộp thoại xem trước, tức là nó bị tắt từ chỗ khác — nghe
-  // sự kiện để hàng ở đây không hiện trạng thái cũ khi popover mở lại.
+  // Cái ô "đừng hiện lại" nằm in chính hộp thoại preview, tức is nó is tắt from chỗ khác — nghe
+  // sự kiện to row at đây not hiện status cũ when popover open lại.
   useEffect(() => {
     const read = () => setPreviewOn(getCommitPreviewForKey(connKey));
     read();
@@ -179,8 +179,8 @@ export const SafeModeControl: React.FC<SafeModeControlProps> = ({
   };
 
   /**
-   * Đặt giới hạn. Ghi vào localStorage (để lần kết nối sau vẫn còn) **và** đẩy sang phiên đang chạy
-   * — hai chỗ, vì một cái là bộ nhớ còn cái kia là hiệu lực. Popover không đóng lại: người ta hay
+   * Đặt limit. write ando localStorage (to lần kết nối sau vẫn còn) **and** đẩy sang phiên currently run
+   * — hai chỗ, vì một cái is bộ nhớ còn cái kia is hiệu lực. Popover not close lại: người ta hay
    * thử một mức rồi đổi ngay sang mức khác.
    */
   const pickTimeout = (secs: number) => {
@@ -231,10 +231,10 @@ export const SafeModeControl: React.FC<SafeModeControlProps> = ({
                   </button>
                 </React.Fragment>
               ))}
-              {/* Giới hạn thời gian câu lệnh — cùng popover vì nó trả lời cùng một câu hỏi với Safe
-                  Mode ("kết nối này bảo vệ mình tới đâu") và cũng lưu theo server. Các mức đặt sẵn
-                  chứ không phải ô nhập số: gõ số trong một menu là thao tác lạc, và sáu mức đã phủ
-                  hết khoảng người ta thực sự chọn. */}
+              {/* limit time statement — cùng popover vì nó trả lời cùng một câu hỏi with Safe
+                  Mode ("kết nối này bảo vệ mình tới đâu") and cũng save theo server. Các mức đặt sẵn
+                  chứ not must ô nhập số: gõ số in một menu is thao tác lạc, and sáu mức already phủ
+                  hết khoảng người ta thực sự select. */}
               {(dbType === 'postgres' || dbType === 'mysql') && (
                 <>
                   <div className="sm-divider" />
@@ -255,9 +255,9 @@ export const SafeModeControl: React.FC<SafeModeControlProps> = ({
                 </>
               )}
 
-              {/* Xem trước SQL trước khi grid lưu. Ở đây vì đây là đường BẬT LẠI: nó bị tắt từ ô
-                  "đừng hiện lại" trong chính hộp thoại đó, và một công tắc tắt được mà không bật
-                  lại được thì chỉ là một cái bẫy. */}
+              {/* preview SQL trước when grid save. at đây vì đây is đường BẬT LẠI: nó is tắt from ô
+                  "đừng hiện lại" in chính hộp thoại đó, and một công tắc tắt is mà not bật
+                  lại is thì chỉ is một cái bẫy. */}
               <div className="sm-divider" />
               <button
                 className={`sm-item ${previewOn ? 'is-on' : ''}`}

@@ -298,7 +298,7 @@ export function cancelJob(id: string): void {
     // Backend refusing to cancel must not kill the job — the loop still checks `cancelled()`.
     void Promise.resolve(entry.spec.onCancel?.(entry.ctx)).catch(() => {});
   } catch {
-    /* bỏ qua */
+    /* skip */
   }
 }
 

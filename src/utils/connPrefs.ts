@@ -1,33 +1,33 @@
-// Một thiết lập lưu **theo server** (`connKey`), trong localStorage, có phát sự kiện khi đổi.
+// Một thiết lập save **theo server** (`connKey`), in localStorage, có phát sự kiện when đổi.
 //
-// Đây là khuôn chung, không phải một thiết lập cụ thể. `safeMode.ts` viết tay đoạn này trước (nó
-// cần thêm phần phân loại command nên vẫn giữ bản riêng), rồi `stmtTimeout` và "xem trước SQL khi
-// lưu" lặp lại y nguyên: đọc localStorage một lần rồi ghi nhớ, xoá entry khi giá trị bằng mặc định,
-// bỏ cache khi cửa sổ khác ghi, phát một `CustomEvent` để control đang mở tự cập nhật. Bản sao thứ
-// ba là lúc phải dừng lại — bốn dòng logic đó sai ở một bản là một thiết lập âm thầm không lưu.
+// Đây is khuôn chung, not must một thiết lập cụ thể. `safeMode.ts` viết tay đoạn này trước (nó
+// cần add phần categorize command nên vẫn giữ bản riêng), rồi `stmtTimeout` and "preview SQL when
+// save" lặp lại y nguyên: read localStorage một lần rồi write nhớ, delete entry when giá trị bằng default,
+// bỏ cache when window khác write, phát một `CustomEvent` to control currently open tự cập nhật. Bản sao thứ
+// ba is lúc must stop lại — bốn row logic đó sai at một bản is một thiết lập âm thầm not save.
 //
-// Hai quy tắc nằm trong khuôn này, không phải ở chỗ dùng:
+// Hai quy tắc nằm in khuôn này, not must at chỗ dùng:
 //
-//  - **Mặc định thì XOÁ entry** thay vì ghi giá trị mặc định. Nhờ vậy localStorage không phình lên
-//    một dòng cho mỗi server người dùng từng mở, và một bản ghi cũ (trước khi thiết lập này tồn
-//    tại) đọc ra đúng mặc định chứ không phải `undefined`.
-//  - **Key rỗng thì trả mặc định và không ghi gì.** Key rỗng nghĩa là "chưa biết đây là server
-//    nào" (`connKey` của một config chưa đủ thông tin); ghi vào đó là ghi cho mọi server một lúc.
+//  - **default thì delete entry** thay vì write giá trị default. Nhờ vậy localStorage not phình lên
+//    một row for mỗi server user fromng open, and một bản write cũ (trước when thiết lập này tồn
+//    tại) read ra đúng default chứ not must `undefined`.
+//  - **Key rỗng thì trả default and not write gì.** Key rỗng nghĩa is "chưa biết đây is server
+//    nào" (`connKey` of một config chưa đủ thông tin); write ando đó is write for mọi server một lúc.
 
-/** Đọc/ghi một thiết lập theo server, cùng tên sự kiện để nghe khi nó đổi. */
+/** read/write một thiết lập theo server, cùng tên sự kiện to nghe when nó đổi. */
 export interface ConnPref<T> {
-  /** Tên `CustomEvent` phát ra sau mỗi lần ghi. */
+  /** Tên `CustomEvent` phát ra sau mỗi lần write. */
   readonly EVENT: string;
   get(key: string): T;
   set(key: string, value: T): void;
 }
 
 /**
- * Dựng một thiết lập theo server.
+ * build một thiết lập theo server.
  *
- * `normalize` nhận giá trị thô lấy từ JSON và trả về `null` khi nó không dùng được (kiểu sai, ngoài
- * miền giá trị, hay đúng bằng mặc định) — `null` nghĩa là "dùng mặc định", nên một entry rác không
- * bao giờ thành một giá trị lạ, và `set` cũng dùng chính hàm này để quyết định xoá entry hay ghi.
+ * `normalize` receive giá trị thô lấy from JSON and returns `null` when nó not dùng is (kiểu sai, ngoài
+ * miền giá trị, hay đúng bằng default) — `null` nghĩa is "dùng default", nên một entry rác not
+ * bao giờ thành một giá trị lạ, and `set` cũng dùng chính hàm này to quyết định delete entry hay write.
  */
 export function createConnPref<T>(
   storageKey: string,
@@ -74,9 +74,9 @@ export function createConnPref<T>(
       try {
         localStorage.setItem(storageKey, JSON.stringify(all));
       } catch {
-        // Hết quota thì giá trị không lưu lại được, nhưng control không được trông như bị hỏng.
+        // Hết quota thì giá trị not save lại is, nhưng control not is trông như is hỏng.
       }
-      // Dưới Vitest (`environment: 'node'`) không có `window` — chặn thay vì làm module chết lúc import.
+      // under Vitest (`environment: 'node'`) not có `window` — chặn thay vì ism module chết lúc import.
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent(event));
       }

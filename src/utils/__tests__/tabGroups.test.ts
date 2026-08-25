@@ -3,8 +3,8 @@ import { moveGroup, moveTabIntoGroup, reorderTabs } from '../tabGroups';
 import type { TabInfo } from '../../components/TabManager';
 
 /**
- * Mỗi ca test kiểm tra cùng một thứ: sau thao tác, các tab cùng nhóm còn nằm
- * liền nhau hay không. Đó là bất biến duy nhất mà thanh tab dựa vào để dựng cụm
+ * Mỗi ca test check cùng một thứ: sau thao tác, các tab cùng nhóm còn nằm
+ * liền nhau hay not. Đó is bất biến unique mà tab bar dựa ando to build cụm
  * nhóm — vỡ nó thì một nhóm hiện thành hai cụm trùng tên.
  */
 
@@ -60,9 +60,9 @@ describe('moveTabIntoGroup', () => {
     expect(groupsAreContiguous(next)).toBe(true);
   });
 
-  // Ca này từng khẳng định ngược lại (tab về cuối danh sách) và đó là bug: bấm
-  // "Nhóm mới" trên một tab ở giữa thì thấy nó nhảy sang tận phải. Chrome giữ
-  // nguyên chỗ và mọc header nhóm ngay trước tab.
+  // Ca này fromng khẳng định ngược lại (tab về cuối danh sách) and đó is bug: bấm
+  // "Nhóm mới" on một tab at giữa thì thấy nó nhảy sang tận must. Chrome giữ
+  // nguyên chỗ and mọc header nhóm ngay trước tab.
   it('tạo nhóm mới cho một tab rời -> tab đứng yên tại chỗ', () => {
     const list = [tab('a'), tab('b'), tab('c')];
     const next = moveTabIntoGroup(list, 'b', 'g-new');
@@ -74,7 +74,7 @@ describe('moveTabIntoGroup', () => {
   it('tạo nhóm mới cho tab đang nằm GIỮA nhóm khác -> ra ngay sau nhóm cũ', () => {
     const list = [tab('a', 'g1'), tab('b', 'g1'), tab('c', 'g1'), tab('d')];
     const next = moveTabIntoGroup(list, 'b', 'g-new');
-    // Giữ nguyên chỗ ở đây sẽ cắt g1 thành [a] ... [c], nên b phải ra sau g1.
+    // preserve chỗ at đây will cắt g1 thành [a] ... [c], nên b must ra sau g1.
     expect(ids(next)).toEqual(['a', 'c', 'b', 'd']);
     expect(groupOf(next, 'b')).toBe('g-new');
     expect(groupsAreContiguous(next)).toBe(true);
@@ -103,9 +103,9 @@ describe('reorderTabs', () => {
     expect(groupsAreContiguous(next)).toBe(true);
   });
 
-  // Ca này trước đây khẳng định ngược lại. Suy nhóm từ hai tab hàng xóm khiến
-  // thả vào MÉP nhóm không nhận nhóm — mà thả vào mép phải chính là thao tác tự
-  // nhiên nhất khi muốn thêm tab vào cuối một nhóm.
+  // Ca này trước đây khẳng định ngược lại. Suy nhóm from hai tab row xóm whenến
+  // thả ando MÉP nhóm not receive nhóm — mà thả ando mép must chính is thao tác tự
+  // nhiên nhất when muốn add tab ando cuối một nhóm.
   it('thả vào mép nhóm vẫn vào nhóm, kể cả khi vị trí không đổi', () => {
     const list = [tab('a', 'g1'), tab('b', 'g1'), tab('c')];
     const next = reorderTabs(list, 2, 2, 'g1');
@@ -144,8 +144,8 @@ describe('moveGroup', () => {
     expect(groupsAreContiguous(next)).toBe(true);
   });
 
-  // Thả rơi vào giữa dải một nhóm khác thì phải bật ra mép của nhóm đó, chèn
-  // thẳng vào giữa sẽ cắt nhóm kia làm đôi.
+  // Thả rơi ando giữa dải một nhóm khác thì must bật ra mép of nhóm đó, chèn
+  // thẳng ando giữa will cắt nhóm kia ism đôi.
   it('không bao giờ chèn vào giữa một nhóm khác', () => {
     const list = [tab('a', 'g2'), tab('b', 'g2'), tab('c', 'g2'), tab('d', 'g1')];
     const next = moveGroup(list, 'g1', 1);

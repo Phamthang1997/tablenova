@@ -18,12 +18,12 @@ import {
   type HistoryEntry,
 } from '../queryHistory';
 
-// environment: 'node' -> không có localStorage. Dựng bản giả để test được cả
-// đường ghi, kể cả nhánh hết quota. `window` vẫn undefined nên hàm phát
+// environment: 'node' -> not có localStorage. build bản giả to test is cả
+// đường write, kể cả nhánh hết quota. `window` vẫn undefined nên hàm phát
 // CustomEvent tự no-op.
 class FakeStorage {
   private map = new Map<string, string>();
-  /** Ném QuotaExceededError khi tổng số ký tự vượt ngưỡng (0 = không giới hạn). */
+  /** Ném QuotaExceededError when tổng số character vượt ngưỡng (0 = not limit). */
   limit = 0;
 
   getItem(key: string): string | null {
@@ -188,7 +188,7 @@ describe('addHistoryEntry', () => {
   });
 
   it('moves a repeat back to the top so the list stays newest-first', () => {
-    // Ngăn lịch sử nhóm theo ngày dựa vào thứ tự mảng, nên dòng vừa chạy lại phải lên đầu.
+    // Ngăn lịch sử nhóm theo ngày dựa ando thứ tự mảng, nên row vừa run lại must lên đầu.
     addHistoryEntry('select 1', CONN_A, 'sakila', '1');
     addHistoryEntry('select 1', CONN_B, 'sakila', '2');
     addHistoryEntry('select 1', CONN_A, 'sakila', '3');
@@ -213,7 +213,7 @@ describe('addHistoryEntry', () => {
       timestamp: '',
       conn: CONN_B,
     })));
-    // Cho phép ghi được danh sách đã bỏ nửa cũ, nhưng không ghi được cả 5 dòng.
+    // allows write is danh sách already bỏ nửa cũ, nhưng not write is cả 5 row.
     storage.limit = JSON.stringify(JSON.parse(storage.getItem(HISTORY_KEY) as string)).length;
 
     const { list } = addHistoryEntry('select new', CONN_A, 'sakila', 'new');
@@ -265,13 +265,13 @@ describe('recordHistoryResult', () => {
 
 describe('deleteHistoryEntry', () => {
   it('rewrites from the store, so entries added elsewhere are not lost', () => {
-    // Mô phỏng hai tab: tab này nạp danh sách rồi tab khác thêm dòng mới.
+    // Mô phỏng hai tab: tab này load danh sách rồi tab khác add row mới.
     seed([{ id: 'old', sql: 'select 1', timestamp: '', conn: CONN_A }]);
     const staleCopy = loadHistory();
     addHistoryEntry('select 2', CONN_A, 'sakila', 'fresh');
 
     const updated = deleteHistoryEntry('old');
-    expect(staleCopy.map(e => e.id)).toEqual(['old']); // bản copy cũ vẫn thấy dòng đã xoá
+    expect(staleCopy.map(e => e.id)).toEqual(['old']); // bản copy cũ vẫn thấy row already delete
     expect(updated.map(e => e.id)).toEqual(['fresh']);
     expect(loadHistory().map(e => e.id)).toEqual(['fresh']);
   });
@@ -296,8 +296,8 @@ describe('clearHistory', () => {
   });
 
   it('never deletes untagged entries except in the scope that owns them', () => {
-    // Chúng hiện ở MỌI phạm vi, nên xoá theo db/kết nối mà xoá luôn thì sang phạm
-    // vi khác người dùng mất dữ liệu không hề định xoá.
+    // Chúng hiện at MỌI phạm vi, nên delete theo db/kết nối mà delete luôn thì sang phạm
+    // vi khác user mất dữ liệu not hề định delete.
     expect(clearHistory('db', CONN_A, 'sakila').some(e => e.id === 'legacy')).toBe(true);
     expect(clearHistory('conn', CONN_A, 'sakila').some(e => e.id === 'legacy')).toBe(true);
     expect(clearHistory('all', CONN_A, 'sakila')).toEqual([]);

@@ -9,12 +9,12 @@ import React from 'react';
  * flex layout does not collapse and then snap back when the editor arrives.
  */
 /**
- * Cùng việc đó nhưng cho một **hộp thoại** nạp chậm (`RowDocumentModal`).
+ * Cùng việc đó nhưng for một **hộp thoại** load chậm (`RowDocumentModal`).
  *
- * `LazyEditorFallback` có `flex: 1` và nền riêng, đúng cho một panel — nhưng hộp thoại thì render
- * qua portal, còn fallback thì không, nên dùng bản kia sẽ chèn một khối vào giữa layout của grid
- * rồi biến mất khi chunk về. Bản này `position: fixed` nên không đẩy gì cả, và vẫn cho một dấu
- * hiệu là cú bấm đã được ghi nhận.
+ * `LazyEditorFallback` có `flex: 1` and nền riêng, đúng for một panel — nhưng hộp thoại thì render
+ * qua portal, còn fallback thì not, nên dùng bản kia will chèn một khối ando giữa layout of grid
+ * rồi biến mất when chunk về. Bản này `position: fixed` nên not đẩy gì cả, and vẫn for một dấu
+ * hiệu is cú bấm already is write receive.
  */
 export const LazyModalFallback: React.FC = () => (
   <div

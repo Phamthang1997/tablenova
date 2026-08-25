@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildJoinConditions, type JoinSchema } from '../../sql/joinConditions';
 
-/** Schema thật của sakila cho hai bảng trong ca dùng đang xét. */
+/** Schema thật of sakila for hai table in ca dùng currently xét. */
 const SAKILA: Record<string, JoinSchema> = {
   city: {
     columns: [{ name: 'city_id' }, { name: 'city' }, { name: 'country_id' }, { name: 'last_update' }],
@@ -40,7 +40,7 @@ describe('buildJoinConditions', () => {
   });
 
   it('bắt được FK theo cả hai chiều', async () => {
-    // Ở đây bảng JOIN sau cùng là `city`, FK lại nằm trên `address`.
+    // at đây table JOIN sau cùng is `city`, FK lại nằm on `address`.
     const out = await buildJoinConditions(
       ['address', 'city'],
       aliases([['address', 'a'], ['city', 'c']]),
@@ -81,17 +81,17 @@ describe('buildJoinConditions', () => {
   });
 
   it('một cặp có FK không được làm mất fallback của cặp khác', async () => {
-    // country<->city có FK; city<->address ở đây bị bỏ FK nên phải dùng fallback.
+    // country<->city có FK; city<->address at đây is bỏ FK nên must dùng fallback.
     const mixed: Record<string, JoinSchema> = {
       ...SAKILA,
-      address: { columns: SAKILA.address.columns }, // không FK
+      address: { columns: SAKILA.address.columns }, // not FK
     };
     const out = await buildJoinConditions(
       ['country', 'city', 'address'],
       aliases([['country', 'co'], ['city', 'c'], ['address', 'a']]),
       get(mixed)
     );
-    // FK city -> country (bảng cuối là address nên cặp này không tính), và fallback city/address:
+    // FK city -> country (table cuối is address nên cặp này not tính), and fallback city/address:
     expect(out).toContain('c.city_id = a.city_id');
   });
 

@@ -1,9 +1,9 @@
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import type { DbConnectionConfig } from './dbHelper';
 
-// Mở Terminal trong MỘT CỬA SỔ OS RIÊNG (như "New Terminal Window" của VS Code).
-// Phiên PTY nằm ở backend Rust dùng chung cho cả process nên cửa sổ mới mở/đọc terminal độc lập.
-// Cấu hình được truyền qua query string ?term=<json> để cửa sổ mới tự khởi tạo phiên.
+// Opens Terminal in a STANDALONE OS WINDOW (like VS Code "New Terminal Window").
+// Backend PTY session is shared process-wide allowing independent window rendering.
+// Configuration passed via ?term=<json> query string for self-initialization.
 export function openTerminalWindow(config: DbConnectionConfig, profileName?: string) {
   const payload = encodeURIComponent(JSON.stringify({ config, profileName }));
   const label = `terminal_${crypto.randomUUID()}`;
