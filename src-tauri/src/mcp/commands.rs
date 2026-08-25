@@ -1,0 +1,51 @@
+//! The Tauri commands behind the MCP settings screen.
+//!
+//! Language note, and it is the opposite of the rest of this directory: these messages surface in
+//! the TableNova UI, so they follow the repo rule - Vietnamese literals, translated at the dbHelper
+//! boundary by `src/utils/backendErrors.ts`. The errors in `http.rs` and `tools/` are read by an AI
+//! client instead, so those are English and never go through that table. Registering these strings
+//! in `backendErrors.ts` happens together with the Settings UI (Bước 3 of the plan).
+
+use super::auth;
+use super::server::{DEFAULT_PORT, McpStatus};
+use crate::state::AppState;
+
+#[tauri::command]
+pub async fn mcp_status(state: tauri::State<'_, AppState>) -> Result<McpStatus, String> {
+    Ok(state.mcp.status())
+}
+
+#[tauri::command]
+pub async fn mcp_start(
+    state: tauri::State<'_, AppState>,
+    port: Option<u16>,
+) -> Result<McpStatus, String> {
+    state.mcp.start(port.unwrap_or(DEFAULT_PORT)).await
+}
+
+#[tauri::command]
+pub async fn mcp_stop(state: tauri::State<'_, AppState>) -> Result<McpStatus, String> {
+    Ok(state.mcp.stop().await)
+}
+
+#[tauri::command]
+pub async fn mcp_get_token() -> Result<String, String> {
+    auth::load_or_create()
+}
+
+/// Mints a new token, and restarts the server if it was running.
+///
+/// The restart is not a nicety: the guard compares against the token read at startup, so without it
+/// the new token would not work until the next restart while the OLD one still would - the exact
+/// opposite of what the button promises. Clients configured with the old token are cut off either
+/// way, which is why the UI has to say so before calling this.
+#[tauri::command]
+pub async fn mcp_regenerate_token(state: tauri::State<'_, AppState>) -> Result<String, String> {
+    let was = state.mcp.status();
+    let token = auth::regenerate()?;
+    if was.running {
+        state.mcp.stop().await;
+        state.mcp.start(was.port).await?;
+    }
+    Ok(token)
+}

@@ -64,6 +64,21 @@ base64 = "0.23.1"
 # zbus + secret-service vào bản build Windows.
 keyring = { version = "4.1.6", default-features = false, features = ["v1"] }
 
+# Built-in MCP server (docs/mcp-server-plan.md). `rmcp` is the official SDK and owns the protocol:
+# JSON-RPC 2.0, `initialize`, version negotiation and Streamable HTTP sessions. That part is
+# deliberately not hand-written - the spec revision moved twice while this plan was being written,
+# and version negotiation is the piece that fails silently once it is out of date.
+#
+# ONLY the server transport is enabled. Every `reqwest*` feature is client-side and would pull in a
+# SECOND TLS stack alongside the rustls that sqlx and redis already use.
+rmcp = { version = "3.1", features = ["transport-streamable-http-server"] }
+# rmcp hands back a tower::Service and ships no bind/listen helper, so an HTTP host is still needed.
+# axum does exactly that, plus the two security middlewares (Origin/Host, bearer token). The protocol
+# does not live there.
+axum = "0.8.9"
+# CancellationToken: the shutdown path, shared with StreamableHttpServerConfig.
+tokio-util = "0.7.19"
+
 [build-dependencies]
 tauri-build = { version = "2.6.3", features = [] }
 

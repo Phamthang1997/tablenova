@@ -6,6 +6,7 @@ pub mod compare;
 pub mod credentials;
 pub mod database;
 pub mod datagen;
+pub mod mcp;
 pub mod redis_db;
 pub mod ssh;
 pub mod state;

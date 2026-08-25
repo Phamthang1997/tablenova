@@ -224,6 +224,7 @@ src-tauri/src/mcp/
   mod.rs        — khối comment: revision spec (do bản rmcp đã pin quy định) và 5 lớp phòng thủ
   server.rs     — mount StreamableHttpService vào axum, bind, trạng thái bật/tắt
   http.rs       — router, kiểm Origin/Host, middleware bearer token
+  auth.rs       — token: sinh, cất keyring, so sánh constant-time
   policy.rs     — kết nối nào được phơi, phân loại câu lệnh, giới hạn dòng
   audit.rs      — ring buffer + emit event
   tools/
@@ -452,12 +453,16 @@ Ngắn hơn ước lượng trước một chút vì `rmcp` nuốt trọn phần
 policy, 6 tool, UI, i18n ba ngôn ngữ — không đổi.
 
 **Bước 1 — nền và bảo mật** (không có bước này thì không có gì được phép chạy)
-- [ ] Tắt `tauri dev` trước khi đụng `Cargo.toml` — thêm dependency là rebuild cả cây.
-- [ ] Thêm `rmcp` (chỉ `transport-streamable-http-server`, **không** feature `reqwest*`) + `axum` (§2.3).
-- [ ] `server.rs`: mount `StreamableHttpService`, bind loopback, bật/tắt qua `AppState`.
-- [ ] Kiểm `Origin`/`Host`, không phát header CORS (§3.1).
-- [ ] Sinh + cất token qua `secret_store.rs`; so sánh constant-time (§3.2).
-- [ ] Ghi bản `rmcp` đã pin + revision spec nó nói vào khối comment của `mcp/mod.rs`.
+- [x] Tắt `tauri dev` trước khi đụng `Cargo.toml` — thêm dependency là rebuild cả cây.
+- [x] Thêm `rmcp` (chỉ `transport-streamable-http-server`, **không** feature `reqwest*`) + `axum` (§2.3).
+- [x] `server.rs`: mount `StreamableHttpService`, bind loopback, bật/tắt qua `AppState`.
+- [x] Kiểm `Origin`/`Host`, không phát header CORS (§3.1).
+- [x] Sinh + cất token qua `secret_store.rs`; so sánh constant-time (§3.2).
+- [x] Ghi bản `rmcp` đã pin + revision spec nó nói vào khối comment của `mcp/mod.rs`.
+
+**Bước 1 xong.** `rmcp` 3.1.4 + `axum` 0.8.9 vào cây sạch, không kéo TLS stack thứ hai. 7 test mới
+(6 thuần + 1 chạy qua socket thật: dựng server trên cổng tạm rồi gõ HTTP vào cả hai cửa). Bề mặt tool
+cố tình để trống — chưa có lớp 3 và 4 thì chưa có gì được phép chạm vào database.
 
 **Bước 2 — đường dữ liệu**
 - [ ] Tách `execute_raw_sql_pooled` khỏi `execute_raw_sql_generic` (§2.2). Một nhát, không nhân bản.

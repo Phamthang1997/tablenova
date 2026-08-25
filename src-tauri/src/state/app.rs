@@ -23,6 +23,9 @@ pub struct AppState {
     pub ssh_terminals: terminal::ssh::SshTerminalMap,
     // The open Local Terminal (local shell) sessions.
     pub local_terminals: terminal::local::LocalTerminalMap,
+    // The built-in MCP server (docs/mcp-server-plan.md). One per app, and it holds only its own
+    // listener - the connections it will serve live in `connections` above, like everything else.
+    pub mcp: crate::mcp::McpServer,
 }
 
 impl AppState {
@@ -33,6 +36,7 @@ impl AppState {
             cancel_flags: Mutex::new(HashMap::new()),
             ssh_terminals: Mutex::new(HashMap::new()),
             local_terminals: Mutex::new(HashMap::new()),
+            mcp: crate::mcp::McpServer::default(),
         }
     }
 }
