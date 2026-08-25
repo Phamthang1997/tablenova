@@ -13,8 +13,8 @@ import {
   type RedisImportWriter,
 } from '../redisTransfer';
 
-// Reader giả: một keyspace in RAM. Chính vì `buildRedisExport` receive reader qua tham số mà
-// định dạng tệp and vòng lặp phân lô kiểm is at đây, not cần Redis thật.
+// Reader giả: một keyspace trong RAM. Chính vì `buildRedisExport` nhận reader qua tham số mà
+// định dạng tệp và vòng lặp phân lô kiểm được ở đây, không cần Redis thật.
 function fakeReader(
   keyspace: { key: string; type: string }[],
   opts: { pageSize?: number; vanish?: Set<string> } = {},
@@ -37,7 +37,7 @@ function fakeReader(
       for (const k of keys) {
         if (vanish.has(k)) { missing.push(k); continue; }
         const t = keyspace.find((x) => x.key === k)?.type ?? 'string';
-        // Payload not cần is DUMP thật, chỉ cần is base64 valid.
+        // Payload không cần là DUMP thật, chỉ cần là base64 hợp lệ.
         entries.push({ key: k, type: t, ttlMs: -1, payload: btoa(`v:${k}`) });
       }
       return { success: true, entries, missing };
@@ -60,7 +60,7 @@ describe('prefixPattern', () => {
     expect(prefixPattern('user:')).toBe('user:*');
   });
 
-  // not escape thì `log[1]:` khớp key bắt đầu bằng `log1:` — xuất sai tập key mà not báo gì.
+  // Không escape thì `log[1]:` khớp key bắt đầu bằng `log1:` — xuất sai tập key mà không báo gì.
   it('escapes glob metacharacters so a prefix means itself', () => {
     expect(prefixPattern('log[1]:')).toBe('log\\[1\\]:*');
     expect(prefixPattern('a*b')).toBe('a\\*b*');
@@ -127,8 +127,8 @@ describe('buildRedisExport', () => {
     expect(parseRedisExport(res.text).entries.map((e) => e.key)).toEqual(['user:1', 'user:3']);
   });
 
-  // Một key hết hạn giữa SCAN and DUMP is chuyện thường, not must error — nhưng must đếm is,
-  // vì nó is chênh lệch giữa "already quét" and "already write".
+  // Một key hết hạn giữa SCAN và DUMP là chuyện thường, không phải lỗi — nhưng phải đếm được,
+  // vì nó là chênh lệch giữa "đã quét" và "đã ghi".
   it('reports keys that vanished between SCAN and DUMP', async () => {
     const reader = fakeReader(
       [
@@ -147,8 +147,8 @@ describe('buildRedisExport', () => {
     });
   });
 
-  // Chạm trần and is stop đều nghĩa is tệp not đầy đủ, nên nó cố ý not có footer: lúc nhập
-  // lại, thiếu footer is dấu hiệu unique for biết điều đó.
+  // Chạm trần và bị dừng đều nghĩa là tệp KHÔNG đầy đủ, nên nó cố ý không có footer: lúc nhập
+  // lại, thiếu footer là dấu hiệu duy nhất cho biết điều đó.
   it('stops at maxKeys and writes no footer', async () => {
     const reader = fakeReader(
       Array.from({ length: 10 }, (_, i) => ({ key: `k:${i}`, type: 'string' })),
@@ -183,7 +183,7 @@ describe('buildRedisExport', () => {
     const res = await buildRedisExport(spec(), reader);
 
     expect(res.keys).toBe(6);
-    // 6 key < DUMP_BATCH -> đúng một lượt DUMP (lượt flush cuối), not must sáu.
+    // 6 key < DUMP_BATCH -> đúng một lượt DUMP (lượt flush cuối), không phải sáu.
     expect(reader.dumpCalls).toBe(1);
   });
 
@@ -227,7 +227,7 @@ describe('isValidEntry', () => {
     expect(isValidEntry('YWJj')).toBe(false);
   });
 
-  // Payload rác is bắt at đây chứ not to RESTORE returns một error driver khó hiểu.
+  // Payload rác bị bắt ở đây chứ không để RESTORE trả về một lỗi driver khó hiểu.
   it('rejects a payload that is not standard base64', () => {
     expect(isValidEntry({ ...ok, payload: 'YWJ' })).toBe(false);
     expect(isValidEntry({ ...ok, payload: 'not base64!' })).toBe(false);
@@ -245,7 +245,7 @@ describe('parseRedisExport', () => {
   });
   const entry = (k: string) => JSON.stringify({ key: k, type: 'string', ttlMs: -1, payload: 'YWJj' });
 
-  // Một tệp 100.000 key not is vô hiệu vì row thứ 4 is error.
+  // Một tệp 100.000 key không được vô hiệu vì dòng thứ 4 bị lỗi.
   it('keeps the good lines and numbers the bad ones', () => {
     const text = [header, entry('a'), '{oops', entry('b'), '{"key":"c"}'].join('\n');
     const parsed = parseRedisExport(text);
@@ -269,7 +269,7 @@ describe('parseRedisExport', () => {
     const parsed = parseRedisExport(text);
     expect(parsed.truncated).toBe(false);
     expect(parsed.declaredKeys).toBe(9);
-    // Khai báo 9 nhưng read-only is 1 — người gọi so hai số này to biết tệp is cắt.
+    // Khai báo 9 nhưng chỉ đọc được 1 — người gọi so hai số này để biết tệp bị cắt.
     expect(parsed.entries).toHaveLength(1);
   });
 
@@ -323,8 +323,8 @@ describe('applyRedisImport', () => {
     expect(w.calls[0].n).toBe(2);
   });
 
-  // Key already tồn tại mà not select write đè is "skip", not must error — gộp hai thứ lại thì một
-  // lần nhập hoàn toàn bình thường hiện lên như row nghìn error.
+  // Key đã tồn tại mà không chọn ghi đè là "bỏ qua", không phải lỗi — gộp hai thứ lại thì một
+  // lần nhập hoàn toàn bình thường hiện lên như hàng nghìn lỗi.
   it('keeps skipped and failed apart', async () => {
     const w = fakeWriter({
       restore: async () => ({
@@ -383,7 +383,7 @@ describe('countByType', () => {
 });
 
 describe('suggestExportFileName', () => {
-  // `:` có in gần như mọi prefix Redis and not valid in tên tệp Windows.
+  // `:` có trong gần như mọi prefix Redis và không hợp lệ trong tên tệp Windows.
   it('strips characters a Windows path cannot hold', () => {
     const name = suggestExportFileName(3, 'user:session:', AT);
     expect(name).toBe('redis-db3-user_session-2026-08-20_10-00-00.ndjson');
@@ -406,9 +406,9 @@ describe('patternToPrefix', () => {
     expect(patternToPrefix('')).toBe('');
   });
 
-  // Đoán at đây rồi to `prefixPattern` escape lần hai is ra một glob khác hẳn, nên thà bỏ trống.
+  // Đoán ở đây rồi để `prefixPattern` escape lần hai là ra một glob khác hẳn, nên thà bỏ trống.
   it('refuses to guess when the body still holds glob syntax', () => {
-    // Dấu `*` already escape: bỏ `*` cuối rồi for `prefixPattern` escape lần hai is ra glob khác.
+    // Dấu `*` đã escape: bỏ `*` cuối rồi cho `prefixPattern` escape lần hai là ra glob khác.
     expect(patternToPrefix('a\\*b*')).toBe('');
     expect(patternToPrefix('log[1]:*')).toBe('');
     expect(patternToPrefix('a?b*')).toBe('');

@@ -8,9 +8,9 @@ import { Modal, ModalBody, ModalFooter } from './Modal';
 import { CLOSE_PRIORITY_TX, registerCloseBlocker } from '../utils/closeGuard';
 
 interface TxControlProps {
-  /** 'sqlite' | 'postgres' | 'mysql' — quyết định danh sách isolation level display. */
+  /** 'sqlite' | 'postgres' | 'mysql' — quyết định danh sách mức cô lập hiển thị. */
   dbType: string;
-  /** hide hoàn toàn when chưa kết nối. */
+  /** Ẩn hoàn toàn khi chưa kết nối. */
   connected: boolean;
   /**
    * Connection this control is showing. Every session is per connection now, and the backend emits
@@ -21,15 +21,15 @@ interface TxControlProps {
 }
 
 /**
- * Điều whenển transaction manual: MỘT nút on title bar, mọi thao tác nằm in hộp thoại
+ * Điều khiển transaction thủ công: MỘT nút trên thanh tiêu đề, mọi thao tác nằm trong hộp thoại
  * "change currently wait".
  *
- * Transaction at đây thuộc về **kết nối**, not thuộc về tab — `DatabaseManager` giữ đúng một
- * connection for cả app, nên nói rằng hai tab có hai transaction is nói dối. Vì vậy nút nằm at thanh
- * tiêu đề chứ not at toolbar fromng tab.
+ * Transaction ở đây thuộc về **kết nối**, không thuộc về tab — `DatabaseManager` giữ đúng một
+ * connection cho cả app, nên nói rằng hai tab có hai transaction là nói dối. Vì vậy nút nằm ở thanh
+ * tiêu đề chứ không ở toolbar từng tab.
  *
- * Frontend not tự suy ra status: mọi thứ display at đây đến from sự kiện `tx-state-changed`
- * do Rust phát sau mỗi statement — kể cả câu user tự gõ `COMMIT` in SQL Editor and câu DDL
+ * Frontend KHÔNG tự suy ra trạng thái: mọi thứ hiển thị ở đây đến từ sự kiện `tx-state-changed`
+ * do Rust phát sau mỗi câu lệnh — kể cả câu người dùng tự gõ `COMMIT` trong SQL Editor và câu DDL
  * mà MySQL tự commit. Xem `src-tauri/src/tx_session.rs`.
  */
 export const TxControl: React.FC<TxControlProps> = ({ dbType, connected, connId }) => {
@@ -113,16 +113,16 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected, connId 
     totalSec < 60
       ? t('tx.elapsedSec', { n: totalSec })
       : t('tx.elapsedMin', { n: Math.floor(totalSec / 60), b: totalSec % 60 });
-  // Mốc mềm 5 phút: transaction dài giữ key and ism phình undo log/WAL.
+  // Mốc mềm 5 phút: transaction dài giữ khoá và làm phình undo log/WAL.
   const isLong = status.open && totalSec >= 300;
   const levels = TX_ISOLATION_LEVELS[dbType] || [];
   const isSqlite = dbType === 'sqlite';
 
-  // Nút is một CÔNG TẮC, not must dropdown: hộp thoại chỉ open when có thứ to quyết định.
-  //   automatic            -> bấm: chuyển sang manual
-  //   manual, chưa có gì -> bấm: chuyển về automatic
-  //   manual, N câu wait  -> bấm: open hộp thoại (not đổi mode — backend cũng chặn đổi when còn
-  //                          change chưa commit, nên đổi mode at đây chỉ tổ báo error)
+  // Nút là một CÔNG TẮC, không phải dropdown: hộp thoại chỉ mở khi có thứ để quyết định.
+  //   Tự động            -> bấm: chuyển sang thủ công
+  //   Thủ công, chưa có gì -> bấm: chuyển về tự động
+  //   Thủ công, N câu chờ  -> bấm: mở hộp thoại (không đổi chế độ — backend cũng chặn đổi khi còn
+  //                          thay đổi chưa commit, nên đổi chế độ ở đây chỉ tổ báo lỗi)
   const hasPending = status.statements > 0;
   const summaryTitle = hasPending
     ? `${t('tx.clickToReview', { n: status.statements })} · ${
@@ -162,7 +162,7 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected, connId 
       if (refetch) window.dispatchEvent(new CustomEvent('database-restored', { detail: { connId } }));
       if (closeAfter) setOpen(false);
     } catch (err) {
-      // Message already is dịch at biên dbHelper (backendErrors.ts).
+      // Message đã được dịch ở biên dbHelper (backendErrors.ts).
       setError(String(err));
       void refresh();
     } finally {
@@ -170,16 +170,16 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected, connId 
     }
   };
 
-  // `pendingSql` can vắng mặt if backend currently run is bản CŨ hơn window này (tauri dev giữ
-  // nguyên binary cuối cùng build is when Rust error biên dịch). Nói thẳng ra thay vì hiện một ô
-  // trống not giải thích is — and read phòng thủ to not nổ TypeError giữa lúc render.
+  // `pendingSql` có thể vắng mặt nếu backend đang chạy là bản CŨ hơn cửa sổ này (tauri dev giữ
+  // nguyên binary cuối cùng build được khi Rust lỗi biên dịch). Nói thẳng ra thay vì hiện một ô
+  // trống không giải thích được — và đọc phòng thủ để không nổ TypeError giữa lúc render.
   const pendingList = Array.isArray(status.pendingSql) ? status.pendingSql : null;
 
-  // Gom các câu giống hệt nhau thành một mục, giữ thứ tự lần run ĐẦU tiên and kèm số lần run.
+  // Gom các câu giống hệt nhau thành một mục, giữ thứ tự lần chạy ĐẦU tiên và kèm số lần chạy.
   //
-  // Số lần must hiện ra: bốn lần `UPDATE … SET first_name = 'X'` for cùng kết quả with một lần, nhưng
-  // bốn lần `SET n = n + 1` thì not — and nhìn text thì not phân biệt is hai trường hợp. Server
-  // already execute đủ bốn câu and Rollback currently gỡ cả bốn, nên bỏ hẳn con số is nói sai with user.
+  // Số lần phải hiện ra: bốn lần `UPDATE … SET first_name = 'X'` cho cùng kết quả với một lần, nhưng
+  // bốn lần `SET n = n + 1` thì không — và nhìn text thì không phân biệt được hai trường hợp. Server
+  // đã thực thi đủ bốn câu và Rollback đang gỡ cả bốn, nên bỏ hẳn con số là nói sai với người dùng.
   const groupedPending = (pendingList ?? []).reduce<{ sql: string; times: number }[]>((acc, sql) => {
     const hit = acc.find((g) => g.sql === sql);
     if (hit) hit.times += 1;
@@ -189,12 +189,12 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected, connId 
 
   return (
     <>
-      {/* MỘT nút unique on title bar. Bản trước bày mode + bộ đếm + Commit + Rollback thành
-          bốn thứ rời nhau, chiếm ~330px and bóp capsule status at giữa (flex:1) xuống còn một
-          vòng tròn. Mọi thao tác nằm in hộp thoại.
+      {/* MỘT nút duy nhất trên thanh tiêu đề. Bản trước bày mode + bộ đếm + Commit + Rollback thành
+          bốn thứ rời nhau, chiếm ~330px và bóp capsule trạng thái ở giữa (flex:1) xuống còn một
+          vòng tròn. Mọi thao tác nằm trong hộp thoại.
 
-          `tb-capsule-btn` preserve dáng default of thanh — not override màu/độ đậm/gap at đây;
-          spacing đặt on các phần tử con. */}
+          `tb-capsule-btn` giữ nguyên dáng mặc định của thanh — không override màu/độ đậm/gap ở đây;
+          khoảng cách đặt trên các phần tử con. */}
       <div className="tb-capsule" style={{ flexShrink: 0 }}>
         <button
           type="button"
@@ -234,9 +234,9 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected, connId 
           zIndex={99999}
         >
           <ModalBody style={{ padding: 0, gap: 0, flex: 1, minHeight: 0 }}>
-            {/* row thiết lập: mode + isolation level. Thiết kế gốc of hộp thoại chỉ có phần SQL and
-                hai nút, nhưng công tắc auto-commit and isolation level must có chỗ nào đó — to at đây thì
-                chúng nằm cùng nơi with thứ chúng chi phối. */}
+            {/* Hàng thiết lập: chế độ + mức cô lập. Thiết kế gốc của hộp thoại chỉ có phần SQL và
+                hai nút, nhưng công tắc auto-commit và mức cô lập phải có chỗ nào đó — để ở đây thì
+                chúng nằm cùng nơi với thứ chúng chi phối. */}
             <div
               style={{
                 display: 'flex',
@@ -253,8 +253,8 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected, connId 
                     key={String(auto)}
                     type="button"
                     className={`btn ${status.autocommit === auto ? 'btn-primary' : 'btn-secondary'}`}
-                    // Quay về automatic when còn change chưa commit thì backend from chối — chặn at đây
-                    // and nói lý do, thay vì to user bấm rồi receive một row error.
+                    // Quay về tự động khi còn thay đổi chưa commit thì backend từ chối — chặn ở đây
+                    // và nói lý do, thay vì để người dùng bấm rồi nhận một dòng lỗi.
                     disabled={busy || (auto && hasPending)}
                     title={auto && hasPending ? t('tx.autoBlocked') : auto ? t('tx.autoDesc') : t('tx.manualDesc')}
                     onClick={() => void run(() => dbHelper.txSetAutocommit(auto))}
@@ -300,10 +300,10 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected, connId 
               </div>
             </div>
 
-            {/* Các câu currently wait. Dùng <pre> đơn sắc chứ not must Monaco: hộp thoại preview SQL
-                of DataGrid (`commitPreview`) already ism đúng như vậy, and một khung Monaco build in
-                portal of Modal có quá nhiều cách hỏng lặng lẽ (đo size lúc mount, theme
-                chưa kịp định nghĩa) — hỏng kiểu đó thì user chỉ thấy một ô trắng. */}
+            {/* Các câu đang chờ. Dùng <pre> đơn sắc chứ không phải Monaco: hộp thoại xem trước SQL
+                của DataGrid (`commitPreview`) đã làm đúng như vậy, và một khung Monaco dựng trong
+                portal của Modal có quá nhiều cách hỏng lặng lẽ (đo kích thước lúc mount, theme
+                chưa kịp định nghĩa) — hỏng kiểu đó thì người dùng chỉ thấy một ô trắng. */}
             <div
               style={{
                 flex: 1,
@@ -373,7 +373,7 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected, connId 
               )}
             </div>
 
-            {/* warning + savepoint: chỉ hiện when có gì to nói, not chiếm chỗ thường trực. */}
+            {/* Cảnh báo + savepoint: chỉ hiện khi có gì để nói, không chiếm chỗ thường trực. */}
             {(status.aborted || status.implicitCommit || isLong || status.sqlTruncated) && (
               <div
                 style={{
@@ -521,7 +521,7 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected, connId 
               disabled={busy}
               onClick={async () => {
                 await run(() => dbHelper.txRollback());
-                // Transaction already close -> lần close() này đi qua guard at on.
+                // Transaction đã đóng -> lần close() này đi qua guard ở trên.
                 void getCurrentWindow().close();
               }}
             >
@@ -538,7 +538,7 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected, connId 
                   setStatus(await dbHelper.txCommit());
                   void getCurrentWindow().close();
                 } catch (err) {
-                  // Commit error thì not close: close tiếp is vứt luôn thứ vừa báo error.
+                  // Commit lỗi thì KHÔNG đóng: đóng tiếp là vứt luôn thứ vừa báo lỗi.
                   setError(String(err));
                   void refresh();
                 } finally {

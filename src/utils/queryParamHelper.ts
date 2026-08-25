@@ -14,8 +14,8 @@ export interface QueryParamPattern {
 export const QUERY_PARAM_PATTERNS: QueryParamPattern[] = [
   {
     id: 0,
-    // Nhãn này is render for user xem. must escape thành '\\w': in
-    // string JS thì '\w' is hiểu is 'w' (backslash is ăn mất) nên UI currently hiện
+    // Nhãn này được render cho người dùng xem. Phải escape thành '\\w': trong
+    // chuỗi JS thì '\w' bị hiểu là 'w' (backslash bị ăn mất) nên UI đang hiện
     // sai thành ':[w.]'.
     label: ':[\\w.]',
     example: 'SELECT * FROM users WHERE id = :user_id AND org = :org.id',
@@ -92,7 +92,7 @@ export function maskCommentsAndStrings(sql: string): string {
   while (i < n) {
     const c = sql[i];
     const c2 = sql[i + 1];
-    // Comment row: -- ... đến hết row
+    // Comment dòng: -- ... đến hết dòng
     if (c === '-' && c2 === '-') {
       while (i < n && sql[i] !== '\n') { out += ' '; i++; }
       continue;
@@ -106,7 +106,7 @@ export function maskCommentsAndStrings(sql: string): string {
       if (i < n) { out += '  '; i += 2; }
       continue;
     }
-    // string: ' " ` (handle escape nháy đôi '' in string nháy đơn)
+    // Chuỗi: ' " ` (xử lý escape nháy đôi '' trong chuỗi nháy đơn)
     if (c === "'" || c === '"' || c === '`') {
       const quote = c;
       out += ' '; i++;
@@ -149,7 +149,7 @@ export function positionalParamIndex(name: string): number | null {
 export function extractQueryParams(sql: string, patternIndex: number): string[] {
   if (!sql.trim()) return [];
   const patternObj = QUERY_PARAM_PATTERNS[patternIndex] || QUERY_PARAM_PATTERNS[0];
-  // scan on mask (cùng độ dài) nên param nằm in comment/string (already thành whitespace) will not khớp
+  // Dò trên mask (cùng độ dài) nên param nằm trong comment/chuỗi (đã thành khoảng trắng) sẽ không khớp
   const cleanSql = maskCommentsAndStrings(sql);
 
   const matches: string[] = [];
@@ -176,18 +176,18 @@ export function extractQueryParams(sql: string, patternIndex: number): string[] 
   return matches;
 }
 
-// Kiểu dữ liệu user select for mỗi tham số in QueryParamsModal.
+// Kiểu dữ liệu người dùng chọn cho mỗi tham số trong QueryParamsModal.
 export type QueryParamType = 'auto' | 'text' | 'number' | 'boolean' | 'null';
 
-// Giá trị + kiểu of một tham số (do modal thu thập).
+// Giá trị + kiểu của một tham số (do modal thu thập).
 export interface TypedParamValue {
   value: string;
   type: QueryParamType;
 }
 
 /**
- * Ép giá trị string user nhập sang giá trị JSON đúng kiểu to bind at tầng driver.
- * 'auto' tự suy luận; các kiểu còn lại tôn trọng lựa select of user.
+ * Ép giá trị chuỗi người dùng nhập sang giá trị JSON đúng kiểu để bind ở tầng driver.
+ * 'auto' tự suy luận; các kiểu còn lại tôn trọng lựa chọn của người dùng.
  */
 export function resolveParamValue(raw: string, type: QueryParamType): string | number | boolean | null {
   switch (type) {
@@ -199,14 +199,14 @@ export function resolveParamValue(raw: string, type: QueryParamType): string | n
       return /^(true|1|yes|t|y)$/i.test(raw.trim());
     case 'number': {
       const n = Number(raw.trim());
-      return Number.isFinite(n) ? n : raw; // not parse is -> giữ string to DB tự báo error rõ ràng
+      return Number.isFinite(n) ? n : raw; // không parse được -> giữ chuỗi để DB tự báo lỗi rõ ràng
     }
     case 'auto':
     default: {
       const t = raw.trim();
       if (t === '') return null;
       if (/^(true|false)$/i.test(t)) return /^true$/i.test(t);
-      // Số nguyên: tránh mất số 0 at đầu (vd mã bưu chính '01234') -> giữ string if có 0 đứng đầu
+      // Số nguyên: tránh mất số 0 ở đầu (vd mã bưu chính '01234') -> giữ chuỗi nếu có 0 đứng đầu
       if (/^-?[1-9]\d*$/.test(t) || t === '0') {
         const n = Number(t);
         if (Number.isSafeInteger(n)) return n;
@@ -221,14 +221,14 @@ export function resolveParamValue(raw: string, type: QueryParamType): string | n
 }
 
 /**
- * Chuyển SQL có placeholder (:name, %name%, ?, ${name}) thành SQL with placeholder NATIVE of driver
- * (`?` for SQLite/MySQL, `$1..$n` for Postgres) kèm mảng giá trị already ép kiểu theo đúng thứ tự bind.
+ * Chuyển SQL có placeholder (:name, %name%, ?, ${name}) thành SQL với placeholder NATIVE của driver
+ * (`?` cho SQLite/MySQL, `$1..$n` cho Postgres) kèm mảng giá trị đã ép kiểu theo đúng thứ tự bind.
  *
- * Mỗi lần xuất hiện of một tham số -> một placeholder + một giá trị (tham số lặp lại is bind lặp lại),
- * đảm bảo ngữ nghĩa đồng nhất on cả 3 driver. Placeholder nằm in string/comment is preserve.
+ * Mỗi lần xuất hiện của một tham số -> một placeholder + một giá trị (tham số lặp lại được bind lặp lại),
+ * đảm bảo ngữ nghĩa đồng nhất trên cả 3 driver. Placeholder nằm trong chuỗi/comment được giữ nguyên.
  *
- * Đây is điểm mấu chốt to not nội suy giá trị ando SQL (chống SQL injection) — giá trị is send
- * riêng for backend to bind at tầng driver.
+ * Đây là điểm mấu chốt để KHÔNG nội suy giá trị vào SQL (chống SQL injection) — giá trị được gửi
+ * riêng cho backend để bind ở tầng driver.
  */
 export function buildParameterizedSql(
   sql: string,
@@ -278,15 +278,15 @@ export function substituteQueryParams(
   if (!sql.trim()) return sql;
   const patternObj = QUERY_PARAM_PATTERNS[patternIndex] || QUERY_PARAM_PATTERNS[0];
 
-  // Mask cùng độ dài with sql: một match at position `offset` nằm in comment/string
-  // when and chỉ when character đầu of nó is thay khác đi in mask (thành whitespace).
+  // Mask cùng độ dài với sql: một match ở vị trí `offset` nằm trong comment/chuỗi
+  // khi và chỉ khi ký tự đầu của nó bị thay khác đi trong mask (thành khoảng trắng).
   const mask = maskCommentsAndStrings(sql);
   const isMasked = (offset: number) => mask[offset] !== sql[offset];
 
   if (patternObj.isPositional) {
     let index = 0;
     return sql.replace(/\?/g, (match, offset) => {
-      if (isMasked(offset)) return match; // ? nằm in string/comment -> preserve
+      if (isMasked(offset)) return match; // ? nằm trong chuỗi/comment -> giữ nguyên
       index++;
       const key = positionalParamKey(index);
       return valuesMap[key] !== undefined ? valuesMap[key] : '';

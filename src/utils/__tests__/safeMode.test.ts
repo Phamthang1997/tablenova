@@ -213,7 +213,7 @@ describe('runApproved asks once for a whole action', () => {
     setSafeModeForKey(connKey(redisConfig), 'writes');
   });
 
-  // Lý do hàm này tồn tại: nhập 10.000 key is 50 lô, and 50 hộp thoại thì user tắt Safe Mode.
+  // Lý do hàm này tồn tại: nhập 10.000 key là 50 lô, và 50 hộp thoại thì người dùng tắt Safe Mode.
   it('prompts once even though the action runs the command many times', async () => {
     await runApproved('redis_restore_keys', 'r1', 'nhập 10.000 key', async () => {
       for (let i = 0; i < 50; i += 1) {
@@ -225,7 +225,7 @@ describe('runApproved asks once for a whole action', () => {
     expect(asked[0].command).toBe('redis_restore_keys');
   });
 
-  // Cửa hẹp: một lần nhập already duyệt not is kéo theo lệnh khác, hay cùng lệnh on connection khác.
+  // Cửa hẹp: một lần nhập đã duyệt không được kéo theo lệnh khác, hay cùng lệnh trên connection khác.
   it('opens the door for that command on that connection only', async () => {
     registerConnection('r2', { type: 'redis', host: 'other.local', port: 6379 } as unknown as DbConnectionConfig);
     setSafeModeForKey(connKey({ type: 'redis', host: 'other.local', port: 6379 } as unknown as DbConnectionConfig), 'writes');
@@ -234,7 +234,7 @@ describe('runApproved asks once for a whole action', () => {
       await approveCommand('redis_flush_db', { connId: 'r1' });
       await approveCommand('redis_restore_keys', { connId: 'r2' });
     });
-    // Một lần for hành động, cộng hai lần for hai lệnh not nằm in phạm vi already duyệt.
+    // Một lần cho hành động, cộng hai lần cho hai lệnh KHÔNG nằm trong phạm vi đã duyệt.
     expect(asked.map((r) => r.command)).toEqual([
       'redis_restore_keys', 'redis_flush_db', 'redis_restore_keys',
     ]);
@@ -245,13 +245,13 @@ describe('runApproved asks once for a whole action', () => {
       runApproved('redis_restore_keys', 'r1', 'nhập', async () => { throw new Error('boom'); }),
     ).rejects.toThrow('boom');
     expect(await approveCommand('redis_restore_keys', { connId: 'r1' })).toBe(true);
-    expect(asked).toHaveLength(2); // một for hành động, một for lệnh lẻ sau đó
+    expect(asked).toHaveLength(2); // một cho hành động, một cho lệnh lẻ sau đó
   });
 
   it('keeps the door open for the outer action when a nested one ends', async () => {
     await runApproved('redis_restore_keys', 'r1', 'ngoài', async () => {
       await runApproved('redis_restore_keys', 'r1', 'trong', async () => {});
-      // Cửa of lần ngoài vẫn must còn — đây is lý do đếm theo tầng thay vì một cờ bật/tắt.
+      // Cửa của lần ngoài vẫn phải còn — đây là lý do đếm theo tầng thay vì một cờ bật/tắt.
       expect(await approveCommand('redis_restore_keys', { connId: 'r1' })).toBe(true);
     });
     expect(asked).toHaveLength(1);
@@ -275,9 +275,9 @@ describe('runApproved asks once for a whole action', () => {
   });
 });
 
-// Grid Save gọi `commit_changes` hai lần: một lần `preview: true` to hiện danh sách preview, một
-// lần to write. Hỏi cả hai thì user thấy hộp thoại "not chịu close", and cái thứ nhất còn hỏi
-// về một việc not write gì cả.
+// Grid Save gọi `commit_changes` hai lần: một lần `preview: true` để hiện danh sách xem trước, một
+// lần để ghi. Hỏi cả hai thì người dùng thấy hộp thoại "không chịu đóng", và cái thứ nhất còn hỏi
+// về một việc không ghi gì cả.
 describe('a dry-run commit does not prompt', () => {
   const pgConfig = { type: 'postgres', host: 'db.local', port: 5432 } as unknown as DbConnectionConfig;
   let asked: SafeModeRequest[];
@@ -308,8 +308,8 @@ describe('a dry-run commit does not prompt', () => {
   });
 });
 
-// Hộp thoại fromng chỉ nói "việc này write ando DB" + tên hàm Rust — đúng mà not trả lời is, vì
-// câu hỏi thật is "write mấy row, ando table nào". Mọi con số under đây tới from chính args of lệnh.
+// Hộp thoại từng chỉ nói "việc này ghi vào CSDL" + tên hàm Rust — đúng mà không trả lời được, vì
+// câu hỏi thật là "ghi mấy dòng, vào bảng nào". Mọi con số dưới đây tới từ chính args của lệnh.
 describe('describeCommand', () => {
   it('counts the grid changes by kind and names the table', () => {
     const t = describeCommand('commit_changes', {
@@ -325,7 +325,7 @@ describe('describeCommand', () => {
     });
     expect(t.name).toBe('film');
     expect(t.changes).toEqual({ inserts: 0, updates: 2, deletes: 1 });
-    // Số đếm chung not is đặt cùng lúc: row "3 phần tử" bên cạnh "2 edit · 1 delete" is nói hai lần.
+    // Số đếm chung không được đặt cùng lúc: hàng "3 phần tử" bên cạnh "2 sửa · 1 xoá" là nói hai lần.
     expect(t.count).toBeUndefined();
   });
 
@@ -342,7 +342,7 @@ describe('describeCommand', () => {
 
   it('returns nothing rather than inventing a name', () => {
     expect(describeCommand('restore_backup', { connId: 'c1' })).toEqual({ name: undefined });
-    // string rỗng/whitespace not must một cái tên.
+    // Chuỗi rỗng/khoảng trắng không phải một cái tên.
     expect(describeCommand('drop_table', { name: '   ' }).name).toBeUndefined();
   });
 });

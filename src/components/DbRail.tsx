@@ -17,8 +17,8 @@ const DIALECT: Record<string, { label: string; Icon: React.FC<{ size?: number }>
   sqlite: { label: 'SQLite', Icon: SqliteIcon },
   postgres: { label: 'PostgreSQL', Icon: PostgresIcon },
   mysql: { label: 'MySQL', Icon: MySqlIcon },
-  // Redis dùng chung registry with SQL nên nó xuất hiện at đây như một kết nối bình thường; mỗi db
-  // index is một ô riêng, đúng như hai database of một server Postgres
+  // Redis dùng chung registry với SQL nên nó xuất hiện ở đây như một kết nối bình thường; mỗi db
+  // index là một ô riêng, đúng như hai database của một server Postgres
   // (docs/redis-ui-unification-plan.md §2.1).
   redis: { label: 'Redis', Icon: RedisIcon },
 };
@@ -34,9 +34,9 @@ interface DbRailProps {
   onCloseOthers: (connId: string) => void;
   /** Flip the read-only flag of one connection. */
   onToggleReadOnly: (connId: string) => void;
-  /** environment of một kết nối. Trường riêng of profile, not suy from màu — xem `utils/connEnv.ts`. */
+  /** Môi trường của một kết nối. Trường riêng của profile, KHÔNG suy từ màu — xem `utils/connEnv.ts`. */
   envOf: (connId: string) => ConnEnv;
-  /** Nhãn màu of kết nối (select from connection info popover). */
+  /** Nhãn màu của kết nối (chọn từ connection info popover). */
   colorOf?: (connId: string) => string;
   /** Bumped by the caller when a connect/disconnect happened, to refetch. */
   reloadKey?: number;

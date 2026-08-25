@@ -43,14 +43,14 @@ export function typeBase(raw: string | null | undefined): string {
 }
 
 /**
- * Các giá trị of một kiểu `enum(...)` / `set(...)`, already bỏ quotes.
+ * Các giá trị của một kiểu `enum(...)` / `set(...)`, đã bỏ dấu nháy.
  *
- * Đây is toàn bộ nền of suggestion giá trị: MySQL trả `COLUMN_TYPE` nên string kiểu **already mang sẵn**
- * danh sách giá trị, not must hỏi database add câu nào. Trả mảng rỗng for mọi kiểu khác, nên
- * column `int`/`varchar` tự khắc not suggestion gì mà not cần luật riêng.
+ * Đây là toàn bộ nền của gợi ý giá trị: MySQL trả `COLUMN_TYPE` nên chuỗi kiểu **đã mang sẵn**
+ * danh sách giá trị, không phải hỏi database thêm câu nào. Trả mảng rỗng cho mọi kiểu khác, nên
+ * cột `int`/`varchar` tự khắc không gợi ý gì mà không cần luật riêng.
  *
- * Tự tách chứ not `split(',')`: giá trị can chứa dấu phẩy (`enum('a,b','c')`) and quotes
- * đơn is nhân đôi to thoát (`'it''s'`).
+ * Tự tách chứ không `split(',')`: giá trị có thể chứa dấu phẩy (`enum('a,b','c')`) và dấu nháy
+ * đơn được nhân đôi để thoát (`'it''s'`).
  */
 export function enumValues(raw: string | null | undefined): string[] {
   const { head, args } = splitType(raw);
@@ -76,11 +76,11 @@ export function enumValues(raw: string | null | undefined): string[] {
   return out;
 }
 
-/** Nhóm kiểu, đủ thô to compare is giữa ba dialect. */
+/** Nhóm kiểu, đủ thô để so sánh được giữa ba dialect. */
 export type TypeFamily = 'number' | 'string' | 'date' | 'bool' | 'binary' | 'json' | 'other';
 
-// Khớp theo from in `head`, not must theo tiền tố string. `timestamp without time zone` and
-// `character varying` đều có nhiều from, còn khớp tiền tố thì `int` will nuốt luôn `interval`.
+// Khớp theo TỪ trong `head`, không phải theo tiền tố chuỗi. `timestamp without time zone` và
+// `character varying` đều có nhiều từ, còn khớp tiền tố thì `int` sẽ nuốt luôn `interval`.
 const FAMILY_WORDS: [TypeFamily, Set<string>][] = [
   ['number', new Set([
     'int', 'int2', 'int4', 'int8', 'integer', 'tinyint', 'smallint', 'mediumint', 'bigint',
@@ -102,11 +102,11 @@ const FAMILY_WORDS: [TypeFamily, Set<string>][] = [
 ];
 
 /**
- * Nhóm of một kiểu column, dùng for những check chỉ cần biết "số hay chữ hay ngày".
+ * Nhóm của một kiểu cột, dùng cho những kiểm tra chỉ cần biết "số hay chữ hay ngày".
  *
- * Cố ý thô: mục đích unique is bắt những compare sai rõ ràng (`int_col = 'abc'`), nên phân
- * biệt `int` with `bigint` not giúp gì mà chỉ add chỗ to sai. not receive ra thì trả `other`,
- * and mọi check read giá trị này đều must hiểu `other` is "not kết luận gì".
+ * Cố ý thô: mục đích duy nhất là bắt những so sánh sai rõ ràng (`int_col = 'abc'`), nên phân
+ * biệt `int` với `bigint` không giúp gì mà chỉ thêm chỗ để sai. Không nhận ra thì trả `other`,
+ * và mọi kiểm tra đọc giá trị này đều phải hiểu `other` là "không kết luận gì".
  */
 export function typeFamily(raw: string | null | undefined): TypeFamily {
   const words = typeBase(raw).toLowerCase().split(/[\s_]+/).filter(Boolean);

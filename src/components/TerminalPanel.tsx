@@ -10,25 +10,25 @@ import { openTerminalWindow } from '../utils/terminalWindow';
 import { ConfirmDialog } from './ConfirmDialog';
 
 interface TerminalPanelProps {
-  /** Kết nối mà component này thao tác lên. Truyền tường minh, not read id ambient (§4.1). */
+  /** Kết nối mà component này thao tác lên. Truyền tường minh, không đọc id ambient (§4.1). */
   connId: string;
   config: DbConnectionConfig;
   profileName?: string;
   onClose: () => void;
-  floating?: boolean;          // true = window nổi; false = writem in tab
-  active?: boolean;            // (mode writem) tab này có currently active not -> quyết định hiện/hide
+  floating?: boolean;          // true = cửa sổ nổi; false = ghim trong tab
+  active?: boolean;            // (chế độ ghim) tab này có đang active không -> quyết định hiện/ẩn
   onToggleFloat?: () => void;  // có -> hiện nút pop-out/dock
-  inOwnWindow?: boolean;       // currently run in window OS riêng -> hide nút "window mới" + lấp đầy
-  // Có hiện nút X on header not. Bên nào already có đường close khác (terminal open
-  // under dạng tab -> X on tab) thì truyền false to header khỏi trùng nút.
+  inOwnWindow?: boolean;       // đang chạy trong cửa sổ OS riêng -> ẩn nút "Cửa sổ mới" + lấp đầy
+  // Có hiện nút X trên header không. Bên nào đã có đường đóng khác (terminal mở
+  // dưới dạng tab -> X trên tab) thì truyền false để header khỏi trùng nút.
   closable?: boolean;
 }
 
-// Terminal thông minh: profile có SSH -> shell from xa; ngược lại -> shell máy cục bộ.
+// Terminal thông minh: profile có SSH -> shell từ xa; ngược lại -> shell máy cục bộ.
 // Hai mode display:
-//   - writem (docked): lấp đầy vùng nội dung of tab, chỉ hiện when tab active (hide = display:none,
-//     not unmount -> phiên PTY sống when chuyển tab).
-//   - Nổi (floating): window nổi kéo di chuyển is, hiện bất kể tab nào currently active.
+//   - Ghim (docked): lấp đầy vùng nội dung của tab, chỉ hiện khi tab active (ẩn = display:none,
+//     KHÔNG unmount -> phiên PTY sống khi chuyển tab).
+//   - Nổi (floating): cửa sổ nổi kéo di chuyển được, hiện bất kể tab nào đang active.
 export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   connId,
   config,
@@ -48,8 +48,8 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   tRef.current = t;
 
   const containerRef = useRef<HTMLDivElement>(null);
-  // crypto.randomUUID thay for Math.random: sessionId is định danh phiên send xuống backend,
-  // not nên đoán trước is (cũng loại luôn khả năng trùng id).
+  // crypto.randomUUID thay cho Math.random: sessionId là định danh phiên gửi xuống backend,
+  // không nên đoán trước được (cũng loại luôn khả năng trùng id).
   const sessionIdRef = useRef<string>(`term_${crypto.randomUUID()}`);
   const apiRef = useRef<{ input: (d: string) => void } | null>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -61,13 +61,13 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   const [logMenu, setLogMenu] = useState(false);
   const [logPaths, setLogPaths] = useState<{ label: string; path: string }[] | null>(null);
   const [detecting, setDetecting] = useState(false);
-  // Lý do scan log failed, to hiện in menu thay vì báo chung "not find thấy".
+  // Lý do dò log thất bại, để hiện trong menu thay vì báo chung "không tìm thấy".
   const [detectError, setDetectError] = useState<string | null>(null);
-  // Phiên shell còn sống hay not. Trước đây status này not is save: when
-  // shell chết, panel chỉ in "[already disconnect]" rồi mọi thao tác log vẫn gọi
-  // api.input() ando phiên already close -> bấm gì cũng not có phản hồi.
+  // Phiên shell còn sống hay không. Trước đây trạng thái này KHÔNG được lưu: khi
+  // shell chết, panel chỉ in "[Đã ngắt kết nối]" rồi mọi thao tác log vẫn gọi
+  // api.input() vào phiên đã đóng -> bấm gì cũng không có phản hồi.
   const [alive, setAlive] = useState(true);
-  // Tăng lên to open lại phiên shell (dùng ism dependency of effect khati create).
+  // Tăng lên để mở lại phiên shell (dùng làm dependency của effect khởi tạo).
   const [epoch, setEpoch] = useState(0);
 
   // Ô run SQL in panel
@@ -76,29 +76,29 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   const [sqlBusy, setSqlBusy] = useState(false);
   const [sqlHistory, setSqlHistory] = useState<string[]>([]);
   const [histIdx, setHistIdx] = useState<number | null>(null);
-  // Thanh thông báo of app, đặt ngoài buffer terminal to shell not vẽ chồng lên.
+  // Thanh thông báo của app, đặt ngoài buffer terminal để shell không vẽ chồng lên.
   const [banner, setBanner] = useState<{ text: string; kind: 'info' | 'ok' | 'err' } | null>(null);
   const bannerTimer = useRef<number | null>(null);
   const [setupMenu, setSetupMenu] = useState(false);
   /** Enable-logging request waiting for confirmation — see handleEnableLog. */
   const [enableLogPrompt, setEnableLogPrompt] = useState<{ kind: string; message: string } | null>(null);
 
-  // Nguồn log: run lệnh tail thẳng (local), bọc qua ssh (VM), hay docker exec/logs (Docker).
+  // Nguồn log: chạy lệnh tail thẳng (local), bọc qua ssh (VM), hay docker exec/logs (Docker).
   const [logSource, setLogSource] = useState<'local' | 'ssh' | 'docker'>(() => (localStorage.getItem('term_log_source') as any) || 'local');
   const [sshTarget, setSshTarget] = useState(() => localStorage.getItem('term_ssh_target') || '');
   const [dockerContainer, setDockerContainer] = useState(() => localStorage.getItem('term_docker_container') || '');
   useEffect(() => { localStorage.setItem('term_log_source', logSource); }, [logSource]);
   useEffect(() => { localStorage.setItem('term_ssh_target', sshTarget); }, [sshTarget]);
   useEffect(() => { localStorage.setItem('term_docker_container', dockerContainer); }, [dockerContainer]);
-  // Dọn timer of thanh thông báo when unmount, tránh setState sau when component already gỡ.
+  // Dọn timer của thanh thông báo khi unmount, tránh setState sau khi component đã gỡ.
   useEffect(() => () => { if (bannerTimer.current) window.clearTimeout(bannerTimer.current); }, []);
 
   const useSsh = !!(config.sshEnabled && config.sshHost);
 
   useEffect(() => {
     if (!containerRef.current) return;
-    // Mỗi lần kết nối lại must dùng sessionId mới: backend giữ phiên theo id, dùng
-    // lại id cũ (already is close) will open not is.
+    // Mỗi lần kết nối lại phải dùng sessionId mới: backend giữ phiên theo id, dùng
+    // lại id cũ (đã bị đóng) sẽ mở không được.
     if (epoch > 0) {
       sessionIdRef.current = `term_${crypto.randomUUID()}`;
     }
@@ -134,8 +134,8 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     term.open(containerRef.current);
 
     const doFit = () => { try { fit.fit(); } catch { /* ignore */ } };
-    // Fit NGAY (sync) trước when open PTY: to số column/row of PTY khớp xterm ngay from đầu,
-    // tránh ConPTY ngắt row theo 80 column in when xterm rộng hơn -> chữ rơi sai column/lộn xộn.
+    // Fit NGAY (đồng bộ) trước khi mở PTY: để số cột/dòng của PTY khớp xterm ngay từ đầu,
+    // tránh ConPTY ngắt dòng theo 80 cột trong khi xterm rộng hơn -> chữ rơi sai cột/lộn xộn.
     doFit();
 
     const dataSub = term.onData((d) => { void api.input(d); });
@@ -149,8 +149,8 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
         if (msg.type === 'data' && msg.bytes) {
           term.write(new Uint8Array(msg.bytes));
         } else if (msg.type === 'exit') {
-          // '\x1b[2K' delete sạch row hiện tại trước when in, tránh write đè lên row
-          // shell currently in dat (chỉ '\r\n' thì '\r' kéo con trỏ về column 0 and đè chữ).
+          // '\x1b[2K' xoá sạch dòng hiện tại trước khi in, tránh ghi đè lên dòng
+          // shell đang in dở (chỉ '\r\n' thì '\r' kéo con trỏ về cột 0 và đè chữ).
           term.write('\r\n\x1b[2K');
           term.writeln(`\x1b[33m${tRef.current('terminal.sessionExited', { code: msg.code ?? 0 })}\x1b[0m`);
           term.writeln(`\x1b[33m${tRef.current('terminal.reconnectHint')}\x1b[0m`);
@@ -170,7 +170,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
         setAlive(false);
       });
 
-    // Fit lại sau when layout ổn định (đề phòng lần fit sync đầu chưa đo đúng size)
+    // Fit lại sau khi layout ổn định (đề phòng lần fit đồng bộ đầu chưa đo đúng kích thước)
     setTimeout(doFit, 60);
     const ro = new ResizeObserver(() => doFit());
     ro.observe(containerRef.current);
@@ -190,7 +190,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   }, [epoch]);
 
   const startDrag = (e: React.MouseEvent) => {
-    if (!floating || maximized) return; // chỉ kéo is at mode nổi and chưa full màn hình
+    if (!floating || maximized) return; // chỉ kéo được ở chế độ nổi và chưa full màn hình
     dragRef.current = { sx: e.clientX, sy: e.clientY, ox: pos.x, oy: pos.y };
     const move = (ev: MouseEvent) => {
       const d = dragRef.current;
@@ -217,19 +217,19 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     setDetecting(false);
   };
 
-  // Windows: Get-Content -Wait not bắt kịp phần mysqld write add; ReadLine() lại cắt row dat dang
-  // and log MySQL newline bằng \n (thiếu \r) -> xterm is "cầu thang". Nên: open kèm FileShare.ReadWrite,
-  // nhảy tới cuối file, read RAW ReadToEnd() mỗi 250ms rồi chuhide hoá về \r\n trước when in.
-  // Escape for string nháy đơn PowerShell: ' -> ''  (tránh vỡ lệnh when path chứa quotes đơn)
+  // Windows: Get-Content -Wait không bắt kịp phần mysqld ghi thêm; ReadLine() lại cắt dòng dở dang
+  // và log MySQL xuống dòng bằng \n (thiếu \r) -> xterm bị "cầu thang". Nên: mở kèm FileShare.ReadWrite,
+  // nhảy tới cuối file, đọc RAW ReadToEnd() mỗi 250ms rồi chuẩn hoá về \r\n trước khi in.
+  // Escape cho chuỗi nháy đơn PowerShell: ' -> ''  (tránh vỡ lệnh khi path chứa dấu nháy đơn)
   const psq = (p: string) => p.replace(/'/g, "''");
 
   const winTail = (p: string) =>
     `$p='${psq(p)}'; $fs=[System.IO.File]::Open($p,'Open','Read','ReadWrite'); $sr=New-Object System.IO.StreamReader($fs,[System.Text.Encoding]::UTF8); [void]$fs.Seek(0,'End'); $cr=[char]13; $lf=[char]10; Write-Host '--- theo doi log (Ctrl+C de dung) ---'; while($true){ $c=$sr.ReadToEnd(); if($c.Length -gt 0){ [Console]::Out.Write($c.Replace($cr.ToString(),'').Replace($lf.ToString(),$cr.ToString()+$lf.ToString())); [Console]::Out.Flush() } else { Start-Sleep -Milliseconds 250 } }`;
 
   // Lệnh tail/list tuỳ NGUỒN LOG:
-  //  - docker: docker exec <container> tail -f/ls (log nằm in container Linux)
+  //  - docker: docker exec <container> tail -f/ls (log nằm trong container Linux)
   //  - ssh:    ssh <target> "tail -f/ls" (log on VM Linux)
-  //  - local:  run thẳng on shell hiện tại (remote Linux if terminal is SSH, or Windows host)
+  //  - local:  chạy thẳng trên shell hiện tại (remote Linux nếu terminal là SSH, hoặc Windows host)
   const src = (): 'local' | 'ssh' | 'docker' =>
     (logSource === 'ssh' && sshTarget.trim()) ? 'ssh'
       : (logSource === 'docker' && dockerContainer.trim()) ? 'docker'
@@ -243,7 +243,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     }
   };
 
-  // datadir is THƯ MỤC -> not tail is, thay ando đó liệt kê file in đó.
+  // datadir là THƯ MỤC -> không tail được, thay vào đó liệt kê file trong đó.
   const isFolder = (lp: { label: string; path: string }) => lp.label === 'datadir' || /[\\/]$/.test(lp.path);
   const listCommand = (p: string) => {
     switch (src()) {
@@ -256,8 +256,8 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   };
 
   // ——— run SQL ngay in panel ———
-  // SQL not đi qua shell mà run on kết nối DB hiện tại rồi in kết quả ra
-  // terminal, nên vẫn dùng is cả when phiên shell already chết.
+  // SQL KHÔNG đi qua shell mà chạy trên kết nối DB hiện tại rồi in kết quả ra
+  // terminal, nên vẫn dùng được cả khi phiên shell đã chết.
   const MAX_SQL_ROWS = 50;
   const MAX_CELL = 28;
 
@@ -274,7 +274,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     return s.length > MAX_CELL ? s.slice(0, MAX_CELL - 1) + '…' : s;
   };
 
-  // In table kết quả dạng ASCII, canh column theo độ rộng nội dung thật.
+  // In bảng kết quả dạng ASCII, canh cột theo độ rộng nội dung thật.
   const printTable = (columns: string[], rows: any[]) => {
     const term = termRef.current;
     if (!term) return;
@@ -327,7 +327,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
           if (r.columns && r.columns.length > 0) {
             printTable(r.columns, r.data || []);
           } else {
-            // Lệnh not trả table (INSERT/UPDATE/DDL...)
+            // Lệnh không trả bảng (INSERT/UPDATE/DDL...)
             term?.writeln(ansi.ok(t('terminal.sqlOk')));
           }
         }
@@ -341,8 +341,8 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     }
   };
 
-  // Mọi thao tác log đều hoạt động bằng cách GÕ LỆNH ando shell. if phiên already chết
-  // thì api.input() rơi ando hư not mà not báo gì — must chặn and nói rõ.
+  // Mọi thao tác log đều hoạt động bằng cách GÕ LỆNH vào shell. Nếu phiên đã chết
+  // thì api.input() rơi vào hư không mà không báo gì — phải chặn và nói rõ.
   const sendCommand = (cmd: string) => {
     if (!alive) {
       note(t('terminal.errSessionClosed'), 'err');
@@ -352,7 +352,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     return true;
   };
 
-  // Docker: image MySQL/PG chính thức write log ra stdout -> docker logs -f is cách xem đúng.
+  // Docker: image MySQL/PG chính thức ghi log ra stdout -> docker logs -f là cách xem đúng.
   const dockerLogs = () => {
     if (!dockerContainer.trim()) return;
     if (sendCommand(`docker logs -f ${dockerContainer.trim()}`)) setLogMenu(false);
@@ -366,11 +366,11 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
 
   const freshLine = () => termRef.current?.write('\r\n\x1b[2K');
 
-  // Thông báo of app hiện at THANH RIÊNG, not write ando buffer terminal nữa.
-  // Lý do: PowerShell/PSReadLine tự vẽ lại row bằng cursor movement (\r, \x1b[A)
-  // and nó sat hữu con trỏ — bất cứ chữ nào app chèn ando buffer đều can is shell
-  // vẽ chồng lên. '\x1b[2K' not giải quyết is vì đây is cuộc đua về con trỏ,
-  // not must chuyện thiếu character newline.
+  // Thông báo của app hiện ở THANH RIÊNG, không ghi vào buffer terminal nữa.
+  // Lý do: PowerShell/PSReadLine tự vẽ lại dòng bằng cursor movement (\r, \x1b[A)
+  // và nó sở hữu con trỏ — bất cứ chữ nào app chèn vào buffer đều có thể bị shell
+  // vẽ chồng lên. '\x1b[2K' không giải quyết được vì đây là cuộc đua về con trỏ,
+  // không phải chuyện thiếu ký tự xuống dòng.
   const note = (s: string, kind: 'info' | 'ok' | 'err' = 'info') => {
     setBanner({ text: s, kind });
     if (bannerTimer.current) window.clearTimeout(bannerTimer.current);
@@ -401,8 +401,8 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     setLogPaths(det.paths);
     setDetectError(det.error || null);
     setLogMenu(true);
-    // In kết quả ra ngay terminal: trước đây chỉ open menu, if menu rỗng thì
-    // user thấy tiến trình đứng lại at "currently scan đường dẫn..." mà not hiểu vì sao.
+    // In kết quả ra ngay terminal: trước đây chỉ mở menu, nếu menu rỗng thì
+    // người dùng thấy tiến trình đứng lại ở "Đang dò đường dẫn..." mà không hiểu vì sao.
     if (det.error) {
       note(t('terminal.errDetectPaths', { message: det.error }), 'err');
     } else if (det.paths.length === 0) {
@@ -446,10 +446,10 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     ? `${config.sshUser || 'root'}@${config.sshHost}:${config.sshPort || 22}`
     : t('terminal.localShell');
 
-  // Style gốc theo mode
+  // Style gốc theo chế độ
   const rootStyle: React.CSSProperties = floating
     ? (maximized
-        // Full = lấp đầy vùng nội dung of app (not phủ title bar / tab bar / sidebar)
+        // Full = lấp đầy vùng nội dung của app (không phủ title bar / thanh tab / sidebar)
         ? { position: 'absolute', inset: 0, zIndex: 40 }
         : {
             position: 'fixed', top: pos.y, left: pos.x,
@@ -470,7 +470,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
         borderRadius: floating && !maximized ? '8px' : 0,
         boxShadow: floating && !maximized ? '0 12px 48px rgba(0,0,0,0.5)' : 'none',
         flexDirection: 'column',
-        // floating luôn hiện (flex); docked chỉ hiện when tab active
+        // floating luôn hiện (flex); docked chỉ hiện khi tab active
         display: floating ? 'flex' : (active ? 'flex' : 'none'),
       }}
     >
@@ -483,8 +483,8 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
           cursor: floating ? 'move' : 'default', userSelect: 'none',
         }}
       >
-        {/* Tiêu đề: add đèn status phiên (xanh = currently run, đỏ = already close) and
-            gom tên/địa chỉ thành 2 row for đỡ chật when window hẹp. */}
+        {/* Tiêu đề: thêm đèn trạng thái phiên (xanh = đang chạy, đỏ = đã đóng) và
+            gom tên/địa chỉ thành 2 dòng cho đỡ chật khi cửa sổ hẹp. */}
         <div className="tp-title">
           <TerminalSquare size={15} style={{ flexShrink: 0, opacity: 0.8 }} />
           <span className={`tp-dot ${alive ? 'on' : 'off'}`} title={alive ? t('terminal.sessionAlive') : t('terminal.sessionDead')} />
@@ -494,8 +494,8 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
           </div>
         </div>
         <div className="tp-actions" onMouseDown={(e) => e.stopPropagation()}>
-          {/* Phiên chết thì panel trat thành cục gạch: shell chỉ is open một lần in
-              effect khati create, not có đường nào open lại ngoài close hẳn terminal. */}
+          {/* Phiên chết thì panel trở thành cục gạch: shell chỉ được mở một lần trong
+              effect khởi tạo, không có đường nào mở lại ngoài đóng hẳn terminal. */}
           {!alive && (
             <button className="tp-btn warn" onClick={() => setEpoch(e => e + 1)} title={t('terminal.reconnectTitle')}>
               <RefreshCw size={13} />
@@ -503,7 +503,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
             </button>
           )}
 
-          {/* run SQL: not đi qua shell nên dùng is cả when phiên already close */}
+          {/* Chạy SQL: không đi qua shell nên dùng được cả khi phiên đã đóng */}
           {config.type !== 'redis' && (
             <button
               className={`tp-btn ${sqlBar ? 'on' : ''}`}
@@ -637,8 +637,8 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
                         );
                       })
                     ) : detectError ? (
-                      /* Hiện đúng error from DB (mất kết nối, thiếu quyền...) thay vì
-                         gộp chung ando thông báo "not find thấy file log". */
+                      /* Hiện đúng lỗi từ DB (mất kết nối, thiếu quyền...) thay vì
+                         gộp chung vào thông báo "không tìm thấy file log". */
                       <div style={{ padding: '10px', color: 'var(--st-danger)', lineHeight: 1.5 }}>
                         {t('terminal.errDetectHeading')}
                         <div style={{ marginTop: '4px', color: 'var(--win-text-secondary)', fontFamily: 'var(--win-font-mono)', fontSize: '10px', whiteSpace: 'pre-wrap' }}>
@@ -690,8 +690,8 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
 
         </div>
       </div>
-      {/* Thanh thông báo of app — nằm NGOÀI buffer terminal nên shell not thể
-          vẽ chồng lên (PSReadLine sat hữu con trỏ and tự redraw row). */}
+      {/* Thanh thông báo của app — nằm NGOÀI buffer terminal nên shell không thể
+          vẽ chồng lên (PSReadLine sở hữu con trỏ và tự redraw dòng). */}
       {banner && (
         <div className={`tp-banner ${banner.kind}`}>
           <span>{banner.text}</span>
@@ -701,7 +701,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
         </div>
       )}
 
-      {/* Ô run SQL: nằm giữa header and terminal, kết quả in xuống terminal ngay under */}
+      {/* Ô chạy SQL: nằm giữa header và terminal, kết quả in xuống terminal ngay dưới */}
       {sqlBar && (
         <div className="tp-sqlbar">
           <span className="tp-sql-prompt">sql&gt;</span>
@@ -712,7 +712,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
             onKeyDown={(e) => {
               if (e.key === 'Enter') { void runSql(); return; }
               if (e.key === 'Escape') { setSqlBar(false); return; }
-              // Mũi tên lên/xuống duyệt lại các câu already run, như một REPL thật
+              // Mũi tên lên/xuống duyệt lại các câu đã chạy, như một REPL thật
               if (e.key === 'ArrowUp' && sqlHistory.length) {
                 e.preventDefault();
                 const i = histIdx === null ? sqlHistory.length - 1 : Math.max(0, histIdx - 1);

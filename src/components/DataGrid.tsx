@@ -20,17 +20,17 @@ import { ExportTableDialog } from './ExportTableDialog';
 import { Modal, ModalBody, ModalFooter } from './Modal';
 import { LazyModalFallback } from './LazyEditorFallback';
 
-// Lazy vì `RowDocumentModal` có tab JSON build bằng `@monaco-editor/react`: import tĩnh at đây is
-// một đường tĩnh from entry tới Monaco, and nó vô hiệu hoá luôn `React.lazy` of `SqlEditor` lẫn Redis
-// `Console` — chunk Monaco 4MB quay lại thành `modulepreload` lúc khati động. Xem CLAUDE.md,
+// Lazy vì `RowDocumentModal` có tab JSON dựng bằng `@monaco-editor/react`: import tĩnh ở đây là
+// một đường tĩnh từ entry tới Monaco, và nó vô hiệu hoá luôn `React.lazy` của `SqlEditor` lẫn Redis
+// `Console` — chunk Monaco 4MB quay lại thành `modulepreload` lúc khởi động. Xem CLAUDE.md,
 // mục Build/config. Kiểm bằng `dist/index.html` sau `npm run build-frontend`.
 const RowDocumentModal = React.lazy(() =>
   import('./RowDocumentModal').then((m) => ({ default: m.RowDocumentModal })));
 
-/** Số row mỗi lô when nhập dữ liệu ando table (to báo is tiến độ). */
+/** Số dòng mỗi lô khi nhập dữ liệu vào bảng (để báo được tiến độ). */
 const IMPORT_BATCH_SIZE = 500;
 
-// Ký hiệu phím điều whenển theo nền tảng, to chỉ hiện đúng một keyboard shortcut.
+// Ký hiệu phím điều khiển theo nền tảng, để chỉ hiện đúng một phím tắt.
 const modKey = /Mac|iPod|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? '⌘' : 'Ctrl+';
 
 const LoadingSpinner: React.FC<{ size?: number; style?: React.CSSProperties }> = ({ size = 16, style }) => (
@@ -106,7 +106,7 @@ const formatForPicker = (val: string): string => {
 };
 
 interface DataGridProps {
-  /** Kết nối mà component này thao tác lên. Truyền tường minh, not read id ambient (§4.1). */
+  /** Kết nối mà component này thao tác lên. Truyền tường minh, không đọc id ambient (§4.1). */
   connId: string;
   tableName: string;
   dbType: 'sqlite' | 'postgres' | 'mysql';
@@ -114,9 +114,9 @@ interface DataGridProps {
   initialFilter?: { column: string; value: any };
   readOnly?: boolean;
   /**
-   * Còn edit đổi chưa commit hay not. App dùng to chấm dấu "chưa save" lên tab
-   * and to hỏi confirm when rời đi — thay for cờ toàn cục `window.__gridDirty`
-   * trước đây, vốn not kéo theo render nào nên tab bar not thể phản ứng.
+   * Còn sửa đổi chưa commit hay không. App dùng để chấm dấu "chưa lưu" lên tab
+   * và để hỏi xác nhận khi rời đi — thay cho cờ toàn cục `window.__gridDirty`
+   * trước đây, vốn không kéo theo render nào nên thanh tab không thể phản ứng.
    */
   onDirtyChange?: (dirty: boolean) => void;
 }
@@ -191,9 +191,9 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
   tRef.current = t;
 
   // Cùng lý do: App truyền một arrow inline nên callback đổi identity mỗi lần
-  // render. to thẳng ando deps of effect theo dõi changeCount thì effect run
-  // lại liên tục, and mỗi lần run lại hàm dọn dẹp bắn `false` -> dấu chưa save
-  // on tab nhấp nháy.
+  // render. Để thẳng vào deps của effect theo dõi changeCount thì effect chạy
+  // lại liên tục, và mỗi lần chạy lại hàm dọn dẹp bắn `false` -> dấu chưa lưu
+  // trên tab nhấp nháy.
   const onDirtyChangeRef = useRef(onDirtyChange);
   onDirtyChangeRef.current = onDirtyChange;
 
@@ -202,11 +202,11 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
 
   // Data State
   const [rows, setRows] = useState<any[]>([]);
-  /** `null` = chưa/not đếm is. Khác hẳn `0`, nghĩa is table rỗng — xem `gridPaging.ts`. */
+  /** `null` = chưa/không đếm được. Khác hẳn `0`, nghĩa là bảng rỗng — xem `gridPaging.ts`. */
   const [totalCount, setTotalCount] = useState<number | null>(null);
-  /** `false` when số row is ước lượng of planner; UI must nói ra bằng dấu `~`. */
+  /** `false` khi số dòng là ước lượng của planner; UI phải nói ra bằng dấu `~`. */
   const [countExact, setCountExact] = useState(true);
-  /** Còn trang sau hay not, do backend read thừa một row — đúng cả when số đếm is ước lượng. */
+  /** Còn trang sau hay không, do backend đọc thừa một dòng — đúng cả khi số đếm là ước lượng. */
   const [hasMore, setHasMore] = useState(false);
   const [primaryKey, setPrimaryKey] = useState('id');
 
@@ -214,23 +214,23 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
   /**
-   * Tăng lên sau mỗi lần grid tự write ando table (commit, import) and when user bấm Refresh —
-   * ba cách unique ism total row count đổi mà tên table lẫn filter đều not đổi. Nó is phần thứ ba
-   * of `countKey`, tức is thứ buộc lần read kế tiếp must đếm lại.
+   * Tăng lên sau mỗi lần grid tự ghi vào bảng (commit, import) và khi người dùng bấm Refresh —
+   * ba cách duy nhất làm tổng số dòng đổi mà tên bảng lẫn filter đều không đổi. Nó là phần thứ ba
+   * của `countKey`, tức là thứ buộc lần đọc kế tiếp phải đếm lại.
    */
   const [dataVersion, setDataVersion] = useState(0);
-  /** Key of lần đếm gần nhất **có kết quả trat về** (not must lần send gần nhất). */
+  /** Key của lần đếm gần nhất **có kết quả trở về** (không phải lần gửi gần nhất). */
   const lastCountedKeyRef = useRef<string | null>(null);
-  /** Bật một lần when user bấm "đếm chính xác", tắt ngay sau lần read đó. */
+  /** Bật một lần khi người dùng bấm "đếm chính xác", tắt ngay sau lần đọc đó. */
   const forceExactCountRef = useRef(false);
   /**
-   * Con trỏ keyset of fromng trang: `cursors[i]` is con trỏ open ra trang `i + 1`, nên `cursors[0]`
-   * luôn is `null` (trang 1 not cần con trỏ).
+   * Con trỏ keyset của từng trang: `cursors[i]` là con trỏ mở ra trang `i + 1`, nên `cursors[0]`
+   * luôn là `null` (trang 1 không cần con trỏ).
    *
-   * Nằm in ref chứ not must state vì not có gì render from nó, and đi kèm `key` of string thứ
-   * tự (`seekViewKey`) to tự bỏ when user đổi filter/sort/cỡ trang — xem `gridPaging.ts`.
-   * Điều hướng at grid chỉ có Prev/Next nên ngăn xếp này luôn liền mạch: tới trang N thì trang
-   * N − 1 vừa mới read xong ngay trước đó.
+   * Nằm trong ref chứ không phải state vì không có gì render từ nó, và đi kèm `key` của chuỗi thứ
+   * tự (`seekViewKey`) để tự bỏ khi người dùng đổi filter/sort/cỡ trang — xem `gridPaging.ts`.
+   * Điều hướng ở grid chỉ có Prev/Next nên ngăn xếp này luôn liền mạch: tới trang N thì trang
+   * N − 1 vừa mới đọc xong ngay trước đó.
    */
   const cursorsRef = useRef<{ key: string; cursors: (string | null)[] }>({ key: '', cursors: [null] });
   const [sortBy, setSortBy] = useState<string | undefined>(undefined);
@@ -254,13 +254,13 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
   const [editingCell, setEditingCell] = useState<{ rowId: any; colName: string } | null>(null);
   const [editValue, setEditValue] = useState<any>('');
 
-  // Undo/Redo for buffer change (updates/deletes/inserts). write lịch sử theo effect nên
-  // not must chèn ando fromng nơi mutate. Mỗi lần buffer đổi -> đẩy snapshot TRƯỚC ĐÓ ando undoStack.
+  // Undo/Redo cho buffer thay đổi (updates/deletes/inserts). Ghi lịch sử theo effect nên
+  // không phải chèn vào từng nơi mutate. Mỗi lần buffer đổi -> đẩy snapshot TRƯỚC ĐÓ vào undoStack.
   type GridSnap = { updates: any; deletes: any[]; inserts: any[] };
   const [undoStack, setUndoStack] = useState<GridSnap[]>([]);
   const [redoStack, setRedoStack] = useState<GridSnap[]>([]);
   const prevSnapRef = React.useRef<GridSnap>({ updates: {}, deletes: [], inserts: [] });
-  const skipHistoryRef = React.useRef(true); // skip lần run đầu (mount) and lúc undo/redo khôi phục
+  const skipHistoryRef = React.useRef(true); // bỏ qua lần chạy đầu (mount) và lúc undo/redo khôi phục
   const curSnap = (): GridSnap => ({
     updates: JSON.parse(JSON.stringify(updates)),
     deletes: Array.from(deletes),
@@ -304,7 +304,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
     restoreSnap(target);
   };
 
-  // Reset lịch sử (sau when commit successful: buffer trống, not for undo về change already write DB)
+  // Reset lịch sử (sau khi commit thành công: buffer trống, không cho undo về thay đổi đã ghi DB)
   const resetGridHistory = () => {
     skipHistoryRef.current = true;
     setUndoStack([]);
@@ -312,11 +312,11 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
     prevSnapRef.current = { updates: {}, deletes: [], inserts: [] };
   };
 
-  // Transaction preview trước when commit
+  // Transaction preview trước khi commit
   const [commitPreview, setCommitPreview] = useState<string[] | null>(null);
   /**
-   * Chỉ to ép render lại cái ô "đừng hiện lại": giá trị thật nằm at localStorage theo server
-   * (`commitPreview.ts`), ngoài React, nên tick ando ô mà not có state này thì ô not đổi hình.
+   * Chỉ để ép render lại cái ô "đừng hiện lại": giá trị thật nằm ở localStorage theo server
+   * (`commitPreview.ts`), ngoài React, nên tick vào ô mà không có state này thì ô không đổi hình.
    */
   const [, setPreviewOptOutTick] = useState(0);
   const [pendingChanges, setPendingChanges] = useState<GridChange[]>([]);
@@ -334,7 +334,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
     colName: string; cellValue: any;
   } | null>(null);
 
-  // position menu right click / context menu sau when đo size thật (tránh tràn khỏi window)
+  // Vị trí menu chuột phải sau khi đo kích thước thật (tránh tràn khỏi cửa sổ)
   const cellMenuRef = useRef<HTMLDivElement>(null);
   const [cellMenuPos, setCellMenuPos] = useState<MenuRect | null>(null);
 
@@ -373,7 +373,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
   const [showIoPopover, setShowIoPopover] = useState(false);
   const ioPopoverRef = useRef<HTMLDivElement>(null);
 
-  // Export State — toàn bộ option/preview nằm in ExportTableDialog
+  // Export State — toàn bộ tuỳ chọn/preview nằm trong ExportTableDialog
   const [showExportDialog, setShowExportDialog] = useState(false);
 
   // Import Preview State
@@ -386,10 +386,10 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
   const [importPendingRows, setImportPendingRows] = useState<any[]>([]);
   const [importSqlContent, setImportSqlContent] = useState('');
 
-  // column có in tệp (gộp key of mọi row: CSV/JSON can thiếu column at một số row)
+  // Cột có trong tệp (gộp key của mọi dòng: CSV/JSON có thể thiếu cột ở một số dòng)
   const importFileCols = React.useMemo(() => collectColumns(importPendingRows), [importPendingRows]);
 
-  // column in tệp mà table đích not có -> nhập will error, warning trước.
+  // Cột trong tệp mà bảng đích không có -> nhập sẽ lỗi, cảnh báo trước.
   const importUnknownCols = React.useMemo(() => {
     if (columns.length === 0) return [];
     const target = columns.map(c => c.name.toLowerCase());
@@ -400,7 +400,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
     setShowImportPicker(true);
   };
 
-  // receive tệp from ImportFilePicker (already check phần expand at đó) rồi parse to preview.
+  // Nhận tệp từ ImportFilePicker (đã kiểm tra phần mở rộng ở đó) rồi parse để xem trước.
   const handleFileImport = async (file: File) => {
     setShowImportPicker(false);
     setImportTab('structure');
@@ -408,13 +408,13 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
     setErrorMsg(null);
     setSuccessMsg(null);
 
-    // XLSX nhị phân -> read ArrayBuffer + parse riêng.
+    // XLSX nhị phân -> đọc ArrayBuffer + parse riêng.
     if (file.name.toLowerCase().endsWith('.xlsx')) {
       try {
         const buf = await file.arrayBuffer();
         const rows = await parseXlsx(buf);
         if (rows.length === 0) throw new Error(t('dataGrid.errXlsxEmpty'));
-        setImportFileType('json'); // row dạng object, đi chung nhánh write DB with CSV/JSON
+        setImportFileType('json'); // dòng dạng object, đi chung nhánh ghi DB với CSV/JSON
         setImportPendingRows(rows);
         setShowImportModal(true);
       } catch (err: any) {
@@ -486,7 +486,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
 
     try {
       if (importFileType === 'sql') {
-        // Xem write chú at App.tsx: tệp .sql có nhiều statement nên must qua executeQueryMulti.
+        // Xem ghi chú ở App.tsx: tệp .sql có nhiều câu lệnh nên phải qua executeQueryMulti.
         const res = await dbHelper.executeQueryMulti(connId, importSqlContent);
         setImportProgress(null);
         setLoading(false);
@@ -497,7 +497,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
           setErrorMsg(t('dataGrid.errImportSql', { message: res.error }));
         }
       } else {
-        // write theo lô to báo is tiến độ thật (backend chèn fromng row in mỗi lô).
+        // Ghi theo lô để báo được tiến độ thật (backend chèn từng dòng trong mỗi lô).
         const total = importPendingRows.length;
         let done = 0;
         for (let i = 0; i < total; i += IMPORT_BATCH_SIZE) {
@@ -538,16 +538,16 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Thông báo successful tự hide. Các đường tự hẹn giờ (sao chép ô, save change...) vẫn hide sớm
-  // hơn theo timer of chúng; hiệu ứng này lo những đường not hẹn giờ — Export/Import gọi
-  // onSuccess from dialog nên trước đây dải xanh treo lại mãi.
+  // Thông báo thành công tự ẩn. Các đường tự hẹn giờ (sao chép ô, lưu thay đổi...) vẫn ẩn sớm
+  // hơn theo timer của chúng; hiệu ứng này lo những đường không hẹn giờ — Export/Import gọi
+  // onSuccess từ dialog nên trước đây dải xanh treo lại mãi.
   useEffect(() => {
     if (!successMsg) return;
     const t = setTimeout(() => setSuccessMsg(null), 4000);
     return () => clearTimeout(t);
   }, [successMsg]);
 
-  // Thông báo error tự hide sau 6 giây
+  // Thông báo lỗi tự ẩn sau 6 giây
   useEffect(() => {
     if (!errorMsg) return;
     const t = setTimeout(() => setErrorMsg(null), 6000);
@@ -628,17 +628,17 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
   // Keyboard Shortcuts (Ctrl/Cmd + F for search, Ctrl/Cmd + I to insert, Delete/Backspace to delete row, Ctrl/Cmd + S to commit)
   //
   // Bản cũ khai 10 dep nhưng THIẾU 5 handler (handleAddRow, handleCommit,
-  // handleDeleteRow, undo/redoGridChange). Đây not chỉ is warning lint: các
-  // handler is "close băng" theo lần render mà effect run gần nhất, nên keyboard shortcut
-  // can gọi phiên bản cũ with state cũ (ví dụ Ctrl+I dùng activeColumns error thời).
-  // add chúng ando deps cũng not đúng: chúng is create lại mỗi render nên listener
-  // will is gỡ/gắn lại liên tục. Giải pháp: giữ handler mới nhất in ref rồi gắn
-  // MỘT listener unique, ổn định suốt đời component.
+  // handleDeleteRow, undo/redoGridChange). Đây không chỉ là cảnh báo lint: các
+  // handler bị "đóng băng" theo lần render mà effect chạy gần nhất, nên phím tắt
+  // có thể gọi phiên bản cũ với state cũ (ví dụ Ctrl+I dùng activeColumns lỗi thời).
+  // Thêm chúng vào deps cũng không đúng: chúng được tạo lại mỗi render nên listener
+  // sẽ bị gỡ/gắn lại liên tục. Giải pháp: giữ handler mới nhất trong ref rồi gắn
+  // MỘT listener duy nhất, ổn định suốt đời component.
   const keyHandlerRef = useRef<(e: KeyboardEvent) => void>(() => { });
 
   keyHandlerRef.current = (e: KeyboardEvent) => {
     {
-      // 0. Chuyển Data/Structure (Ctrl/Cmd + [ or ])
+      // 0. Chuyển Data/Structure (Ctrl/Cmd + [ hoặc ])
       if ((e.metaKey || e.ctrlKey) && e.key === ']') {
         e.preventDefault();
         setViewMode('structure');
@@ -668,7 +668,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
         return;
       }
 
-      // 2. Insert new row (Ctrl/Cmd + I, or Ctrl/Cmd + Shift + N for khớp doc)
+      // 2. Insert new row (Ctrl/Cmd + I, hoặc Ctrl/Cmd + Shift + N cho khớp doc)
       if ((e.metaKey || e.ctrlKey) && (e.key.toLowerCase() === 'i' || (e.shiftKey && e.key.toLowerCase() === 'n'))) {
         e.preventDefault();
         handleAddRow();
@@ -676,7 +676,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
       }
 
       // 2b. Undo/Redo buffer change (Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y)
-      // Chỉ when not currently gõ in ô/text (to undo native of input hoạt động bình thường)
+      // Chỉ khi KHÔNG đang gõ trong ô/text (để undo native của input hoạt động bình thường)
       if ((e.metaKey || e.ctrlKey) && (e.key.toLowerCase() === 'z' || e.key.toLowerCase() === 'y')) {
         const el = document.activeElement;
         const editingText = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.getAttribute('contenteditable') === 'true');
@@ -728,8 +728,8 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
     }
   };
 
-  // Gắn MỘT listener unique suốt đời component; nó luôn gọi bản handler mới nhất
-  // qua ref nên not còn closure cũ, and cũng not gỡ/gắn lại mỗi lần state đổi.
+  // Gắn MỘT listener duy nhất suốt đời component; nó luôn gọi bản handler mới nhất
+  // qua ref nên không còn closure cũ, và cũng không gỡ/gắn lại mỗi lần state đổi.
   useEffect(() => {
     const listener = (e: KeyboardEvent) => keyHandlerRef.current(e);
     window.addEventListener('keydown', listener);
@@ -739,16 +739,16 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
   // Fetch Data Row
   const fetchData = useCallback(async () => {
     setLoading(true);
-    // Chỉ đếm when thứ is đếm đổi (table/filter/dữ liệu). Lật trang, đổi sort hay đổi cỡ trang
-    // not đổi is con số đó, mà `COUNT(*)` thì quét lại cả table — xem `gridPaging.ts`.
+    // Chỉ đếm khi thứ được đếm đổi (bảng/filter/dữ liệu). Lật trang, đổi sort hay đổi cỡ trang
+    // không đổi được con số đó, mà `COUNT(*)` thì quét lại cả bảng — xem `gridPaging.ts`.
     const key = countKey(tableName, activeFilter, dataVersion);
     const forceExact = forceExactCountRef.current;
     forceExactCountRef.current = false;
     const mode = nextCountMode(lastCountedKeyRef.current, key, forceExact);
 
-    // Keyset: trang sâu read theo `WHERE pk > <con trỏ>` thay for `OFFSET n`, thứ mà server must
-    // read rồi bỏ đi n row đầu. not seek is (key phức hợp, sort theo column khác, hay chưa có
-    // con trỏ for trang này) thì `cursor` is `null` and backend lại phân trang theo số trang.
+    // Keyset: trang sâu đọc theo `WHERE pk > <con trỏ>` thay cho `OFFSET n`, thứ mà server phải
+    // đọc rồi bỏ đi n dòng đầu. Không seek được (khoá phức hợp, sort theo cột khác, hay chưa có
+    // con trỏ cho trang này) thì `cursor` là `null` và backend lại phân trang theo số trang.
     const seekCol = seekColumn(
       columns.filter((c) => c.isPrimaryKey).map((c) => c.name), sortBy, activeFilter
     );
@@ -764,19 +764,19 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
     );
     setRows(data.rows);
     setHasMore(data.hasMore);
-    // write con trỏ open ra trang sau. Chỉ when key chưa đổi in lúc wait phản hồi — if đổi rồi thì
-    // con trỏ này thuộc một string thứ tự khác and dùng nó is read sai row.
+    // Ghi con trỏ mở ra trang sau. Chỉ khi key chưa đổi trong lúc chờ phản hồi — nếu đổi rồi thì
+    // con trỏ này thuộc một chuỗi thứ tự khác và dùng nó là đọc sai dòng.
     if (seekCol && data.nextCursor && cursorsRef.current.key === viewKey) {
       cursorsRef.current.cursors[page] = data.nextCursor;
     }
     if (data.totalCount !== null) {
       setTotalCount(data.totalCount);
       setCountExact(data.countExact);
-      // Đánh dấu is already đếm chỉ when có số thật trat về: đếm error thì lần sau must thử lại, chứ not
-      // is ngồi mãi on một `null`. Số ước lượng thì cũng already trả lời xong for key này rồi.
+      // Đánh dấu là đã đếm chỉ khi có số thật trở về: đếm lỗi thì lần sau phải thử lại, chứ không
+      // được ngồi mãi trên một `null`. Số ước lượng thì cũng đã trả lời xong cho key này rồi.
       lastCountedKeyRef.current = key;
     } else if (mode !== 'skip') {
-      // already xin đếm mà not có số: delete tổng cũ đi thay vì display con số of table/filter khác.
+      // Đã xin đếm mà không có số: xoá tổng cũ đi thay vì hiển thị con số của bảng/filter khác.
       setTotalCount(null);
       setCountExact(true);
     }
@@ -784,23 +784,23 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
     setLoading(false);
   }, [connId, tableName, page, pageSize, sortBy, sortDir, activeFilter, dataVersion, columns]);
 
-  /** read lại trang hiện tại and đếm CHÍNH XÁC, sau when user bấm ando con số ước lượng. */
+  /** Đọc lại trang hiện tại và đếm CHÍNH XÁC, sau khi người dùng bấm vào con số ước lượng. */
   const recountExact = useCallback(() => {
     forceExactCountRef.current = true;
     fetchData();
   }, [fetchData]);
 
   /**
-   * Grid vừa write ando table (commit/import) nên must read lại and đếm lại.
+   * Grid vừa ghi vào bảng (commit/import) nên phải đọc lại VÀ đếm lại.
    *
-   * Tăng `dataVersion` chứ not gọi `fetchData()`: `dataVersion` nằm in deps of `fetchData`,
-   * nên gọi thẳng will run with closure cũ (skip việc đếm) rồi effect run lại lần nữa — hai lần
-   * read trang for một lần write.
+   * Tăng `dataVersion` chứ không gọi `fetchData()`: `dataVersion` nằm trong deps của `fetchData`,
+   * nên gọi thẳng sẽ chạy với closure cũ (bỏ qua việc đếm) rồi effect chạy lại lần nữa — hai lần
+   * đọc trang cho một lần ghi.
    */
   const refetchAfterWrite = useCallback(() => setDataVersion((v) => v + 1), []);
 
   useEffect(() => {
-    // Tôn trọng mode xem ban đầu (Data/Structure) when open tab, thay vì luôn ép về 'data'
+    // Tôn trọng chế độ xem ban đầu (Data/Structure) khi mở tab, thay vì luôn ép về 'data'
     setViewMode(initialViewMode);
     fetchSchema().then(() => {
       // Reset changes on table change
@@ -810,9 +810,9 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
       setSelectedRowId(null);
       setPage(1);
       setSortBy(undefined);
-      // Chiều sort must về ASC cùng with column: bỏ column mà giữ 'desc' thì table mới open ra will is sắp
-      // giảm dần theo primary key (chiều này giờ có tác dụng cả when chưa sort column nào — xem
-      // `seekColumn`), tức is thứ tự lạ mà not có mũi tên nào giải thích.
+      // Chiều sort phải về ASC cùng với cột: bỏ cột mà giữ 'desc' thì bảng mới mở ra sẽ được sắp
+      // giảm dần theo khoá chính (chiều này giờ có tác dụng cả khi chưa sort cột nào — xem
+      // `seekColumn`), tức là thứ tự lạ mà không có mũi tên nào giải thích.
       setSortDir('asc');
       const clause = getInitialFilterClause(initialFilter, dbType);
       setActiveFilter(clause);
@@ -847,8 +847,8 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
       setTimeout(() => setErrorMsg(null), 3000);
       return;
     }
-    // allows edit cả column primary key: backend UPDATE dùng giá trị PK gốc in WHERE,
-    // còn SET áp giá trị PK mới (rowId luôn preserve giá trị gốc for tới when commit + refetch).
+    // Cho phép sửa cả cột khóa chính: backend UPDATE dùng giá trị PK gốc trong WHERE,
+    // còn SET áp giá trị PK mới (rowId luôn giữ nguyên giá trị gốc cho tới khi commit + refetch).
     setEditingCell({ rowId, colName });
     setEditValue(currentValue === null ? '' : currentValue);
   };
@@ -864,7 +864,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
     const isTemp = String(rowId).startsWith('temp_');
 
     if (isTemp) {
-      // Modify inserts array (định danh theo __tempId, not dùng column PK vì PK can is edit)
+      // Modify inserts array (định danh theo __tempId, không dùng cột PK vì PK có thể được sửa)
       setInserts(prev =>
         prev.map(row => {
           if (row.__tempId === rowId) {
@@ -919,7 +919,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
     const tempId = `temp_${nextTempId}`;
     setNextTempId(nextTempId + 1);
 
-    // __tempId is định danh nội bộ; column PK to trống to user nhập or DB tự sinh (auto-increment)
+    // __tempId là định danh nội bộ; cột PK để trống để người dùng nhập hoặc DB tự sinh (auto-increment)
     const newRow: any = { __tempId: tempId };
     columns.forEach(col => {
       newRow[col.name] = col.name === primaryKey ? '' : (col.defaultValue || '');
@@ -927,8 +927,8 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
 
     setInserts([...inserts, newRow]);
 
-    // select row and open sẵn ô nhập đầu tiên: row trống mà must tự đoán is "nhấp
-    // đôi to edit" thì rất khó dùng. skip column PK auto-increment vì DB tự sinh giá trị.
+    // Chọn dòng và mở sẵn ô nhập đầu tiên: dòng trống mà phải tự đoán là "nhấp
+    // đôi để sửa" thì rất khó dùng. Bỏ qua cột PK tự tăng vì DB tự sinh giá trị.
     const firstEditable = activeColumns.find(c => !(c.isPrimaryKey && c.autoIncrement)) || activeColumns[0];
     setSelectedRowId(tempId);
     if (firstEditable) {
@@ -964,11 +964,11 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
     setSelectedRowId(null);
   };
 
-  // Foreign Key Helper (chỉ lấy foreign key thật, loại trừ primary key of table hiện tại)
+  // Foreign Key Helper (chỉ lấy khóa ngoại thật, loại trừ khóa chính của bảng hiện tại)
   const getFkInfo = useCallback((colName: string) => {
     if (!colName) return null;
 
-    // 1. check in metadata foreignKeys chính xác of schema
+    // 1. Kiểm tra trong metadata foreignKeys chính xác của schema
     if (schema?.foreignKeys && Array.isArray(schema.foreignKeys)) {
       const fk = schema.foreignKeys.find(
         f => (f.column || '').toLowerCase() === colName.toLowerCase()
@@ -978,8 +978,8 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
       }
     }
 
-    // 2. Dự phòng Heuristic: Chỉ áp dụng when column not must is primary key (PK)
-    // and tên table dự đoán not trùng with table hiện tại
+    // 2. Dự phòng Heuristic: Chỉ áp dụng khi cột KHÔNG phải là Khóa chính (PK)
+    // và tên bảng dự đoán KHÔNG trùng với bảng hiện tại
     const isPk = colName === primaryKey || columns.some(c => c.name === colName && c.isPrimaryKey);
     if (!isPk) {
       const lower = colName.toLowerCase();
@@ -1013,7 +1013,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
   const handleDuplicateRow = (row: any) => {
     const tempId = `temp_${nextTempId}`;
     setNextTempId(n => n + 1);
-    // not sao chép giá trị PK (tránh trùng key); to trống for user nhập or DB tự sinh
+    // Không sao chép giá trị PK (tránh trùng khóa); để trống cho người dùng nhập hoặc DB tự sinh
     const newRow: any = { __tempId: tempId };
     columns.forEach(col => {
       newRow[col.name] = col.name === primaryKey ? '' : (row[col.name] ?? null);
@@ -1102,8 +1102,8 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
     inserts.forEach(row => {
       const data = { ...row };
       delete data.__tempId;
-      // Chỉ bỏ column PK khỏi INSERT when to trống -> DB tự sinh (auto-increment).
-      // if user already nhập giá trị PK (vd officeCode) thì giữ lại to đưa ando câu INSERT.
+      // Chỉ bỏ cột PK khỏi INSERT khi để trống -> DB tự sinh (auto-increment).
+      // Nếu người dùng đã nhập giá trị PK (vd officeCode) thì giữ lại để đưa vào câu INSERT.
       const pkVal = data[primaryKey];
       if (pkVal === '' || pkVal === null || pkVal === undefined || String(pkVal).startsWith('temp_')) {
         delete data[primaryKey];
@@ -1134,15 +1134,15 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
       return;
     }
 
-    // Tắt preview (công tắc in popover Safe Mode) thì save thẳng. not gọi luôn cả lượt
-    // `preview: true`: nó is một vòng nữa xuống backend chỉ to build thứ not ai read.
+    // Tắt xem trước (công tắc trong popover Safe Mode) thì lưu thẳng. Không gọi luôn cả lượt
+    // `preview: true`: nó là một vòng nữa xuống backend chỉ để dựng thứ không ai đọc.
     if (!getCommitPreviewForKey(connKeyOfConn(connId))) {
       setPendingChanges(changesList);
       await commitNow(changesList);
       return;
     }
 
-    // Lấy trước danh sách SQL will run to user preview (transaction preview)
+    // Lấy trước danh sách SQL sẽ chạy để người dùng xem trước (transaction preview)
     setLoading(true);
     const preview = await dbHelper.commitChanges(connId, tableName, changesList, primaryKey, true);
     setLoading(false);
@@ -1156,9 +1156,9 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
   };
 
   /**
-   * write thật. Tách khỏi `handleConfirmCommit` vì giờ có hai đường tới đây: qua hộp thoại preview,
-   * and đi thẳng when hộp thoại đó is tắt. receive `changes` qua tham số chứ not read `pendingChanges`:
-   * đường đi thẳng vừa `setPendingChanges` xong nên state chưa kịp cập nhật at nhịp render này.
+   * Ghi thật. Tách khỏi `handleConfirmCommit` vì giờ có hai đường tới đây: qua hộp thoại xem trước,
+   * và đi thẳng khi hộp thoại đó bị tắt. Nhận `changes` qua tham số chứ không đọc `pendingChanges`:
+   * đường đi thẳng vừa `setPendingChanges` xong nên state chưa kịp cập nhật ở nhịp render này.
    */
   const commitNow = async (changes: GridChange[]) => {
     setCommitPreview(null);
@@ -1180,14 +1180,14 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
     }
   };
 
-  /** Nút confirm of hộp thoại preview. */
+  /** Nút xác nhận của hộp thoại xem trước. */
   const handleConfirmCommit = () => commitNow(pendingChanges);
 
   // Helper to build SQL WHERE clause from visual filters
   const buildWhereFromVisual = (rowsToBuild: FilterRow[]) => {
     const active = rowsToBuild.filter(r => r.active && r.column);
     if (active.length === 0) return '';
-    // Trích dẫn định danh theo dialect: MySQL dùng backtick, còn lại dùng quotes kép
+    // Trích dẫn định danh theo dialect: MySQL dùng backtick, còn lại dùng dấu nháy kép
     const qc = dbType === 'mysql' ? '`' : '"';
     return active.map(r => {
       const col = `${qc}${r.column}${qc}`;
@@ -1220,7 +1220,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
 
   const removeFilterRow = (id: string) => {
     if (filterRows.length <= 1) {
-      // when trừ hết row filter cuối cùng -> automatic close thanh filter and delete filter condition
+      // Khi trừ hết dòng filter cuối cùng -> Tự động đóng thanh filter và xoá điều kiện lọc
       setShowFilterBar(false);
       clearFilter();
       return;
@@ -1254,9 +1254,9 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
     setPage(1);
   };
 
-  // build câu SELECT hoàn chỉnh from filter condition currently có, to dán thẳng ando trình
-  // viết SQL. Kèm ORDER BY if currently sort, nhờ vậy câu SQL tái hiện đúng những
-  // gì lưới currently display.
+  // Dựng câu SELECT hoàn chỉnh từ điều kiện lọc đang có, để dán thẳng vào trình
+  // viết SQL. Kèm ORDER BY nếu đang sắp xếp, nhờ vậy câu SQL tái hiện đúng những
+  // gì lưới đang hiển thị.
   const buildFilterSql = () => {
     const qc = dbType === 'mysql' ? '`' : '"';
     const where = filterMode === 'sql' ? filterText.trim() : buildWhereFromVisual(filterRows);
@@ -1293,13 +1293,13 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
   // Helper count of pending changes
   const changeCount = Object.keys(updates).length + deletes.size + inserts.length;
 
-  // Guard rời đi when còn change chưa save:
+  // Guard rời đi khi còn thay đổi chưa lưu:
   //  - beforeunload: warning khi reload/close app.
-  //  - onDirtyChange: báo lên App to hỏi confirm when đổi tab/table/disconnect,
-  //    đồng thời chấm dấu "chưa save" lên tab.
+  //  - onDirtyChange: báo lên App để hỏi xác nhận khi đổi tab/bảng/ngắt kết nối,
+  //    đồng thời chấm dấu "chưa lưu" lên tab.
   //
-  // Hàm dọn dẹp báo `false`: lúc đó tab already đổi rồi, and App luôn delete cờ chứ not
-  // gán theo tab nào, nên grid cũ tháo đi not thể to lại dấu on tab mới.
+  // Hàm dọn dẹp báo `false`: lúc đó tab đã đổi rồi, và App luôn xoá cờ chứ không
+  // gán theo tab nào, nên grid cũ tháo đi không thể để lại dấu trên tab mới.
   useEffect(() => {
     onDirtyChangeRef.current?.(changeCount > 0);
     const handler = (e: BeforeUnloadEvent) => {
@@ -1465,8 +1465,8 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
                       <option key={col.name} value={col.name}>{col.name}</option>
                     ))}
                   </select>
-                  {/* CHỈ đổi phần nhãn display, value must preserve vì nó
-                      is dùng trực tiếp when build câu WHERE. */}
+                  {/* CHỈ đổi phần nhãn hiển thị, value phải giữ nguyên vì nó
+                      được dùng trực tiếp khi dựng câu WHERE. */}
                   <select
                     className="visual-filter-select"
                     style={{ minWidth: '130px' }}
@@ -1531,8 +1531,8 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
                   <button className="visual-filter-btn-apply" onClick={handleCopyFilterSql} title={t('dataGrid.copySqlTitle')}>
                     <Copy size={12} /> {t('dataGrid.copySql')}
                   </button>
-                  {/* Chỉ hiện keyboard shortcut of đúng nền tảng currently run, thay vì in cả
-                      "⌘F / Ctrl+F" whenến user must tự filter. */}
+                  {/* Chỉ hiện phím tắt của đúng nền tảng đang chạy, thay vì in cả
+                      "⌘F / Ctrl+F" khiến người dùng phải tự lọc. */}
                   <div className="visual-filter-footer-info" style={{ marginLeft: '12px' }}>
                     <span>{t('dataGrid.shortcutToggleFilter')} <kbd>{modKey}F</kbd></span>
                     <span>{t('dataGrid.shortcutAddRow')} <kbd>{modKey}I</kbd></span>
@@ -1547,7 +1547,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
         </div>
       )}      {/* Commit/Discard buttons removed from here to prevent squeezing */}
 
-      {/* Tiến độ nhập dữ liệu — modal preview already close nên báo at dải thông báo of grid */}
+      {/* Tiến độ nhập dữ liệu — modal xem trước đã đóng nên báo ở dải thông báo của grid */}
       {importProgress && (
         <div className="info-bar info-bar-blue">
           <ProgressBar progress={importProgress} />
@@ -1560,7 +1560,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
             <CheckCircle2 size={16} />
             <span>{successMsg}</span>
           </div>
-          {/* close tay is, not must đợi hết 5 giây */}
+          {/* Đóng tay được, không phải đợi hết 5 giây */}
           <button className="info-bar-close" onClick={() => setSuccessMsg(null)}>×</button>
         </div>
       )}
@@ -1897,8 +1897,8 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
                                </div>
                               </>
                             ) : cellVal === null || cellVal === '' ? (
-                              /* Ô chưa có giá trị: hiện dấu gạch mờ to thấy is ô,
-                                 thay vì string rỗng ism cả row trông như trống trơn. */
+                              /* Ô chưa có giá trị: hiện dấu gạch mờ để thấy được ô,
+                                 thay vì chuỗi rỗng làm cả dòng trông như trống trơn. */
                               <span className="grid-cell-empty">—</span>
                             ) : fkInfo && cellVal !== undefined ? (
                               <div
@@ -1935,8 +1935,8 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
         </div>
       )}
 
-      {/* Nền, viền on and height lấy from class .grid-pagination to thanh này
-          cao đúng bằng chân sidebar (--ws-foot-h); đặt inline will đè mất glass. */}
+      {/* Nền, viền trên và chiều cao lấy từ class .grid-pagination để thanh này
+          cao đúng bằng chân sidebar (--ws-foot-h); đặt inline sẽ đè mất glass. */}
       <div className="grid-pagination gp-container">
         {/* Left segment: Data | Structure & + Row */}
         <div className="gp-left-section">
@@ -2039,9 +2039,9 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
             title={!countExact && totalCount !== null ? t('dataGrid.rowsApproxTitle') : undefined}
           >
             <Trans
-              // Ba biến thể vì total row count có ba status thật khác nhau: đếm chính xác, ước
-              // lượng (dấu `~`), and not đếm is. display cùng một câu for cả ba thì con số ước
-              // lượng trông như số thật — and nó lệch is tới andi chục phần trăm on InnoDB.
+              // Ba biến thể vì tổng số dòng có ba trạng thái thật khác nhau: đếm chính xác, ước
+              // lượng (dấu `~`), và không đếm được. Hiển thị cùng một câu cho cả ba thì con số ước
+              // lượng trông như số thật — và nó lệch được tới vài chục phần trăm trên InnoDB.
               i18nKey={
                 totalCount === null
                   ? 'dataGrid.rowsRangeNoTotal'
@@ -2051,15 +2051,15 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
               }
               values={{
                 from: (page - 1) * pageSize + 1,
-                // from số row thật of trang, not must from `totalCount`: trang cuối ngắn hơn
-                // `pageSize`, and `totalCount` can is ước lượng nên not cắt is for đúng.
+                // Từ số dòng thật của trang, không phải từ `totalCount`: trang cuối ngắn hơn
+                // `pageSize`, và `totalCount` có thể là ước lượng nên không cắt được cho đúng.
                 to: (page - 1) * pageSize + rows.length,
                 total: totalCount === null ? '' : fmtNum(totalCount),
               }}
               components={{ strong: <b /> }}
             />
             {!countExact && totalCount !== null && (
-              // Ước lượng thì luôn đi kèm đường ra: một cú bấm is có số thật.
+              // Ước lượng thì luôn đi kèm đường ra: một cú bấm là có số thật.
               <button
                 className="gp-count-exact"
                 onClick={recountExact}
@@ -2333,9 +2333,9 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
 
               <span className="gp-pager-sep" />
 
-              {/* `hasMore` tới from một row read thừa at backend, not from `totalCount / pageSize`:
-                  chia một con số ước lượng ra thì nút này key sai trang, còn đây is sự thật về
-                  dữ liệu and đúng cả when not đếm gì cả. */}
+              {/* `hasMore` tới từ một dòng đọc thừa ở backend, không từ `totalCount / pageSize`:
+                  chia một con số ước lượng ra thì nút này khoá sai trang, còn đây là sự thật về
+                  dữ liệu và đúng cả khi không đếm gì cả. */}
               <button
                 className="gp-pager-btn"
                 onClick={() => setPage(p => p + 1)}
@@ -2349,7 +2349,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
         )}
       </div>
 
-      {/* Xuất table: popup option + preview, dùng chung with menu right click / context menu at Sidebar */}
+      {/* Xuất bảng: popup tuỳ chọn + xem trước, dùng chung với menu chuột phải ở Sidebar */}
       <ExportTableDialog
         connId={connId}
         open={showExportDialog}
@@ -2361,9 +2361,9 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
           sortBy,
           sortDir,
           filter: activeFilter,
-          // CHỈ đưa xuống when is số đếm chính xác. `fetchAllRows` of dialog lặp for tới when
-          // `all.length >= total`, nên một số ước lượng thiếu will xuất ra tệp is cắt mà not báo
-          // error. `null` is an toàn: dialog tự đếm chính xác bằng lần read trang đầu of nó.
+          // CHỈ đưa xuống khi là số đếm chính xác. `fetchAllRows` của dialog lặp cho tới khi
+          // `all.length >= total`, nên một số ước lượng thiếu sẽ xuất ra tệp bị cắt mà không báo
+          // lỗi. `null` là an toàn: dialog tự đếm chính xác bằng lần đọc trang đầu của nó.
           totalCount: countExact ? totalCount : null,
         }}
         onClose={() => setShowExportDialog(false)}
@@ -2371,7 +2371,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
         onError={setErrorMsg}
       />
 
-      {/* Popup select tệp: báo định dạng allows trước when open hộp thoại of hệ điều hành */}
+      {/* Popup chọn tệp: báo định dạng cho phép trước khi mở hộp thoại của hệ điều hành */}
       <ImportFilePicker
         open={showImportPicker}
         targetTable={tableName}
@@ -2426,7 +2426,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
               />
             ) : (
               <>
-                {/* Tab: cấu trúc (column in tệp vs table đích) | dữ liệu (10 row đầu) */}
+                {/* Tab: cấu trúc (cột trong tệp vs bảng đích) | dữ liệu (10 dòng đầu) */}
                 <div style={{ display: 'flex', gap: '4px' }}>
                   {([
                     { id: 'structure', label: t('dataGrid.importTabStructure', { n: importFileCols.length }) },
@@ -2564,8 +2564,8 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
           onClick={e => e.stopPropagation()}
           style={{
             position: 'fixed',
-            // position chỉnh theo size thật of menu (trước đây ước lượng cứng 320/230
-            // nên menu dài vẫn is cắt at đáy window).
+            // Vị trí chỉnh theo kích thước thật của menu (trước đây ước lượng cứng 320/230
+            // nên menu dài vẫn bị cắt ở đáy cửa sổ).
             top: cellMenuPos ? cellMenuPos.top : contextMenu.y,
             left: cellMenuPos ? cellMenuPos.left : contextMenu.x,
             visibility: cellMenuPos ? 'visible' : 'hidden',
@@ -2698,7 +2698,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
         </Modal>
       )}
 
-      {/* ─── Transaction Preview Modal (preview SQL trước when commit) ─── */}
+      {/* ─── Transaction Preview Modal (xem trước SQL trước khi commit) ─── */}
       {commitPreview && (
         <Modal
           title={t('dataGrid.commitPreviewTitle', { n: commitPreview.length })}
@@ -2720,9 +2720,9 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
             )}
           </ModalBody>
           <ModalFooter>
-            {/* Công tắc đặt ngay đây vì đây is lúc người ta thấy nó phiền. Nó chỉ có tác dụng from lần
-                save SAU (lần này user already open hộp thoại rồi), and bật lại is at popover Safe Mode
-                — nhãn nói rõ chỗ đó, vì một "đừng hiện lại" not có đường về is một cái bẫy. */}
+            {/* Công tắc đặt ngay đây vì đây là lúc người ta thấy nó phiền. Nó chỉ có tác dụng từ lần
+                lưu SAU (lần này người dùng đã mở hộp thoại rồi), và bật lại được ở popover Safe Mode
+                — nhãn nói rõ chỗ đó, vì một "đừng hiện lại" không có đường về là một cái bẫy. */}
             <label
               style={{
                 display: 'flex', alignItems: 'center', gap: '8px', marginRight: 'auto',

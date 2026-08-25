@@ -25,7 +25,7 @@ import { willPromptForSql } from '../utils/safeMode';
 import { resolveResultEditability, type ResultEditability, type NotEditableReason } from '../sql/editableResult';
 import { SqlSnippetPanel } from './SqlSnippetPanel';
 
-// Đăng ký smart completion + hover + theme + rename provider (dùng chung, chỉ run 1 lần)
+// Đăng ký smart completion + hover + theme + rename provider (dùng chung, chỉ chạy 1 lần)
 setupSqlCompletion();
 setupSqlHover();
 defineSqlThemes();
@@ -65,16 +65,16 @@ const LoadingSpinner: React.FC<{ size?: number; style?: React.CSSProperties }> =
   </svg>
 );
 
-// Đăng ký format provider (Shift+Alt+F / Format Document) for ĐỦ 3 dialect,
-// kể cả 'genericsql' mà SQLite currently dùng.
-// dbType hiện hành: provider đăng ký 1 lần nhưng must format theo DB currently kết nối,
-// kể cả when user đổi sang kết nối loại khác mà not reload app.
+// Đăng ký format provider (Shift+Alt+F / Format Document) cho ĐỦ 3 dialect,
+// kể cả 'genericsql' mà SQLite đang dùng.
+// dbType hiện hành: provider đăng ký 1 lần nhưng phải format theo DB đang kết nối,
+// kể cả khi người dùng đổi sang kết nối loại khác mà không tải lại app.
 let formatterDbType = 'sqlite';
 function registerSqlFormatter(dbType: string) {
   formatterDbType = dbType;
   const w = window as any;
-  // Cờ/disposable must nằm on window: HMR load lại module will reset biến module and
-  // đăng ký provider lần 2 -> Monaco có 2 formatter for cùng language.
+  // Cờ/disposable phải nằm trên window: HMR nạp lại module sẽ reset biến module và
+  // đăng ký provider lần 2 -> Monaco có 2 formatter cho cùng language.
   if (Array.isArray(w.__sqlFormatDisposables)) {
     for (const d of w.__sqlFormatDisposables) {
       try { d.dispose(); } catch { /* already cancel */ }
@@ -116,22 +116,22 @@ import { ExplainViewer } from './ExplainViewer';
 import { Modal, ModalBody, ModalFooter } from './Modal';
 
 interface SqlEditorProps {
-  /** Kết nối mà component này thao tác lên. Truyền tường minh, not read id ambient (§4.1). */
+  /** Kết nối mà component này thao tác lên. Truyền tường minh, không đọc id ambient (§4.1). */
   connId: string;
-  /** Kết nối gắn nhãn production -> warning statement nguy hiểm đòi gõ tên database. */
+  /** Kết nối gắn nhãn production -> cảnh báo câu lệnh nguy hiểm đòi gõ tên database. */
   isProdConn?: boolean;
   /**
-   * Kết nối NÀY currently at read-only mode (cờ at backend, khác công tắc toàn cục `readOnly`).
+   * Kết nối NÀY đang ở chế độ chỉ đọc (cờ ở backend, khác công tắc toàn cục `readOnly`).
    *
-   * Cần cả hai: backend mới is chỗ thực sự from chối, nhưng if UI not biết thì nó will mời người
-   * dùng gõ tên database to confirm một statement chắc chắn is chặn — một hộp thoại hứa điều
-   * not xảy ra.
+   * Cần cả hai: backend mới là chỗ thực sự từ chối, nhưng nếu UI không biết thì nó sẽ mời người
+   * dùng gõ tên database để xác nhận một câu lệnh chắc chắn bị chặn — một hộp thoại hứa điều
+   * không xảy ra.
    */
   connReadOnly?: boolean;
   dbType?: string;
-  /** Định danh máy chủ currently kết nối (utils/connKey) — dùng to gắn nhãn & filter lịch sử. */
+  /** Định danh máy chủ đang kết nối (utils/connKey) — dùng để gắn nhãn & lọc lịch sử. */
   connKey?: string;
-  /** Tên database currently dùng, hiện on fromng row lịch sử when xem "all kết nối". */
+  /** Tên database đang dùng, hiện trên từng dòng lịch sử khi xem "tất cả kết nối". */
   dbName?: string;
   initialSql?: string;
   initialSql2?: string;
@@ -146,26 +146,26 @@ interface SqlEditorProps {
   onEditorHeightChange?: (height: number) => void;
 }
 
-// Bộ filter phạm vi of ngăn lịch sử. table hằng at mức module nên giữ KEY dịch,
-// hàm t() gọi in component (i18next must kiểm is fromng key).
+// Bộ lọc phạm vi của ngăn lịch sử. Bảng hằng ở mức module nên giữ KEY dịch,
+// hàm t() gọi trong component (i18next phải kiểm được từng key).
 const SCOPE_OPTIONS = [
   { scope: 'db', labelKey: 'sqlEditor.scopeDb', titleKey: 'sqlEditor.scopeDbTitle' },
   { scope: 'conn', labelKey: 'sqlEditor.scopeConn', titleKey: 'sqlEditor.scopeConnTitle' },
   { scope: 'all', labelKey: 'sqlEditor.scopeAll', titleKey: 'sqlEditor.scopeAllTitle' },
 ] as const;
 
-// statement read-only is phép run in mode Chỉ read
+// Câu lệnh chỉ đọc được phép chạy trong chế độ Chỉ đọc
 const READ_ONLY_PREFIXES = ['SELECT', 'SHOW', 'EXPLAIN', 'DESCRIBE', 'DESC', 'PRAGMA', 'WITH'];
 function isReadOnlySql(text: string): boolean {
-  // Dùng chung splitter with editor: dấu ';' in string/comment/khối $$ and dấu kết thúc câu
-  // do DELIMITER đổi đều is handle đúng (tự split(';') will đánh giá sai các script đó).
+  // Dùng chung splitter với editor: dấu ';' trong chuỗi/comment/khối $$ và dấu kết thúc câu
+  // do DELIMITER đổi đều được xử lý đúng (tự split(';') sẽ đánh giá sai các script đó).
   return splitStatements(text).every(stmt => {
     const first = stmt.text.split(/\s+/)[0].toUpperCase();
     return READ_ONLY_PREFIXES.includes(first);
   });
 }
 
-/** Áp dụng limit số row (LIMIT) from dropdown thanh công cụ ando statement SELECT/WITH if chưa có LIMIT */
+/** Áp dụng giới hạn số dòng (LIMIT) từ dropdown thanh công cụ vào câu lệnh SELECT/WITH nếu chưa có LIMIT */
 function applyLimitToSql(sqlText: string, limitOption: string): string {
   if (!limitOption || limitOption === 'No limit') return sqlText;
   const match = limitOption.match(/[\d,]+/);
@@ -293,9 +293,9 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
 
   const [savedQueries, setSavedQueries] = useState<SavedQueryEntry[]>([]);
   const [historyTab, setHistoryTab] = useState<'history' | 'saved'>('history');
-  // Xem lịch sử of database currently dùng, of cả máy chủ, hay of mọi kết nối. Nhớ
-  // lựa select qua các lần open app (quy ước tf_*): đây is thói quen ism việc, not
-  // must status tạm.
+  // Xem lịch sử của database đang dùng, của cả máy chủ, hay của mọi kết nối. Nhớ
+  // lựa chọn qua các lần mở app (quy ước tf_*): đây là thói quen làm việc, không
+  // phải trạng thái tạm.
   const [historyScope, setHistoryScope] = useState<HistoryScope>(
     () => parseHistoryScope(localStorage.getItem('tf_history_scope'))
   );
@@ -305,7 +305,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     localStorage.setItem('tf_history_scope', scope);
   };
 
-  /** not biết currently at kết nối nào (run vite-dev thuần) thì not filter is gì. */
+  /** Không biết đang ở kết nối nào (chạy vite-dev thuần) thì không lọc được gì. */
   const effectiveScope: HistoryScope = connKey ? historyScope : 'all';
   const inScope = (entry: HistoryEntry) => matchesScope(entry, connKey, dbName, effectiveScope);
 
@@ -361,7 +361,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   const [cursorPos1, setCursorPos1] = useState<{ line: number; column: number }>({ line: 1, column: 1 });
   const [cursorPos2, setCursorPos2] = useState<{ line: number; column: number }>({ line: 1, column: 1 });
 
-  // status sort column of Lưới kết quả SQL (Sort Column & Direction)
+  // Trạng thái sắp xếp cột của Lưới kết quả SQL (Sort Column & Direction)
   const [sortCol1, setSortCol1] = useState<string | null>(null);
   const [sortDir1, setSortDir1] = useState<'asc' | 'desc' | null>(null);
   const [sortCol2, setSortCol2] = useState<string | null>(null);
@@ -439,17 +439,17 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   const [showQueryParamsConfigModal, setShowQueryParamsConfigModal] = useState(false);
   const [paramPromptData, setParamPromptData] = useState<{ pane: 1 | 2; originalSql: string; params: string[]; action: 'run' | 'explain'; variant?: 'explain' | 'analyze' | 'json' } | null>(null);
 
-  // Hỏi lại trước when run statement delete sạch dữ liệu (DELETE thiếu WHERE / DROP TABLE).
-  // Chỉ is warning — muốn chặn hẳn thì bật mode Chỉ read.
+  // Hỏi lại trước khi chạy câu lệnh xoá sạch dữ liệu (DELETE thiếu WHERE / DROP TABLE).
+  // Chỉ là cảnh báo — muốn chặn hẳn thì bật chế độ Chỉ đọc.
   const [unsafePrompt, setUnsafePrompt] = useState<{
     pane: 1 | 2;
     sql: string;
     items: UnsafeStatement[];
-    /** Bấm "Vẫn run" thì run tiếp bằng đường nào (nút Run hay EXPLAIN ANALYZE). */
+    /** Bấm "Vẫn chạy" thì chạy tiếp bằng đường nào (nút Run hay EXPLAIN ANALYZE). */
     resume: 'run' | 'analyze';
   } | null>(null);
 
-  // switch returns key literal, not nội suy key động (i18next must kiểm is fromng key).
+  // switch trả về key literal, KHÔNG nội suy key động (i18next phải kiểm được từng key).
   const unsafeKindLabel = (kind: UnsafeStatementKind): string => {
     switch (kind) {
       case 'deleteNoWhere': return t('sqlEditor.unsafeKindDeleteNoWhere');
@@ -471,7 +471,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   const hasResult1 = loading || hasRun || errorMsg !== null || explainResult1 !== null;
   const hasResult2 = loading2 || hasRun2 || errorMsg2 !== null || explainResult2 !== null;
 
-  // ─── edit trực tiếp on table kết quả ───────────────────────────────────────────────
+  // ─── Sửa trực tiếp trên bảng kết quả ───────────────────────────────────────────────
   // Only the edit buffer is split per pane: at most one cell is being typed into and at
   // most one preview dialog is open at a time, so those stay single.
   const [cellEdits, setCellEdits] = useState<Record<1 | 2, Record<string, Record<string, any>>>>({ 1: {}, 2: {} });
@@ -487,8 +487,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   const [, setSchemaTick] = useState(0);
 
   // Load history & saved queries on mount, then follow the shared store: mỗi tab
-  // query is một SqlEditor riêng with bản copy riêng, nên must load lại when tab
-  // khác add/delete (utils/queryHistory phát HISTORY_CHANGED_EVENT sau mỗi lần write).
+  // truy vấn là một SqlEditor riêng với bản copy riêng, nên phải nạp lại khi tab
+  // khác thêm/xoá (utils/queryHistory phát HISTORY_CHANGED_EVENT sau mỗi lần ghi).
   useEffect(() => {
     const reload = () => {
       setHistoryList(loadHistory());
@@ -508,15 +508,15 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     return () => clearTimeout(timer);
   }, [showHistory, splitMode, userEditorHeight, userEditorHeight2, hasResult1, hasResult2]);
 
-  /** returns id row lịch sử to `runRawSql` write kết quả lên đó when run xong. */
+  /** Trả về id dòng lịch sử để `runRawSql` ghi kết quả lên đó khi chạy xong. */
   const addToHistory = (queryText: string): string => {
     const { list, id } = addHistoryEntry(queryText, connKey, dbName, Date.now().toString());
     setHistoryList(list);
     return id;
   };
 
-  // delete đúng phạm vi currently xem, not nhiều hơn.
-  // switch returns key literal, not nội suy key động (i18next must kiểm is fromng key).
+  // Xoá đúng phạm vi đang xem, không nhiều hơn.
+  // switch trả về key literal, KHÔNG nội suy key động (i18next phải kiểm được từng key).
   const clearHistoryLabel = (): string => {
     switch (effectiveScope) {
       case 'db': return t('sqlEditor.clearDbHistory');
@@ -600,7 +600,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     }
   };
 
-  /** "37 ms · 200 row" — skip phần not có (row cũ chưa write kết quả, câu DDL not trả row). */
+  /** "37 ms · 200 dòng" — bỏ qua phần không có (dòng cũ chưa ghi kết quả, câu DDL không trả dòng). */
   const historyMetrics = (item: HistoryEntry): string => {
     const parts: string[] = [];
     if (item.ms !== undefined) parts.push(t('sqlEditor.historyMs', { n: item.ms.toLocaleString(locale) }));
@@ -635,17 +635,17 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     );
   };
 
-  // Số row hiện on tiêu đề tab must khớp danh sách currently hiện (already filter theo kết nối).
+  // Số dòng hiện trên tiêu đề tab phải khớp danh sách đang hiện (đã lọc theo kết nối).
   const historyCount = historyList.filter(inScope).length;
   const savedCount = savedQueries.filter(inScope).length;
 
   const editorRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // sync nội dung ra React state + component cha theo NHỊP (trailing debounce).
-  // Trước đây mỗi character gõ/delete gọi onSqlChange -> App.setTabs -> re-render CẢ app (mọi tab,
-  // kể cả DataGrid) nên giữ Backspace is thấy giật. Nội dung "thật" luôn read from editor
-  // (getPaneSql/getCurrentStatement) nên trễ 150ms at state not ảnh hưatng hành vi.
+  // Đồng bộ nội dung ra React state + component cha theo NHỊP (trailing debounce).
+  // Trước đây mỗi ký tự gõ/xoá gọi onSqlChange -> App.setTabs -> re-render CẢ app (mọi tab,
+  // kể cả DataGrid) nên giữ Backspace là thấy giật. Nội dung "thật" luôn đọc từ editor
+  // (getPaneSql/getCurrentStatement) nên trễ 150ms ở state không ảnh hưởng hành vi.
   const SQL_SYNC_DELAY = 150;
   const sqlSyncRef = useRef<{ timer: any; value: string | null }[]>([
     { timer: null, value: null },
@@ -669,12 +669,12 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     slot.timer = setTimeout(() => flushSqlSync(paneId), SQL_SYNC_DELAY);
   };
 
-  // Giữ callback of cha in ref: cleanup lúc unmount must gọi bản MỚI NHẤT, mà effect
-  // thì chỉ is run 1 lần (deps rỗng) nên not thể read trực tiếp from closure.
+  // Giữ callback của cha trong ref: cleanup lúc unmount phải gọi bản MỚI NHẤT, mà effect
+  // thì chỉ được chạy 1 lần (deps rỗng) nên không thể đọc trực tiếp từ closure.
   const changeCallbacksRef = useRef({ onSqlChange, onSql2Change });
   changeCallbacksRef.current = { onSqlChange, onSql2Change };
 
-  // Rời khỏi component: đẩy nốt nội dung còn treo (khỏi mất chữ vừa gõ when close/đổi tab)
+  // Rời khỏi component: đẩy nốt nội dung còn treo (khỏi mất chữ vừa gõ khi đóng/đổi tab)
   useEffect(() => () => {
     [1, 2].forEach((p) => {
       const slot = sqlSyncRef.current[p - 1];
@@ -768,7 +768,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     editor.onDidChangeCursorSelection(syncCursor);
     syncCursor();
 
-    // Rời khung -> đẩy ngay nội dung còn treo in debounce ra state/cha
+    // Rời khung -> đẩy ngay nội dung còn treo trong debounce ra state/cha
     editor.onDidBlurEditorText(() => {
       flushSqlSync(editorId);
     });
@@ -861,7 +861,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       });
     });
 
-    // Phím tắt (read trực tiếp from editor nên not lo stale state)
+    // Phím tắt (đọc trực tiếp từ editor nên không lo stale state)
     // getTextToRun, not getCurrentStatement: the Run button and the menu item labelled
     // "Ctrl+Enter" both honour the selection, so the key itself must too — otherwise the
     // same advertised shortcut runs something different from the button next to it.
@@ -877,7 +877,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       handleSaveQuery();
     });
 
-    // F2 / Context menu: rename Ký hiệu thông minh (Rename Symbol)
+    // F2 / Context menu: Đổi tên Ký hiệu thông minh (Rename Symbol)
     editor.addAction({
       id: 'trigger-symbol-rename',
       label: 'Rename Symbol',
@@ -889,12 +889,12 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       },
     });
 
-    // Alt+Enter / context menu: Quick Fix for chỗ currently is gạch chân (xem sql/quickFix.ts).
-    // Ctrl+. default of Monaco not dùng is on máy user (chưa rõ vì bàn phím hay vì
-    // bộ gõ) nên gắn phím riêng: Alt+Enter is phím "intention actions" of JetBrains/DataGrip and
-    // not đụng Ctrl+Enter / Ctrl+Shift+Enter vốn already dành for việc run statement. Mục in menu
-    // right click / context menu mới is đường dễ find nhất — một keyboard shortcut not nhìn thấy is coi như not có,
-    // and nó cũng is cách nhanh nhất to phân biệt "phím not tới" with "provider not trả gì".
+    // Alt+Enter / context menu: Quick Fix cho chỗ đang bị gạch chân (xem sql/quickFix.ts).
+    // Ctrl+. mặc định của Monaco không dùng được trên máy người dùng (chưa rõ vì bàn phím hay vì
+    // bộ gõ) nên gắn phím riêng: Alt+Enter là phím "intention actions" của JetBrains/DataGrip và
+    // không đụng Ctrl+Enter / Ctrl+Shift+Enter vốn đã dành cho việc chạy câu lệnh. Mục trong menu
+    // chuột phải mới là đường dễ tìm nhất — một phím tắt không nhìn thấy được coi như không có,
+    // và nó cũng là cách nhanh nhất để phân biệt "phím không tới" với "provider không trả gì".
     editor.addAction({
       id: 'trigger-sql-quick-fix',
       label: tRef.current('sqlEditor.actionQuickFix'),
@@ -906,8 +906,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       },
     });
 
-    // Alt+F12: xem DDL of table ngay tại chỗ, not rời tab (xem sql/peekDefinition.ts).
-    // Tách khỏi F12 vì hai việc khác nhau: liếc cấu trúc vs. open hẳn table ra to xem dữ liệu.
+    // Alt+F12: xem DDL của bảng ngay tại chỗ, không rời tab (xem sql/peekDefinition.ts).
+    // Tách khỏi F12 vì hai việc khác nhau: liếc cấu trúc vs. mở hẳn bảng ra để xem dữ liệu.
     editor.addAction({
       id: 'peek-table-definition',
       label: tRef.current('sqlEditor.actionPeekDefinition'),
@@ -919,13 +919,13 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       },
     });
 
-    // F12 / context menu: open table currently at under con trỏ in tab mới
+    // F12 / context menu: mở bảng đang ở dưới con trỏ trong tab mới
     editor.addAction({
       id: 'open-table-under-cursor',
       label: tRef.current('sqlEditor.actionOpenTable'),
       contextMenuGroupId: 'navigation',
       contextMenuOrder: 1.1,
-      // Ctrl+B is phím "go to declaration" quen thuộc of JetBrains/DataGrip; F12 to dự phòng.
+      // Ctrl+B là phím "go to declaration" quen thuộc của JetBrains/DataGrip; F12 để dự phòng.
       keybindings: [monaco.KeyCode.F12, monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyB],
       run: () => {
         const pos = editor.getPosition();
@@ -934,7 +934,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       }
     });
 
-    // Ctrl/Cmd + Click lên tên table -> open tab table (giống go-to-definition)
+    // Ctrl/Cmd + Click lên tên bảng -> mở tab bảng (giống go-to-definition)
     editor.onMouseDown((e: any) => {
       if (!(e.event?.ctrlKey || e.event?.metaKey)) return;
       if (e.target?.type !== monaco.editor.MouseTargetType.CONTENT_TEXT || !e.target.position) return;
@@ -942,7 +942,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       if (word) void openTableIfExists(word.word, editorId, false);
     });
 
-    // Click mũi tên at lề trái -> run statement bắt đầu tại row đó
+    // Click mũi tên ở lề trái -> chạy câu lệnh bắt đầu tại dòng đó
     editor.onMouseDown((e: any) => {
       if (e.target?.type !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN || !e.target.position) return;
       editor.setPosition(e.target.position);
@@ -950,8 +950,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       if (stmt) executeSql(stmt, editorId);
     });
 
-    // Tô sáng statement under con trỏ — câu mà Ctrl+Enter will run when not bôi đen.
-    // Có vùng bôi thì vùng đó thắng (xem getTextToRun) and chính Monaco already tự tô nó.
+    // Tô sáng câu lệnh dưới con trỏ — câu mà Ctrl+Enter sẽ chạy KHI KHÔNG bôi đen.
+    // Có vùng bôi thì vùng đó thắng (xem getTextToRun) và chính Monaco đã tự tô nó.
     const decorations = editor.createDecorationsCollection([]);
     let highlightTimer: any = null;
     const refreshStatementHighlight = () => {
@@ -959,23 +959,23 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       const pos = editor.getPosition();
       if (!model || !pos) return;
       const text = model.getValue();
-      // Script rất lớn: skip to not tốn CPU mỗi lần gõ
+      // Script rất lớn: bỏ qua để không tốn CPU mỗi lần gõ
       if (text.length > 200000) { decorations.set([]); return; }
-      // Lấy cả danh sách statement lẫn câu under con trỏ in 1 lần mask văn bản
+      // Lấy cả danh sách câu lệnh lẫn câu dưới con trỏ trong 1 lần mask văn bản
       const { statements: stmts, current: stmt } = analyzeStatements(text, model.getOffsetAt(pos));
       if (!stmt) { decorations.set([]); return; }
 
       const from = model.getPositionAt(stmt.start);
       const to = model.getPositionAt(stmt.end);
       const items: any[] = [{
-        // Mũi tên "run câu này" at lề trái, đặt tại row đầu of statement
+        // Mũi tên "chạy câu này" ở lề trái, đặt tại dòng đầu của câu lệnh
         range: new monaco.Range(from.lineNumber, 1, from.lineNumber, 1),
         options: {
           glyphMarginClassName: 'sql-run-glyph',
           glyphMarginHoverMessage: { value: tRef.current('sqlEditor.runThisStatement') },
         },
       }];
-      // Chỉ tô nền/vạch when có nhiều statement — 1 câu unique thì tô cả trang is vô nghĩa
+      // Chỉ tô nền/vạch khi có nhiều câu lệnh — 1 câu duy nhất thì tô cả trang là vô nghĩa
       if (stmts.length > 1) {
         items.push({
           range: new monaco.Range(from.lineNumber, 1, to.lineNumber, model.getLineMaxColumn(to.lineNumber)),
@@ -999,7 +999,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     refreshStatementHighlight();
 
     registerSqlFormatter(dbType);
-    void catalog.getTables(connId); // load nền catalog for autocomplete/hover
+    void catalog.getTables(connId); // nạp nền catalog cho autocomplete/hover
     const cleanupInspection = attachEditorInspection(monaco, editor);
     editor.onDidDispose(() => {
       cleanupInspection();
@@ -1010,8 +1010,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     }, 100);
   };
 
-  // open tab table if `name` đúng is một table/view in DB hiện tại.
-  // `notify` = false for Ctrl+Click (click nhầm ando from key thì im lặng), = true for F12.
+  // Mở tab bảng nếu `name` đúng là một bảng/view trong DB hiện tại.
+  // `notify` = false cho Ctrl+Click (click nhầm vào từ khoá thì im lặng), = true cho F12.
   const openTableIfExists = async (name: string, paneId: 1 | 2, notify = true) => {
     const found = await findTable(name);
     if (!found) {
@@ -1029,7 +1029,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     const textToRun = queryText || (pane === 2 ? sql2 : sql);
     if (!textToRun.trim()) return;
 
-    // mode Chỉ read: chỉ allows statement read (SELECT/SHOW/...)
+    // Chế độ Chỉ đọc: chỉ cho phép câu lệnh đọc (SELECT/SHOW/...)
     if ((readOnly || connReadOnly) && !isReadOnlySql(textToRun)) {
       // Two different switches block writes and they live in different places. Naming the wrong one
       // leaves the user toggling something that changes nothing.
@@ -1039,11 +1039,11 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       return;
     }
 
-    // warning trước when delete sạch dữ liệu. not cần check `readOnly` at đây: when bật Chỉ read,
-    // mọi DELETE/DROP already is chặn at nhánh on nên đoạn này chỉ run when currently allows write.
-    // Đặt TRƯỚC bước hỏi tham số query to cả đường đi qua QueryParamsModal cũng is hỏi.
-    // Safe Mode will hỏi ngay trước when lệnh rời `dbHelper`, and hộp of nó liệt kê đúng những câu
-    // lệnh này kèm cùng nhãn warning. Hỏi add at đây is hai dialog for một lần run.
+    // Cảnh báo trước khi xoá sạch dữ liệu. Không cần kiểm tra `readOnly` ở đây: khi bật Chỉ đọc,
+    // mọi DELETE/DROP đã bị chặn ở nhánh trên nên đoạn này chỉ chạy khi đang cho phép ghi.
+    // Đặt TRƯỚC bước hỏi tham số truy vấn để cả đường đi qua QueryParamsModal cũng được hỏi.
+    // Safe Mode sẽ hỏi ngay trước khi lệnh rời `dbHelper`, và hộp của nó liệt kê đúng những câu
+    // lệnh này kèm cùng nhãn cảnh báo. Hỏi thêm ở đây là hai dialog cho một lần chạy.
     if (!skipUnsafeCheck && !willPromptForSql(connId, textToRun)) {
       const items = findUnsafeStatements(textToRun);
       if (items.length > 0) {
@@ -1077,8 +1077,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     const isPane1 = pane === 1;
     const queryId = `q_${crypto.randomUUID()}`;
 
-    // Bộ đệm edit ô key theo giá trị primary key of bộ kết quả CŨ. run statement mới mà
-    // giữ lại thì các ô đó will bám nhầm ando row khác, nên must delete cùng lúc with kết quả.
+    // Bộ đệm sửa ô khoá theo giá trị khoá chính của bộ kết quả CŨ. Chạy câu lệnh mới mà
+    // giữ lại thì các ô đó sẽ bám nhầm vào dòng khác, nên phải xoá cùng lúc với kết quả.
     discardEdits(isPane1 ? 1 : 2);
 
     if (isPane1) {
@@ -1105,20 +1105,20 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       setColumns2([]);
     }
 
-    // Gom kết quả stream ando acc rồi phản chiếu ra state. in lúc stream chỉ display live
-    // statement đầu tiên (tab 0); các statement sau vẫn is tích lũy and xem is when bấm sang tab.
+    // Gom kết quả stream vào acc rồi phản chiếu ra state. Trong lúc stream chỉ hiển thị live
+    // câu lệnh đầu tiên (tab 0); các câu lệnh sau vẫn được tích lũy và xem được khi bấm sang tab.
     const acc: { query: string; columns: string[]; data: any[]; affected?: number }[] = [];
     let errText: string | null = null;
     let cancelled = false;
     const t0 = performance.now();
-    let tFirst = 0; // thời điểm receive batch dữ liệu đầu tiên (~ execute xong, bắt đầu download)
+    let tFirst = 0; // thời điểm nhận batch dữ liệu đầu tiên (~ thực thi xong, bắt đầu tải)
 
-    // Channel of Tauri send message rời khỏi Rust theo kiểu "bắn rồi quên", nên chúng can
-    // còn xếp row when promise of invoke() already resolve. wait mỗi invoke is tính tổng on một
-    // `acc` chưa đầy -> thanh status báo "0 row" (and exec = transfer, vì `tFirst` chưa
-    // is đặt) in when lưới vẫn currently đổ đầy phía sau. Lệnh Rust luôn send đúng MỘT message
-    // kết thúc ('done' or 'error') trước when return, and channel preserve thứ tự, nên wait
-    // message đó is đủ and not thể treo.
+    // Channel của Tauri gửi message rời khỏi Rust theo kiểu "bắn rồi quên", nên chúng có thể
+    // còn xếp hàng khi promise của invoke() đã resolve. Chờ mỗi invoke là tính tổng trên một
+    // `acc` chưa đầy -> thanh trạng thái báo "0 dòng" (và exec = transfer, vì `tFirst` chưa
+    // được đặt) trong khi lưới vẫn đang đổ đầy phía sau. Lệnh Rust luôn gửi đúng MỘT message
+    // kết thúc ('done' hoặc 'error') trước khi return, và channel giữ nguyên thứ tự, nên chờ
+    // message đó là đủ và không thể treo.
     let markStreamEnd: () => void = () => {};
     const streamEnded = new Promise<void>(resolve => { markStreamEnd = resolve; });
 
@@ -1148,7 +1148,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
           acc[i].data.push(...(msg.rows || []));
           flush();
         } else if (msg.type === 'affected') {
-          // statement write (INSERT/UPDATE/DELETE/DDL): not có column/row, chỉ có số row ảnh hưatng.
+          // Câu lệnh ghi (INSERT/UPDATE/DELETE/DDL): không có cột/dòng, chỉ có số dòng ảnh hưởng.
           if (tFirst === 0) tFirst = performance.now();
           const i = msg.stmtIndex ?? 0;
           acc[i] = { query: msg.query || '', columns: [], data: [], affected: msg.affected ?? 0 };
@@ -1166,7 +1166,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       errText = t('sqlEditor.errQuery', { message: String(e) });
     }
 
-    flush(); // phản chiếu lần cuối (đảm bảo batch cuối cùng already ando state)
+    flush(); // phản chiếu lần cuối (đảm bảo batch cuối cùng đã vào state)
 
     const totalRows = acc.reduce((s, r) => s + r.data.length, 0);
     const affectedTotal = acc.reduce((s, r) => s + (r.affected || 0), 0);
@@ -1183,11 +1183,11 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     setLoad(false);
     setRunId(null);
 
-    // Kết quả lần run về đúng row lịch sử already create lúc bắt đầu: chấm status,
-    // time and số row hiện ngay in ngăn lịch sử.
+    // Kết quả lần chạy về đúng dòng lịch sử đã tạo lúc bắt đầu: chấm trạng thái,
+    // thời gian và số dòng hiện ngay trong ngăn lịch sử.
     setHistoryList(recordHistoryResult(historyId, {
-      // Bấm stop thì not must successful cũng not must error -> to trống, khỏi
-      // gắn dấu tích xanh for một lần run dat dang.
+      // Bấm Dừng thì không phải thành công cũng không phải lỗi -> để trống, khỏi
+      // gắn dấu tích xanh cho một lần chạy dở dang.
       ok: errText ? false : (cancelled ? undefined : true),
       ms: Math.round(execMs),
       rows: totalRows,
@@ -1209,8 +1209,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       if (onRunSuccess) onRunSuccess();
     }
 
-    // statement vừa run có đổi cấu trúc (DDL) or đổi database (USE / search_path) -> clear cache
-    // catalog to autocomplete/hover thấy ngay table/column mới, khỏi must wait TTL.
+    // Câu lệnh vừa chạy có đổi cấu trúc (DDL) hoặc đổi database (USE / search_path) -> xoá cache
+    // catalog để autocomplete/hover thấy ngay bảng/cột mới, khỏi phải chờ TTL.
     if (isSchemaChangingSql(textToRun)) catalog.invalidateCatalog();
   };
 
@@ -1220,8 +1220,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     if (!textToRun.trim()) return;
 
     // EXPLAIN ANALYZE THỰC SỰ execute statement (Postgres: `EXPLAIN (… ANALYZE …)`, MySQL:
-    // `EXPLAIN ANALYZE`) — `EXPLAIN ANALYZE DELETE FROM t` delete dữ liệu thật. Nên nó must đi qua
-    // đúng hai chốt of nút Run. Các variant còn lại chỉ lấy kế hoạch nên not cần.
+    // `EXPLAIN ANALYZE`) — `EXPLAIN ANALYZE DELETE FROM t` xoá dữ liệu thật. Nên nó phải đi qua
+    // đúng hai chốt của nút Run. Các variant còn lại chỉ lấy kế hoạch nên không cần.
     if (variant === 'analyze') {
       if ((readOnly || connReadOnly) && !isReadOnlySql(textToRun)) {
         // Two different switches block writes and they live in different places. Naming the wrong one
@@ -1231,7 +1231,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
         else setErrorMsg2(msg);
         return;
       }
-      // Cùng lý do như at `handleRun`: to Safe Mode hỏi một lần, not xếp hai hộp.
+      // Cùng lý do như ở `handleRun`: để Safe Mode hỏi một lần, không xếp hai hộp.
       if (!skipUnsafeCheck && !willPromptForSql(connId, textToRun)) {
         const items = findUnsafeStatements(textToRun);
         if (items.length > 0) {
@@ -1241,7 +1241,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       }
     }
 
-    // if bật Tham số query and statement có placeholder -> prompt giá trị rồi EXPLAIN bản parameterized.
+    // Nếu bật Tham số Truy vấn và câu lệnh có placeholder -> prompt giá trị rồi EXPLAIN bản parameterized.
     if (queryParamsConfig.enabled) {
       const detectedParams = extractQueryParams(textToRun, queryParamsConfig.patternIndex);
       if (detectedParams.length > 0) {
@@ -1253,7 +1253,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     await runExplainQuery(buildExplainQuery(textToRun, dbType, variant), paneId);
   };
 
-  // run một câu EXPLAIN already build sẵn (can kèm params already bind at tầng driver) and display kế hoạch.
+  // Chạy một câu EXPLAIN đã dựng sẵn (có thể kèm params đã bind ở tầng driver) và hiển thị kế hoạch.
   const runExplainQuery = async (explainQuery: string, paneId: 1 | 2, params?: any[]) => {
     const isPane1 = paneId === 1;
     if (isPane1) {
@@ -1298,8 +1298,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     if (qid) dbHelper.cancelQuery(qid);
   };
 
-  // statement under con trỏ. Dùng statementAt (skip ';' nằm in string/comment)
-  // nên not còn cắt sai at những câu như: WHERE note = 'a;b'
+  // Câu lệnh dưới con trỏ. Dùng statementAt (bỏ qua ';' nằm trong chuỗi/comment)
+  // nên không còn cắt sai ở những câu như: WHERE note = 'a;b'
   const getCurrentStatement = (editor: any): string => {
     if (!editor) return '';
     const model = editor.getModel();
@@ -1313,8 +1313,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     return paneId === 2 ? editorRef2.current : editorRef.current;
   };
 
-  // Luôn lấy nội dung from chính editor (chính xác tuyệt đối), state chỉ is bản dự phòng
-  // vì nó is cập nhật theo nhịp debounce.
+  // Luôn lấy nội dung từ chính editor (chính xác tuyệt đối), state chỉ là bản dự phòng
+  // vì nó được cập nhật theo nhịp debounce.
   const getPaneSql = (paneId: 1 | 2 = focusedEditor) => {
     const value = getPaneEditor(paneId)?.getValue?.();
     return typeof value === 'string' ? value : (paneId === 2 ? sql2 : sql);
@@ -1335,7 +1335,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   const handleRun = (paneId: 1 | 2 = focusedEditor) => {
     const editor = getPaneEditor(paneId);
     if (!editor) return;
-    flushSqlSync(paneId); // run -> chốt luôn nội dung ra state/cha
+    flushSqlSync(paneId); // chạy -> chốt luôn nội dung ra state/cha
     executeSql(getTextToRun(paneId), paneId);
   };
 
@@ -1386,7 +1386,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     } else {
       const val = editor.getValue();
       const formatted = formatSql(val, dbType);
-      // Dùng executeEdits thay setValue to Ctrl+Z hoàn tác is lần ism đẹp này
+      // Dùng executeEdits thay setValue để Ctrl+Z hoàn tác được lần làm đẹp này
       editor.pushUndoStop();
       editor.executeEdits('format-beautify', [{
         range: editor.getModel().getFullModelRange(),
@@ -1487,7 +1487,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     return (
       <div className="sql-toolbar-wrap">
         <div className="sql-pane-action-bar">
-          {/* Khối bên trái: Icon configuration Sliders (Image 2 + Image 3) & position con trỏ (line X, column Y) */}
+          {/* Khối bên trái: Icon Cấu hình Sliders (Image 2 + Image 3) & Vị trí con trỏ (line X, column Y) */}
           <div className="sql-toolbar-left">
             <div className="gp-popover-wrap">
               <button
@@ -1579,9 +1579,9 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
             </span>
           </div>
 
-          {/* Khối bên must: Nút No limit + cụm nút Format, Run, [...] */}
+          {/* Khối bên phải: Nút No limit + cụm nút Format, Run, [...] */}
           <div className="sql-toolbar-right">
-            {/* Nút No limit / limit câu query */}
+            {/* Nút No limit / Giới hạn câu truy vấn */}
             <div style={{ position: 'relative' }}>
               <button
                 className="btn btn-secondary"
@@ -1639,7 +1639,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
               )}
             </div>
 
-            {/* Menu thao tác phụ [...] gom toàn bộ Tùy select Param, Chia khung, History, Copy, Paste, Clear */}
+            {/* Menu thao tác phụ [...] gom toàn bộ Tùy chọn Param, Chia khung, History, Copy, Paste, Clear */}
             <div style={{ position: 'relative' }}>
               <button
                 className="btn btn-secondary"
@@ -1794,7 +1794,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
               <span>Snippets</span>
             </button>
 
-            {/* Split button: run SQL / Tùy select run at GÓC NGOÀI CÙNG BÊN must */}
+            {/* Split button: Chạy SQL / Tùy chọn chạy ở GÓC NGOÀI CÙNG BÊN PHẢI */}
             <div style={{ position: 'relative', display: 'flex' }}>
               <button
                 className="btn btn-primary btn-join-l"
@@ -1898,7 +1898,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
               )}
             </div>
 
-            {/* Nút stop Query when currently execute */}
+            {/* Nút Dừng Query khi đang thực thi */}
             {(paneId === 1 ? loading : loading2) && (
               <button
                 className="btn btn-secondary"
@@ -1913,7 +1913,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
           </div>
         </div>
 
-        {/* Đường kẻ kéo resizer (isDraggingResizer) nằm at ĐƯỜNG KẺ under giữa action bar and kết quả */}
+        {/* Đường kẻ kéo resizer (isDraggingResizer) nằm ở ĐƯỜNG KẺ DƯỚI giữa action bar và kết quả */}
         <div
           onMouseDown={(e) => handleInnerResizerMouseDown(e, paneId)}
           style={{
@@ -1933,7 +1933,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   };
 
   const handleTabChange = (index: number, paneId: 1 | 2 = 1) => {
-    // Mỗi tab kết quả is một statement khác, can on table khác — bộ đệm edit ô not
+    // Mỗi tab kết quả là một câu lệnh khác, có thể trên bảng khác — bộ đệm sửa ô không
     // mang sang is.
     discardEdits(paneId);
     if (paneId === 1) {
@@ -2054,18 +2054,18 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     }
   };
 
-  /** Nhảy tới row cha / table liên quan when click ando ô Foreign Key (FK) */
+  /** Nhảy tới dòng cha / bảng liên quan khi click vào ô Foreign Key (FK) */
   const handleFkClick = async (colName: string, cellVal: any, pTargetTable?: string, _paneId: 1 | 2 = 1) => {
     if (cellVal === null || cellVal === undefined || String(cellVal).trim() === '') return;
 
     let targetTable = '';
     let targetCol = colName;
 
-    // 1. check in catalog foreign keys of table hiện tại
+    // 1. Kiểm tra trong catalog foreign keys của bảng hiện tại
     if (pTargetTable) {
       const schema = catalog.getCachedSchema(connId, pTargetTable) || await catalog.getSchema(connId, pTargetTable);
       if (schema && schema.foreignKeys) {
-        // Tên trường must khớp JSON of get_full_catalog: column / refTable / refColumn
+        // Tên trường phải khớp JSON của get_full_catalog: column / refTable / refColumn
         // (xem SchemaInfo in dbHelper.ts and json! at database.rs).
         const fk = schema.foreignKeys.find(
           (f) => (f.column || '').toLowerCase() === colName.toLowerCase()
@@ -2077,7 +2077,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       }
     }
 
-    // 2. Dự phòng theo quy ước đặt tên (vd: language_id -> table language, column language_id)
+    // 2. Dự phòng theo quy ước đặt tên (vd: language_id -> bảng language, cột language_id)
     if (!targetTable) {
       if (colName.toLowerCase().endsWith('_id')) {
         targetTable = colName.substring(0, colName.length - 3);
@@ -2086,7 +2086,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       }
     }
 
-    // 3. if chưa biết tên column đích, check schema table đích to dùng đúng tên column or PK
+    // 3. Nếu chưa biết tên cột đích, kiểm tra schema bảng đích để dùng đúng tên cột hoặc PK
     if (targetTable) {
       const targetSchema = catalog.getCachedSchema(connId, targetTable) || await catalog.getSchema(connId, targetTable);
       if (targetSchema && targetSchema.columns && targetSchema.columns.length > 0) {
@@ -2100,8 +2100,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       }
     }
 
-    // open tab xem dữ liệu table liên quan and áp bộ filter (WHERE targetCol = cellVal)
-    // thay vì write đè statement SQL hiện tại.
+    // Mở tab xem dữ liệu bảng liên quan và áp bộ lọc (WHERE targetCol = cellVal)
+    // thay vì ghi đè câu lệnh SQL hiện tại.
     window.dispatchEvent(new CustomEvent('open-table-tab', {
       detail: {
         table: targetTable,
@@ -2111,7 +2111,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     }));
   };
 
-  // ─── edit trực tiếp on table kết quả ───────────────────────────────────────────────
+  // ─── Sửa trực tiếp trên bảng kết quả ───────────────────────────────────────────────
 
   /** Editability of the result tab currently shown in a pane. Pure — safe to call in render. */
   const editabilityOf = (query: string, cols: string[]): ResultEditability =>
@@ -2159,7 +2159,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     setCellEdits({ 1: {}, 2: {} });
   }, [readOnly]);
 
-  // switch returns key literal, not nội suy key động (i18next must kiểm is fromng key).
+  // switch trả về key literal, KHÔNG nội suy key động (i18next phải kiểm được từng key).
   const notEditableLabel = (reason: NotEditableReason, table?: string): string => {
     const v = { table: table || '' };
     switch (reason) {
@@ -2330,7 +2330,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
             {pAllResults.length > 0 ? (
               pAllResults.map((resItem, idx) => {
                 const firstWord = resItem.query.trim().split(/\s+/)[0].toUpperCase();
-                // Hậu tố đếm: câu write hiện "✓N" (row ảnh hưatng), câu read hiện "(N)" (số row returns).
+                // Hậu tố đếm: câu ghi hiện "✓N" (dòng ảnh hưởng), câu đọc hiện "(N)" (số dòng trả về).
                 const countSuffix = resItem.affected !== undefined && resItem.affected !== null
                   ? ` ✓${Number(resItem.affected).toLocaleString(locale)}`
                   : ` (${(resItem.data?.length || 0).toLocaleString(locale)})`;
@@ -2497,9 +2497,9 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                             <span style={{ fontSize: '11px', opacity: (paneId === 1 ? autoFitColsPane1 : autoFitColsPane2) ? 1 : 0.65, display: 'inline-block', color: (paneId === 1 ? autoFitColsPane1 : autoFitColsPane2) ? 'var(--win-accent)' : undefined }}>⇄</span>
                           </th>
                         )}
-                        {/* key theo position, not theo tên: `SELECT *` qua nhiều JOIN returns
-                            trùng tên column (film_id có at film/film_actor/inventory) nên tên column
-                            not must key unique — React will warning and can nhân đôi/bỏ ô. */}
+                        {/* key theo VỊ TRÍ, không theo tên: `SELECT *` qua nhiều JOIN trả về
+                            trùng tên cột (film_id có ở film/film_actor/inventory) nên tên cột
+                            không phải khoá duy nhất — React sẽ cảnh báo và có thể nhân đôi/bỏ ô. */}
                         {pColumns.map((col, ci) => {
                           const sampleVal = pResults[0]?.[col];
                           const isNum = typeof sampleVal === 'number' || (sampleVal !== null && sampleVal !== undefined && !isNaN(Number(sampleVal)) && String(sampleVal).trim() !== '') || col.toLowerCase().endsWith('_id') || col.toLowerCase().includes('year');
@@ -2539,8 +2539,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                             </td>
                           )}
                           {pColumns.map((col, ci) => {
-                            // Buộc must key theo GIÁ TRỊ primary key chứ not theo chỉ số row:
-                            // lưới phân trang phía client nên chỉ số chỉ đúng in trang hiện tại.
+                            // Buộc phải khoá theo GIÁ TRỊ khoá chính chứ không theo chỉ số dòng:
+                            // lưới phân trang phía client nên chỉ số chỉ đúng trong trang hiện tại.
                             const rowKey = pTarget ? String(row[pTarget.primaryKey]) : '';
                             const edited = pTarget ? pEdits[rowKey]?.[col] : undefined;
                             const isDirty = edited !== undefined;
@@ -2685,7 +2685,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
 
         {!pErrorMsg && (
           <div className="grid-pagination" style={{ borderTop: '1px solid var(--win-border-light, rgba(229,231,235,0.4))', background: 'var(--win-bg-window)', flexShrink: 0, padding: '2px 8px', fontSize: '11px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '26px' }}>
-            {/* Trái: Thông báo execute / Kết quả */}
+            {/* Trái: Thông báo thực thi / Kết quả */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, marginRight: '12px' }}>
               {editMsg && editMsg.pane === paneId ? (
                 <>
@@ -2713,7 +2713,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
               )}
             </div>
 
-            {/* must: Cụm điều whenển phân trang & Xuất dữ liệu */}
+            {/* Phải: Cụm điều khiển phân trang & Xuất dữ liệu */}
             {pResults.length > 0 && (
               <div className="pagination-controls" style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
                 <span style={{ fontSize: '11px', color: 'var(--win-text-secondary)', marginRight: '4px' }}>
@@ -2769,7 +2769,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
 
                 <div style={{ width: '1px', height: '12px', background: 'var(--win-border)', margin: '0 4px' }} />
 
-                {/* Nút Xuất/Sao chép dữ liệu (Export) gom 1 nút unique at phía under */}
+                {/* Nút Xuất/Sao chép dữ liệu (Export) gom 1 nút duy nhất ở phía dưới */}
                 <div style={{ position: 'relative', display: 'inline-block' }}>
                   <button
                     className="btn btn-secondary"
@@ -3030,9 +3030,9 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
               value={historySearch}
               onChange={(e) => setHistorySearch(e.target.value)}
             />
-            {/* Phạm vi: database currently dùng (default), cả máy chủ, hay mọi kết nối.
-                Câu viết on DB dev thường cần run lại on prod, nên must xem is
-                cả of kết nối khác — chỉ is not trộn sẵn ando default. */}
+            {/* Phạm vi: database đang dùng (mặc định), cả máy chủ, hay mọi kết nối.
+                Câu viết trên DB dev thường cần chạy lại trên prod, nên phải xem được
+                cả của kết nối khác — chỉ là không trộn sẵn vào mặc định. */}
             {!!connKey && (
               <div style={{ display: 'flex', gap: '4px', marginTop: '6px' }}>
                 {SCOPE_OPTIONS.map(({ scope, labelKey, titleKey }) => (
@@ -3086,13 +3086,13 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                           >
                             <div className="sql-history-item-meta">
                               <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                {/* Kết quả lần run. row cũ (and row currently run dat) not có
-                                    item.ok -> not hiện gì, not giả vờ is successful. */}
+                                {/* Kết quả lần chạy. Dòng cũ (và dòng đang chạy dở) không có
+                                    item.ok -> không hiện gì, không giả vờ là thành công. */}
                                 {item.ok === true && <CheckCircle2 size={11} style={{ color: 'var(--st-ok)', flexShrink: 0 }} />}
                                 {item.ok === false && <AlertTriangle size={11} style={{ color: 'var(--st-danger)', flexShrink: 0 }} />}
                                 {timeStr}
-                                {/* run on DB nào: chỉ cần when currently xem nhiều kết nối.
-                                    row write trước when có tính năng này thì not có item.db. */}
+                                {/* Chạy trên DB nào: chỉ cần khi đang xem nhiều kết nối.
+                                    Dòng ghi trước khi có tính năng này thì không có item.db. */}
                                 {effectiveScope !== 'db' && item.db && (
                                   <span style={{ opacity: 0.7 }}>· {item.db}</span>
                                 )}
@@ -3270,8 +3270,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
           params={paramPromptData.params}
           sqlPreview={paramPromptData.originalSql}
           onSubmit={(valuesMap) => {
-            // with EXPLAIN: bọc EXPLAIN quanh câu gốc trước rồi mới đổi placeholder -> native + values.
-            // with run thường: đổi trực tiếp câu gốc. Cả hai đều bind at tầng driver (not nội suy -> chống SQL injection).
+            // Với EXPLAIN: bọc EXPLAIN quanh câu gốc trước rồi mới đổi placeholder -> native + values.
+            // Với chạy thường: đổi trực tiếp câu gốc. Cả hai đều bind ở tầng driver (không nội suy -> chống SQL injection).
             const p = paramPromptData.pane;
             const isExplain = paramPromptData.action === 'explain';
             const srcSql = isExplain
@@ -3294,8 +3294,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
         />
       )}
 
-      {/* warning DELETE thiếu WHERE / DROP TABLE. Liệt kê nguyên văn câu vi phạm — hữu ích hơn
-          tên table already tách, vì script nhiều statement thì user cần biết CHÍNH XÁC câu nào. */}
+      {/* Cảnh báo DELETE thiếu WHERE / DROP TABLE. Liệt kê nguyên văn câu vi phạm — hữu ích hơn
+          tên bảng đã tách, vì script nhiều câu lệnh thì người dùng cần biết CHÍNH XÁC câu nào. */}
       {unsafePrompt && (
         <ConfirmDialog
           open
@@ -3354,7 +3354,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
         />
       )}
 
-      {/* ─── preview SQL trước when write các ô already edit (giống DataGrid) ─── */}
+      {/* ─── Xem trước SQL trước khi ghi các ô đã sửa (giống DataGrid) ─── */}
       {editCommit && (
         <Modal
           title={t('sqlEditor.editPreviewTitle', { n: editCommit.sqls.length })}

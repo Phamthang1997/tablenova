@@ -15,19 +15,19 @@ import { openInFileManager } from '../utils/fileSave';
 import { ProgressBar } from './ProgressBar';
 import { Modal, ModalBody, ModalFooter } from './Modal';
 
-/** Cùng width with `.jobs-pop` in index.css — dùng to neo popover for khỏi tràn màn hình. */
+/** Cùng chiều rộng với `.jobs-pop` trong index.css — dùng để neo popover cho khỏi tràn màn hình. */
 const POP_WIDTH = 380;
 
 /**
- * Việc run nền: một nút **chuông** on title bar, danh sách nằm in popover **neo ngay under
- * nút** — not must hộp thoại giữa màn hình. Một việc currently run nền is thông báo, not must một
- * thao tác cần cả màn hình; and open nó ra not is che thứ user currently ism.
+ * Việc chạy nền: một nút **chuông** trên thanh tiêu đề, danh sách nằm trong popover **neo ngay dưới
+ * nút** — không phải hộp thoại giữa màn hình. Một việc đang chạy nền là thông báo, không phải một
+ * thao tác cần cả màn hình; và mở nó ra không được che thứ người dùng đang làm.
  *
- * Cách neo (`top`/`left` + portal + backdrop) lấy đúng theo `SafeModeControl`, popover kia of thanh
- * tiêu đề: `right` + `position: fixed` ism lớp blur is lệch khỏi nội dung of chính nó.
+ * Cách neo (`top`/`left` + portal + backdrop) lấy đúng theo `SafeModeControl`, popover kia của thanh
+ * tiêu đề: `right` + `position: fixed` làm lớp blur bị lệch khỏi nội dung của chính nó.
  *
- * Component này **not** giữ tiến độ: nó read from `utils/jobs.ts` qua `useSyncExternalStore`, nên
- * close popover (hay unmount cả nút) not ism mất job. Đó is toàn bộ mục đích of module kia.
+ * Component này **không** giữ tiến độ: nó đọc từ `utils/jobs.ts` qua `useSyncExternalStore`, nên
+ * đóng popover (hay unmount cả nút) không làm mất job. Đó là toàn bộ mục đích của module kia.
  */
 export const JobsTray: React.FC = () => {
   const { t } = useTranslation();
@@ -39,8 +39,8 @@ export const JobsTray: React.FC = () => {
   const active = jobs.filter((j) => j.state === 'running' || j.state === 'queued');
   const finished = jobs.filter((j) => j.state !== 'running' && j.state !== 'queued');
 
-  // close app when job currently run = một bản restore load is một nửa, not resume is. Hỏi trước.
-  // Blocker chứ not must listener riêng — xem `closeGuard.ts`.
+  // Đóng app khi job đang chạy = một bản restore nạp được một nửa, không resume được. Hỏi trước.
+  // Blocker chứ không phải listener riêng — xem `closeGuard.ts`.
   useEffect(() => registerCloseBlocker(CLOSE_PRIORITY_JOBS, () => {
     if (activeJobs().length === 0) return false;
     setAskOnClose(true);
@@ -56,7 +56,7 @@ export const JobsTray: React.FC = () => {
     return () => document.removeEventListener('keydown', onKey);
   }, [anchor]);
 
-  // Chưa fromng có job nào thì not chiếm chỗ on title bar.
+  // Chưa từng có job nào thì không chiếm chỗ trên thanh tiêu đề.
   if (jobs.length === 0) return null;
 
   const failed = finished.some((j) => j.state === 'error');
@@ -66,7 +66,7 @@ export const JobsTray: React.FC = () => {
       ? t('jobs.trayFailed')
       : t('jobs.trayIdle');
 
-  // Neo must theo nút rồi kẹp lại, to nút sát mép nào cũng thấy trọn popover.
+  // Neo phải theo nút rồi kẹp lại, để nút sát mép nào cũng thấy trọn popover.
   const open = () => {
     const rect = btnRef.current?.getBoundingClientRect();
     if (!rect) return;
@@ -76,8 +76,8 @@ export const JobsTray: React.FC = () => {
 
   return (
     <>
-      {/* Bọc `.tb-capsule` như `TxControl`: lớp đó giữ height 34px and canh giữa of thanh tiêu
-          đề, `.tb-capsule-btn` một mình chỉ có dáng of cái nút. */}
+      {/* Bọc `.tb-capsule` như `TxControl`: lớp đó giữ chiều cao 34px và canh giữa của thanh tiêu
+          đề, `.tb-capsule-btn` một mình chỉ có dáng của cái nút. */}
       <div className="tb-capsule" style={{ flexShrink: 0 }}>
         <button
           ref={btnRef}
@@ -86,8 +86,8 @@ export const JobsTray: React.FC = () => {
           title={capsuleTitle}
           aria-label={capsuleTitle}
         >
-          {/* Chuông is biểu tượng of thông báo; số việc currently run is cái badge cạnh nó — cùng
-              cách read with mọi khay thông báo, not must một icon đổi hình theo status. */}
+          {/* Chuông là biểu tượng của thông báo; số việc đang chạy là cái badge cạnh nó — cùng
+              cách đọc với mọi khay thông báo, không phải một icon đổi hình theo trạng thái. */}
           <Bell size={13} />
           {active.length > 0 && <span className="jobs-badge">{active.length}</span>}
         </button>
@@ -96,11 +96,11 @@ export const JobsTray: React.FC = () => {
       {anchor &&
         createPortal(
           <>
-            {/* `.jobs-backdrop`/`.jobs-pop` dùng CHUNG rule with `.sm-backdrop`/`.sm-pop` of Safe
-                Mode (một selector ghép in index.css, not must bản sao) — dáng popover of thanh
-                tiêu đề edit một chỗ is cả hai đổi theo. `.sm-pop-title` is row tiêu đề of dáng đó. */}
+            {/* `.jobs-backdrop`/`.jobs-pop` dùng CHUNG rule với `.sm-backdrop`/`.sm-pop` của Safe
+                Mode (một selector ghép trong index.css, không phải bản sao) — dáng popover của thanh
+                tiêu đề sửa một chỗ là cả hai đổi theo. `.sm-pop-title` là hàng tiêu đề của dáng đó. */}
             <div className="jobs-backdrop" onClick={() => setAnchor(null)} />
-            {/* Chỉ `top`/`left` is inline — đó is giá trị đo lúc render; dáng nằm at .jobs-pop. */}
+            {/* Chỉ `top`/`left` là inline — đó là giá trị đo lúc render; dáng nằm ở .jobs-pop. */}
             <div className="jobs-pop" style={{ top: anchor.top, left: anchor.left }} role="dialog">
               <div className="jobs-pop-head">
                 <div className="sm-pop-title">{t('jobs.panelTitle')}</div>
@@ -139,7 +139,7 @@ export const JobsTray: React.FC = () => {
               className="btn btn-primary"
               onClick={() => {
                 setAskOnClose(false);
-                // close thẳng: đi qua `close()` lần nữa is hỏi lại đúng câu vừa trả lời.
+                // Đóng thẳng: đi qua `close()` lần nữa là hỏi lại đúng câu vừa trả lời.
                 forceClose();
               }}
             >
@@ -165,8 +165,8 @@ const JobRow: React.FC<{ job: JobRecord }> = ({ job }) => {
   const running = job.state === 'running';
   const queued = job.state === 'queued';
 
-  // Nhãn status is key literal tra in table on, not must key ghép string — `t()` is
-  // kiểm kiểu theo cây key of `en.ts`.
+  // Nhãn trạng thái là key literal tra trong bảng trên, không phải key ghép chuỗi — `t()` được
+  // kiểm kiểu theo cây key của `en.ts`.
   const stateLabel = t(STATE_KEY[job.state] as 'jobs.stateQueued');
 
   const icon = running ? (
@@ -192,7 +192,7 @@ const JobRow: React.FC<{ job: JobRecord }> = ({ job }) => {
           </span>
         </div>
 
-        {/* currently wait vì có job khác currently write ando cùng database — nói ra, đừng to nó im at 0%. */}
+        {/* Đang chờ vì có job khác đang ghi vào cùng database — nói ra, đừng để nó im ở 0%. */}
         {queued && <div className="jobs-row-note">{t('jobs.waitingTurn')}</div>}
 
         {running && job.progress && (
@@ -224,9 +224,9 @@ const JobRow: React.FC<{ job: JobRecord }> = ({ job }) => {
           <button
             type="button"
             className="btn btn-secondary"
-            // open THƯ MỤC, not open tệp: `openInFileManager` gọi `open_url`, nên đưa đường dẫn tệp
-            // ando is hệ điều hành open tệp .sql bằng ứng dụng default — not must điều người ta
-            // muốn when bấm "open thư mục". Đường dẫn tệp đi ando tooltip.
+            // Mở THƯ MỤC, không mở tệp: `openInFileManager` gọi `open_url`, nên đưa đường dẫn tệp
+            // vào là hệ điều hành mở tệp .sql bằng ứng dụng mặc định — không phải điều người ta
+            // muốn khi bấm "mở thư mục". Đường dẫn tệp đi vào tooltip.
             title={job.result.path || job.result.dir}
             onClick={() => void openInFileManager(job.result!.dir!)}
           >

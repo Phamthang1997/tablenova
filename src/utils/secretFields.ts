@@ -1,10 +1,10 @@
-// Ranh giới giữa phần configuration kết nối is phép nằm in localStorage and phần bí mật
-// bắt buộc must nằm in OS secure keystore (xem src-tauri/src/secret_store.rs).
+// Ranh giới giữa phần cấu hình kết nối được phép nằm trong localStorage và phần bí mật
+// bắt buộc phải nằm trong kho bảo mật của HĐH (xem src-tauri/src/secret_store.rs).
 //
-// localStorage of webview is file thường on đĩa, not mã hoá — mật khẩu DB hay private
-// key SSH to at đó thì bất kỳ tiến trình nào run under cùng user cũng read is.
+// localStorage của webview là file thường trên đĩa, không mã hoá — mật khẩu DB hay private
+// key SSH để ở đó thì bất kỳ tiến trình nào chạy dưới cùng user cũng đọc được.
 
-/** Các key in `profile.config` is coi is bí mật, not bao giờ write xuống localStorage. */
+/** Các khoá trong `profile.config` được coi là bí mật, không bao giờ ghi xuống localStorage. */
 export const SECRET_FIELDS = [
   'password',
   'sshPassword',
@@ -19,12 +19,12 @@ export type SecretMap = Record<string, string>;
 
 const SECRET_SET: ReadonlySet<string> = new Set(SECRET_FIELDS);
 
-// Hai nửa of config is lấy bằng hai hàm ĐỘC LẬP, cố ý not dùng chung một hàm
-// returns `{ safe, secrets }`. Gộp lại thì phân tích luồng dữ liệu (CodeQL) not tách
-// is hai nửa: nửa `safe` is coi is nhạy cảm lây from nửa kia, and mọi thứ chạm ando
-// profile sau đó — kể cả `profile.id` — is báo is write bí mật ra localStorage.
+// Hai nửa của config được lấy bằng hai hàm ĐỘC LẬP, cố ý không dùng chung một hàm
+// trả về `{ safe, secrets }`. Gộp lại thì phân tích luồng dữ liệu (CodeQL) không tách
+// được hai nửa: nửa `safe` bị coi là nhạy cảm lây từ nửa kia, và mọi thứ chạm vào
+// profile sau đó — kể cả `profile.id` — bị báo là ghi bí mật ra localStorage.
 
-/** Phần config is phép write xuống localStorage: mọi key trừ key bí mật. */
+/** Phần config được phép ghi xuống localStorage: mọi khoá trừ khoá bí mật. */
 export function publicConfig(config: any): any {
   if (!config || typeof config !== 'object') return config;
 
@@ -36,8 +36,8 @@ export function publicConfig(config: any): any {
 }
 
 /**
- * Phần bí mật of config, to đẩy sang OS secure keystore.
- * Bí mật rỗng is skip to not create mục thừa in kho.
+ * Phần bí mật của config, để đẩy sang kho bảo mật của HĐH.
+ * Bí mật rỗng bị bỏ qua để không tạo mục thừa trong kho.
  */
 export function pickSecrets(config: any): SecretMap {
   const secrets: SecretMap = {};
@@ -55,13 +55,13 @@ export function mergeSecrets(safe: any, secrets: SecretMap): any {
   return { ...safe, ...secrets };
 }
 
-/** Config có còn bí mật nằm thẳng in đó not (profile cũ, or file import). */
+/** Config có còn bí mật nằm thẳng trong đó không (profile cũ, hoặc file import). */
 export function hasInlineSecrets(config: any): boolean {
   if (!config || typeof config !== 'object') return false;
   return SECRET_FIELDS.some((f) => typeof config[f] === 'string' && config[f] !== '');
 }
 
-/** Id profile mới — dùng crypto.randomUUID() to not trùng and not đoán trước is. */
+/** Id profile mới — dùng crypto.randomUUID() để không trùng và không đoán trước được. */
 export function newProfileId(): string {
   return 'profile_' + crypto.randomUUID();
 }

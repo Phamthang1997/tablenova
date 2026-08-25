@@ -150,7 +150,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
     }
 
     try {
-      // Chỉ send các index/foreign key already nhập đủ thông tin to tránh sinh SQL error
+      // Chỉ gửi các index/khóa ngoại đã nhập đủ thông tin để tránh sinh SQL lỗi
       const validIdxs = idxs.filter(i => i.name.trim() && i.columns.trim());
       const validFks = fks.filter(f => f.column.trim() && f.refTable.trim() && f.refColumn.trim());
       const res = await dbHelper.createTable(name, cols, validIdxs, validFks);

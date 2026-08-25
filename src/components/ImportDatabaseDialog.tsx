@@ -23,30 +23,30 @@ import { Modal, ModalFooter } from './Modal';
 
 const ACCEPT = '.sql,.gz,.dump';
 
-// Các mức chặn under đây chỉ to tệp dump khổng lồ not treo UI; dump thường will hiện đủ.
-/** Số statement tối đa is parse thành dạng trực quan (table/column/row). */
+// Các mức chặn dưới đây chỉ để tệp dump khổng lồ không treo UI; dump thường sẽ hiện đủ.
+/** Số câu lệnh tối đa được parse thành dạng trực quan (bảng/cột/dòng). */
 const MAX_STATEMENTS = 50000;
-/** Số statement tối đa display at dạng SQL. */
+/** Số câu lệnh tối đa hiển thị ở dạng SQL. */
 const PREVIEW_LIMIT = 2000;
-/** Số row display for mỗi table at tab Dữ liệu (dạng trực quan). */
+/** Số dòng hiển thị cho mỗi bảng ở tab Dữ liệu (dạng trực quan). */
 const PREVIEW_ROWS = 20;
 
-/** row dữ liệu of một table: chỉ giữ PREVIEW_ROWS row đầu, `total` is tổng thật. */
+/** Dòng dữ liệu của một bảng: chỉ giữ PREVIEW_ROWS dòng đầu, `total` là tổng thật. */
 interface TablePreviewRows extends DumpRows {
   total: number;
 }
 
 /**
- * Một statement of dump cùng mọi thứ suy ra is from nó — tính sẵn một lần for mỗi tệp, to phần
- * đếm/filter theo table currently select not must quét lại nội dung tệp.
+ * Một câu lệnh của dump cùng mọi thứ suy ra được từ nó — tính sẵn một lần cho mỗi tệp, để phần
+ * đếm/lọc theo bảng đang chọn không phải quét lại nội dung tệp.
  */
 interface PreviewStmt {
-  /** Text thô, còn nguyên comment đầu câu (dạng xem SQL display đúng cái này). */
+  /** Text thô, còn nguyên comment đầu câu (dạng xem SQL hiển thị đúng cái này). */
   text: string;
-  /** table scan is in statement; null = câu not nhắc table nào (SET/USE...). */
+  /** Bảng dò được trong câu lệnh; null = câu không nhắc bảng nào (SET/USE...). */
   table: string | null;
   kind: 'structure' | 'data' | 'other';
-  /** Backend skip câu này: LOCK/UNLOCK TABLES and các lệnh transaction of dump. */
+  /** Backend bỏ qua câu này: LOCK/UNLOCK TABLES và các lệnh transaction của dump. */
   skipped: boolean;
   /** Statement contains only comments after leading comment removal. */
   commentOnly: boolean;
@@ -62,17 +62,17 @@ const labelStyle: React.CSSProperties = {
   marginBottom: '6px',
 };
 
-// Bỏ dấu to find table not phân biệt dấu (giống ô search at Sidebar).
+// Bỏ dấu để tìm bảng không phân biệt dấu (giống ô tìm kiếm ở Sidebar).
 const COMBINING_MARKS = new RegExp('[\\u0300-\\u036f]', 'g');
 const removeAccents = (s: string) =>
   s.normalize('NFD').replace(COMBINING_MARKS, '').toLowerCase();
 
-/** Rút gọn một statement dài to preview not is tràn. */
+/** Rút gọn một câu lệnh dài để preview không bị tràn. */
 function clip(stmt: string, max = 600): string {
   return stmt.length > max ? stmt.slice(0, max) + ' …' : stmt;
 }
 
-/** Giải nén .sql.gz bằng DecompressionStream of WebView (Chromium) -> text SQL. */
+/** Giải nén .sql.gz bằng DecompressionStream của WebView (Chromium) -> text SQL. */
 async function gunzipToText(t: TFunction, file: File): Promise<string> {
   const DS = (globalThis as any).DecompressionStream;
   if (!DS) throw new Error(t('importDialog.errNoGzip'));
@@ -106,19 +106,19 @@ function formatSize(bytes: number): string {
 interface ImportDatabaseDialogProps {
   open: boolean;
   onClose: () => void;
-  /** Database currently kết nối (default to nhập ando if tệp not nói database nào). */
+  /** Database đang kết nối (mặc định để nhập vào nếu tệp không nói database nào). */
   currentDb?: string;
-  /** false with SQLite: not có khái niệm database nên hide phần select database đích. */
+  /** false với SQLite: không có khái niệm database nên ẩn phần chọn database đích. */
   canManageDatabases?: boolean;
-  /** Dialect to build lệnh DROP đúng cú pháp when write đè. */
+  /** Dialect để dựng lệnh DROP đúng cú pháp khi ghi đè. */
   dbType?: string;
   /**
-   * returns true if nhập xong (popup tự close), false to giữ popup lại.
-   * targetDb: database đích — rỗng nghĩa is dùng database currently kết nối.
+   * Trả về true nếu nhập xong (popup tự đóng), false để giữ popup lại.
+   * targetDb: database đích — rỗng nghĩa là dùng database đang kết nối.
    *
-   * not có tham số tiến độ: lần restore run như job nền (utils/jobs.ts), nên nó báo tiến độ
-   * ando JobsTray. Popup này close ngay when job is xếp, and một callback ando component already unmount
-   * chỉ is bản sao thứ hai of phần tính ETA already nằm at utils/restoreProgress.ts.
+   * KHÔNG có tham số tiến độ: lần restore chạy như job nền (utils/jobs.ts), nên nó báo tiến độ
+   * vào JobsTray. Popup này đóng ngay khi job được xếp, và một callback vào component đã unmount
+   * chỉ là bản sao thứ hai của phần tính ETA đã nằm ở utils/restoreProgress.ts.
    */
   onSubmit: (
     sqlText: string,
@@ -129,8 +129,8 @@ interface ImportDatabaseDialogProps {
 }
 
 /**
- * Popup "Nhập database" — layout 2 column giống popup Xuất: trái is tệp dump + thông tin,
- * must is table list scan is in tệp to select nhập một phần.
+ * Popup "Nhập Cơ sở dữ liệu" — layout 2 cột giống popup Xuất: trái là tệp dump + thông tin,
+ * phải là danh sách bảng dò được trong tệp để chọn nhập một phần.
  */
 export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
   open,
@@ -153,19 +153,19 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<ProgressState | null>(null);
-  // Database đích: lấy from tệp if tệp có `USE`/`CREATE DATABASE`, not thì user tự nhập.
+  // Database đích: lấy từ tệp nếu tệp có `USE`/`CREATE DATABASE`, không thì người dùng tự nhập.
   const [targetDb, setTargetDb] = useState('');
   const [dbFromFile, setDbFromFile] = useState<string | null>(null);
-  // delete đối tượng trùng tên trước when run dump (if not will error "already exists")
+  // Xoá đối tượng trùng tên trước khi chạy dump (nếu không sẽ lỗi "already exists")
   const [overwrite, setOverwrite] = useState(false);
-  // skip statement error thay vì rollback toàn bộ. foreign key thì restore vốn already tắt sẵn rồi —
-  // thứ ism hỏng cả lần nhập is error not tắt is (view read table not có in tệp…).
+  // Bỏ qua câu lệnh lỗi thay vì rollback toàn bộ. Khoá ngoại thì restore vốn đã tắt sẵn rồi —
+  // thứ làm hỏng cả lần nhập là lỗi không tắt được (view đọc bảng không có trong tệp…).
   const [continueOnError, setContinueOnError] = useState(false);
-  // currently hiện bản tóm tắt confirm trước when run
+  // Đang hiện bản tóm tắt xác nhận trước khi chạy
   const [confirming, setConfirming] = useState(false);
   const [tab, setTab] = useState<'tables' | 'structure' | 'data'>('tables');
   const [viewMode, setViewMode] = useState<'visual' | 'sql'>('visual');
-  // table currently xem at phần trực quan (độc lập with các table is tick to nhập)
+  // Bảng đang xem ở phần trực quan (độc lập với các bảng được tick để nhập)
   const [previewTables, setPreviewTables] = useState<string[]>([]);
   const [showPreviewPicker, setShowPreviewPicker] = useState(false);
 
@@ -196,26 +196,26 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose, submitting]);
 
-  // Cắt dump MỘT lần for mỗi tệp and write sẵn mọi thứ suy ra is from fromng statement.
+  // Cắt dump MỘT lần cho mỗi tệp và ghi sẵn mọi thứ suy ra được từ từng câu lệnh.
   //
-  // Trước đây phần đếm statement cắt lại cả tệp mỗi when `selected` đổi, tức is mỗi lần tick một
-  // checkbox lại quét 10 triệu character -> UI đứng andi giây một cái tick. at đây chỉ `sqlText`
-  // is dependency; những gì phụ thuộc lựa select of user chỉ còn read mảng này.
+  // Trước đây phần đếm câu lệnh cắt lại cả tệp mỗi khi `selected` đổi, tức là mỗi lần tick một
+  // checkbox lại quét 10 triệu ký tự -> giao diện đứng vài giây một cái tick. Ở đây chỉ `sqlText`
+  // là dependency; những gì phụ thuộc lựa chọn của người dùng chỉ còn đọc mảng này.
   const parsed = React.useMemo(() => {
     const stmts: PreviewStmt[] = [];
     const createdTables: DumpTable[] = [];
-    // Đếm hết số row of mỗi table nhưng chỉ giữ PREVIEW_ROWS row đầu to render.
+    // Đếm hết số dòng của mỗi bảng nhưng chỉ giữ PREVIEW_ROWS dòng đầu để render.
     const byTable = new Map<string, TablePreviewRows>();
     if (!sqlText) return { stmts, createdTables, insertedRows: [] as TablePreviewRows[] };
 
-    // Dùng chung `splitStatements` with SQL editor — hàm này hiểu lệnh `DELIMITER` of MySQL and
-    // khối `$$` of Postgres, giống splitter phía Rust dùng when run thật, nên preview hiện đúng
-    // những statement will is execute (thân trigger/procedure not is cắt vụn).
+    // Dùng chung `splitStatements` với SQL editor — hàm này hiểu lệnh `DELIMITER` của MySQL và
+    // khối `$$` của Postgres, giống splitter phía Rust dùng khi chạy thật, nên preview hiện đúng
+    // những câu lệnh sẽ được thực thi (thân trigger/procedure không bị cắt vụn).
     let visualParsed = 0;
     for (const { text } of splitStatements(sqlText)) {
-      // categorize theo phần SAU comment đầu câu — giống `strip_leading_comments()` at backend.
-      // Dump dán `-- Structure for table x` liền TRƯỚC statement, nên so khớp `^\s*CREATE` on
-      // text thô will trượt câu CREATE/INSERT đầu tiên of mỗi table.
+      // Phân loại theo phần SAU comment đầu câu — giống `strip_leading_comments()` ở backend.
+      // Dump dán `-- Structure for table x` liền TRƯỚC câu lệnh, nên so khớp `^\s*CREATE` trên
+      // text thô sẽ trượt câu CREATE/INSERT đầu tiên của mỗi bảng.
       const body = stripLeadingSqlComments(text);
       const kind: PreviewStmt['kind'] = /^(CREATE|ALTER|DROP)\b/i.test(body)
         ? 'structure'
@@ -232,8 +232,8 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
         commentRuns: willRun,
       });
 
-      // Dạng trực quan: CREATE TABLE -> danh sách column; INSERT -> các row, gộp theo table.
-      // Chỉ đây is chặn bati MAX_STATEMENTS: hai hàm parse này is phần đắt nhất of vòng lặp.
+      // Dạng trực quan: CREATE TABLE -> danh sách cột; INSERT -> các dòng, gộp theo bảng.
+      // Chỉ đây bị chặn bởi MAX_STATEMENTS: hai hàm parse này là phần đắt nhất của vòng lặp.
       if (visualParsed >= MAX_STATEMENTS) continue;
       if (kind === 'structure') {
         const ct = parseCreateTable(body);
@@ -263,28 +263,28 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
     return { stmts, createdTables, insertedRows: [...byTable.values()] };
   }, [sqlText]);
 
-  // Đối tượng in dump + lệnh DROP tương ứng: cũng chỉ phụ thuộc tệp, not phụ thuộc
-  // `overwrite`, nên bật/tắt ô write đè not must quét lại cả tệp. `runImport` dùng lại luôn.
+  // Đối tượng trong dump + lệnh DROP tương ứng: cũng chỉ phụ thuộc tệp, KHÔNG phụ thuộc
+  // `overwrite`, nên bật/tắt ô ghi đè không phải quét lại cả tệp. `runImport` dùng lại luôn.
   const dumpObjects = React.useMemo(() => (sqlText ? parseDumpObjects(sqlText) : null), [sqlText]);
   const dropStatements = React.useMemo(
     () => (dumpObjects ? buildDropStatements(dumpObjects, dbType) : []),
     [dumpObjects, dbType]
   );
 
-  // Set thay for `selected.includes()`: bộ filter run on mọi statement of dump.
+  // Set thay cho `selected.includes()`: bộ lọc chạy trên mọi câu lệnh của dump.
   const selectedSet = React.useMemo(() => new Set(selected), [selected]);
-  // statement not nhắc table nào (SET/USE...) vẫn run; còn lại must thuộc table already select.
+  // Câu lệnh không nhắc bảng nào (SET/USE...) vẫn chạy; còn lại phải thuộc bảng đã chọn.
   const keepStatement = React.useCallback(
     (s: PreviewStmt) => tables.length === 0 || !s.table || selectedSet.has(s.table),
     [tables.length, selectedSet]
   );
 
-  // Số statement will run (đúng cùng bộ filter mà backend dùng), for phần ước tính time.
-  // must đứng TRƯỚC `if (!open)` bên under: hook not is gọi sau early return.
+  // Số câu lệnh sẽ chạy (đúng cùng bộ lọc mà backend dùng), cho phần ước tính thời gian.
+  // Phải đứng TRƯỚC `if (!open)` bên dưới: hook không được gọi sau early return.
   const plannedStatements = React.useMemo(() => {
     let n = overwrite ? dropStatements.length : 0;
     for (const s of parsed.stmts) {
-      // Cùng luật with backend: bỏ LOCK/UNLOCK TABLES + lệnh transaction of dump...
+      // Cùng luật với backend: bỏ LOCK/UNLOCK TABLES + lệnh transaction của dump...
       if (s.skipped) continue;
       if (s.commentOnly) {
         if (s.commentRuns) n++;
@@ -295,7 +295,7 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
     return n;
   }, [parsed, overwrite, dropStatements, keepStatement]);
 
-  // Preview chỉ hiện statement of các table currently select (not scan is table nào -> hiện hết).
+  // Preview chỉ hiện câu lệnh của các bảng đang chọn (không dò được bảng nào -> hiện hết).
   const structureShown = React.useMemo(
     () => parsed.stmts.filter((s) => s.kind === 'structure' && keepStatement(s)),
     [parsed, keepStatement]
@@ -326,7 +326,7 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
     setParsing(true);
 
     try {
-      // restore_backup chỉ receive SQL dạng text -> .gz must giải nén ngay at đây.
+      // restore_backup chỉ nhận SQL dạng text -> .gz phải giải nén ngay ở đây.
       setProgress({ label: lower.endsWith('.gz') ? t('importDialog.decompressing') : t('importDialog.reading') });
       const text = lower.endsWith('.gz') ? await gunzipToText(t, picked) : await picked.text();
       setSqlText(text);
@@ -335,7 +335,7 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
       setTables(found);
       setSelected(found);
       setPreviewTables(found);
-      // Tệp có nói database đích thì lấy luôn; not thì to trống for user nhập.
+      // Tệp có nói database đích thì lấy luôn; không thì để trống cho người dùng nhập.
       const dbInFile = parseDumpDatabase(text);
       setDbFromFile(dbInFile);
       setTargetDb(dbInFile || '');
@@ -356,7 +356,7 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
   const previewClipped =
     (tab === 'structure' ? structureShown.length : dataShown.length) > PREVIEW_LIMIT;
 
-  // Phần trực quan filter theo multi-select riêng (previewTables), not theo tick nhập.
+  // Phần trực quan lọc theo multi-select riêng (previewTables), không theo tick nhập.
   const keepTable = (name: string) => tables.length === 0 || previewTables.includes(name);
   const visualTables = parsed.createdTables.filter((t) => keepTable(t.name));
   const visualRows = parsed.insertedRows.filter((r) => keepTable(r.table));
@@ -371,10 +371,10 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
 
   const canSubmit = !!file && !parsing && !submitting && !!sqlText && (tables.length === 0 || selected.length > 0);
 
-  // Bấm "Bắt đầu Nhập" -> hiện bản tóm tắt to confirm, run thật at runImport().
+  // Bấm "Bắt đầu Nhập" -> hiện bản tóm tắt để xác nhận, chạy thật ở runImport().
   const askConfirm = () => {
     if (!file || !sqlText) return;
-    // not có tên database (tệp not nói, user cũng chưa nhập) -> nhắc nhập.
+    // Không có tên database (tệp không nói, người dùng cũng chưa nhập) -> nhắc nhập.
     if (canManageDatabases && !targetDb.trim() && !currentDb) {
       setError(t('importDialog.errNoTargetDb'));
       return;
@@ -390,9 +390,9 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
     setSubmitting(true);
     setProgress({ label: t('importDialog.preparing') });
     try {
-      // write đè: chèn DROP ... IF EXISTS lên đầu and for các tên đó qua bộ filter theo table
-      // (backend chỉ run statement có nhắc tên in danh sách này). Dùng lại kết quả already
-      // memo hoá theo `sqlText` — not parse lại 10MB at đây nữa.
+      // Ghi đè: chèn DROP ... IF EXISTS lên đầu và cho các tên đó qua bộ lọc theo bảng
+      // (backend chỉ chạy câu lệnh có nhắc tên trong danh sách này). Dùng lại kết quả đã
+      // memo hoá theo `sqlText` — không parse lại 10MB ở đây nữa.
       const objs = overwrite ? dumpObjects : null;
       const drops = overwrite ? dropStatements : [];
       const finalSql = drops.length ? `${drops.join('\n')}\n${sqlText}` : sqlText;
@@ -410,13 +410,13 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
 
   const browse = () => inputRef.current?.click();
 
-  // Ước lượng THÔ trước when run (~800 statement/giây on server local). when run thật thì
-  // ETA is tính lại from tốc độ đo is.
+  // Ước lượng THÔ trước khi chạy (~800 câu lệnh/giây trên server local). Khi chạy thật thì
+  // ETA được tính lại từ tốc độ đo được.
   const estimatedSeconds = plannedStatements > 0 ? plannedStatements / 800 : 0;
 
   return (
     <>
-      {/* Tóm tắt trước when run: nhập ando database nào, bao nhiêu table/statement, ước tính bao lâu */}
+      {/* Tóm tắt trước khi chạy: nhập vào database nào, bao nhiêu bảng/câu lệnh, ước tính bao lâu */}
       <ConfirmDialog
         open={confirming}
         tone={overwrite ? 'danger' : 'info'}
@@ -462,7 +462,7 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
       height="540px"
       zIndex={9999}
     >
-        {/* Thân: 2 column — tệp dump | table list in tệp */}
+        {/* Thân: 2 cột — tệp dump | danh sách bảng trong tệp */}
         <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
           <div style={{
             width: '340px',
@@ -503,7 +503,7 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
               />
             </div>
 
-            {/* Database đích: tệp có `USE`/`CREATE DATABASE` thì lấy sẵn, not thì must nhập */}
+            {/* Database đích: tệp có `USE`/`CREATE DATABASE` thì lấy sẵn, không thì phải nhập */}
             {canManageDatabases && !!file && !parsing && !!sqlText && (
               <div className="form-group">
                 <label style={labelStyle}>{t('importDialog.targetDb')}</label>
@@ -557,8 +557,8 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
               </div>
             )}
 
-            {/* run lại một dump lên database already có table cùng tên -> MySQL báo 1050
-                "Table already exists" and cả lần nhập is rollback. Tuỳ select này delete trước. */}
+            {/* Chạy lại một dump lên database đã có bảng cùng tên -> MySQL báo 1050
+                "Table already exists" và cả lần nhập bị rollback. Tuỳ chọn này xoá trước. */}
             <div className="form-group">
               <label style={labelStyle}>{t('importDialog.onExisting')}</label>
               <label style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}>
@@ -617,7 +617,7 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
           </div>
 
           <div style={{ flex: 1, minWidth: 0, padding: '16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {/* Tab: select table | preview cấu trúc | preview dữ liệu */}
+            {/* Tab: chọn bảng | xem trước cấu trúc | xem trước dữ liệu */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <div style={{ display: 'flex', gap: '4px', flex: 1, minWidth: 0 }}>
                 {([
@@ -723,7 +723,7 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
                     {viewMode === 'visual' && tab === 'data' && t('importDialog.previewRowsNote', { n: PREVIEW_ROWS })}:
                   </div>
 
-                  {/* select table to xem (nhiều table) — dropdown for gọn một row */}
+                  {/* Chọn bảng để xem (nhiều bảng) — dropdown cho gọn một dòng */}
                   {viewMode === 'visual' && tables.length > 0 && (
                     <div style={{ position: 'relative', flexShrink: 0 }}>
                       <button
@@ -750,7 +750,7 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
                       {showPreviewPicker && (
                         <>
                           <div style={{ position: 'fixed', inset: 0, zIndex: 10 }} onClick={() => setShowPreviewPicker(false)} />
-                          {/* Nền lấy from .ws-menu — menu must đủ đục to not lẫn with table phía sau */}
+                          {/* Nền lấy từ .ws-menu — menu phải đủ đục để không lẫn với bảng phía sau */}
                           <div className="ws-menu" style={{
                             position: 'absolute',
                             top: 'calc(100% + 4px)',
@@ -798,7 +798,7 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
                     </div>
                   )}
 
-                  {/* Đổi giữa xem trực quan and xem SQL thô */}
+                  {/* Đổi giữa xem trực quan và xem SQL thô */}
                   <div style={{ display: 'flex', gap: '2px', flexShrink: 0 }}>
                     {([
                       { id: 'visual', label: t('importDialog.viewVisual') },

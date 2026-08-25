@@ -64,7 +64,7 @@ const LoadingSpinner: React.FC<{ size?: number; style?: React.CSSProperties; cla
   </svg>
 );
 
-// Nút hiện/hide mật khẩu nằm bên in ô input.
+// Nút hiện/ẩn mật khẩu nằm bên trong ô input.
 const EyeBtn: React.FC<{ on: boolean; onClick: () => void }> = ({ on, onClick }) => {
   const { t } = useTranslation();
   return (
@@ -74,7 +74,7 @@ const EyeBtn: React.FC<{ on: boolean; onClick: () => void }> = ({ on, onClick })
   );
 };
 
-// Nút select tệp (chứng chỉ SSL, private key...) — chỉ hiện tên tệp for gọn.
+// Nút chọn tệp (chứng chỉ SSL, private key...) — chỉ hiện tên tệp cho gọn.
 const FilePick: React.FC<{ id: string; value: string; label: string; onPick: (path: string) => void }> = ({ id, value, label, onPick }) => {
   const handleClick = async () => {
     const file = await pickOpenFile({ title: label });
@@ -112,10 +112,10 @@ export interface SavedProfile {
   name: string;
   type: 'sqlite' | 'postgres' | 'mysql' | 'redis';
   config: any;
-  /** Nhãn màu, thuần trang trí. environment nằm at `env` — xem `utils/connEnv.ts`. */
+  /** Nhãn màu, thuần trang trí. Môi trường nằm ở `env` — xem `utils/connEnv.ts`. */
   color?: string;
   /**
-   * environment. Vắng mặt at profile save trước when có trường này; is điền một lần lúc load, suy from
+   * Môi trường. Vắng mặt ở profile lưu trước khi có trường này; được điền một lần lúc nạp, suy từ
    * `color` theo cách hiểu cũ (xem `migrateProfileEnvs`).
    */
   env?: ConnEnv;
@@ -124,10 +124,10 @@ export interface SavedProfile {
 }
 
 /**
- * Điền `env` for những profile chưa có, theo đúng ý nghĩa mà màu fromng mang.
+ * Điền `env` cho những profile chưa có, theo đúng ý nghĩa mà màu từng mang.
  *
- * returns `null` when not có gì must đổi, to chỗ gọi khỏi write lại localStorage vô ích. Bỏ bước này
- * thì mọi kết nối currently is đánh dấu production mất dấu ngay at lần nâng cấp, not một lời báo.
+ * Trả về `null` khi không có gì phải đổi, để chỗ gọi khỏi ghi lại localStorage vô ích. Bỏ bước này
+ * thì mọi kết nối đang được đánh dấu production mất dấu ngay ở lần nâng cấp, không một lời báo.
  */
 function migrateProfileEnvs(list: SavedProfile[]): SavedProfile[] | null {
   if (list.every((p) => p.env !== undefined)) return null;
@@ -135,26 +135,26 @@ function migrateProfileEnvs(list: SavedProfile[]): SavedProfile[] | null {
 }
 
 interface ConnectionManagerProps {
-  /** Kết nối mà component này thao tác lên. Truyền tường minh, not read id ambient (§4.1). */
+  /** Kết nối mà component này thao tác lên. Truyền tường minh, không đọc id ambient (§4.1). */
   connId: string;
   /**
-   * currently mount in Modal "add kết nối" (from title bar), not must ism màn hình đầu.
+   * Đang mount trong Modal "Thêm kết nối" (từ thanh tiêu đề), không phải làm màn hình đầu.
    *
-   * hide phần chrome thuộc *quản lý* kết nối chứ not thuộc việc *open add một* kết nối: nhập/xuất tệp
-   * profile, and Sao save & restore. Cái thứ hai đáng hide nhất — nó thao tác on kết nối **currently open**,
-   * nên đặt nó in hộp thoại "add kết nối" is mời user backup một database khác with cái họ
-   * currently nhìn.
+   * Ẩn phần chrome thuộc *quản lý* kết nối chứ không thuộc việc *mở thêm một* kết nối: nhập/xuất tệp
+   * profile, và Sao lưu & Phục hồi. Cái thứ hai đáng ẩn nhất — nó thao tác trên kết nối **đang mở**,
+   * nên đặt nó trong hộp thoại "thêm kết nối" là mời người dùng backup một database khác với cái họ
+   * đang nhìn.
    */
   embedded?: boolean;
-  // `profile` is profile already select to kết nối (if có). App giữ id + tên to popover
-  // chi tiết kết nối edit tên/màu rồi write thẳng ngược ando tf_connection_profiles.
+  // `profile` là profile đã chọn để kết nối (nếu có). App giữ id + tên để popover
+  // chi tiết kết nối sửa tên/màu rồi ghi thẳng ngược vào tf_connection_profiles.
   onConnect: (
     dbName: string,
     dbType: 'sqlite' | 'postgres' | 'mysql' | 'redis',
     color?: string,
     config?: DbConnectionConfig,
-    // `env` sống at đây chứ not thành tham số position thứ bảy: nó is thuộc tính of profile, đúng
-    // như `name`, and một kết nối not đến from profile nào thì not có environment.
+    // `env` sống ở đây chứ không thành tham số vị trí thứ bảy: nó là thuộc tính của profile, đúng
+    // như `name`, và một kết nối không đến từ profile nào thì không có môi trường.
     profile?: { id: string; name: string; env?: ConnEnv },
     // Schema the backend actually landed in (Postgres `current_schema()`), null elsewhere.
     // Passed on rather than re-queried: it is part of the tab storage key, so App needs it
@@ -172,7 +172,7 @@ const SSL_MODES = ['DISABLED', 'PREFERRED', 'REQUIRED', 'VERIFY_CA', 'VERIFY_IDE
 // redis_db.rs maps it to VERIFY_IDENTITY if an old profile still carries it.
 const REDIS_SSL_MODES = ['DISABLED', 'REQUIRED', 'VERIFY_CA', 'VERIFY_IDENTITY'] as const;
 
-// Logo thật of fromng hệ DB (xem DbIcons.tsx) + màu thương hiệu for ô nền.
+// Logo thật của từng hệ DB (xem DbIcons.tsx) + màu thương hiệu cho ô nền.
 const TYPE_META: Record<string, { label: string; color: string; Icon: React.FC<{ size?: number }> }> = {
   sqlite: { label: 'SQLite', color: '#003B57', Icon: SqliteIcon },
   postgres: { label: 'PostgreSQL', color: '#336791', Icon: PostgresIcon },
@@ -210,19 +210,19 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
   const [redisUser, setRedisUser] = useState('');
   const [redisPassword, setRedisPassword] = useState('');
   const [redisDbIndex, setRedisDbIndex] = useState(0);
-  const [showPw, setShowPw] = useState(false); // hiện/hide mật khẩu form kết nối
+  const [showPw, setShowPw] = useState(false); // hiện/ẩn mật khẩu form kết nối
   const [profileSearch, setProfileSearch] = useState(''); // filter profile at sidebar
-  const [testStatus, setTestStatus] = useState<'untested' | 'ok' | 'fail'>('untested'); // status check kết nối
+  const [testStatus, setTestStatus] = useState<'untested' | 'ok' | 'fail'>('untested'); // trạng thái Kiểm tra kết nối
 
-  // Tab of form configuration: gom SSL / SSH ra tab riêng to form chính not is dài.
+  // Tab của form cấu hình: gom SSL / SSH ra tab riêng để form chính không bị dài.
   const [formTab, setFormTab] = useState<'general' | 'ssl' | 'ssh'>('general');
-  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({}); // nhóm currently collapse at sidebar
-  const [showNewMenu, setShowNewMenu] = useState(false); // menu select loại DB when create kết nối mới
-  const [showGroupList, setShowGroupList] = useState(false); // dropdown suggestion nhóm already có
-  const [showDbList, setShowDbList] = useState(false); // dropdown select database already download về
-  const [uriCopied, setUriCopied] = useState(false); // phản hồi sau when copy connection string
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({}); // nhóm đang thu gọn ở sidebar
+  const [showNewMenu, setShowNewMenu] = useState(false); // menu chọn loại DB khi tạo kết nối mới
+  const [showGroupList, setShowGroupList] = useState(false); // dropdown gợi ý nhóm đã có
+  const [showDbList, setShowDbList] = useState(false); // dropdown chọn database đã tải về
+  const [uriCopied, setUriCopied] = useState(false); // phản hồi sau khi copy connection string
 
-  // Host is coi is "from xa" (not must local) -> dùng to warning SSL.
+  // Host được coi là "từ xa" (không phải local) -> dùng để cảnh báo SSL.
   const isRemoteHost = (h?: string) => {
     const v = (h || '').trim().toLowerCase();
     return v !== '' && !['localhost', '127.0.0.1', '::1', '0.0.0.0', 'host.docker.internal'].includes(v);
@@ -243,11 +243,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
   const [myPassword, setMyPassword] = useState('');
   const [myDatabase, setMyDatabase] = useState('');
   const [sslEnabled, setSslEnabled] = useState(false);
-  // PREFERRED: dùng TLS if máy chủ hỗ trợ, tự lùi về not mã hoá if not —
-  // nên not ism hỏng kết nối tới máy chủ nội bộ. default thật for kết nối mới
-  // nằm at handleCreateNewProfile (config.sslMode), giá trị khati create này chỉ phủ
-  // nhịp render trước when profile đầu tiên is select. Profile already save not đổi:
-  // hai chỗ load profile vẫn lùi về DISABLED for bản write cũ chưa có trường này.
+  // PREFERRED: dùng TLS nếu máy chủ hỗ trợ, tự lùi về không mã hoá nếu không —
+  // nên không làm hỏng kết nối tới máy chủ nội bộ. Mặc định thật cho kết nối mới
+  // nằm ở handleCreateNewProfile (config.sslMode), giá trị khởi tạo này chỉ phủ
+  // nhịp render trước khi profile đầu tiên được chọn. Profile đã lưu không đổi:
+  // hai chỗ nạp profile vẫn lùi về DISABLED cho bản ghi cũ chưa có trường này.
   const [sslMode, setSslMode] = useState('PREFERRED');
   const [sslKeyPath, setSslKeyPath] = useState('');
   const [sslCertPath, setSslCertPath] = useState('');
@@ -281,8 +281,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
   const [isSuccessConnecting, setIsSuccessConnecting] = useState(false);
   const [connectingDbName, setConnectingDbName] = useState('');
 
-  // Thông báo tự hide: successful 4s, error 8s (dài hơn to còn read kịp nội dung error).
-  // time này must khớp with keyframes cmAlertLife / cmAlertLifeLong in CSS.
+  // Thông báo tự ẩn: thành công 4s, lỗi 8s (dài hơn để còn đọc kịp nội dung lỗi).
+  // Thời gian này phải khớp với keyframes cmAlertLife / cmAlertLifeLong trong CSS.
   useEffect(() => {
     if (!successMsg) return;
     const timer = setTimeout(() => setSuccessMsg(null), 4000);
@@ -310,23 +310,23 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
   const [brMyPassword, setBrMyPassword] = useState('');
   const [brMyDatabase, setBrMyDatabase] = useState('');
 
-  // Tên tệp suggestion is `bk_<database>_<thời điểm>`, nhưng user gõ tay is stop suggestion
-  // (`brFilenameTouched`) — not thì đổi database một cái is delete mất tên họ vừa đặt.
+  // Tên tệp gợi ý là `bk_<database>_<thời điểm>`, nhưng người dùng gõ tay là dừng gợi ý
+  // (`brFilenameTouched`) — không thì đổi database một cái là xoá mất tên họ vừa đặt.
   const [brFilename, setBrFilename] = useState('');
   const [brFilenameTouched, setBrFilenameTouched] = useState(false);
-  // Dấu time chốt MỘT lần lúc open màn hình: tính lại theo fromng lần render thì con số in ô
-  // nhảy liên tục in lúc user currently gõ máy chủ/database.
+  // Dấu thời gian chốt MỘT lần lúc mở màn hình: tính lại theo từng lần render thì con số trong ô
+  // nhảy liên tục trong lúc người dùng đang gõ máy chủ/database.
   const [brStamp, setBrStamp] = useState(() => fileStamp());
   const [brCompressGzip, setBrCompressGzip] = useState(false);
   const [brDropTable, setBrDropTable] = useState(true);
   const [brIncludeStructure, setBrIncludeStructure] = useState(true);
   const [brIncludeContent, setBrIncludeContent] = useState(true);
   const [brFile, setBrFile] = useState<File | null>(null);
-  // delete đối tượng trùng tên trước when run dump (if not will error "already exists")
+  // Xoá đối tượng trùng tên trước khi chạy dump (nếu không sẽ lỗi "already exists")
   const [brOverwrite, setBrOverwrite] = useState(false);
-  // skip statement error thay vì rollback toàn bộ — cùng nghĩa with ô at popup Nhập.
+  // Bỏ qua câu lệnh lỗi thay vì rollback toàn bộ — cùng nghĩa với ô ở popup Nhập.
   const [brContinueOnError, setBrContinueOnError] = useState(false);
-  // Bản tóm tắt confirm + tiến độ thật of lần restore
+  // Bản tóm tắt xác nhận + tiến độ thật của lần phục hồi
   const [brConfirm, setBrConfirm] = useState(false);
   const [brParsedTables, setBrParsedTables] = useState<string[]>([]);
   const [brSelectedTables, setBrSelectedTables] = useState<string[]>([]);
@@ -336,7 +336,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
   const [availableDatabases, setAvailableDatabases] = useState<string[]>([]);
   const [loadingDbs, setLoadingDbs] = useState(false);
 
-  // ando lại màn Sao save & restore thì suggestion lại tên tệp with dấu time mới.
+  // Vào lại màn Sao lưu & Phục hồi thì gợi ý lại tên tệp với dấu thời gian mới.
   useEffect(() => {
     if (activeType !== 'backup_restore') return;
     setBrFilenameTouched(false);
@@ -344,9 +344,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
   }, [activeType]);
 
   /**
-   * `bk_<database>_<20260821_143512>`: sắp is theo time, and hai lần backup liên tiếp
-   * not write đè lên nhau. SQLite lấy tên tệp (not phần expand) chứ not lấy cả đường dẫn —
-   * `safeFileBase` will biến `C:\data\demo.db` thành `C__data_demo.db`.
+   * `bk_<database>_<20260821_143512>`: sắp được theo thời gian, và hai lần sao lưu liên tiếp
+   * không ghi đè lên nhau. SQLite lấy tên tệp (không phần mở rộng) chứ không lấy cả đường dẫn —
+   * `safeFileBase` sẽ biến `C:\data\demo.db` thành `C__data_demo.db`.
    */
   const brDbLabel = brType === 'sqlite'
     ? fileBaseFromPath(brSqlitePath)
@@ -354,8 +354,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
   const brSuggestedFilename = `bk_${safeFileBase(brDbLabel)}_${brStamp}`;
   const brEffectiveFilename = brFilenameTouched ? brFilename : brSuggestedFilename;
 
-  // configuration SSL currently select at form — must send kèm mọi lệnh phụ (liệt kê database,
-  // backup/restore), if not backend will hiểu is DISABLED and tắt hẳn TLS.
+  // Cấu hình SSL đang chọn ở form — phải gửi kèm mọi lệnh phụ (liệt kê database,
+  // sao lưu/phục hồi), nếu không backend sẽ hiểu là DISABLED và tắt hẳn TLS.
   const currentSslConfig = () => ({
     sslEnabled,
     sslMode,
@@ -364,8 +364,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
     sslCaPath,
   });
 
-  // Form Sao save & restore not có phần SSL riêng: lấy theo profile already select,
-  // not có profile thì to PREFERRED (dùng TLS if máy chủ hỗ trợ).
+  // Form Sao lưu & Phục hồi không có phần SSL riêng: lấy theo profile đã chọn,
+  // không có profile thì để PREFERRED (dùng TLS nếu máy chủ hỗ trợ).
   const brSslConfig = () => {
     const prof = profiles.find(p => p.id === selectedBrProfileId);
     const c: any = prof?.config || {};
@@ -439,11 +439,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
     }
   };
 
-  // fetchDatabases is create lại mỗi render (nó read rất nhiều state). not thể đưa
-  // thẳng ando deps of 3 effect debounce bên under: effect will run lại sau mỗi render,
-  // timer 500ms is reset liên tục and gần như not bao giờ nổ -> mất hẳn tính năng
-  // tự download danh sách database. Giữ bản mới nhất in ref: ref is stable nên
-  // exhaustive-deps not đòi, mà effect vẫn luôn gọi đúng bản mới nhất.
+  // fetchDatabases được tạo lại mỗi render (nó đọc rất nhiều state). KHÔNG thể đưa
+  // thẳng vào deps của 3 effect debounce bên dưới: effect sẽ chạy lại sau mỗi render,
+  // timer 500ms bị reset liên tục và gần như không bao giờ nổ -> mất hẳn tính năng
+  // tự tải danh sách database. Giữ bản mới nhất trong ref: ref là stable nên
+  // exhaustive-deps không đòi, mà effect vẫn luôn gọi đúng bản mới nhất.
   const fetchDbRef = useRef(fetchDatabases);
   useEffect(() => { fetchDbRef.current = fetchDatabases; });
 
@@ -508,8 +508,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
             const text = event.target?.result as string;
             setBrSqlText(text);
 
-            // Dùng chung bộ scan with popup Nhập: nó receive cả VIEW (dump write view bằng
-            // CREATE VIEW / DROP VIEW, not must DROP TABLE) and loại table tạm in routine.
+            // Dùng chung bộ dò với popup Nhập: nó nhận cả VIEW (dump ghi view bằng
+            // CREATE VIEW / DROP VIEW, không phải DROP TABLE) và loại bảng tạm trong routine.
             const tables = parseDumpTableNames(text);
             setBrParsedTables(tables);
             setBrSelectedTables(tables);
@@ -537,11 +537,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
   const [profileColor, setProfileColor] = useState('');
   const [profileEnv, setProfileEnv] = useState<ConnEnv>('none');
   const [profileGroup, setProfileGroup] = useState('');
-  const [secretError, setSecretError] = useState<string | null>(null); // error when thao tác with kho bí mật HĐH
+  const [secretError, setSecretError] = useState<string | null>(null); // lỗi khi thao tác với kho bí mật HĐH
 
-  // Điểm write profile unique: luôn bóc bí mật ra khỏi config trước when chạm localStorage,
-  // đồng thời đẩy bí mật sang OS secure keystore. State in bộ nhớ cũng giữ bản already bóc
-  // to not có đường nào vô tình serialize lại mật khẩu.
+  // Điểm ghi profile DUY NHẤT: luôn bóc bí mật ra khỏi config trước khi chạm localStorage,
+  // đồng thời đẩy bí mật sang kho bảo mật của HĐH. State trong bộ nhớ cũng giữ bản đã bóc
+  // để không có đường nào vô tình serialize lại mật khẩu.
   const persistProfiles = async (list: SavedProfile[]): Promise<SavedProfile[]> => {
     const stripped: SavedProfile[] = [];
     const pending: Array<Promise<void>> = [];
@@ -559,13 +559,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
       await Promise.all(pending);
       setSecretError(null);
     } catch (e: any) {
-      // configuration vẫn is save, chỉ riêng bí mật not ando is kho HĐH -> must nói rõ.
+      // Cấu hình vẫn được lưu, chỉ riêng bí mật không vào được kho HĐH -> phải nói rõ.
       setSecretError(t('connection.errSaveSecrets', { message: e?.message || e }));
     }
     return stripped;
   };
 
-  // read lại bí mật of một profile from kho HĐH and ghép ando config to đem đi dùng.
+  // Đọc lại bí mật của một profile từ kho HĐH và ghép vào config để đem đi dùng.
   const configWithSecrets = async (profile: SavedProfile): Promise<any> => {
     try {
       const secrets = await dbHelper.getSecrets(profile.id, SECRET_FIELD_LIST);
@@ -576,9 +576,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
     }
   };
 
-  // duplicate bí mật sang một id khác, đi thẳng kho HĐH -> kho HĐH. Cố ý not read bí mật
-  // ra rồi gắn ando object profile: profile is thứ will đi ando localStorage, for bí mật run
-  // qua nó is open một đường (dù tạm thời) from secure store ra bộ nhớ write xuống đĩa.
+  // Nhân bản bí mật sang một id khác, đi thẳng kho HĐH -> kho HĐH. Cố ý KHÔNG đọc bí mật
+  // ra rồi gắn vào object profile: profile là thứ sẽ đi vào localStorage, cho bí mật chạy
+  // qua nó là mở một đường (dù tạm thời) từ kho bảo mật ra bộ nhớ ghi xuống đĩa.
   const copySecretsBetweenProfiles = async (fromId: string, toId: string): Promise<void> => {
     try {
       const values = await dbHelper.getSecrets(fromId, SECRET_FIELD_LIST);
@@ -625,7 +625,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
     profile?: SavedProfile;
   } | null>(null);
 
-  // Profile currently open Terminal (null = not open). Có SSH -> SSH terminal; not -> shell cục bộ.
+  // Profile đang mở Terminal (null = không mở). Có SSH -> SSH terminal; không -> shell cục bộ.
   const [terminalProfile, setTerminalProfile] = useState<SavedProfile | null>(null);
 
   // Two confirmations replacing window.confirm (which shows nothing in the Tauri webview).
@@ -672,8 +672,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
         return;
       }
 
-      // profiles in bộ nhớ already not còn bí mật -> muốn xuất kèm mật khẩu thì must
-      // read lại from OS secure keystore. not kèm thì preserve bản already bóc.
+      // profiles trong bộ nhớ đã không còn bí mật -> muốn xuất kèm mật khẩu thì phải
+      // đọc lại từ kho bảo mật của HĐH. Không kèm thì giữ nguyên bản đã bóc.
       const processedProfiles = await Promise.all(
         targetProfiles.map(async p => {
           const cloned = JSON.parse(JSON.stringify(p));
@@ -767,8 +767,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
         importedCount++;
       }
 
-      // Tệp import can chứa mật khẩu dạng thô -> persistProfiles đẩy chúng sang kho HĐH
-      // and chỉ write phần configuration sạch xuống localStorage.
+      // Tệp import có thể chứa mật khẩu dạng thô -> persistProfiles đẩy chúng sang kho HĐH
+      // và chỉ ghi phần cấu hình sạch xuống localStorage.
       await persistProfiles(merged);
       setShowImportPasswordModal(false);
       setPendingImportContent(null);
@@ -858,7 +858,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
       config: res.config
     };
 
-    // URL kết nối thường có sẵn mật khẩu -> tách sang kho HĐH ngay when save.
+    // URL kết nối thường có sẵn mật khẩu -> tách sang kho HĐH ngay khi lưu.
     await persistProfiles([...profiles, newProfile]);
     selectProfile(newProfile);
 
@@ -875,12 +875,12 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
     if (saved) {
       try {
         const raw: SavedProfile[] = JSON.parse(saved);
-        // Di trú bản cũ #2: environment fromng is suy from màu. Điền `env` một lần rồi write xuống, to
-        // from đây màu chỉ còn is màu.
+        // Di trú bản cũ #2: môi trường từng được suy từ màu. Điền `env` một lần rồi ghi xuống, để
+        // từ đây màu chỉ còn là màu.
         const migrated = migrateProfileEnvs(raw);
         const parsed = migrated ?? raw;
-        // Di trú bản cũ: profile save trước đây còn mật khẩu nằm thẳng in localStorage.
-        // Đẩy chúng sang OS secure keystore rồi write đè lại bản already bóc sạch.
+        // Di trú bản cũ: profile lưu trước đây còn mật khẩu nằm thẳng trong localStorage.
+        // Đẩy chúng sang kho bảo mật của HĐH rồi ghi đè lại bản đã bóc sạch.
         if (migrated || parsed.some(p => hasInlineSecrets(p.config))) {
           persistProfiles(parsed);
         } else {
@@ -901,9 +901,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Điền form from một profile. Bí mật not nằm in profile.config nữa nên must read
-  // from kho HĐH -> hàm này bất sync; phần not nhạy cảm hiện ra ngay, ô mật khẩu
-  // is điền ngay sau đó.
+  // Điền form từ một profile. Bí mật không nằm trong profile.config nữa nên phải đọc
+  // từ kho HĐH -> hàm này bất đồng bộ; phần không nhạy cảm hiện ra ngay, ô mật khẩu
+  // được điền ngay sau đó.
   const selectProfile = async (profile: SavedProfile) => {
     setActiveProfileId(profile.id);
     setActiveType(profile.type);
@@ -913,8 +913,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
     setSuccessMsg(null);
     setProfileNameInput(profile.name);
     setProfileColor(profile.color || '');
-    // `normalizeEnv` chứ not must `profile.env ?? 'none'`: profile can đến from tệp export of
-    // bản khác, and một string lạ lọt ando đây will ism ô select not khớp lựa select nào.
+    // `normalizeEnv` chứ không phải `profile.env ?? 'none'`: profile có thể đến từ tệp export của
+    // bản khác, và một chuỗi lạ lọt vào đây sẽ làm ô chọn không khớp lựa chọn nào.
     setProfileEnv(normalizeEnv(profile.env));
     setProfileGroup(profile.group || '');
 
@@ -928,8 +928,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
       setRedisPassword(config.password || '');
       setRedisDbIndex(config.dbIndex ?? 0);
       setSslEnabled(config.sslEnabled || false);
-      // Profile save trước when có tab SSL chỉ có công tắc, and công tắc đó nghĩa is rediss://
-      // with check chứng chỉ đầy đủ -> VERIFY_IDENTITY, not must mức yếu nhất.
+      // Profile lưu trước khi có tab SSL chỉ có công tắc, và công tắc đó nghĩa là rediss://
+      // với kiểm tra chứng chỉ đầy đủ -> VERIFY_IDENTITY, không phải mức yếu nhất.
       setSslMode(config.sslMode || (config.sslEnabled ? 'VERIFY_IDENTITY' : 'DISABLED'));
       setSslKeyPath(config.sslKeyPath || '');
       setSslCertPath(config.sslCertPath || '');
@@ -1000,8 +1000,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
     }
   };
 
-  // Ba chỗ cần đúng cùng một payload Redis (save profile, kết nối, test kết nối). Trước đây
-  // mỗi chỗ build riêng and nhánh save profile thì thiếu hẳn — profile Redis save ra config rỗng.
+  // Ba chỗ cần đúng cùng một payload Redis (lưu profile, kết nối, test kết nối). Trước đây
+  // mỗi chỗ dựng riêng và nhánh lưu profile thì thiếu hẳn — profile Redis lưu ra config rỗng.
   const buildRedisConfig = (): DbConnectionConfig => ({
     type: 'redis',
     host: redisHost,
@@ -1103,15 +1103,15 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
       return p;
     });
 
-    // config lấy from form nên có mật khẩu; persistProfiles tách ra kho HĐH trước when write.
+    // config lấy từ form nên có mật khẩu; persistProfiles tách ra kho HĐH trước khi ghi.
     await persistProfiles(updatedProfiles);
     setSuccessMsg(t('connection.saveSuccess'));
   };
 
   const handleCreateNewProfile = async (type: 'sqlite' | 'postgres' | 'mysql' | 'redis') => {
-    // sslMode must nằm sẵn in config chứ not chỉ at giá trị khati create of
-    // state: selectProfile ngay bên under read lại from config, thiếu trường này is
-    // nó lùi về DISABLED and write đè mọi thứ form currently display.
+    // sslMode phải nằm sẵn trong config chứ không chỉ ở giá trị khởi tạo của
+    // state: selectProfile ngay bên dưới đọc lại từ config, thiếu trường này là
+    // nó lùi về DISABLED và ghi đè mọi thứ form đang hiển thị.
     const newProfile: SavedProfile = {
       id: newProfileId(),
       name: t('connection.newProfileName', { type: type.toUpperCase() }),
@@ -1137,7 +1137,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
   const doDeleteProfile = async (id: string) => {
     const newProfiles = profiles.filter(p => p.id !== id);
     await persistProfiles(newProfiles);
-    // Dọn luôn bí mật in kho HĐH, đừng to lại mục mồ côi.
+    // Dọn luôn bí mật trong kho HĐH, đừng để lại mục mồ côi.
     try {
       await dbHelper.deleteSecrets(id, SECRET_FIELD_LIST);
     } catch (err: any) {
@@ -1155,8 +1155,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
 
   const handleDuplicateProfile = async (profile: SavedProfile, e: React.MouseEvent) => {
     e.stopPropagation();
-    // Bản sao must mang theo cả bí mật, nhưng bí mật is duplicate riêng in kho HĐH
-    // (xem copySecretsBetweenProfiles) chứ not đi kèm in `duplicated.config`.
+    // Bản sao phải mang theo cả bí mật, nhưng bí mật được nhân bản riêng trong kho HĐH
+    // (xem copySecretsBetweenProfiles) chứ không đi kèm trong `duplicated.config`.
     const duplicated: SavedProfile = {
       ...profile,
       id: newProfileId(),
@@ -1164,7 +1164,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
       config: publicConfig(profile.config)
     };
     await persistProfiles([...profiles, duplicated]);
-    // must xong trước selectProfile: hàm đó read bí mật theo id mới to điền form.
+    // Phải xong trước selectProfile: hàm đó đọc bí mật theo id mới để điền form.
     await copySecretsBetweenProfiles(profile.id, duplicated.id);
     selectProfile(duplicated);
   };
@@ -1208,10 +1208,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
         awsProfile,
         awsRegion
       };
-      // already bỏ các cache 'tf_pg_config' / 'tf_ssh_config' at đây: not chỗ nào read lại chúng,
-      // riêng 'tf_ssh_config' còn write thẳng sshKeyContent (private key) + sshPassphrase xuống
-      // localStorage dạng thô. configuration kết nối chỉ còn sống in profile (localStorage already
-      // bóc bí mật) and bí mật thì nằm in OS secure keystore (dbHelper.setSecrets).
+      // Đã bỏ các cache 'tf_pg_config' / 'tf_ssh_config' ở đây: không chỗ nào đọc lại chúng,
+      // riêng 'tf_ssh_config' còn ghi thẳng sshKeyContent (private key) + sshPassphrase xuống
+      // localStorage dạng thô. Cấu hình kết nối chỉ còn sống trong profile (localStorage đã
+      // bóc bí mật) và bí mật thì nằm trong kho bảo mật của HĐH (dbHelper.setSecrets).
     } else if (activeType === 'redis') {
       config = buildRedisConfig();
     } else {
@@ -1244,10 +1244,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
         awsProfile,
         awsRegion
       };
-      // Xem write chú at nhánh postgres: các cache 'tf_my_config' / 'tf_ssh_config' already is bỏ.
+      // Xem ghi chú ở nhánh postgres: các cache 'tf_my_config' / 'tf_ssh_config' đã bị bỏ.
     }
 
-    // 'tf_last_type' cũng already bỏ: write xuống nhưng not nơi nào read.
+    // 'tf_last_type' cũng đã bỏ: ghi xuống nhưng không nơi nào đọc.
 
     const res = await dbHelper.connect(config);
 
@@ -1257,13 +1257,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
       setIsSuccessConnecting(true);
       setConnectingDbName(res.database || (config.type === 'sqlite' ? config.sqlitePath : config.database) || 'Database');
       const activeProfile = profiles.find(p => p.id === activeProfileId);
-      // environment lấy from STATE of FORM, not from profile already save.
+      // Môi trường lấy từ STATE CỦA FORM, không từ profile đã lưu.
       //
-      // `config` ngay bên on cũng build from form: host, port, user, SSL... đều đi thẳng ando lần kết
-      // nối này dù user chưa bấm save. Riêng `env` mà read from bản already save thì ô select hiện
-      // "Production" nhưng kết nối lại open theo giá trị cũ — chỗ hụt tệ nhất can có for một cờ an
-      // toàn, vì thứ currently display and thứ currently có hiệu lực not còn is một. save vẫn is việc riêng:
-      // nó quyết định lần sau có nhớ hay not, chứ not quyết định lần này.
+      // `config` ngay bên trên cũng dựng từ form: host, port, user, SSL... đều đi thẳng vào lần kết
+      // nối này dù người dùng chưa bấm Lưu. Riêng `env` mà đọc từ bản đã lưu thì ô chọn hiện
+      // "Production" nhưng kết nối lại mở theo giá trị cũ — chỗ hụt tệ nhất có thể có cho một cờ an
+      // toàn, vì thứ đang hiển thị và thứ đang có hiệu lực không còn là một. Lưu vẫn là việc riêng:
+      // nó quyết định lần sau có nhớ hay không, chứ không quyết định lần này.
       const env = profileEnv;
       setTimeout(() => {
         onConnect(
@@ -1271,8 +1271,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
           config.type,
           activeProfile?.color,
           config,
-          // Kết nối build tay (chưa save thành profile) vẫn must receive is environment vừa select: not
-          // có chỗ to nhớ nó not có nghĩa is phiên này is phép skip nó.
+          // Kết nối dựng tay (chưa lưu thành profile) vẫn phải nhận được môi trường vừa chọn: không
+          // có chỗ để nhớ nó không có nghĩa là phiên này được phép bỏ qua nó.
           activeProfile || env !== 'none'
             ? { id: activeProfile?.id ?? '', name: activeProfile?.name ?? '', env }
             : undefined,
@@ -1296,7 +1296,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
       setTestStatus(res.success ? 'ok' : 'fail');
       if (res.success) setSuccessMsg(t('connection.redisTestOk'));
       else setErrorMsg(res.message);
-      // disconnect test to not giữ phiên.
+      // Ngắt kết nối test để không giữ phiên.
       await dbHelper.redisDisconnect();
       return;
     }
@@ -1377,8 +1377,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
     }
   };
 
-  // Bấm "Bắt đầu restore" -> hiện bản tóm tắt (database đích, số table, số statement, ước tính)
-  // rồi mới run; nhánh backup thì run luôn.
+  // Bấm "Bắt đầu phục hồi" -> hiện bản tóm tắt (database đích, số bảng, số câu lệnh, ước tính)
+  // rồi mới chạy; nhánh sao lưu thì chạy luôn.
   const handleBrClick = (e: React.MouseEvent) => {
     e.preventDefault();
     if (brAction === 'restore') {
@@ -1389,12 +1389,12 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
   };
 
   /**
-   * run Sao save / restore như một **job nền**: hàm này chỉ chốt mọi thứ currently có on form rồi
-   * xếp job, còn tiến độ and kết quả nằm at `JobsTray`. Trước đây nó giữ cả màn hình lại — mà một
-   * bản restore sakila mất row chục phút. Xem docs/background-jobs-plan.md.
+   * Chạy Sao lưu / Phục hồi như một **job nền**: hàm này chỉ chốt mọi thứ đang có trên form rồi
+   * xếp job, còn tiến độ và kết quả nằm ở `JobsTray`. Trước đây nó giữ cả màn hình lại — mà một
+   * bản restore sakila mất hàng chục phút. Xem docs/background-jobs-plan.md.
    *
-   * Mọi giá trị lấy from form đều is **copy ra biến cục bộ trước when xếp job**: job can run
-   * sau đó (row đợi), and lúc ấy user already gõ sang máy chủ khác in cùng cái form này.
+   * Mọi giá trị lấy từ form đều được **copy ra biến cục bộ trước khi xếp job**: job có thể chạy
+   * sau đó (hàng đợi), và lúc ấy người dùng đã gõ sang máy chủ khác trong cùng cái form này.
    */
   const handleBrSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -1433,7 +1433,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
       return;
     }
 
-    // Ảnh chụp of form — xem doc comment at on.
+    // Ảnh chụp của form — xem doc comment ở trên.
     const targetType = brType;
     const dbLabel = brDbLabel || (targetType === 'sqlite' ? brSqlitePath : '');
     const fileName = (brEffectiveFilename.trim().replace(/\.(sql|sql\.gz|gz)$/i, '') || brSuggestedFilename)
@@ -1457,9 +1457,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
       write: !isBackup,
       lockKey: `br|${connKey(config)}|${dbLabel}`,
       run: async (ctx) => {
-        // Job này open KẾT NỐI RIÊNG of nó rồi close lại — màn hình này vốn already ism vậy ("not cần
-        // kết nối sẵn"), and đó cũng đúng hướng Phase 1 of plan: job not dùng chung kết nối with
-        // user, nên nó not tắt check foreign key on phiên user currently browse.
+        // Job này mở KẾT NỐI RIÊNG của nó rồi đóng lại — màn hình này vốn đã làm vậy ("không cần
+        // kết nối sẵn"), và đó cũng đúng hướng Phase 1 của plan: job không dùng chung kết nối với
+        // người dùng, nên nó không tắt kiểm tra khoá ngoại trên phiên người dùng đang browse.
         const prevConnId = activeConnId();
         let jobConnId = '';
         try {
@@ -1467,18 +1467,18 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
           if (!connRes.success) {
             throw new Error(t('connection.errConnectFailed', { message: connRes.message }));
           }
-          // Mọi lệnh mang đúng id vừa mint — not must `connId` of workspace (prop): chưa kết
-          // nối gì thì prop is string rỗng and `getTables` trả mảng rỗng, tức is báo "database not
-          // có table nào"; currently có kết nối thì nó trỏ ando database KHÁC.
+          // Mọi lệnh mang đúng id vừa mint — không phải `connId` của workspace (prop): chưa kết
+          // nối gì thì prop là chuỗi rỗng và `getTables` trả mảng rỗng, tức là báo "database không
+          // có bảng nào"; đang có kết nối thì nó trỏ vào database KHÁC.
           jobConnId = connRes.connId || activeConnId();
-          // `connect()` đổi luôn kết nối active of cả app. Trả lại NGAY, vì job run nền: to
-          // ambient trỏ ando kết nối riêng of job is mọi thao tác khác of user đi sai chỗ.
+          // `connect()` đổi luôn kết nối active của cả app. Trả lại NGAY, vì job chạy nền: để
+          // ambient trỏ vào kết nối riêng của job là mọi thao tác khác của người dùng đi sai chỗ.
           setActiveConnId(prevConnId);
 
           if (isBackup) {
-            // Dump build bằng đúng code of popup "Xuất database" (buildDump): trước đây chỗ
-            // này gọi lệnh Rust `export_multi_tables`, vốn coi view is table (sinh DROP TABLE and
-            // INSERT INTO for view), write một INSERT for mỗi row, and not hề có routine/trigger.
+            // Dump dựng bằng đúng code của popup "Xuất Cơ sở dữ liệu" (buildDump): trước đây chỗ
+            // này gọi lệnh Rust `export_multi_tables`, vốn coi view là bảng (sinh DROP TABLE và
+            // INSERT INTO cho view), ghi một INSERT cho mỗi dòng, và không hề có routine/trigger.
             const list = await dbHelper.getTables(jobConnId);
             const tables = list.map(item => item.name);
             if (tables.length === 0) {
@@ -1501,8 +1501,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
               triggers: triggers.map((tr) => tr.name),
               events: dbObjs.events,
               sqlOptions,
-              // Schema mà `connect` vừa báo is currently dùng — cùng schema mà getTables() at on read
-              // ra. not có ô select schema at màn này, nên đây luôn is schema đầu search_path.
+              // Schema mà `connect` vừa báo là đang dùng — cùng schema mà getTables() ở trên đọc
+              // ra. Không có ô chọn schema ở màn này, nên đây luôn là schema đầu search_path.
               schema: connRes.schema,
               onProgress: (p) => ctx.report(p),
             }, dumpReaderFor(dbHelper, jobConnId));
@@ -1524,8 +1524,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
             };
           }
 
-          // write đè: chèn DROP ... IF EXISTS lên đầu, and for các tên đó qua bộ filter theo table
-          // of backend (nó chỉ run statement có nhắc tên in danh sách truyền ando).
+          // Ghi đè: chèn DROP ... IF EXISTS lên đầu, và cho các tên đó qua bộ lọc theo bảng
+          // của backend (nó chỉ chạy câu lệnh có nhắc tên trong danh sách truyền vào).
           const objs = overwrite ? parseDumpObjects(dumpText) : null;
           const sqlToRun = dropStatements.length ? `${dropStatements.join('\n')}\n${dumpText}` : dumpText;
           const tablesToRun = objs
@@ -1545,17 +1545,17 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
             throw new Error(addExistsHint(resData.error || t('connection.errRestore'), overwrite));
           }
 
-          // not viết `resData.activeDatabase` (database mà một câu `USE` in tệp dump chuyển
-          // tới) trat lại các ô of form nữa: job run nền, nên lúc nó xong user can currently
-          // gõ configuration for một máy chủ khác in đúng cái form này — write ando đó is delete thứ họ vừa
-          // gõ. Tên database already nằm in thông báo kết quả of job.
-          // Có câu is skip thì not is báo "successful" trơn — database chưa đầy đủ.
+          // KHÔNG viết `resData.activeDatabase` (database mà một câu `USE` trong tệp dump chuyển
+          // tới) trở lại các ô của form nữa: job chạy nền, nên lúc nó xong người dùng có thể đang
+          // gõ cấu hình cho một máy chủ khác trong đúng cái form này — ghi vào đó là xoá thứ họ vừa
+          // gõ. Tên database đã nằm trong thông báo kết quả của job.
+          // Có câu bị bỏ qua thì không được báo "thành công" trơn — database chưa đầy đủ.
           return resData.failedCount
             ? { message: t('app.importDbPartial', { n: resData.statementsCount || 0, failed: resData.failedCount }) }
             : { message: t('connection.restoreSuccess', { n: resData.statementsCount || 0 }) };
         } finally {
-          // Chỉ close kết nối do job này open. `disconnect()` not tham số close kết nối currently
-          // active — tức is kết nối user currently dùng dat, when `connect()` error giữa đường.
+          // Chỉ đóng kết nối do job này mở. `disconnect()` không tham số đóng kết nối đang
+          // active — tức là kết nối người dùng đang dùng dở, khi `connect()` lỗi giữa đường.
           if (jobConnId) await dbHelper.disconnect(jobConnId);
           setActiveConnId(prevConnId);
         }
@@ -1579,7 +1579,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
     return acc;
   }, {} as Record<string, SavedProfile[]>);
   const groupNames = Object.keys(groupedProfiles);
-  // Danh sách nhóm already tồn tại — dùng for combobox "Nhóm" (select lại or nhập mới).
+  // Danh sách nhóm đã tồn tại — dùng cho combobox "Nhóm" (chọn lại hoặc nhập mới).
   const existingGroups = Array.from(
     new Set(profiles.map(p => (p.group || '').trim()).filter(Boolean))
   ).sort((a, b) => a.localeCompare(b));
@@ -1587,12 +1587,12 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
   const isBrMode = (activeType as any) === 'backup_restore';
   const isServerDb = activeType === 'postgres' || activeType === 'mysql';
   const isRedis = activeType === 'redis';
-  // Ai có tab SSL + SSH Tunnel. SQLite is tệp cục bộ nên not có gì to mã hoá hay chuyển tiếp.
+  // Ai có tab SSL + SSH Tunnel. SQLite là tệp cục bộ nên không có gì để mã hoá hay chuyển tiếp.
   const hasNetTabs = isServerDb || isRedis;
   const tlsOn = sslMode !== 'DISABLED';
-  // sslMode and sslEnabled must luôn đi cùng nhau: backend hiểu sslEnabled=true is "bật TLS" kể
-  // cả when mode is DISABLED (to profile cũ chỉ có công tắc vẫn run), nên to hai giá trị lệch
-  // nhau is bật mã hoá ngoài ý muốn of form.
+  // sslMode và sslEnabled phải luôn đi cùng nhau: backend hiểu sslEnabled=true là "bật TLS" kể
+  // cả khi mode là DISABLED (để profile cũ chỉ có công tắc vẫn chạy), nên để hai giá trị lệch
+  // nhau là bật mã hoá ngoài ý muốn của form.
   const applySslMode = (mode: string) => {
     setSslMode(mode);
     setSslEnabled(mode !== 'DISABLED');
@@ -1600,7 +1600,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
   const activeMeta = TYPE_META[activeType] || TYPE_META.sqlite;
   const hasProfile = !!activeProfileId && !isBrMode;
 
-  // Connection string tóm tắt (not kèm mật khẩu) — display at header to đối chiếu nhanh.
+  // Connection string tóm tắt (không kèm mật khẩu) — hiển thị ở header để đối chiếu nhanh.
   const connectionUri = (() => {
     if (activeType === 'sqlite') return `sqlite://${sqlitePath}`;
     if (activeType === 'redis') return `${tlsOn ? 'rediss' : 'redis'}://${redisUser ? redisUser + '@' : ''}${redisHost}:${redisPort}/${redisDbIndex}`;
@@ -1613,7 +1613,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
       await navigator.clipboard.writeText(connectionUri);
       setUriCopied(true);
       setTimeout(() => setUriCopied(false), 1600);
-    } catch { /* clipboard is chặn - skip */ }
+    } catch { /* clipboard bị chặn - bỏ qua */ }
   };
 
   const toggleGroup = (name: string) =>
@@ -1626,8 +1626,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
     { val: 'redis', label: 'Redis' },
   ];
 
-  // ——— Ô "database": nhập tự do + nút reload and dropdown select from danh sách ———
-  // Gộp nút ando in ô thay vì to nút "download danh sách" nổi riêng một row phía on.
+  // ——— Ô "Cơ sở dữ liệu": nhập tự do + nút tải lại và dropdown chọn từ danh sách ———
+  // Gộp nút vào trong ô thay vì để nút "Tải danh sách" nổi riêng một dòng phía trên.
   const renderDatabaseField = (
     value: string,
     setValue: (v: string) => void,
@@ -1635,8 +1635,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
     placeholder: string,
   ) => {
     const q = value.trim().toLowerCase();
-    // currently gõ dat thì filter theo from key; if already trùng khít một database thì hiện
-    // lại toàn bộ danh sách to còn đổi sang cái khác.
+    // Đang gõ dở thì lọc theo từ khoá; nếu đã trùng khít một database thì hiện
+    // lại toàn bộ danh sách để còn đổi sang cái khác.
     const exact = availableDatabases.some(d => d.toLowerCase() === q);
     const opts = (!q || exact) ? availableDatabases : availableDatabases.filter(d => d.toLowerCase().includes(q));
     return (
@@ -1701,7 +1701,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
     );
   };
 
-  // ——— Khối "Thông tin cơ bản": tên, nhóm, màu receive diện ———
+  // ——— Khối "Thông tin cơ bản": tên, nhóm, màu nhận diện ———
   const renderBasicSection = () => (
     <div className="cm-section">
       <div className="cm-section-title">{t('connection.basicSection')}</div>
@@ -1719,8 +1719,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
           </div>
           <div className="form-group">
             <label>{t('connection.group')}</label>
-            {/* Combobox tự build thay for <datalist>: native datalist hiện add một
-                mũi tên riêng and popup not theo is theme of app. */}
+            {/* Combobox tự dựng thay cho <datalist>: native datalist hiện thêm một
+                mũi tên riêng và popup không theo được theme của app. */}
             <div className="cm-combo">
               <input
                 type="text"
@@ -1788,7 +1788,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
     </div>
   );
 
-  // ——— warning kết nối from xa nhưng chưa bật mã hoá ———
+  // ——— Cảnh báo kết nối từ xa nhưng chưa bật mã hoá ———
   const renderSslWarning = () => {
     if (activeType === 'redis') {
       if (tlsOn || !isRemoteHost(redisHost)) return null;
@@ -1827,7 +1827,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
     }
   };
 
-  // ——— Tab "Chung" for fromng loại DB ———
+  // ——— Tab "Chung" cho từng loại DB ———
   const renderGeneralTab = () => (
     <>
       {renderBasicSection()}
@@ -1924,9 +1924,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
                 />
               </div>
             </div>
-            {/* Công tắc một chạm for trường hợp phổ biến; mức check chứng chỉ, CA and mTLS
-                nằm at tab SSL. Bật at đây = VERIFY_IDENTITY, đúng bằng hành vi of công tắc
-                trước when tab SSL tồn tại. */}
+            {/* Công tắc một chạm cho trường hợp phổ biến; mức kiểm tra chứng chỉ, CA và mTLS
+                nằm ở tab SSL. Bật ở đây = VERIFY_IDENTITY, đúng bằng hành vi của công tắc
+                trước khi tab SSL tồn tại. */}
             <div className="cm-switch-row">
               <button type="button" className={`cm-switch ${tlsOn ? 'on' : ''}`} onClick={() => applySslMode(tlsOn ? 'DISABLED' : 'VERIFY_IDENTITY')} aria-label={t('connection.enableTls')} />
               <div style={{ flex: 1 }}>
@@ -2111,8 +2111,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
   const renderSslTab = () => {
     const prefix = isRedis ? 'redis' : activeType === 'postgres' ? 'pg' : 'my';
     const sslOn = tlsOn;
-    // Hai mode VERIFY_* mới thực sự check chứng chỉ máy chủ -> CA cert lúc đó
-    // is bắt buộc (if CA not nằm in store of hệ thống). REQUIRED thì 3 ô
+    // Hai mode VERIFY_* mới thực sự kiểm tra chứng chỉ máy chủ -> CA cert lúc đó
+    // là bắt buộc (nếu CA không nằm trong store của hệ thống). REQUIRED thì 3 ô
     // này chỉ phục vụ mTLS.
     const needVerify = sslMode === 'VERIFY_CA' || sslMode === 'VERIFY_IDENTITY';
     return (
@@ -2130,9 +2130,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
             <span className="cm-hint">{sslModeDesc(sslMode)}</span>
           </div>
 
-          {/* Tunnel ism client kết nối tới 127.0.0.1, nên chứng chỉ of server is đối chiếu
-              with địa chỉ đó and VERIFY_IDENTITY chắc chắn hỏng. VERIFY_CA vẫn check string
-              chứng chỉ, chỉ skip tên miền. */}
+          {/* Tunnel làm client kết nối tới 127.0.0.1, nên chứng chỉ của server được đối chiếu
+              với địa chỉ đó và VERIFY_IDENTITY chắc chắn hỏng. VERIFY_CA vẫn kiểm tra chuỗi
+              chứng chỉ, chỉ bỏ qua tên miền. */}
           {isRedis && sshEnabled && sslMode === 'VERIFY_IDENTITY' && (
             <div className="cm-warn">
               <ShieldAlert size={15} style={{ flexShrink: 0 }} />
@@ -2226,9 +2226,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
                 </div>
               </div>
             </div>
-            {/* select cách xác thực bằng segmented at row tiêu đề (giống khối
-                "Xác thực" at tab Chung) to user + mật khẩu/passphrase luôn nằm
-                cùng một row 2 column, not còn field lẻ loi nửa row. */}
+            {/* Chọn cách xác thực bằng segmented ở dòng tiêu đề (giống khối
+                "Xác thực" ở tab Chung) để user + mật khẩu/passphrase luôn nằm
+                cùng một dòng 2 cột, không còn field lẻ loi nửa dòng. */}
             <div className="cm-label-row">
               <span className="cm-subhead">{t('connection.sshAuthHeading')}</span>
               <div className="cm-seg">
@@ -2318,8 +2318,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
     </div>
   );
 
-  // Cắt dump MỘT lần for mỗi tệp and write sẵn thứ cần for bộ filter. Trước đây phần đếm cắt lại
-  // cả tệp mỗi when table list select đổi, nên with dump lớn thì mỗi cái tick treo UI.
+  // Cắt dump MỘT lần cho mỗi tệp và ghi sẵn thứ cần cho bộ lọc. Trước đây phần đếm cắt lại
+  // cả tệp mỗi khi danh sách bảng chọn đổi, nên với dump lớn thì mỗi cái tick treo giao diện.
   const brStatements = React.useMemo(() => {
     if (!brSqlText) return [];
     return splitStatements(brSqlText).map(({ text }) => {
@@ -2334,25 +2334,25 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
     });
   }, [brSqlText]);
 
-  // not phụ thuộc `brOverwrite`: bật/tắt ô write đè not must quét lại cả tệp.
+  // Không phụ thuộc `brOverwrite`: bật/tắt ô ghi đè không phải quét lại cả tệp.
   const brDropStatements = React.useMemo(
     () => (brSqlText ? buildDropStatements(parseDumpObjects(brSqlText), brType) : []),
     [brSqlText, brType]
   );
 
-  // Số statement will run when restore (cùng bộ filter theo table with backend) to ước tính time.
+  // Số câu lệnh sẽ chạy khi phục hồi (cùng bộ lọc theo bảng với backend) để ước tính thời gian.
   const brPlannedStatements = React.useMemo(() => {
-    // not đặt tên tham số is `t` — đó is hàm dịch.
+    // Không đặt tên tham số là `t` — đó là hàm dịch.
     const selectedLower = new Set(brSelectedTables.map((name) => name.toLowerCase()));
     let n = brOverwrite ? brDropStatements.length : 0;
     for (const s of brStatements) {
-      // Cùng luật with backend: bỏ LOCK/UNLOCK TABLES + lệnh transaction of dump...
+      // Cùng luật với backend: bỏ LOCK/UNLOCK TABLES + lệnh transaction của dump...
       if (s.skipped) continue;
       if (s.commentOnly) {
         if (s.commentRuns) n++;
         continue;
       }
-      // ...câu not nhắc table nào (SET/USE...) vẫn run; còn lại must thuộc table already select.
+      // ...câu không nhắc bảng nào (SET/USE...) vẫn chạy; còn lại phải thuộc bảng đã chọn.
       if (brParsedTables.length === 0 || !s.table || selectedLower.has(s.table.toLowerCase())) n++;
     }
     return n;
@@ -2360,10 +2360,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
 
   const brTargetDb = brType === 'postgres' ? brPgDatabase : brType === 'mysql' ? brMyDatabase : brSqlitePath;
 
-  // ——— mode Sao save & restore (not cần kết nối sẵn) ———
+  // ——— Chế độ Sao lưu & Phục hồi (không cần kết nối sẵn) ———
   const renderBackupRestore = () => (
     <>
-      {/* Tóm tắt trước when restore: ando database nào, bao nhiêu table/statement, ước tính bao lâu */}
+      {/* Tóm tắt trước khi phục hồi: vào database nào, bao nhiêu bảng/câu lệnh, ước tính bao lâu */}
       <ConfirmDialog
         open={brConfirm}
         tone={brOverwrite ? 'danger' : 'info'}
@@ -2439,7 +2439,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
                   const selectedProf = profiles.find(p => p.id === profId);
                   if (selectedProf) {
                     setBrType(selectedProf.type === 'redis' ? 'sqlite' : selectedProf.type);
-                    // Mật khẩu nằm in kho HĐH -> must read ra mới điền is ando form backup.
+                    // Mật khẩu nằm trong kho HĐH -> phải đọc ra mới điền được vào form sao lưu.
                     const c = await configWithSecrets(selectedProf);
                     if (selectedProf.type === 'sqlite') {
                       setBrSqlitePath(c.sqlitePath || '');
@@ -2650,8 +2650,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
                 </div>
               )}
 
-              {/* run lại dump lên database already có table cùng tên -> MySQL báo 1050
-                  "Table already exists" and cancel cả lần restore. Tuỳ select này delete trước. */}
+              {/* Chạy lại dump lên database đã có bảng cùng tên -> MySQL báo 1050
+                  "Table already exists" và huỷ cả lần phục hồi. Tuỳ chọn này xoá trước. */}
               {brFile && (
                 <label className="cm-check" style={{ alignItems: 'flex-start' }}>
                   <input
@@ -2668,7 +2668,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
                 </label>
               )}
 
-              {/* Cùng option with popup Nhập — dùng chung key dịch to hai chỗ not mô tả
+              {/* Cùng tuỳ chọn với popup Nhập — dùng chung key dịch để hai chỗ không mô tả
                   cùng một hành vi bằng hai lời khác nhau. */}
               {brFile && (
                 <label className="cm-check" style={{ alignItems: 'flex-start' }}>
@@ -2719,11 +2719,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
 
       <div className="connection-card">
         <div className="cm-shell">
-          {/* ————— Sidebar: danh sách kết nối already save ————— */}
+          {/* ————— Sidebar: danh sách kết nối đã lưu ————— */}
           <aside className="cm-side">
             <div className="cm-side-head">
               <span className="cm-side-title">{t('connection.sideTitle', { n: profiles.length })}</span>
-              {/* Nhập/xuất tệp profile: quản lý cả bộ profile, not must open add một kết nối. */}
+              {/* Nhập/xuất tệp profile: quản lý cả bộ profile, không phải mở thêm một kết nối. */}
               {!embedded && (
                 <>
                   <button className="cm-icon-btn" title={t('connection.importFromFile')} onClick={() => document.getElementById('cm-import-file')?.click()}>
@@ -2818,10 +2818,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
                         ? `${p.config.host}${p.config.database ? ' / ' + p.config.database : ''}`
                         : sqliteFile;
                       const fullSubInfo = p.config?.sqlitePath || sub;
-                      // Đèn status: chỉ row currently is tác động mới có, and chỉ
-                      // 'busy' is nháy. Màn hình này chỉ tồn tại when chưa có kết
-                      // nối nào open, nên "currently open" not must status khả dụng —
-                      // thay ando đó is currently kết nối/check and kết quả check.
+                      // Đèn trạng thái: chỉ dòng đang được tác động mới có, và chỉ
+                      // 'busy' được nháy. Màn hình này chỉ tồn tại khi chưa có kết
+                      // nối nào mở, nên "đang mở" không phải trạng thái khả dụng —
+                      // thay vào đó là đang kết nối/kiểm tra và kết quả kiểm tra.
                       const led: 'busy' | 'ok' | 'fail' | null = !isActive
                         ? null
                         : isBusy ? 'busy'
@@ -2844,7 +2844,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
                           <div className="cm-item-body">
                             <div className="cm-item-name">
                               <span className="cm-ellipsis">{p.name}</span>
-                              {/* Đèn status: chỉ 'busy' nháy. */}
+                              {/* Đèn trạng thái: chỉ 'busy' nháy. */}
                               {led && <span className={`cm-item-led ${led}`} title={ledTitle[led]} />}
                               {defaultProfileId === p.id && <Star size={10} className="cm-default-star" aria-label={t('connection.defaultConnectionAria')} />}
                             </div>
@@ -2873,9 +2873,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
               })}
             </div>
 
-            {/* Sao save & restore thao tác on kết nối currently open, nên in hộp thoại "add kết nối"
-                nó vừa lệch việc vừa dễ hiểu sai is currently backup cái sắp open. at workspace nó already có chỗ
-                riêng on title bar. */}
+            {/* Sao lưu & Phục hồi thao tác trên kết nối ĐANG MỞ, nên trong hộp thoại "thêm kết nối"
+                nó vừa lệch việc vừa dễ hiểu sai là đang backup cái sắp mở. Ở workspace nó đã có chỗ
+                riêng trên thanh tiêu đề. */}
             {!embedded && (
               <div className="cm-side-foot">
                 <button
@@ -2956,8 +2956,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
                   <div className="cm-alert err">
                     <AlertTriangle size={15} style={{ flexShrink: 0 }} />
                     <span style={{ flex: 1 }}>{errorMsg}</span>
-                    {/* Máy chủ bắt buộc SSL mà currently to DISABLED -> open đường edit ngay,
-                        vì error returns from driver khá khó hiểu with người mới. */}
+                    {/* Máy chủ bắt buộc SSL mà đang để DISABLED -> mở đường sửa ngay,
+                        vì lỗi trả về từ driver khá khó hiểu với người mới. */}
                     {isServerDb && sslMode === 'DISABLED' && /ssl|no encryption|secure transport/i.test(errorMsg) && (
                       <button
                         className="cm-alert-btn"
@@ -2976,8 +2976,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
                     <button className="cm-icon-btn sm" onClick={() => setSuccessMsg(null)} title={t('common.close')}><X size={12} /></button>
                   </div>
                 )}
-                {/* Kho bí mật HĐH hỏng thì configuration vẫn save is nhưng mật khẩu thì not —
-                    must báo rõ, đừng to user tưatng already save xong. */}
+                {/* Kho bí mật HĐH hỏng thì cấu hình vẫn lưu được nhưng mật khẩu thì không —
+                    phải báo rõ, đừng để người dùng tưởng đã lưu xong. */}
                 {secretError && (
                   <div className="cm-alert err">
                     <ShieldAlert size={15} style={{ flexShrink: 0 }} />
@@ -3007,7 +3007,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
             <footer className="cm-foot">
               {isBrMode ? (
                 <>
-                  {/* not còn thanh tiến độ at đây: backup/restore run nền, tiến độ nằm at
+                  {/* Không còn thanh tiến độ ở đây: sao lưu/phục hồi chạy nền, tiến độ nằm ở
                       JobsTray on title bar. Xem docs/background-jobs-plan.md. */}
                   <span className="cm-foot-msg cm-hint">
                     {brAction === 'restore' && brFile && brParsedTables.length > 0
@@ -3045,7 +3045,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
         </div>
       </div>
 
-      {/* ————— Modal: nhập from connection URL ————— */}
+      {/* ————— Modal: nhập từ connection URL ————— */}
       {showImportUrlModal && (
         <div className="cm-modal-backdrop">
           <div className="cm-modal" onClick={(e) => e.stopPropagation()}>
@@ -3075,7 +3075,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
         </div>
       )}
 
-      {/* ————— Context menu for kết nối / nhóm ————— */}
+      {/* ————— Context menu cho kết nối / nhóm ————— */}
       {contextMenu && (
         <>
           <div style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={() => setContextMenu(null)} />
@@ -3090,7 +3090,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
                   <Copy size={13} style={{ flexShrink: 0 }} />
                   <span>{t('connection.duplicateProfile')}</span>
                 </button>
-                <button className="context-menu-item" onClick={async () => { const p = contextMenu.profile!; setContextMenu(null); /* SSH terminal cần mật khẩu/private key -> lấy from kho HĐH */ setTerminalProfile({ ...p, config: await configWithSecrets(p) }); }}>
+                <button className="context-menu-item" onClick={async () => { const p = contextMenu.profile!; setContextMenu(null); /* SSH terminal cần mật khẩu/private key -> lấy từ kho HĐH */ setTerminalProfile({ ...p, config: await configWithSecrets(p) }); }}>
                   <TerminalSquare size={13} style={{ flexShrink: 0 }} />
                   <span>
                     {contextMenu.profile.config?.sshEnabled && contextMenu.profile.config?.sshHost
@@ -3119,7 +3119,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
         </>
       )}
 
-      {/* Terminal overlay (SSH if profile có SSH, ngược lại shell cục bộ) */}
+      {/* Terminal overlay (SSH nếu profile có SSH, ngược lại shell cục bộ) */}
       {terminalProfile && (
         <TerminalPanel
           connId={connId}
@@ -3130,7 +3130,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
         />
       )}
 
-      {/* ————— Modal: option xuất kết nối ————— */}
+      {/* ————— Modal: tuỳ chọn xuất kết nối ————— */}
       {showExportModal && (
         <div className="cm-modal-backdrop">
           <div className="cm-modal" onClick={(e) => e.stopPropagation()}>

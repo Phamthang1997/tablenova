@@ -118,7 +118,7 @@ export interface GenPreview {
 /**
  * Generator ids grouped for the dropdown, in display order. Must stay in step with the `match`
  * in `ColState::base_cell` — an id here that Rust does not know fails at generation time with
- * "Generator '<id>' not is hỗ trợ".
+ * "Generator '<id>' không được hỗ trợ".
  */
 export const GENERATOR_GROUPS: { groupKey: string; ids: string[] }[] = [
   {

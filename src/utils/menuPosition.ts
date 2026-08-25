@@ -1,9 +1,9 @@
 /**
- * Đặt position menu ngữ cảnh (right click / context menu) sao for not is tràn ra ngoài window:
- * hết chỗ bên under thì lật lên on điểm bấm, hết chỗ bên must thì lật sang trái,
- * còn if menu cao/rộng hơn cả khoảng trống thì ép ando in viewport.
+ * Đặt vị trí menu ngữ cảnh (chuột phải) sao cho không bị tràn ra ngoài cửa sổ:
+ * hết chỗ bên dưới thì lật lên trên điểm bấm, hết chỗ bên phải thì lật sang trái,
+ * còn nếu menu cao/rộng hơn cả khoảng trống thì ép vào trong viewport.
  *
- * Hàm thuần to test is; phần đo size thật do component ism bằng ref.
+ * Hàm thuần để test được; phần đo kích thước thật do component làm bằng ref.
  */
 export interface MenuRect {
   top: number;
@@ -22,12 +22,12 @@ export function clampMenu(
   let left = x;
   let top = y;
 
-  // not đủ chỗ bên must -> open sang trái điểm bấm
+  // Không đủ chỗ bên phải -> mở sang trái điểm bấm
   if (left + menuWidth + margin > viewWidth) left = x - menuWidth;
-  // not đủ chỗ bên under -> open lên on điểm bấm
+  // Không đủ chỗ bên dưới -> mở lên trên điểm bấm
   if (top + menuHeight + margin > viewHeight) top = y - menuHeight;
 
-  // Vẫn tràn (menu lớn hơn khoảng trống) -> ép ando in viewport
+  // Vẫn tràn (menu lớn hơn khoảng trống) -> ép vào trong viewport
   if (left + menuWidth + margin > viewWidth) left = viewWidth - menuWidth - margin;
   if (top + menuHeight + margin > viewHeight) top = viewHeight - menuHeight - margin;
 

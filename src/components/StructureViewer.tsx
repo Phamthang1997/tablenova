@@ -16,7 +16,7 @@ type StructureSection = 'columns' | 'indexes' | 'fks' | 'check_constraints' | 't
 const CUSTOM_TYPE = '__custom_type__';
 
 interface StructureViewerProps {
-  /** Kết nối mà component này thao tác lên. Truyền tường minh, not read id ambient (§4.1). */
+  /** Kết nối mà component này thao tác lên. Truyền tường minh, không đọc id ambient (§4.1). */
   connId: string;
   tableName: string;
   schema: SchemaInfo;
@@ -235,7 +235,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
   const [allTables, setAllTables] = useState<string[]>([]);
   const [refColumns, setRefColumns] = useState<string[]>([]);
 
-  // automatic hide error message sau 6 giây
+  // Tự động ẩn thông báo lỗi sau 6 giây
   useEffect(() => {
     if (!errorMsg) return;
     const t = setTimeout(() => setErrorMsg(null), 6000);
@@ -421,8 +421,8 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
     };
     const newCols = [...cols, newCol];
     setCols(newCols);
-    // open sẵn ô nhập tên column như handleAddIndex vẫn ism — bấm "add column" mà row
-    // mới chỉ nằm im at under thì user not biết must nhấp đôi to edit.
+    // Mở sẵn ô nhập tên cột như handleAddIndex vẫn làm — bấm "Thêm cột" mà dòng
+    // mới chỉ nằm im ở dưới thì người dùng không biết phải nhấp đôi để sửa.
     setTimeout(() => startEditCol(newCols.length - 1, 'name', newCol.name), 50);
   };
 
@@ -570,12 +570,12 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
     }
   };
 
-  // Lấy danh sách column of một table to select "column tham chiếu".
-  // Bản cũ gọi getTableSchema(refTable) MỖI LẦN nhấp đôi ando ô — mỗi lần is một
-  // vòng round-trip tới DB, and getTableSchema còn lấy cả index + foreign key dù at
-  // đây chỉ cần tên column. with DB at xa thì mỗi lần open dropdown must wait.
-  // Nay dùng getFullCatalog(): lấy column of all table in ít query rồi cache
-  // lại, nên chỉ chậm đúng một lần đầu, sau đó mọi table đều tức thì.
+  // Lấy danh sách cột của một bảng để chọn "Cột tham chiếu".
+  // Bản cũ gọi getTableSchema(refTable) MỖI LẦN nhấp đôi vào ô — mỗi lần là một
+  // vòng round-trip tới DB, và getTableSchema còn lấy cả index + khóa ngoại dù ở
+  // đây chỉ cần tên cột. Với DB ở xa thì mỗi lần mở dropdown phải chờ.
+  // Nay dùng getFullCatalog(): lấy cột của TẤT CẢ bảng trong ít truy vấn rồi cache
+  // lại, nên chỉ chậm đúng một lần đầu, sau đó mọi bảng đều tức thì.
   const [loadingRefCols, setLoadingRefCols] = useState(false);
 
   /**
@@ -628,8 +628,8 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
     }));
     setEditingFkCell(null);
 
-    // Vừa select table tham chiếu -> load sẵn column of nó ngay, to when user open ô
-    // "column tham chiếu" thì danh sách already có, not must wait.
+    // Vừa chọn bảng tham chiếu -> nạp sẵn cột của nó ngay, để khi người dùng mở ô
+    // "Cột tham chiếu" thì danh sách đã có, không phải chờ.
     if (field === 'refTable' && finalVal) {
       void getColumnsOf(finalVal).then(setRefColumns);
     }
@@ -922,7 +922,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [section, tableName, schema, cols, idxs, fks, deletedColNames, deletedIdxNames, deletedFkNames]);
 
-  // build các dump script theo dialect (dùng in pane DDL)
+  // Dựng các dump script theo dialect (dùng trong pane DDL)
   const q = dbType === 'mysql' ? '`' : '"';
   const dropScript = `DROP TABLE ${q}${tableName}${q};`;
   const truncateScript = dbType === 'sqlite'
@@ -2513,7 +2513,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
         </Modal>
       )}
 
-      {/* Index Window Modal (Chỉnh edit / add Index trực quan) */}
+      {/* Index Window Modal (Chỉnh sửa / Thêm Index trực quan) */}
       {idxModalData && (
         <Modal
           title={idxModalData.isNew ? "Thêm Index Mới" : "Chỉnh sửa Index"}
@@ -2551,7 +2551,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
               </select>
             </div>
 
-            {/* column mục tiêu (Multi-column selector) */}
+            {/* Cột mục tiêu (Multi-column selector) */}
             <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', alignItems: 'flex-start', gap: '12px' }}>
               <span style={{ fontWeight: 600, color: 'var(--win-text-secondary)', textAlign: 'right', paddingTop: '4px' }}>Cột chỉ mục</span>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -2639,7 +2639,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
         </Modal>
       )}
 
-      {/* Visual Check Constraint Modal (add & Chỉnh edit trực quan) */}
+      {/* Visual Check Constraint Modal (Thêm & Chỉnh sửa trực quan) */}
       {checkModalData && (
         <Modal
           title={checkModalData.isNew ? "Thêm Check Constraint" : "Chỉnh sửa Check Constraint"}
@@ -2771,7 +2771,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
         </Modal>
       )}
 
-      {/* Visual Trigger Modal (add & Chỉnh edit trực quan) */}
+      {/* Visual Trigger Modal (Thêm & Chỉnh sửa trực quan) */}
       {triggerModalData && (
         <Modal
           title={triggerModalData.isNew ? "Thêm Trigger Mới" : "Chỉnh sửa Trigger"}

@@ -5,7 +5,7 @@ import { RefreshCw, HardDrive, Hash, Table, Search, ArrowUpDown, ExternalLink, S
 import { Modal, ModalFooter } from './Modal';
 
 type InfoTab = 'current' | 'all';
-/** Nhóm đối tượng currently xem in tab "Database hiện tại". */
+/** Nhóm đối tượng đang xem trong tab "Database hiện tại". */
 type ObjKind = 'table' | 'view' | 'function' | 'procedure';
 
 /**
@@ -71,15 +71,15 @@ const mergeSizes = (base: AllDatabasesStats, items: AllDatabasesSizeItem[]): All
 };
 
 interface DatabaseInfoModalProps {
-  /** Kết nối mà component này thao tác lên. Truyền tường minh, not read id ambient (§4.1). */
+  /** Kết nối mà component này thao tác lên. Truyền tường minh, không đọc id ambient (§4.1). */
   connId: string;
   isOpen: boolean;
   onClose: () => void;
   onSelectTable: (tableName: string) => void;
-  /** Tab open sẵn when bật modal (ando from menu "Thống kê all database" thì is 'all'). */
+  /** Tab mở sẵn khi bật modal (vào từ menu "Thống kê tất cả database" thì là 'all'). */
   initialTab?: InfoTab;
-  /** Gọi sau when đổi database successful, to App load lại cây table + tab. */
-  /** Xem write chú cùng tên at `Sidebar.tsx`: open add kết nối, not thay pool tại chỗ. */
+  /** Gọi sau khi đổi database thành công, để App nạp lại cây bảng + tab. */
+  /** Xem ghi chú cùng tên ở `Sidebar.tsx`: mở thêm kết nối, không thay pool tại chỗ. */
   onDatabaseOpened?: (connId: string, name: string, schema?: string | null) => void;
 }
 
@@ -110,7 +110,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
   const [exactCounts, setExactCounts] = useState<Record<string, number>>({});
   const [countingTable, setCountingTable] = useState<string | null>(null);
 
-  // View / hàm / thủ tục of database hiện tại (dùng chung nguồn with Sidebar)
+  // View / hàm / thủ tục của database hiện tại (dùng chung nguồn với Sidebar)
   const [objects, setObjects] = useState<{ views: string[]; functions: string[]; procedures: string[] } | null>(null);
   const [objKind, setObjKind] = useState<ObjKind>('table');
   const [expandedObj, setExpandedObj] = useState<string | null>(null);
@@ -147,7 +147,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
     }
   };
 
-  // Định nghĩa SQL of view/hàm/thủ tục: load when expand lần đầu rồi giữ lại.
+  // Định nghĩa SQL của view/hàm/thủ tục: nạp khi mở rộng lần đầu rồi giữ lại.
   const toggleObjectDef = async (name: string, kind: Exclude<ObjKind, 'table'>) => {
     const key = `${kind}:${name}`;
     if (expandedObj === key) {
@@ -244,7 +244,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, initialTab]);
 
-  // Chuyển tab: chỉ load when tab đó chưa có dữ liệu (tránh gọi lại mỗi lần bấm qua lại).
+  // Chuyển tab: chỉ nạp khi tab đó chưa có dữ liệu (tránh gọi lại mỗi lần bấm qua lại).
   const selectTab = (next: InfoTab) => {
     setTab(next);
     if (next === 'current' && !stats && !loading) fetchStats();
@@ -316,7 +316,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
     });
   }, [stats, deferredSearch, sortBy, exactCounts]);
 
-  // Danh sách view/hàm/thủ tục theo nhóm currently select (dùng chung ô search with table).
+  // Danh sách view/hàm/thủ tục theo nhóm đang chọn (dùng chung ô tìm kiếm với bảng).
   const currentObjects = useMemo(() => {
     if (!objects || objKind === 'table') return [];
     const src =
@@ -341,14 +341,14 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
     [objects]
   );
 
-  // Tập database currently xét: chỉ filter theo "DB hệ thống". Mọi con số tổng (kể cả tiêu đề
-  // and tên tab) đều đếm on tập này to not lệch nhau; ô search chỉ filter row in table.
+  // Tập database đang xét: chỉ lọc theo "DB hệ thống". Mọi con số tổng (kể cả tiêu đề
+  // và tên tab) đều đếm trên tập này để không lệch nhau; ô tìm kiếm chỉ lọc hàng trong bảng.
   const scopedDatabases = useMemo(
     () => (allStats?.databases || []).filter((d) => showSystemDbs || !d.is_system),
     [allStats, showSystemDbs]
   );
 
-  // Danh sách display in table: tập on + search + sort.
+  // Danh sách hiển thị trong bảng: tập trên + tìm kiếm + sắp xếp.
   const visibleDatabases = useMemo(() => {
     const list = scopedDatabases.filter((d) =>
       d.db_name.toLowerCase().includes(allSearch.toLowerCase().trim())
@@ -367,7 +367,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
     });
   }, [scopedDatabases, allSearch, allSortBy]);
 
-  // Tổng of các database currently xét (đổi theo bộ filter "DB hệ thống", not đổi theo search).
+  // Tổng của các database đang xét (đổi theo bộ lọc "DB hệ thống", không đổi theo tìm kiếm).
   const serverSummary = useMemo(() => {
     let size = 0;
     let tables = 0;
@@ -432,8 +432,8 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
         </span>
       }
     >
-        {/* Segmented tabs: database hiện tại ↔ toàn bộ database on server.
-            Nút Refresh nằm at row này thay vì on title bar, to header
+        {/* Segmented tabs: database hiện tại ↔ toàn bộ database trên server.
+            Nút Refresh nằm ở hàng này thay vì trên thanh tiêu đề, để header
             cao đúng bằng mọi dialog khác (xem `Modal.tsx`). */}
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: '4px', padding: '10px 24px 0', borderBottom: '1px solid var(--win-border)', background: 'var(--win-bg-tab-bar)' }}>
           {([
@@ -551,7 +551,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
             </div>
           </div>
 
-          {/* select nhóm đối tượng to liệt kê bên under */}
+          {/* Chọn nhóm đối tượng để liệt kê bên dưới */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
             {([
               { key: 'table' as const, icon: <Table size={12} />, label: t('dbInfo.kindTable'), count: stats?.total_tables ?? 0 },
@@ -609,7 +609,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
               />
             </div>
 
-            {/* View/hàm/thủ tục not có dung lượng hay số row nên luôn xếp theo tên */}
+            {/* View/hàm/thủ tục không có dung lượng hay số dòng nên luôn xếp theo tên */}
             {objKind === 'table' && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto' }}>
                 <ArrowUpDown size={14} style={{ color: 'var(--win-text-secondary)' }} />
@@ -770,7 +770,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
                 </tbody>
               </table>
               ) : (
-              /* View / hàm / thủ tục: chỉ có tên + định nghĩa, bấm to xem SQL */
+              /* View / hàm / thủ tục: chỉ có tên + định nghĩa, bấm để xem SQL */
               <table style={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'collapse', textAlign: 'left', fontSize: '12px' }}>
                 <thead>
                   <tr style={{ background: 'var(--win-bg-tab-bar)', borderBottom: '1px solid var(--win-border)', color: 'var(--win-text-secondary)', fontWeight: 600, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>
@@ -941,7 +941,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
             </div>
           </div>
 
-          {/* Postgres: metadata số table/số row read-only is from chính database currently kết nối */}
+          {/* Postgres: metadata số bảng/số dòng chỉ đọc được từ chính database đang kết nối */}
           {allStats?.metrics_manual && allStats.metrics_pending && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', background: 'var(--win-bg-window)', border: '1px dashed var(--win-border)', borderRadius: '8px', fontSize: '12px', color: 'var(--win-text-secondary)' }}>
               <ScanSearch size={16} style={{ color: 'var(--win-accent)', flexShrink: 0 }} />
@@ -1023,9 +1023,9 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
           {/* Database Comparison Grid */}
           <div style={{ flex: 1, border: '1px solid var(--win-border)', borderRadius: '8px', overflow: 'hidden', background: 'var(--win-bg-window)', display: 'flex', flexDirection: 'column' }}>
             <div style={{ overflowX: 'auto', flex: 1 }}>
-              {/* table-layout fixed: chia column theo tỉ lệ định sẵn, not to trình duyệt tự
-                  co kéo (thanh bar co giãn is will nuốt hết chỗ and ism các column số newline).
-                  minWidth to window hẹp thì cuộn ngang thay vì bóp nát các column. */}
+              {/* table-layout fixed: chia cột theo tỉ lệ định sẵn, không để trình duyệt tự
+                  co kéo (thanh bar co giãn được sẽ nuốt hết chỗ và làm các cột số xuống dòng).
+                  minWidth để cửa sổ hẹp thì cuộn ngang thay vì bóp nát các cột. */}
               <table style={{ width: '100%', minWidth: '860px', tableLayout: 'fixed', borderCollapse: 'collapse', textAlign: 'left', fontSize: '12px' }}>
                 <thead>
                   <tr style={{ background: 'var(--win-bg-tab-bar)', borderBottom: '1px solid var(--win-border)', color: 'var(--win-text-secondary)', fontWeight: 600, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>

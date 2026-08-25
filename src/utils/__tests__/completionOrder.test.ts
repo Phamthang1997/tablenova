@@ -3,12 +3,12 @@ import { SQL_EDITOR_OPTIONS } from '../../sql/editorOptions';
 import { rankSort } from '../../sql/usageStats';
 
 /**
- * Thứ tự suggestion of trình viết SQL nằm hoàn toàn in `sortText` (xem sqlLanguage.ts).
- * Hai test under đây key lại thứ tự đó, and key luôn option Monaco unique can
+ * Thứ tự gợi ý của trình viết SQL nằm hoàn toàn trong `sortText` (xem sqlLanguage.ts).
+ * Hai test dưới đây khoá lại thứ tự đó, và khoá luôn tuỳ chọn Monaco duy nhất có thể
  * âm thầm vô hiệu hoá nó.
  */
 
-/** Đúng các tier mà sqlLanguage.ts phát ra, from ưu tiên cao xuống thấp. */
+/** Đúng các tier mà sqlLanguage.ts phát ra, từ ưu tiên cao xuống thấp. */
 const TIERS: [string, string][] = [
   ['* sau SELECT', '00_star'],
   ['liệt kê cột của bảng', '00_starlist_f'],
@@ -28,20 +28,20 @@ describe('thứ tự gợi ý SQL', () => {
   });
 
   it('điều kiện JOIN xếp trên mọi cột, bất kể tần suất dùng của cột', () => {
-    // '0_...' luôn nhỏ hơn '1_...' nên not có column nào chen lên on is.
+    // '0_...' luôn nhỏ hơn '1_...' nên không có cột nào chen lên trên được.
     expect('0_0' < rankSort('1', 'a')).toBe(true);
     expect('0_9' < rankSort('1', 'zzz')).toBe(true);
   });
 
   it("snippetSuggestions phải là 'inline'", () => {
-    // 'bottom'/'top' bắt Monaco gom mọi item kind=Snippet về một đầu danh sách and skip
-    // sortText of chúng. Điều kiện JOIN and mục "liệt kê N column" đều is Snippet, nên đặt
-    // 'bottom' ism chúng is dìm xuống under row chục column — đúng bug already gặp.
+    // 'bottom'/'top' bắt Monaco gom mọi item kind=Snippet về một đầu danh sách và BỎ QUA
+    // sortText của chúng. Điều kiện JOIN và mục "liệt kê N cột" đều là Snippet, nên đặt
+    // 'bottom' làm chúng bị dìm xuống dưới hàng chục cột — đúng bug đã gặp.
     expect(SQL_EDITOR_OPTIONS.snippetSuggestions).toBe('inline');
   });
 
   it('không lấy gợi ý từ nội dung văn bản', () => {
-    // Chỉ suggestion from catalog DB + parser; bật lên will trộn add from in statement currently gõ.
+    // Chỉ gợi ý từ catalog DB + parser; bật lên sẽ trộn thêm từ trong câu lệnh đang gõ.
     expect(SQL_EDITOR_OPTIONS.wordBasedSuggestions).toBe('off');
   });
 });

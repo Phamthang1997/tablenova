@@ -43,7 +43,7 @@ import {
 import { Modal, ModalBody } from './Modal';
 
 interface DbCompareDialogProps {
-  /** Kết nối mà hộp thoại này lấy danh sách database from đó. */
+  /** Kết nối mà hộp thoại này lấy danh sách database từ đó. */
   connId: string;
   dbType: string;
   currentDb?: string;
