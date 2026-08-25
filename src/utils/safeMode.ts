@@ -74,7 +74,8 @@ export const COMMAND_KINDS: Record<string, CommandKind> = {
   // --- Redis writes ---
   redis_delete_by_pattern: 'write',
   redis_delete_keys: 'write',
-  // Nhập keyspace: RESTORE ghi cả một lô key, đúng thứ Safe Mode tồn tại để hỏi trước.
+  // Keyspace import: RESTORE writes a whole batch of keys at once — exactly what Safe Mode exists
+  // to ask about first.
   redis_restore_keys: 'write',
   // Arbitrary command text, so it can be anything: a write by default.
   redis_execute_cmd: 'write',
@@ -141,9 +142,9 @@ export const COMMAND_KINDS: Record<string, CommandKind> = {
   open_database: 'internal',
   set_connection_read_only: 'internal',
   set_current_schema: 'internal',
-  // Đặt giới hạn thời gian cho câu lệnh: một cài đặt của phiên, không phải câu lệnh người dùng
-  // chạy. Hỏi lại ở đây thì Safe Mode 'all' sẽ bật hộp thoại ngay giữa lúc người dùng đang cố
-  // dựng một hàng rào an toàn.
+  // Setting a statement time limit is a session setting, not a statement the user ran. Prompting
+  // here would make Safe Mode 'all' throw a dialog in the middle of the user putting up a guard
+  // rail of their own.
   set_statement_timeout: 'internal',
   cancel_query: 'internal',
   cancel_data_generation: 'internal',
@@ -175,7 +176,7 @@ export const COMMAND_KINDS: Record<string, CommandKind> = {
   redis_disconnect: 'internal',
   redis_get_elements: 'internal',
   redis_get_key: 'internal',
-  // DUMP chỉ đọc — cùng hạng với redis_get_key, không phải một lệnh người dùng gõ.
+  // DUMP only reads — the same class as redis_get_key, not a command the user typed.
   redis_dump_keys: 'internal',
   redis_info: 'internal',
   redis_json_get: 'internal',
@@ -217,7 +218,7 @@ export function commandKind(cmd: string): CommandKind {
   return COMMAND_KINDS[cmd] ?? 'write';
 }
 
-/** `payload.preview === true`, tức lời gọi này chỉ dựng SQL chứ không chạy. */
+/** `payload.preview === true`, i.e. this call only builds SQL and never runs it. */
 function isDryRunPayload(payload: unknown): boolean {
   return (
     typeof payload === 'object' &&
@@ -311,8 +312,8 @@ export function forgetConnection(connId: string): void {
 export function resetSafeModeState(): void {
   keyByConn.clear();
   cache = null;
-  // Một cửa `runApproved` còn mở sau khi reset là một hành động đã duyệt được mang sang cảnh khác —
-  // vô hại trong app (reset chỉ chạy lúc ngắt kết nối) nhưng là rò rỉ giữa hai test.
+  // A `runApproved` door left open across a reset carries an approved action into another scene —
+  // harmless in the app (reset only runs on disconnect) but a leak between two tests.
   openBatches.clear();
 }
 
@@ -329,11 +330,11 @@ function keyForCommand(_cmd: string, connId: string): string {
 }
 
 /**
- * `connKey` của một `connId`, hoặc `''` khi chưa biết.
+ * The `connKey` of a `connId`, or `''` when it is not known.
  *
- * Cho những chỗ chỉ có id trong tay (component nhận `connId` qua props) mà cần danh tính **server**
- * để đọc một thiết lập lưu theo server. Bản đồ này đã tồn tại vì cổng Safe Mode cần nó; mở ra ở đây
- * để không ai phải dựng bản thứ hai và làm hai bên lệch nhau.
+ * For the places that hold only an id (a component handed `connId` through props) but need the
+ * **server** identity to read a setting stored per server. This map already exists because the Safe
+ * Mode gate needs it; exposing it here stops anyone building a second one that then drifts.
  */
 export function connKeyOfConn(connId: string): string {
   return keyByConn.get(connId) ?? '';
@@ -424,32 +425,33 @@ export interface SafeModeRequest {
   /** The Tauri command about to run — shown verbatim, it is the most precise label there is. */
   command: string;
   /**
-   * Điều hành động này sắp làm, bằng câu chữ đã dịch, do chỗ gọi `runApproved()` cung cấp.
+   * What this action is about to do, in already-translated words, supplied by whoever calls
+   * `runApproved()`.
    *
-   * Tên command một mình đủ chính xác cho một lệnh lẻ, nhưng không nói được "10.000 key, có ghi
-   * đè" — mà với một hành động chỉ được hỏi ĐÚNG MỘT LẦN cho cả lần chạy thì đó chính là thứ
-   * người dùng cần biết để trả lời.
+   * The command name alone is precise enough for a single call, but it cannot say "10,000 keys,
+   * overwriting existing ones" — and for an action asked about EXACTLY ONCE for a whole run, that
+   * is the very thing the user needs in order to answer.
    */
   detail?: string;
   /** Present only for `sql` commands. */
   sql?: SqlSummary;
-  /** Đối tượng cụ thể mà lệnh này nhắm vào, rút ra từ chính tham số của nó. */
+  /** The specific thing this command targets, read out of its own arguments. */
   target?: CommandTarget;
 }
 
 /**
- * "Việc này sắp làm gì, với cái gì" — rút ra từ args của lệnh.
+ * "What is this about to do, and to what" — read out of the command's own args.
  *
- * Không có gì được đoán: mọi trường ở đây là thứ chỗ gọi đã gửi xuống backend. Trước khi có nó, hộp
- * thoại nói "việc này ghi vào CSDL" rồi in tên hàm Rust — đúng nhưng người dùng không trả lời được,
- * vì câu hỏi thật của họ là "ghi mấy dòng, vào bảng nào".
+ * Nothing is guessed: every field here is something the caller already sent to the backend. Before
+ * it existed, the dialog said "this writes to the database" and printed a Rust function name — true,
+ * and unanswerable, because the user's real question is "how many rows, into which table".
  */
 export interface CommandTarget {
-  /** Tên bảng / database / key / pattern mà lệnh nhắm vào. */
+  /** The table / database / key / pattern the command targets. */
   name?: string;
-  /** Số thay đổi theo loại — chỉ `commit_changes` có. */
+  /** Change counts by kind — only `commit_changes` carries these. */
   changes?: { inserts: number; updates: number; deletes: number };
-  /** Số phần tử khi lệnh nhận một mảng (dòng import, key Redis…). */
+  /** Element count when the command takes an array (imported rows, Redis keys…). */
   count?: number;
 }
 
@@ -459,13 +461,13 @@ const str = (v: unknown): string | undefined =>
 const arr = (v: unknown): unknown[] | undefined => (Array.isArray(v) ? v : undefined);
 
 /**
- * Đọc args của một lệnh thành thứ hiển thị được. Trả về object rỗng khi không rút được gì — hộp
- * thoại lúc đó lùi về đúng những gì nó vẫn hiện, chứ không bịa ra một cái tên.
+ * Reads a command's args into something displayable. Returns an empty object when nothing can be
+ * read — the dialog then falls back to exactly what it always showed, rather than inventing a name.
  *
- * Cố tình KHÔNG phải một bảng tra theo từng tên lệnh: tham số của các lệnh này đã đặt tên theo cùng
- * quy ước (`name`/`tableName`/`keys`/`pattern`), nên đọc theo quy ước phủ được cả những lệnh thêm
- * sau mà không ai phải nhớ cập nhật bảng. Thêm một lệnh với tham số tên khác thì mất phần ngữ cảnh
- * — không phải hiện sai.
+ * Deliberately NOT a lookup table keyed by command name: these commands already name their
+ * parameters by one convention (`name`/`tableName`/`keys`/`pattern`), so reading by convention
+ * also covers commands added later, with nobody having to remember to update a table. A command
+ * with a differently-named parameter loses the context — it does not show the wrong one.
  */
 export function describeCommand(cmd: string, args: Record<string, unknown>): CommandTarget {
   const payload = (typeof args.payload === 'object' && args.payload !== null
@@ -499,39 +501,42 @@ export function setSafeModeConfirmer(fn: Confirmer | null): void {
   confirmer = fn;
 }
 
-// ===== Một hành động, một lần hỏi =====
+// ===== One action, one question =====
 //
-// `SafeModeGate` đã ghi rõ nguyên tắc của nó: "One prompt per *action*, never per statement" —
-// chạy một tệp 500 câu lệnh thì hỏi một lần. Nhưng nguyên tắc đó chỉ tự đúng khi một hành động là
-// MỘT lệnh backend, còn `approveCommand` thì chạy trước từng `invoke`.
+// `SafeModeGate` states its own rule plainly: "One prompt per *action*, never per statement" — run
+// a file of 500 statements and you are asked once. But that rule only holds by itself while one
+// action is ONE backend command, and `approveCommand` runs in front of every `invoke`.
 //
-// Nhập keyspace Redis là hành động đầu tiên trong app phá vỡ điều đó: nó gọi `redis_restore_keys`
-// theo từng lô (`RESTORE_BATCH` = 200), nên 10.000 key là 50 lần hỏi. Không ai trả lời 50 hộp
-// thoại — họ tắt Safe Mode, tức là cái giá cho một tính năng lại là mất hẳn cổng bảo vệ.
+// The Redis keyspace import is the first action in this app to break that: it calls
+// `redis_restore_keys` batch by batch (`RESTORE_BATCH` = 200), so 10,000 keys means 50 questions.
+// Nobody answers 50 dialogs — they switch Safe Mode off, so the price of one feature becomes the
+// loss of the guard entirely.
 //
-// `runApproved()` hỏi một lần cho cả vòng lặp rồi mở một "cửa" trong lúc chạy. Cửa đó hẹp có chủ ý:
+// `runApproved()` asks once for the whole loop and then holds a "door" open while it runs. That
+// door is deliberately narrow:
 //
-//  - Khoá theo **đúng tên command + đúng connId**. Một lần nhập đã duyệt không thể cho
-//    `redis_flush_db`, hay cùng lệnh đó trên một connection khác, đi kèm qua cổng.
-//  - Đóng trong `finally`, nên một lần chạy lỗi giữa đường không để cửa mở lại sau lưng.
-//  - Đếm theo tầng (`Map` giá trị số) chứ không phải một cờ bật/tắt: hai lần chạy lồng nhau hoặc
-//    song song trên cùng command thì lần kết thúc trước không đóng cửa của lần còn đang chạy.
+//  - Keyed on the **exact command name plus the exact connId**. An approved import cannot carry
+//    `redis_flush_db`, or the same command on another connection, through with it.
+//  - Closed in a `finally`, so a run that fails halfway does not leave the door open behind it.
+//  - Depth-counted (a `Map` of numbers) rather than a boolean: with two nested or concurrent runs
+//    of the same command, the one that finishes first does not close the door on the other.
 //
-// Cái nó KHÔNG làm: nhớ câu trả lời sau khi hành động kết thúc. Không có "đừng hỏi lại nữa" — lần
-// nhập sau vẫn hỏi.
+// What it does NOT do: remember the answer once the action is over. There is no "don't ask again" —
+// the next import asks again.
 const openBatches = new Map<string, number>();
 
 const batchKey = (cmd: string, connId: string) => `${cmd} @ ${connId}`;
 
 /**
- * Chạy `run()` như MỘT hành động dưới mắt Safe Mode: hỏi một lần trước, rồi mọi lệnh `cmd` trên
- * `connId` phát ra bên trong đó không bị hỏi lại.
+ * Runs `run()` as ONE action in Safe Mode's eyes: asks once up front, after which every `cmd` on
+ * `connId` issued inside it goes through unasked.
  *
- * `detail` là câu mô tả đã dịch dành cho hộp thoại ("Nhập 10.000 key vào db0, ghi đè key đã có") —
- * chỗ gọi có `t()`, còn module này thì không nên tự dựng câu.
+ * `detail` is the already-translated sentence for the dialog ("Import 10,000 keys into db0,
+ * overwriting existing ones") — the call site has `t()`, and this module should not be composing
+ * sentences of its own.
  *
- * Người dùng từ chối thì hàm **throw** đúng chuỗi mà `dbHelper` throw khi một lệnh lẻ bị từ chối,
- * nên chỗ gọi không cần biết cổng đã chặn ở tầng nào.
+ * When the user declines, this **throws** the very string `dbHelper` throws for a single declined
+ * command, so the call site never needs to know which layer of the gate stopped it.
  */
 export async function runApproved<T>(
   cmd: string,
@@ -543,8 +548,8 @@ export async function runApproved<T>(
   const mode = getSafeModeForKey(keyForCommand(cmd, connId));
   const wouldAsk = mode !== 'silent' && commandKind(cmd) !== 'internal' && !openBatches.has(key);
 
-  // Cửa này che luôn cả lần cảnh báo mà `approveCommand` in ra khi hộp thoại chưa mount, nên nó
-  // phải tự in — không thì một confirmer null trở thành im lặng hoàn toàn.
+  // This door also covers the warning `approveCommand` prints when the dialog is not mounted, so it
+  // has to print its own — otherwise a null confirmer becomes complete silence.
   if (wouldAsk && !confirmer) {
     console.warn(`[safe-mode] no confirmer registered; ${cmd} ran without asking`);
   }
@@ -579,21 +584,22 @@ export function willPromptForSql(connId: string, sql: string): boolean {
  */
 export async function approveCommand(cmd: string, args: Record<string, unknown>): Promise<boolean> {
   const connId = typeof args.connId === 'string' ? args.connId : '';
-  // Đang ở trong một hành động mà người dùng đã duyệt cho cả lần chạy (`runApproved`) -> không hỏi
-  // lại. Khoá gồm cả `connId`, nên cửa này không mở cho cùng lệnh đó trên connection khác.
+  // Inside an action the user approved for its whole run (`runApproved`) -> do not ask again. The
+  // key includes `connId`, so this door does not open for the same command on another connection.
   if (openBatches.has(batchKey(cmd, connId))) return true;
 
   const mode = getSafeModeForKey(keyForCommand(cmd, connId));
   if (mode === 'silent') return true;
 
-  // Chạy thử thì không hỏi. `commit_changes` là MỘT command làm hai việc: `preview: true` chỉ dựng
-  // SQL rồi trả về (xem `database.rs`), còn không có cờ đó mới là ghi thật — nên cái phân loại theo
-  // tên lệnh không tách được hai đường này. Grid gọi cả hai cho một lần Save (một lần để hiện danh
-  // sách xem trước, một lần để ghi), nên nếu không có nhánh này thì người dùng phải trả lời hai hộp
-  // thoại giống nhau và cái thứ nhất hỏi về một việc không ghi gì cả.
+  // A dry run is not worth asking about. `commit_changes` is ONE command doing two jobs:
+  // `preview: true` only builds the SQL and returns it (see `database.rs`), and without that flag it
+  // is the real write — so classification by command name cannot tell the two paths apart. The grid
+  // calls both for a single Save (once to show the preview list, once to write), so without this
+  // branch the user answers two identical dialogs, the first of which is about writing nothing.
   //
-  // Điều kiện chặt: đúng `=== true`. Thiếu cờ, cờ sai kiểu, hay payload lạ đều rơi về "hỏi", cùng
-  // hướng an toàn với việc một command chưa phân loại bị tính là `write`.
+  // A strict test: exactly `=== true`. A missing flag, a flag of the wrong type, or an unfamiliar
+  // payload all fall back to "ask" — the same safe direction as an unclassified command counting as
+  // a `write`.
   if (cmd === 'commit_changes' && isDryRunPayload(args.payload)) return true;
 
   const kind = commandKind(cmd);

@@ -39,11 +39,11 @@ function usesDelimiterCommand(sql: string): boolean {
 }
 
 /**
- * Full masking for statement splitting: comments + strings, PLUS Postgres dollar-quotes
- ) where bodies contain embedded semicolons.
- 
+ * Full masking for statement splitting: comments + strings (via maskCommentsAndStrings), PLUS
+ * Postgres dollar-quoted blocks (`$$ ... $$`, `$body$ ... $body$`) — a function or trigger body is
+ * full of ';', and without masking them Ctrl+Enter would cut through the middle of one.
  *
- * Returns string of equal length with masked regions replaced by spaces.
+ * The result has the same length as `sql`; characters in a region to be skipped become spaces.
  */
 export function maskForSplit(sql: string): string {
   const base = maskCommentsAndStrings(sql);
@@ -103,24 +103,25 @@ const ALIAS_STOP_WORDS = [
 /**
  * `FROM|JOIN|UPDATE|INTO <table> [AS] [alias]`.
  *
- * Keywords excluded via lookahead to prevent skipping subsequent JOIN clauses.
- 
- 
+ * Keywords are excluded by LOOKAHEAD, not by checking after a match: letting the alias group match
+ * and then discarding it has already moved the regex cursor past that keyword — `FROM a JOIN b`
+ * swallows the `JOIN` and table `b` is never seen at all (a pre-existing bug; see the test).
  */
 const TABLE_REF_SOURCE =
   '\\b(?:from|join|update|into)\\s+([`"\\[\\]\\w.]+)' +
   `(?:\\s+(?:as\\s+)?(?!(?:${ALIAS_STOP_WORDS.join('|')})\\b)([a-zA-Z_]\\w*))?`;
 
 /**
- * Tables referenced in statement in appearance order.
+ * The tables a statement references, **in the order they appear**.
  *
- * Fallback source for hover and completion during mid-typing when AST parsers fail.
- 
- 
- 
- 
+ * This is the fallback source for both hover and completion. Why it is needed even with the ANTLR
+ * parser: while a statement is still half-typed, `getAllEntities()` is not trustworthy and is wrong
+ * in dialect-specific ways — measured: for `... JOIN address a on ` the Postgres parser drops the
+ * freshly joined `address` itself (2 entities instead of 3), and for `... on c.` the MySQL parser
+ * returns zero. A regex over the text understands no SQL in depth, but it stays reliably right in
+ * exactly those half-finished states.
  *
- * Order preserved for JOIN condition inference on the latest table.
+ * The order is kept because the JOIN-condition suggestion needs to know which table was joined last.
  */
 export function collectTableRefs(statement: string): TableRef[] {
   const out: TableRef[] = [];
@@ -144,20 +145,22 @@ const CTE_AS = /as\b/iy;
 const CTE_MATERIALIZED = /(?:not\s+)?materialized\b/iy;
 
 /**
- * Lowercase names of CTEs declared in `WITH ... AS (...)`.
+ * The names of the CTEs declared in `WITH … AS ( … )`, lowercased.
  *
- * Distinguishes local CTE aliases from actual database catalog tables.
- 
- 
- 
+ * Why it is needed: `collectTableRefs()` sees `FROM recent` and reports a table named `recent`, but
+ * a CTE is a name that lives only inside the statement and is not in the database — so
+ * `inspection.ts` looks it up in the catalog, does not find it, and underlines "unknown table" on a
+ * perfectly valid statement. The text is the only place these names can be learned from.
  *
- * Scans masked text; jumps over CTE body via balanced parenthesis counting.
- 
- 
- 
+ * It scans the masked text, so a `WITH` inside a string or a comment does not count, and a CTE body
+ * is skipped by counting parentheses (parens inside literals are masked, so they cannot throw the
+ * count off). Every `WITH` found is handled, including one nested inside another CTE's body: the
+ * outer loop's cursor only steps past the keyword it just matched, not past the body the inner pass
+ * has read.
  *
- * Halts on unexpected syntax (`SELECT * FROM t WITH (NOLOCK)`).
- 
+ * It stops the moment something does not fit the shape rather than guessing on — `SELECT * FROM t
+ * WITH (NOLOCK)` must come out empty, and guessing here would mean silently swallowing a genuinely
+ * misspelled table.
  */
 export function collectCteNames(sql: string): Set<string> {
   const out = new Set<string>();
@@ -227,11 +230,11 @@ export function collectCteNames(sql: string): Set<string> {
 }
 
 /**
- * Non-column tokens in SELECT list (clauses, keywords, literals).
+ * Words that can stand where a column would in a SELECT list but are NOT column names.
  *
- * Prevents false squigglies on subqueries and expressions.
- 
- 
+ * This list is what keeps the "bare column" check from crying wolf. It errs on the side of too many
+ * rather than too few: missing one misspelled column only costs a warning, while underlining valid
+ * SQL costs the user's trust in every underline the editor draws.
  */
 const NON_COLUMN_WORDS = new Set([
   'distinct', 'all', 'as', 'case', 'when', 'then', 'else', 'end', 'null', 'true', 'false',
@@ -255,23 +258,24 @@ export interface BareColumnRef {
 }
 
 /**
- * Unqualified column identifiers in SELECT list.
- * column: `SELECT ids FROM test` -> `ids`.
+ * The **unqualified** identifiers in a SELECT list, i.e. the things being read as a column:
+ * `SELECT ids FROM test` -> `ids`.
  *
- * Scopes strictly to SELECT list where typos commonly occur while avoiding false positives in complex WHERE/ORDER BY clauses.
- 
- 
+ * Why only the SELECT list and not the whole statement: it is the easiest region to bound, and the
+ * one where a mistyped column name happens most. Extending to `WHERE`/`ORDER BY` would require
+ * understanding functions, operators and values, and each of those misunderstood is another
+ * undeserved underline.
  *
- * Four exclusions preventing false diagnostics:
- *  - dot-qualified identifiers (`t.id`, `db.t`) — handled by qualified checks;
- *  - tokens followed by `(` — function calls;
- *  - keywords and literals (`NULL`, `CASE`, `DISTINCT`...) — see `NON_COLUMN_WORDS`;
- *  - **defined aliases**: both `expr AS x` and implicit `expr x` shorthand.
- 
- 
+ * Four things are excluded, each a real source of false reports:
+ *  - dot-qualified names (`t.id`, `db.t`) — the qualified form has its own check;
+ *  - anything sitting right before `(` — a function call, not a column;
+ *  - keywords and literals (`NULL`, `CASE`, `DISTINCT`…) — see `NON_COLUMN_WORDS`;
+ *  - **aliases being defined**: both `expr AS x` and the shorthand `expr x`. An alias is a new name
+ *    the statement itself creates, so it cannot be in the catalog; without excluding it, every
+ *    `SELECT count(*) total` gets flagged.
  *
- * Returns empty array when unresolvable (lacks SELECT or top-level FROM).
- 
+ * Returns an empty array when the region cannot be bounded — no `SELECT`, or no top-level `FROM`.
+ * Silence is right here: the caller only wants what this is sure of.
  */
 /** SELECT list item with character offsets in statement. */
 export interface SelectListItem {
@@ -280,15 +284,15 @@ export interface SelectListItem {
 }
 
 /**
- * Splits SELECT list into items by top-level commas at depth 0.
+ * Cuts a SELECT list into items at commas on paren depth 0.
  *
- * Separated from `collectSelectListRefs` because GROUP BY validation operates per item.
- 
- 
+ * Kept separate from `collectSelectListRefs` because the GROUP BY check has to look **per item**: an
+ * item holding an aggregate is valid even though the column inside it is not grouped, and a flat
+ * list of identifiers cannot express that.
  *
- * Text extracted from masked copy: identifiers preserved while strings/comments are whitespace.
- 
- 
+ * The text comes from the masked copy: identifiers are intact while string and comment content has
+ * become whitespace — exactly what the identifier scanners need. Returns an empty array when the
+ * region cannot be bounded (no `SELECT`, or no top-level `FROM`).
  */
 export function selectListItems(statement: string): SelectListItem[] {
   const masked = maskForSplit(statement);
@@ -381,11 +385,12 @@ export function hasAggregate(item: string): boolean {
 }
 
 /**
- * Identifiers listed in `GROUP BY` clause, or `null` if clause is absent.
+ * The identifiers listed in `GROUP BY`, or `null` when the statement has no such clause.
  *
- * Distinguishes `null` (no GROUP BY) from `[]` (unresolvable GROUP BY like `GROUP BY 1`).
- 
- 
+ * Telling `null` from an empty array is deliberate: with no GROUP BY there is nothing to check,
+ * while a GROUP BY from which no identifier could be read (`GROUP BY 1`) is a case that must be
+ * **skipped** — grouping by ordinal cannot be matched against names, and guessing there is an
+ * undeserved underline.
  */
 export function groupByRefs(statement: string): BareColumnRef[] | null {
   const masked = maskForSplit(statement);
@@ -453,14 +458,14 @@ const DDL_FILLERS = new Set([
 ]);
 
 /**
- * Short descriptive statement label for outline and breadcrumbs.
+ * A short name for a statement, for the outline and the breadcrumb.
  *
- * Finds leading verb at paren depth 0 on masked text, extracting primary table/object target.
- 
- 
+ * Finds the first verb sitting at **paren depth 0** in the masked text, so `SELECT (SELECT …)` is
+ * still one SELECT and a verb inside a string or a comment does not count. Then it takes the main
+ * object: the FROM/INTO/UPDATE table for DML, and `<kind> <name>` for DDL.
  *
- * Fallback returns statement prefix rather than empty string.
- 
+ * When nothing is recognised it returns the beginning of the statement itself — an ugly label still
+ * locates the line you are looking for, an empty entry does not.
  */
 export function describeStatement(statement: string): StatementOutline {
   const masked = maskForSplit(statement);
@@ -552,13 +557,13 @@ const VALUE_AFTER_LIKE = /([`"[\]\w.]+)\s+(?:not\s+)?like\s*(')?$/i;
 const VALUE_IN_LIST = /([`"[\]\w.]+)\s+(?:not\s+)?in\s*\(\s*(?:'(?:[^']|'')*'\s*,\s*)*(')?$/i;
 
 /**
- * Detects if cursor is in value position for a column, and identifies the column.
+ * Whether the caret is where a column's value goes, and which column that is.
  *
- * Matches `WHERE status = `, `WHERE status = '`, `WHERE status IN (`, `IN ('a', `, `LIKE `.
- * Inspects text preceding cursor; reliable during mid-typing.
+ * Recognises `WHERE status = `, `WHERE status = '`, `WHERE status IN (`, `IN ('a', ` and `LIKE `.
+ * It looks only at the text **before** the caret, so it can be called mid-typing.
  *
- * Slices trailing buffer before regex evaluation for performance.
- 
+ * The tail is sliced before matching: these patterns can scan a long way back on a long statement,
+ * and what matters is always within the last few dozen characters.
  */
 export function valuePosition(textBefore: string): ValuePosition | null {
   const tail = textBefore.slice(-200);
@@ -582,18 +587,18 @@ export interface EnclosingCall {
 }
 
 /**
- * Identifies function enclosing `offset` and the active argument index.
+ * Which function encloses `offset`, and which argument the caret is in.
  *
- * Scans backward counting parentheses: depth 0 opening paren marks the enclosing call.
- Commas at depth 0 count argument positions: `concat(a, foo(b, c), |)` resolves to index 2.
- 
+ * Walks backwards from the caret counting parens: a `)` goes one level deeper, and a `(` at level 0
+ * is the opening paren of the enclosing call. Commas count only at level 0, so
+ * `concat(a, foo(b, c), | )` gives argument 3 rather than 5.
  *
- * Runs on masked copy so parens/commas inside strings or comments are ignored.
- Semicolons at depth 0 halt search.
+ * It runs on the masked copy, so parens and commas inside strings or comments do not count. A `;`
+ * at level 0 stops the walk: that is another statement, so we cannot still be inside a call.
  *
- * Function name must directly precede opening paren without whitespace to avoid false matches (`SELECT (a + b)`).
- 
- 
+ * The function name must be **flush against** the opening paren. This is not cosmetic: `SELECT (a + b`
+ * has `SELECT` before the paren, and in the docs set `SELECT` is an entry with a `syntax` of its own
+ * — loosening this means every paren opened to group an expression pops up `SELECT`'s syntax table.
  */
 export function enclosingCall(text: string, offset: number): EnclosingCall | null {
   const masked = maskForSplit(text);
