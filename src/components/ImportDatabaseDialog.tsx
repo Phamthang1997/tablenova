@@ -48,9 +48,9 @@ interface PreviewStmt {
   kind: 'structure' | 'data' | 'other';
   /** Backend skip câu này: LOCK/UNLOCK TABLES and các lệnh transaction of dump. */
   skipped: boolean;
-  /** Câu chỉ còn comment sau when bỏ comment đầu. */
+  /** Statement contains only comments after leading comment removal. */
   commentOnly: boolean;
-  /** Comment điều kiện of MySQL (`/*!40101 ... *​/`) vẫn is lệnh thật nên vẫn run. */
+  /** MySQL conditional comments (`/*!40101 ... * /`) remain executable statements. */
   commentRuns: boolean;
 }
 

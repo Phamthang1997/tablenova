@@ -80,10 +80,9 @@ export function stripCommentsAndStrings(sql: string): string {
 }
 
 /**
- * returns một string CÙNG ĐỘ DÀI with `sql`, in đó mọi character thuộc comment (-- , /* *​/)
- * or string ('...', "...", `...`) is thay bằng whitespace, còn lại preserve.
- * Nhờ preserve offset, ta can check một match at position `offset` có nằm in
- * vùng comment/string hay not bằng cách so `mask[offset]` with `sql[offset]`.
+ * Returns a string of EQUAL LENGTH to `sql`, replacing characters inside comments (-- , /* * /)
+ * or strings ('...', "...", `...`) with whitespace, preserving all other characters.
+ * Preserves character offsets for accurate position matching.
  */
 export function maskCommentsAndStrings(sql: string): string {
   if (!sql) return '';

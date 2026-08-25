@@ -219,8 +219,8 @@ export function isSkippedDumpBody(body: string): boolean {
 }
 
 /**
- * Câu chỉ còn comment sau when bỏ comment đầu: comment điều kiện of MySQL (`/*!40101 SET ... *​/`)
- * vẫn is lệnh thật nên có run; comment thường thì not.
+ * Statement containing only comments after stripping leading comments: MySQL conditional comments (`/*!40101 SET ... * /`)
+ * remain executable statements, whereas standard comments do not.
  */
 export function isCommentOnlyStatement(stmt: string): { commentOnly: boolean; willRun: boolean } {
   return commentOnlyFromBody(stmt, stripLeadingSqlComments(stmt));
