@@ -212,17 +212,17 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
   const [redisUser, setRedisUser] = useState('');
   const [redisPassword, setRedisPassword] = useState('');
   const [redisDbIndex, setRedisDbIndex] = useState(0);
-  const [showPw, setShowPw] = useState(false); // hiện/ẩn mật khẩu form kết nối
+  const [showPw, setShowPw] = useState(false); // show/hide the connection form's password
   const [profileSearch, setProfileSearch] = useState(''); // filter profile at sidebar
-  const [testStatus, setTestStatus] = useState<'untested' | 'ok' | 'fail'>('untested'); // trạng thái Kiểm tra kết nối
+  const [testStatus, setTestStatus] = useState<'untested' | 'ok' | 'fail'>('untested'); // the state of the Test connection button
 
   // The config form's tabs: SSL and SSH go to tabs of their own so the main form stays short.
   const [formTab, setFormTab] = useState<'general' | 'ssl' | 'ssh'>('general');
-  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({}); // nhóm đang thu gọn ở sidebar
-  const [showNewMenu, setShowNewMenu] = useState(false); // menu chọn loại DB khi tạo kết nối mới
-  const [showGroupList, setShowGroupList] = useState(false); // dropdown gợi ý nhóm đã có
-  const [showDbList, setShowDbList] = useState(false); // dropdown chọn database đã tải về
-  const [uriCopied, setUriCopied] = useState(false); // phản hồi sau khi copy connection string
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({}); // the groups currently collapsed in the sidebar
+  const [showNewMenu, setShowNewMenu] = useState(false); // the DB-type menu shown when creating a new connection
+  const [showGroupList, setShowGroupList] = useState(false); // the dropdown suggesting existing groups
+  const [showDbList, setShowDbList] = useState(false); // the dropdown for picking one of the fetched databases
+  const [uriCopied, setUriCopied] = useState(false); // the feedback shown after copying the connection string
 
   // Whether the host counts as "remote" (not local) -> used for the SSL warning.
   const isRemoteHost = (h?: string) => {
@@ -539,7 +539,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
   const [profileColor, setProfileColor] = useState('');
   const [profileEnv, setProfileEnv] = useState<ConnEnv>('none');
   const [profileGroup, setProfileGroup] = useState('');
-  const [secretError, setSecretError] = useState<string | null>(null); // lỗi khi thao tác với kho bí mật HĐH
+  const [secretError, setSecretError] = useState<string | null>(null); // an error while working with the OS secret store
 
   // The ONE place profiles are written: it always strips the secrets out of the config before
   // touching localStorage, and pushes them into the OS secret store at the same time. The in-memory
@@ -1627,7 +1627,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
       await navigator.clipboard.writeText(connectionUri);
       setUriCopied(true);
       setTimeout(() => setUriCopied(false), 1600);
-    } catch { /* clipboard bị chặn - bỏ qua */ }
+    } catch { /* the clipboard is blocked - ignored */ }
   };
 
   const toggleGroup = (name: string) =>
@@ -3106,7 +3106,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({ connId, em
                   <Copy size={13} style={{ flexShrink: 0 }} />
                   <span>{t('connection.duplicateProfile')}</span>
                 </button>
-                <button className="context-menu-item" onClick={async () => { const p = contextMenu.profile!; setContextMenu(null); /* SSH terminal cần mật khẩu/private key -> lấy từ kho HĐH */ setTerminalProfile({ ...p, config: await configWithSecrets(p) }); }}>
+                <button className="context-menu-item" onClick={async () => { const p = contextMenu.profile!; setContextMenu(null); /* an SSH terminal needs the password/private key -> read them from the OS store */ setTerminalProfile({ ...p, config: await configWithSecrets(p) }); }}>
                   <TerminalSquare size={13} style={{ flexShrink: 0 }} />
                   <span>
                     {contextMenu.profile.config?.sshEnabled && contextMenu.profile.config?.sshHost

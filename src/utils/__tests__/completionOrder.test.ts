@@ -3,12 +3,11 @@ import { SQL_EDITOR_OPTIONS } from '../../sql/editorOptions';
 import { rankSort } from '../../sql/usageStats';
 
 /**
- * Thứ tự gợi ý của trình viết SQL nằm hoàn toàn trong `sortText` (xem sqlLanguage.ts).
- * Hai test dưới đây khoá lại thứ tự đó, và khoá luôn tuỳ chọn Monaco duy nhất có thể
- * âm thầm vô hiệu hoá nó.
+ * The SQL editor's suggestion order lives entirely in `sortText` (see sqlLanguage.ts).
+ * The two tests below pin that order, and pin the one Monaco option that can silently defeat it.
  */
 
-/** Đúng các tier mà sqlLanguage.ts phát ra, từ ưu tiên cao xuống thấp. */
+/** Exactly the tiers sqlLanguage.ts emits, from the highest priority down. */
 const TIERS: [string, string][] = [
   ['* sau SELECT', '00_star'],
   ['liệt kê cột của bảng', '00_starlist_f'],
@@ -28,20 +27,20 @@ describe('thứ tự gợi ý SQL', () => {
   });
 
   it('điều kiện JOIN xếp trên mọi cột, bất kể tần suất dùng của cột', () => {
-    // '0_...' luôn nhỏ hơn '1_...' nên không có cột nào chen lên trên được.
+    // '0_...' always sorts below '1_...', so no column can push its way above.
     expect('0_0' < rankSort('1', 'a')).toBe(true);
     expect('0_9' < rankSort('1', 'zzz')).toBe(true);
   });
 
   it("snippetSuggestions phải là 'inline'", () => {
-    // 'bottom'/'top' bắt Monaco gom mọi item kind=Snippet về một đầu danh sách và BỎ QUA
-    // sortText của chúng. Điều kiện JOIN và mục "liệt kê N cột" đều là Snippet, nên đặt
-    // 'bottom' làm chúng bị dìm xuống dưới hàng chục cột — đúng bug đã gặp.
+    // 'bottom'/'top' makes Monaco group every kind=Snippet item at one end of the list and IGNORE
+    // their sortText. The JOIN condition and the "list N columns" entry are both Snippets, so
+    // 'bottom' buried them dozens of columns down — exactly the bug that was hit.
     expect(SQL_EDITOR_OPTIONS.snippetSuggestions).toBe('inline');
   });
 
   it('không lấy gợi ý từ nội dung văn bản', () => {
-    // Chỉ gợi ý từ catalog DB + parser; bật lên sẽ trộn thêm từ trong câu lệnh đang gõ.
+    // Suggestions come only from the DB catalog and the parser; switching this on would mix in words from the statement being typed.
     expect(SQL_EDITOR_OPTIONS.wordBasedSuggestions).toBe('off');
   });
 });

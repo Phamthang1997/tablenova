@@ -15,10 +15,10 @@ interface TerminalPanelProps {
   config: DbConnectionConfig;
   profileName?: string;
   onClose: () => void;
-  floating?: boolean;          // true = cửa sổ nổi; false = ghim trong tab
-  active?: boolean;            // (chế độ ghim) tab này có đang active không -> quyết định hiện/ẩn
-  onToggleFloat?: () => void;  // có -> hiện nút pop-out/dock
-  inOwnWindow?: boolean;       // đang chạy trong cửa sổ OS riêng -> ẩn nút "Cửa sổ mới" + lấp đầy
+  floating?: boolean;          // true = a floating window; false = docked in a tab
+  active?: boolean;            // (docked mode) whether this tab is active -> decides shown/hidden
+  onToggleFloat?: () => void;  // present -> show the pop-out/dock button
+  inOwnWindow?: boolean;       // running in an OS window of its own -> hide "New window" and fill it
   // Whether to show the X in the header. Callers that already have another way to close it (a
   // terminal opened as a tab -> the tab's own X) pass false, so the header does not duplicate it.
   closable?: boolean;
@@ -192,7 +192,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   }, [epoch]);
 
   const startDrag = (e: React.MouseEvent) => {
-    if (!floating || maximized) return; // chỉ kéo được ở chế độ nổi và chưa full màn hình
+    if (!floating || maximized) return; // draggable only while floating and not maximized
     dragRef.current = { sx: e.clientX, sy: e.clientY, ox: pos.x, oy: pos.y };
     const move = (ev: MouseEvent) => {
       const d = dragRef.current;

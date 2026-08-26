@@ -69,31 +69,31 @@ export function phpUnserialize(bytes: Uint8Array): any {
     const s = i;
     while (i < bytes.length && bytes[i] !== stop) i++;
     const n = parseInt(td.decode(bytes.subarray(s, i)), 10);
-    i++; // bỏ ký tự stop
+    i++; // skip the stop character
     return n;
   };
   const readNumSemicolon = (): number => {
     const s = i;
     while (i < bytes.length && bytes[i] !== 0x3b /* ; */) i++;
     const n = Number(td.decode(bytes.subarray(s, i)));
-    i++; // bỏ ';'
+    i++; // skip the ';'
     return n;
   };
   // Reads the LEN:"…" part — for s: it ends with '";', for O: with '":' (both 2 bytes -> skip 2).
   const readLenString = (): string => {
     const len = readIntUntil(0x3a /* : */);
-    i++; // bỏ '"'
+    i++; // skip the '"'
     const start = i;
-    i += len; // LEN là số byte
+    i += len; // LEN counts bytes
     const str = td.decode(bytes.subarray(start, i));
-    i += 2; // bỏ 2 byte kết thúc
+    i += 2; // skip the 2 terminating bytes
     return str;
   };
 
   function parse(): any {
     const t = bytes[i];
     if (t === 0x4e /* N */) { i += 2; return null; } // N;
-    i += 2; // bỏ type + ':'
+    i += 2; // skip the type and the ':'
     switch (t) {
       case 0x62: { const v = bytes[i] === 0x31; i += 2; return v; } // b:V;
       case 0x69: return readNumSemicolon(); // i:V;
@@ -567,7 +567,7 @@ export async function decodeRedisValue(
       const val = phpUnserialize(bytes);
       return { ok: true, format: prefix + 'php-serialize', text: JSON.stringify(val, null, 2) };
     } catch {
-      /* rơi xuống raw */
+      /* falls through to raw */
     }
   }
   if (/^[[{]/.test(trimmed)) {
@@ -575,7 +575,7 @@ export async function decodeRedisValue(
       const val = JSON.parse(text);
       return { ok: true, format: prefix + 'json', text: JSON.stringify(val, null, 2) };
     } catch {
-      /* rơi xuống raw */
+      /* falls through to raw */
     }
   }
   return { ok: true, format: plainFormat, text };

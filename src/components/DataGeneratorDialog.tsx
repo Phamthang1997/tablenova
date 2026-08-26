@@ -34,7 +34,7 @@ import { ProgressBar } from './ProgressBar';
 import { cancelJob, startJob } from '../utils/jobs';
 
 interface DataGeneratorDialogProps {
-  /** Kết nối đích. Tường minh vì lần sinh dữ liệu chạy như job nền — xem dbHelper.generateData. */
+  /** The target connection. Explicit, because a generation run happens as a background job — see dbHelper.generateData. */
   connId: string;
   /** Server + database the data will be written to — shown in the footer, since this writes. */
   dbName?: string;
@@ -99,7 +99,7 @@ export const DataGeneratorDialog: React.FC<DataGeneratorDialogProps> = ({ connId
   const [result, setResult] = useState<GenResult | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
   const startedAtRef = useRef(0);
-  /** Job của lần chạy hiện tại — nút Huỷ ở footer nhắm vào nó. */
+  /** The current run's job — the footer's Cancel button aims at it. */
   const jobIdRef = useRef<string | null>(null);
 
   // ---- load targets ----
@@ -259,12 +259,12 @@ export const DataGeneratorDialog: React.FC<DataGeneratorDialogProps> = ({ connId
 
   // ---- run ----
   /**
-   * Sinh dữ liệu chạy như một **job nền** (xem utils/jobs.ts): người dùng đóng hộp thoại này rồi
-   * đi làm việc khác, tiến độ và nút huỷ vẫn còn ở `JobsTray`.
+   * Generation runs as a **background job** (see utils/jobs.ts): the user closes this dialog and goes
+   * off to do something else, and the progress and cancel button are still there in `JobsTray`.
    *
-   * Hộp thoại vẫn giữ `progress`/`result` của riêng nó để hiện đúng như trước **khi còn mở** — hai
-   * chỗ cùng đọc một lần chạy, không phải hai lần chạy. Sau khi đóng thì các `setState` này thành
-   * no-op, còn job thì không đụng tới.
+   * The dialog keeps `progress`/`result` of its own so it displays exactly as before **while it is
+   * open** — two places reading one run, not two runs. After it closes these `setState` calls become
+   * no-ops, and the job is left untouched.
    */
   const run = useCallback(() => {
     setRunning(true);
@@ -279,7 +279,7 @@ export const DataGeneratorDialog: React.FC<DataGeneratorDialogProps> = ({ connId
       db: dbName ?? '',
       write: true,
       lockKey: `${connId}|${dbName ?? ''}`,
-      // Cờ huỷ bên Rust khoá theo `conn_id`, nên phải nhắm đúng kết nối đang sinh dữ liệu.
+      // The cancel flag on the Rust side is keyed by `conn_id`, so it has to aim at the connection actually generating.
       onCancel: () => void dbHelper.cancelDataGeneration(connId),
       run: async (ctx) => {
         try {
@@ -296,8 +296,8 @@ export const DataGeneratorDialog: React.FC<DataGeneratorDialogProps> = ({ connId
             });
           }, connId);
           setResult(res);
-          // Số dòng đã đổi -> Sidebar/DataGrid nạp lại, kể cả khi hộp thoại đã đóng từ lâu.
-          // Schema không đổi nên KHÔNG gọi invalidateCatalog.
+          // The row counts changed -> Sidebar/DataGrid reload, even if the dialog closed long ago.
+          // The schema did not, so invalidateCatalog is deliberately NOT called.
           window.dispatchEvent(new CustomEvent('database-restored', { detail: { connId } }));
           const inserted = res.inserted ? Object.values(res.inserted).reduce((a, b) => a + b, 0) : 0;
           return {
@@ -446,7 +446,7 @@ export const DataGeneratorDialog: React.FC<DataGeneratorDialogProps> = ({ connId
               <div className="dgen-pane-title">{t('dataGen.paneTables')}</div>
               <div className="dgen-pane-pad" style={{ minHeight: 0, flex: 1, gap: '6px' }}>
                 <div style={{ position: 'relative' }}>
-                  {/* Ô nhập cao 28px (bằng .btn) -> icon căn giữa theo chiều dọc. */}
+                  {/* The input is 28px tall (matching .btn) -> the icon centres vertically. */}
                   <Search
                     size={12}
                     className="dgen-dim"
