@@ -78,7 +78,7 @@ export const ImportFilePicker: React.FC<ImportFilePickerProps> = ({
 
   const handlePicked = (e: React.ChangeEvent<HTMLInputElement>) => {
     const picked = e.target.files?.[0] || null;
-    e.target.value = ''; // cho phép chọn lại cùng một tệp
+    e.target.value = ''; // let the same file be chosen again
     if (!picked) return;
 
     const lower = picked.name.toLowerCase();

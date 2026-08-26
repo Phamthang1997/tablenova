@@ -39,7 +39,7 @@ const get = (t: string) => SCHEMA[t] ?? null;
 
 const USERS_COLS = ['id', 'name', 'email', 'age'];
 
-/** Ngắn gọn cho các ca chỉ cần biết lý do bị từ chối. */
+/** A short form for the cases that only need the reason for the refusal. */
 function reasonOf(sql: string, cols: string[] = USERS_COLS): NotEditableReason | 'EDITABLE' {
   const r = resolveResultEditability(sql, cols, get);
   return r.editable ? 'EDITABLE' : r.reason;
@@ -89,7 +89,7 @@ describe('resolveResultEditability — ca cho sửa được', () => {
   });
 
   it('cột trả về không thuộc bảng thì chỉ cột đó bị loại, phần còn lại vẫn sửa được', () => {
-    // Trùng tên cột được backend hậu tố hoá (uniquify_columns) -> không khớp schema.
+    // Duplicate column names are suffixed by the backend (uniquify_columns) -> they no longer match the schema.
     const r = resolveResultEditability('SELECT * FROM users', ['id', 'name', 'name (2)'], get);
     expect(r).toEqual({ editable: true, table: 'users', primaryKey: 'id', columns: ['id', 'name'] });
   });

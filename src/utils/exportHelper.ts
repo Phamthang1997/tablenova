@@ -140,7 +140,7 @@ export function buildSql(
       flush();
     }
     tuples.push(tuple);
-    chars += tuple.length + 2; // +2 cho ",\n" nối giữa hai tuple
+    chars += tuple.length + 2; // +2 for the ",\n" joining two tuples
   }
   flush();
   return out.join('\n');

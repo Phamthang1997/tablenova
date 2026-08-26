@@ -96,7 +96,7 @@ describe('splitStatements — lệnh DELIMITER của MySQL', () => {
     const body = stmts[1].text;
     expect(body).toContain('UPDATE stats');
     expect(body).toContain('INSERT INTO audit');
-    expect(body.endsWith('END')).toBe(true); // '//' không bị gửi kèm
+    expect(body.endsWith('END')).toBe(true); // the '//' is not sent along
   });
 
   it('không bao giờ trả chính dòng DELIMITER thành câu lệnh', () => {
@@ -296,7 +296,7 @@ describe('statementAt', () => {
   });
 
   it('con trỏ ngay sau dấu ; thuộc câu lệnh kế tiếp', () => {
-    const at = sql.indexOf(';') + 1; // ngay sau ';' đầu tiên
+    const at = sql.indexOf(';') + 1; // right after the first ';'
     expect(statementAt(sql, at)?.text).toBe('SELECT 2');
   });
 
@@ -538,7 +538,7 @@ describe('valuePosition', () => {
     expect(valuePosition('SELECT * FROM t WHERE status')).toBeNull();
     expect(valuePosition('SELECT * FROM t WHERE ')).toBeNull();
     expect(valuePosition("SELECT * FROM t WHERE status = 'a'")).toBeNull();
-    expect(valuePosition('SELECT * FROM t WHERE 1 = ')).toBeNull(); // số không phải tên cột
+    expect(valuePosition('SELECT * FROM t WHERE 1 = ')).toBeNull(); // a number is not a column name
   });
 });
 

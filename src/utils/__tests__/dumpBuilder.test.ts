@@ -201,7 +201,7 @@ describe('buildDump — theo dialect', () => {
     expect(dump).not.toContain('DELIMITER');
     expect(dump).not.toContain('DROP FUNCTION');
     expect(dump).toContain('DROP TRIGGER IF EXISTS "trg" ON "film";');
-    expect(dump).not.toContain('DROP VIEW'); // không chọn view nào -> không được có DROP VIEW
+    expect(dump).not.toContain('DROP VIEW'); // no view was selected -> there must be no DROP VIEW
   });
 
   it('SQLite: trigger BEGIN...END vẫn đọc lại được thành một câu', async () => {

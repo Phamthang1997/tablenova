@@ -65,7 +65,7 @@ export function enumValues(raw: string | null | undefined): string[] {
     let value = '';
     while (i < args.length) {
       if (args[i] === "'") {
-        if (args[i + 1] === "'") { value += "'"; i += 2; continue; } // nháy đôi = một nháy
+        if (args[i + 1] === "'") { value += "'"; i += 2; continue; } // a doubled quote is one quote
         i++;
         break;
       }

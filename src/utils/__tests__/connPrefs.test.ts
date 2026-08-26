@@ -1,8 +1,8 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import { createConnPref } from '../connPrefs';
 
-// Cùng lý do như `safeMode.test.ts`: Vitest chạy `environment: 'node'`, không có localStorage, nên
-// cài bản nhỏ nhất hành xử giống nó.
+// The same reason as `safeMode.test.ts`: Vitest runs `environment: 'node'`, which has no
+// localStorage, so the smallest thing that behaves like one is installed.
 const memory = new Map<string, string>();
 (globalThis as { localStorage?: unknown }).localStorage = {
   getItem: (k: string) => memory.get(k) ?? null,
@@ -15,13 +15,13 @@ const memory = new Map<string, string>();
   },
 } satisfies Storage;
 
-/** Bản sao của thiết lập "giới hạn thời gian": số > 0, mặc định 0. */
+/** A copy of the "statement timeout" setting: a number > 0, defaulting to 0. */
 const makeSecs = (storageKey: string) =>
   createConnPref<number>(storageKey, 'test-secs-changed', 0, (raw) =>
     typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : null,
   );
 
-/** Bản sao của thiết lập "xem trước SQL": chỉ `false` được lưu, mặc định `true`. */
+/** A copy of the "preview SQL" setting: only `false` is stored, and it defaults to `true`. */
 const makeFlag = (storageKey: string) =>
   createConnPref<boolean>(storageKey, 'test-flag-changed', true, (raw) => (raw === false ? false : null));
 
@@ -41,7 +41,7 @@ describe('createConnPref', () => {
   });
 
   it('DELETES the entry when the value is the default, instead of writing it', () => {
-    // Nếu không thì localStorage phình lên một dòng cho mỗi server người dùng từng mở.
+    // Otherwise localStorage grows by one entry for every server the user has ever opened.
     const p = makeSecs('k4');
     p.set('pg:a:5432', 30);
     p.set('pg:a:5432', 0);
@@ -50,7 +50,7 @@ describe('createConnPref', () => {
   });
 
   it('ignores a key it cannot attribute to a server', () => {
-    // Key rỗng = "chưa biết đây là server nào"; ghi vào đó là ghi cho mọi server một lúc.
+    // An empty key means "which server this is is not known yet"; writing there writes for every server at once.
     const p = makeFlag('k5');
     p.set('', false);
     expect(memory.get('k5')).toBeUndefined();

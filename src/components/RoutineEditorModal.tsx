@@ -7,7 +7,7 @@ import { type RoutineParam, parseRoutineParameters, getDefaultValueForType } fro
 export type { RoutineParam };
 
 interface RoutineEditorModalProps {
-  /** Kết nối mà component này thao tác lên. Truyền tường minh, không đọc id ambient (§4.1). */
+  /** The connection this component acts on. Passed explicitly, never read from the ambient id (§4.1). */
   connId: string;
   name: string;
   kind: 'procedure' | 'function';
@@ -158,7 +158,7 @@ export const RoutineEditorModal: React.FC<RoutineEditorModalProps> = ({
         />
       </div>
 
-      {/* Panel Chạy thử nghiệm với Auto Parameter Detection */}
+      {/* The test-run panel, with automatic parameter detection */}
       <div className="rt-test-panel">
         <div className="rt-test-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>

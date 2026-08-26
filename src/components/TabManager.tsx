@@ -50,8 +50,8 @@ export interface TabInfo {
    * recreated) between sessions.
    */
   redisKeyInfo?: { keyName: string; keyType?: string };
-  config?: any;       // cấu hình kết nối cho tab terminal
-  floating?: boolean; // terminal: đang ở chế độ cửa sổ nổi
+  config?: any;       // the connection config for a terminal tab
+  floating?: boolean; // terminal: currently in floating-window mode
   /** The group holding this tab. Empty = a loose tab. See TabGroup. */
   groupId?: string;
 }

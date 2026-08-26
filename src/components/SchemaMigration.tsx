@@ -23,7 +23,7 @@ export const SchemaMigration: React.FC<SchemaMigrationProps> = ({ dbType, databa
   const { t, i18n } = useTranslation();
   const [snapshots, setSnapshots] = useState<SchemaSnapshot[]>(() => listSnapshots());
   const [snapName, setSnapName] = useState('');
-  const [busy, setBusy] = useState<string>(''); // thông báo trạng thái đang xử lý
+  const [busy, setBusy] = useState<string>(''); // the status message while it is working
   // Separate flag for "an operation is running". The spinner used to be driven by
   // `busy.startsWith('currently')`, which only worked while the message was Vietnamese.
   const [working, setWorking] = useState(false);
@@ -154,7 +154,7 @@ export const SchemaMigration: React.FC<SchemaMigrationProps> = ({ dbType, databa
       zIndex={10000}
     >
         <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-          {/* Cột trái: snapshots */}
+          {/* Left column: snapshots */}
           <div style={{ width: '300px', borderRight: '1px solid var(--win-border)', display: 'flex', flexDirection: 'column', padding: '12px', gap: '10px', overflow: 'hidden' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               <span style={label}>{t('migration.captureLabel')}</span>
@@ -206,7 +206,7 @@ export const SchemaMigration: React.FC<SchemaMigrationProps> = ({ dbType, databa
             </div>
           </div>
 
-          {/* Cột phải: kết quả diff + migration */}
+          {/* Right column: the diff result and the migration */}
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '12px', gap: '10px', overflow: 'hidden' }}>
             {error && (
               <div style={{ fontSize: '11px', color: 'var(--st-danger)', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '4px', padding: '6px 8px' }}>{error}</div>

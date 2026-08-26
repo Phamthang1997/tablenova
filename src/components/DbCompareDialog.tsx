@@ -43,7 +43,7 @@ import {
 import { Modal, ModalBody } from './Modal';
 
 interface DbCompareDialogProps {
-  /** Kết nối mà hộp thoại này lấy danh sách database từ đó. */
+  /** The connection this dialog reads its database list from. */
   connId: string;
   dbType: string;
   currentDb?: string;
@@ -1210,7 +1210,7 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
       zIndex={10000}
     >
       <ModalBody style={{ padding: '14px 18px', gap: '12px', flex: 1 }}>
-        {/* Row 1: Selectors Nguồn (A) - Đích (B) */}
+        {/* Row 1: the Source (A) and Target (B) selectors */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           {sideCard('source')}
           <button

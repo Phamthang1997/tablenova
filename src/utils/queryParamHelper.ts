@@ -198,7 +198,7 @@ export function resolveParamValue(raw: string, type: QueryParamType): string | n
       return /^(true|1|yes|t|y)$/i.test(raw.trim());
     case 'number': {
       const n = Number(raw.trim());
-      return Number.isFinite(n) ? n : raw; // không parse được -> giữ chuỗi để DB tự báo lỗi rõ ràng
+      return Number.isFinite(n) ? n : raw; // unparseable -> keep the string so the DB reports a clear error itself
     }
     case 'auto':
     default: {
@@ -286,7 +286,7 @@ export function substituteQueryParams(
   if (patternObj.isPositional) {
     let index = 0;
     return sql.replace(/\?/g, (match, offset) => {
-      if (isMasked(offset)) return match; // ? nằm trong chuỗi/comment -> giữ nguyên
+      if (isMasked(offset)) return match; // the ? sits inside a string or comment -> left alone
       index++;
       const key = positionalParamKey(index);
       return valuesMap[key] !== undefined ? valuesMap[key] : '';

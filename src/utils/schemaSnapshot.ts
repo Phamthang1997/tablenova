@@ -8,7 +8,7 @@ import { editorConnId } from '../sql/editorScope';
 
 export interface TableSnapshot {
   schema: SchemaInfo;
-  ddl: string; // CREATE TABLE gốc, dùng để sinh migration cho bảng mới
+  ddl: string; // the original CREATE TABLE, used to generate the migration for a new table
 }
 
 export interface SchemaSnapshot {
@@ -49,7 +49,7 @@ export async function captureCurrentSchema(name: string, dbType: string, databas
   const items = await dbHelper.getTables(editorConnId());
   const tables: Record<string, TableSnapshot> = {};
   for (const it of items) {
-    if (it.type !== 'table') continue; // chỉ bảng (bỏ view) cho migration
+    if (it.type !== 'table') continue; // tables only (views are skipped) for a migration
     const schema = await dbHelper.getTableSchema(editorConnId(), it.name);
     const def = await dbHelper.getTableDefinition(editorConnId(), it.name);
     tables[it.name] = { schema, ddl: def.sql || '' };
@@ -76,8 +76,8 @@ export interface TableChange {
 }
 
 export interface SchemaDiff {
-  addedTables: string[]; // có ở current, không ở baseline -> CREATE
-  droppedTables: string[]; // có ở baseline, không ở current -> DROP
+  addedTables: string[]; // present in current, absent from the baseline -> CREATE
+  droppedTables: string[]; // present in the baseline, absent from current -> DROP
   changedTables: TableChange[];
   identical: boolean;
 }

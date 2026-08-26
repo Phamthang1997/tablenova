@@ -261,7 +261,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
   const [undoStack, setUndoStack] = useState<GridSnap[]>([]);
   const [redoStack, setRedoStack] = useState<GridSnap[]>([]);
   const prevSnapRef = React.useRef<GridSnap>({ updates: {}, deletes: [], inserts: [] });
-  const skipHistoryRef = React.useRef(true); // bỏ qua lần chạy đầu (mount) và lúc undo/redo khôi phục
+  const skipHistoryRef = React.useRef(true); // skip the first run (mount) and the restores that undo/redo performs
   const curSnap = (): GridSnap => ({
     updates: JSON.parse(JSON.stringify(updates)),
     deletes: Array.from(deletes),
@@ -416,7 +416,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
         const buf = await file.arrayBuffer();
         const rows = await parseXlsx(buf);
         if (rows.length === 0) throw new Error(t('dataGrid.errXlsxEmpty'));
-        setImportFileType('json'); // dòng dạng object, đi chung nhánh ghi DB với CSV/JSON
+        setImportFileType('json'); // object-shaped rows, sharing the DB-write branch with CSV/JSON
         setImportPendingRows(rows);
         setShowImportModal(true);
       } catch (err: any) {
