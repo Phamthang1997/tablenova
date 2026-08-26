@@ -1,12 +1,14 @@
-// Mở một kết nối từ profile đã lưu — đường dùng CHUNG.
+// Opening a connection from a saved profile — the SHARED path.
 //
-// Tồn tại vì Quick Switcher cần đúng việc mà Connection Manager đã làm: đọc profile, lấy bí mật từ
-// kho HĐH, ghép vào config, gọi `dbHelper.connect`. Viết lại nó trong switcher là dựng **bản sao thứ
-// hai** của đường kết nối, mà đường đó mang SSH, SSL, IAM và merge bí mật — hai bản sao sẽ lệch, và
-// lệch ở đây thì biểu hiện là "profile này kết nối được ở màn kia mà không được ở đây".
+// It exists because the Quick Switcher needs exactly what Connection Manager already does: read the
+// profile, fetch the secrets from the OS store, merge them into the config, call `dbHelper.connect`.
+// Rewriting that in the switcher would build a **second copy** of the connect path, and that path
+// carries SSH, SSL, IAM and secret merging — two copies drift, and drift here shows up as "this
+// profile connects on that screen but not on this one".
 //
-// Chỉ phần "dựng config từ profile" nằm ở đây. Phần dựng config từ **state của form** vẫn là của
-// Connection Manager và không cần dùng chung: profile đã lưu *có sẵn* config, chỉ thiếu bí mật.
+// Only "build a config from a profile" lives here. Building a config from the **form's state** is
+// still Connection Manager's and needs no sharing: a saved profile *already has* a config, it merely
+// lacks the secrets.
 
 import { dbHelper } from './dbHelper';
 import { SECRET_FIELDS, mergeSecrets } from './secretFields';
@@ -18,11 +20,12 @@ const PROFILES_KEY = 'tf_connection_profiles';
 const SECRET_FIELD_LIST: string[] = [...SECRET_FIELDS];
 
 /**
- * Profile đã lưu, đọc thẳng từ localStorage.
+ * The saved profiles, read straight from localStorage.
  *
- * Không đi qua state của Connection Manager: component đó chỉ mount ở màn hình kết nối, còn switcher
- * mở từ thanh tiêu đề lúc đã vào workspace. Bản trong localStorage là bản đã bóc bí mật
- * (`persistProfiles`), nên cấu hình ở đây luôn thiếu mật khẩu — đó là ý đồ, xem `configWithSecrets`.
+ * Not through Connection Manager's state: that component only mounts on the connection screen, while
+ * the switcher opens from the title bar once the workspace is up. What is in localStorage is the
+ * secret-stripped version (`persistProfiles`), so a config here always lacks its password — which is
+ * the intent; see `configWithSecrets`.
  */
 export function loadSavedProfiles(): SavedProfile[] {
   try {
@@ -36,11 +39,12 @@ export function loadSavedProfiles(): SavedProfile[] {
 }
 
 /**
- * Config của profile kèm bí mật đọc lại từ kho bảo mật của HĐH.
+ * A profile's config with its secrets read back from the OS secret store.
  *
- * Lỗi đọc kho **không** làm hỏng lần kết nối: trả về config trơn kèm `warning`, để người gọi vẫn thử
- * kết nối (profile không có mật khẩu vẫn hợp lệ — SQLite, hoặc server tin cậy socket) rồi hiện lỗi
- * thật của driver nếu có, thay vì chặn bằng một lỗi về keychain.
+ * A failure to read the store does **not** break the connect: it returns the bare config plus a
+ * `warning`, so the caller still tries (a profile without a password is perfectly valid — SQLite, or a
+ * server that trusts the socket) and shows the driver's real error if there is one, rather than
+ * blocking on a keychain error.
  */
 export async function configWithSecrets(
   profile: SavedProfile,
@@ -57,11 +61,11 @@ export async function configWithSecrets(
 }
 
 /**
- * Mở kết nối từ một profile đã lưu. Trả về đúng những gì `App.handleConnect` cần.
+ * Opens a connection from a saved profile. Returns exactly what `App.handleConnect` needs.
  *
- * `config` được trả ra chứ không chỉ giữ trong đây: App phải lưu nó vào `openConns` để khoá tab
- * (`scopeKey`) và để Terminal kế thừa — nhưng nó mang credential, nên không bao giờ ghi xuống đĩa từ
- * đường này (chỉ `persistProfiles` được ghi profile, và nó bóc bí mật trước).
+ * The `config` is returned rather than kept here: App has to store it in `openConns` to key the tabs
+ * (`scopeKey`) and for the Terminal to inherit — but it carries credentials, so nothing on this path
+ * ever writes it to disk (only `persistProfiles` writes a profile, and it strips the secrets first).
  */
 export async function connectSavedProfile(profile: SavedProfile): Promise<{
   success: boolean;
@@ -73,8 +77,8 @@ export async function connectSavedProfile(profile: SavedProfile): Promise<{
   const { config, warning } = await configWithSecrets(profile);
   const res = await dbHelper.connect(config);
   if (!res.success) {
-    // Lỗi keychain (nếu có) đi kèm lỗi kết nối: một mình nó không nói được gì, nhưng khi kết nối
-    // thất bại thì nó thường CHÍNH LÀ nguyên nhân, và giấu đi là bắt người dùng đoán.
+    // A keychain error, when there is one, travels with the connection error: alone it says nothing,
+    // but when a connect fails it usually IS the cause, and hiding it leaves the user guessing.
     return { success: false, message: warning ? `${res.message}\n\n${warning}` : res.message };
   }
   return { success: true, database: res.database, schema: res.schema, config };

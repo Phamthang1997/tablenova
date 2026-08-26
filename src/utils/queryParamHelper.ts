@@ -14,9 +14,8 @@ export interface QueryParamPattern {
 export const QUERY_PARAM_PATTERNS: QueryParamPattern[] = [
   {
     id: 0,
-    // Nhãn này được render cho người dùng xem. Phải escape thành '\\w': trong
-    // chuỗi JS thì '\w' bị hiểu là 'w' (backslash bị ăn mất) nên UI đang hiện
-    // sai thành ':[w.]'.
+    // This label is rendered for the user. It has to be escaped as '\\w': in a JS string '\w' reads
+    // as 'w' (the backslash is eaten), so the UI was showing ':[w.]' instead.
     label: ':[\\w.]',
     example: 'SELECT * FROM users WHERE id = :user_id AND org = :org.id',
     regex: /(?<!:):([a-zA-Z0-9_.]+)/g
@@ -92,12 +91,12 @@ export function maskCommentsAndStrings(sql: string): string {
   while (i < n) {
     const c = sql[i];
     const c2 = sql[i + 1];
-    // Comment dòng: -- ... đến hết dòng
+    // A line comment: -- … to the end of the line
     if (c === '-' && c2 === '-') {
       while (i < n && sql[i] !== '\n') { out += ' '; i++; }
       continue;
     }
-    // Comment khối: /* ... */
+    // A block comment: /* … */
     if (c === '/' && c2 === '*') {
       out += '  '; i += 2;
       while (i < n && !(sql[i] === '*' && sql[i + 1] === '/')) {
@@ -106,7 +105,7 @@ export function maskCommentsAndStrings(sql: string): string {
       if (i < n) { out += '  '; i += 2; }
       continue;
     }
-    // Chuỗi: ' " ` (xử lý escape nháy đôi '' trong chuỗi nháy đơn)
+    // Strings: ' " ` (handling the doubled '' escape inside a single-quoted string)
     if (c === "'" || c === '"' || c === '`') {
       const quote = c;
       out += ' '; i++;
@@ -149,7 +148,7 @@ export function positionalParamIndex(name: string): number | null {
 export function extractQueryParams(sql: string, patternIndex: number): string[] {
   if (!sql.trim()) return [];
   const patternObj = QUERY_PARAM_PATTERNS[patternIndex] || QUERY_PARAM_PATTERNS[0];
-  // Dò trên mask (cùng độ dài) nên param nằm trong comment/chuỗi (đã thành khoảng trắng) sẽ không khớp
+  // Scanned over the mask (same length), so a parameter inside a comment or string (now whitespace) cannot match
   const cleanSql = maskCommentsAndStrings(sql);
 
   const matches: string[] = [];
@@ -176,18 +175,18 @@ export function extractQueryParams(sql: string, patternIndex: number): string[] 
   return matches;
 }
 
-// Kiểu dữ liệu người dùng chọn cho mỗi tham số trong QueryParamsModal.
+// The data type the user picks for each parameter in QueryParamsModal.
 export type QueryParamType = 'auto' | 'text' | 'number' | 'boolean' | 'null';
 
-// Giá trị + kiểu của một tham số (do modal thu thập).
+// One parameter's value and type, as collected by the modal.
 export interface TypedParamValue {
   value: string;
   type: QueryParamType;
 }
 
 /**
- * Ép giá trị chuỗi người dùng nhập sang giá trị JSON đúng kiểu để bind ở tầng driver.
- * 'auto' tự suy luận; các kiểu còn lại tôn trọng lựa chọn của người dùng.
+ * Coerces the string the user typed into a correctly typed JSON value for binding at the driver level.
+ * 'auto' infers it; every other type honours what the user chose.
  */
 export function resolveParamValue(raw: string, type: QueryParamType): string | number | boolean | null {
   switch (type) {
@@ -206,7 +205,7 @@ export function resolveParamValue(raw: string, type: QueryParamType): string | n
       const t = raw.trim();
       if (t === '') return null;
       if (/^(true|false)$/i.test(t)) return /^true$/i.test(t);
-      // Số nguyên: tránh mất số 0 ở đầu (vd mã bưu chính '01234') -> giữ chuỗi nếu có 0 đứng đầu
+      // Integers: a leading zero must not be lost (a postcode like '01234') -> kept as a string when one is present
       if (/^-?[1-9]\d*$/.test(t) || t === '0') {
         const n = Number(t);
         if (Number.isSafeInteger(n)) return n;
@@ -221,14 +220,15 @@ export function resolveParamValue(raw: string, type: QueryParamType): string | n
 }
 
 /**
- * Chuyển SQL có placeholder (:name, %name%, ?, ${name}) thành SQL với placeholder NATIVE của driver
- * (`?` cho SQLite/MySQL, `$1..$n` cho Postgres) kèm mảng giá trị đã ép kiểu theo đúng thứ tự bind.
+ * Turns SQL with placeholders (:name, %name%, ?, ${name}) into SQL with the driver's NATIVE ones
+ * (`?` for SQLite/MySQL, `$1..$n` for Postgres) plus an array of coerced values in bind order.
  *
- * Mỗi lần xuất hiện của một tham số -> một placeholder + một giá trị (tham số lặp lại được bind lặp lại),
- * đảm bảo ngữ nghĩa đồng nhất trên cả 3 driver. Placeholder nằm trong chuỗi/comment được giữ nguyên.
+ * Each occurrence of a parameter -> one placeholder and one value (a repeated parameter is bound
+ * repeatedly), which keeps the semantics identical across all three drivers. Placeholders inside
+ * strings or comments are left untouched.
  *
- * Đây là điểm mấu chốt để KHÔNG nội suy giá trị vào SQL (chống SQL injection) — giá trị được gửi
- * riêng cho backend để bind ở tầng driver.
+ * This is the crux of NEVER interpolating values into SQL (which is what stops SQL injection) — the
+ * values are sent separately for the backend to bind at the driver level.
  */
 export function buildParameterizedSql(
   sql: string,
@@ -245,7 +245,7 @@ export function buildParameterizedSql(
   const pushValue = (key: string, altKey?: string) => {
     const entry = valuesMap[key] ?? (altKey ? valuesMap[altKey] : undefined);
     values.push(resolveParamValue(entry?.value ?? '', entry?.type ?? 'auto'));
-    // Postgres đánh số $1..$n theo thứ tự bind; SQLite/MySQL dùng `?`.
+    // Postgres numbers $1..$n in bind order; SQLite and MySQL use `?`.
     return isPg ? `$${values.length}` : '?';
   };
 
@@ -278,8 +278,8 @@ export function substituteQueryParams(
   if (!sql.trim()) return sql;
   const patternObj = QUERY_PARAM_PATTERNS[patternIndex] || QUERY_PARAM_PATTERNS[0];
 
-  // Mask cùng độ dài với sql: một match ở vị trí `offset` nằm trong comment/chuỗi
-  // khi và chỉ khi ký tự đầu của nó bị thay khác đi trong mask (thành khoảng trắng).
+  // The mask has the same length as the sql: a match at `offset` is inside a comment or string if and
+  // only if its first character was replaced in the mask (turned into whitespace).
   const mask = maskCommentsAndStrings(sql);
   const isMasked = (offset: number) => mask[offset] !== sql[offset];
 
