@@ -1,9 +1,9 @@
-/* Font bundle sẵn trong public/fonts — KHÔNG tải từ Google Fonts nữa: app desktop phải
-   hiển thị đúng cả khi máy không có mạng, và không gửi request ra ngoài mỗi lần mở app.
-   Giấy phép OFL đi kèm: public/fonts/Inter-OFL.txt, public/fonts/JetBrainsMono-OFL.txt.
-   font-display: block vì file nằm ngay trong app, nạp gần như tức thì.
+/* The fonts are bundled in public/fonts — NO longer fetched from Google Fonts: a desktop app has to
+   render correctly with no network, and must not send a request out every time it opens.
+   The OFL licences ship alongside them: public/fonts/Inter-OFL.txt, public/fonts/JetBrainsMono-OFL.txt.
+   font-display: block, because the files are inside the app and load almost instantly.
 
-   Inter dùng bản variable (1 file cho mọi weight 100–900) nên nhẹ hơn 4 file tĩnh. */
+   Inter is the variable build (one file for every weight 100–900), lighter than four static ones. */
 @font-face {
   font-family: 'Inter';
   font-style: normal;
@@ -12,7 +12,7 @@
   src: url('/fonts/InterVariable.woff2') format('woff2');
 }
 
-/* JetBrains Mono (dùng cho editor SQL, terminal, bảng dữ liệu) */
+/* JetBrains Mono (used by the SQL editor, the terminal and the data grid) */
 @font-face {
   font-family: 'JetBrains Mono';
   font-style: normal;
@@ -29,8 +29,8 @@
   src: url('/fonts/JetBrainsMono-Italic.woff2') format('woff2');
 }
 
-/* 500 và 600 có thật vì UI dùng font-weight 500/600 với mono (DatabaseInfoModal,
-   RedisBrowser, StructureViewer) — nếu thiếu thì browser sẽ nhảy sang 400/700. */
+/* 500 and 600 are real files because the UI uses font-weight 500/600 with the mono face
+   (DatabaseInfoModal, RedisBrowser, StructureViewer) — without them the browser jumps to 400/700. */
 @font-face {
   font-family: 'JetBrains Mono';
   font-style: normal;
@@ -205,7 +205,7 @@ body {
   overflow: hidden;
 }
 
-/* TitleBar: nền kính mỏng + hairline sáng ở cạnh trên cho khớp vật liệu cửa sổ */
+/* TitleBar: a thin glass background plus a light hairline on the top edge, to match the window material */
 .title-bar {
   height: 40px;
   flex-shrink: 0;
@@ -232,9 +232,9 @@ body {
   min-width: 0;
 }
 
-/* Chỉ brand mới giãn chữ. Trước đây uppercase + letter-spacing đặt trên cả
-   .title-bar-left nên "TableNova" bị hiển thị thành "TABLENOVA", và các nhãn
-   menu phải tự hủy bằng text-transform: none. */
+/* Only the brand gets letter-spacing. uppercase + letter-spacing used to sit on the whole
+   .title-bar-left, which rendered "TableNova" as "TABLENOVA" and left every menu label undoing it
+   with text-transform: none. */
 .title-bar-brand {
   font-size: 12px;
   font-weight: 700;
@@ -311,10 +311,10 @@ body {
   font-weight: 600;
 }
 
-/* Màn ConnectionManager: cụm nút chỉ còn vài mục phụ trợ nên bỏ hẳn phản hồi
-   hover, giữ thanh tiêu đề phẳng. Đặt sau hai luật hover ở trên vì cùng độ ưu
-   tiên (0,3,0) — đổi thứ tự là mất tác dụng; bản dark ghi rõ để thắng luật
-   [data-theme='dark'] cùng hạng. */
+/* The ConnectionManager screen: the button cluster holds only a few secondary items there, so hover
+   feedback is dropped entirely and the title bar stays flat. Placed after the two hover rules above
+   because they share a specificity (0,3,0) — reordering breaks it; the dark version is spelled out
+   to beat the [data-theme='dark'] rule of the same rank. */
 .title-bar-flat .tb-capsule-btn:hover:not(:disabled),
 [data-theme='dark'] .title-bar-flat .tb-capsule-btn:hover:not(:disabled) {
   background: transparent;
@@ -366,10 +366,10 @@ body {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
-/* Cụm trạng thái là <button>: bấm vào mở popover chi tiết kết nối
-   (ConnectionInfoPopover). Là <button> nên phải tự dựng lại phần geometry mà
-   .btn thường lo — bản thân .tb-status-capsule đã đặt đủ font/màu/kích thước,
-   chỉ còn con trỏ và trạng thái hover/disabled. */
+/* The status cluster is a <button>: clicking it opens the connection details popover
+   (ConnectionInfoPopover). Being a <button>, it has to rebuild the geometry .btn normally provides —
+   .tb-status-capsule already sets the font, colours and size, so all that is left is the cursor and
+   the hover/disabled states. */
 .tb-status-capsule {
   cursor: pointer;
   transition: filter 120ms ease;
@@ -403,9 +403,9 @@ body {
   box-shadow: none;
 }
 
-/* Cụm nút và ô trạng thái mất luôn viên nền bo tròn: nút/chữ nằm thẳng trên nền
-   trang. .tb-status-capsule ở màn này là <button> disabled nên không có hover,
-   nhưng vẫn tắt filter phòng khi sau này nó bấm được. */
+/* The button cluster and the status box lose their rounded pill background: buttons and text sit
+   directly on the page background. On this screen .tb-status-capsule is a disabled <button> and so
+   has no hover, but the filter is switched off anyway in case it becomes clickable later. */
 .title-bar-flat .tb-capsule,
 [data-theme='dark'] .title-bar-flat .tb-capsule,
 [data-theme='light'] .title-bar-flat .tb-capsule,
@@ -460,7 +460,7 @@ body {
   color: var(--win-text-primary);
 }
 
-/* Menu đang mở: chip sáng nổi lên, cùng chất liệu với segmented control */
+/* An open menu: the chip lifts and brightens, in the same material as the segmented control */
 .title-bar-menu-btn.active {
   background: linear-gradient(rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.72));
   color: var(--win-text-primary);
@@ -603,8 +603,8 @@ body {
   color: var(--win-text-primary);
 }
 
-/* Nút ⋮ nằm ở cụm phải (màn quản lý kết nối): neo panel gốc theo mép phải của
-   nút và bung menu con sang trái, không thì cả hai tràn ra ngoài màn hình. */
+/* The ⋮ button sits in the right cluster on the connection manager screen: the root panel anchors to
+   the button's right edge and submenus open leftwards, or both overflow the screen. */
 .tb-menu-root.tb-menu-flip {
   left: auto;
   right: 0;
@@ -666,8 +666,8 @@ body {
   -webkit-app-region: no-drag;
 }
 
-/* Nút điều khiển cửa sổ bo góc thay vì ô vuông cao hết thanh, cho khớp với các
-   nút bo tròn khác trên nền kính. */
+/* The window controls are rounded rather than full-height squares, to match the other rounded
+   buttons on the glass. */
 .title-bar-btn {
   width: 36px;
   height: 32px;
@@ -719,16 +719,15 @@ body {
     filter: blur(0px);
   }
 
-  /* Khung cuối PHẢI là `none`, không được là scale(1)/blur(0px).
-     Hai giá trị đó tuy giống hệt về hình ảnh nhưng `transform` và `filter` khác
-     `none` đều biến phần tử thành containing block cho mọi con position: fixed —
-     mà .workspace-container lại chạy animation này với fill-mode forwards, nên
-     giá trị của khung cuối nằm lại vĩnh viễn.
-     Hậu quả: mọi thứ fixed BÊN TRONG workspace bị tính toạ độ từ góc trên trái
-     của workspace thay vì của viewport, tức lệch xuống đúng chiều cao thanh tiêu
-     đề. Nạn nhân rõ nhất là hover/suggest của Monaco (fixedOverflowWidgets: true,
-     xem sql/editorOptions.ts) vì chúng nằm trong cây DOM của editor nên không
-     portal ra ngoài được như các popup tự viết. */
+  /* The final keyframe MUST be `none`, never scale(1)/blur(0px).
+     Those two look identical, but any `transform` or `filter` other than `none` turns the element
+     into a containing block for every position: fixed descendant — and .workspace-container runs this
+     animation with fill-mode forwards, so the final keyframe's value stays forever.
+     The consequence: everything fixed INSIDE the workspace is positioned from the workspace's top-left
+     corner instead of the viewport's, i.e. offset down by exactly the title bar's height. The most
+     visible victim is Monaco's hover and suggest widgets (fixedOverflowWidgets: true, see
+     sql/editorOptions.ts), because they live in the editor's DOM tree and cannot be portalled out the
+     way hand-written popups can. */
   100% {
     opacity: 1;
     transform: none;
@@ -759,11 +758,10 @@ body {
   height: 100%;
   width: 100%;
   overflow: hidden;
-  /* Không còn `forwards`: khung cuối của workspaceZoomIn giờ trùng đúng trạng
-     thái tự nhiên của phần tử (opacity 1, không transform, không filter), nên
-     giữ lại giá trị cuối là thừa — và giữ lại chính là thứ từng làm phần tử này
-     mãi mãi là containing block cho con position: fixed. Xem chú thích ở khung
-     100% of keyframe. */
+  /* No more `forwards`: workspaceZoomIn's final keyframe now matches the element's natural state
+     exactly (opacity 1, no transform, no filter), so keeping the final values is redundant — and
+     keeping them is precisely what used to make this element a permanent containing block for
+     position: fixed children. See the note on the 100% keyframe. */
   animation: workspaceZoomIn 0.45s cubic-bezier(0.16, 1, 0.3, 1);
   transform-origin: center center;
 }
@@ -810,8 +808,8 @@ body {
   opacity: 1 !important;
 }
 
-/* Segmented control (Mật khẩu / AWS IAM, Sao lưu / Phục hồi...) */
-/* Track 3px padding + pill bo 6px = ngoài bo 9px, hai đường cong đồng tâm. */
+/* The segmented control (Password / AWS IAM, Backup / Restore…) */
+/* A 3px track padding plus a 6px pill radius = a 9px outer radius, two concentric curves. */
 .cm-seg {
   display: inline-flex;
   gap: 4px;
@@ -1563,12 +1561,13 @@ select.form-input {
   padding-left: 6px;
 }
 
-/* Nút icon trong tiêu đề nhóm ở sidebar (tạo mới / tải lại).
-   Mặc định chìm hẳn vào nền để không làm rối vùng tiêu đề, hover mới nổi khối. */
-/* Nút hành động ở tiêu đề nhóm (tạo mới / tải lại).
-   Lúc nghỉ dùng --win-text-disabled chứ không phải --win-text-secondary: nhãn nhóm
-   ("TABLES") đã là chữ mờ, để icon đậm hơn nhãn thì hai nút hút mắt hơn chính tiêu
-   đề chúng đứng cạnh. Màu đậm dành cho trạng thái hover, khi đó mới có nền + viền. */
+/* Icon buttons in a sidebar group heading (create / reload).
+   They sink fully into the background by default so the heading area stays calm, and only rise on
+   hover. */
+/* Action buttons in a group heading (create / reload).
+   At rest they use --win-text-disabled rather than --win-text-secondary: the group label ("TABLES")
+   is already dimmed, and an icon darker than the label draws more attention than the heading it sits
+   beside. The darker colour belongs to hover, where a background and border appear with it. */
 .sidebar-section-btn {
   width: 24px;
   height: 24px;
@@ -1591,7 +1590,7 @@ select.form-input {
   color: var(--win-text-primary);
 }
 
-/* Nút hành động chính (tạo mới) nhấn thêm màu accent khi hover/đang mở menu */
+/* The primary action button (create) takes the accent colour on hover and while its menu is open */
 .sidebar-section-btn.accent:hover,
 .sidebar-section-btn.is-active {
   background: var(--win-accent-glow);
@@ -1610,14 +1609,14 @@ select.form-input {
   color: var(--win-text-disabled);
 }
 
-/* Tab phân đoạn ở đầu thanh bên (Items / Queries / History / Tools).
-   Bốn nút này trước đây mang inline style giống nhau, tab đang chọn dùng
-   `var(--win-bg-modal, #ffffff)` — mà --win-bg-modal KHÔNG hề được định nghĩa ở đâu
-   trong file này, nên nó luôn rơi về #ffffff. Giao diện sáng trông đúng nên lỗi lọt
-   qua; giao diện tối thì chip trắng cộng với --win-text-primary (gần trắng) làm nhãn
-   tab đang chọn tàng hình.
-   Dùng --ws-sel của .workspace-container thay vì màu cứng: token đó đã có sẵn bản cho
-   từng theme và là cùng "chip sáng nổi lên" mà dòng bảng đang chọn dùng. */
+/* The segmented tabs at the top of the sidebar (Items / Queries / History / Tools).
+   These four buttons used to carry identical inline styles, with the selected tab using
+   `var(--win-bg-modal, #ffffff)` — and --win-bg-modal is NOT defined anywhere in this file, so it
+   always fell back to #ffffff. The light theme looked right, which is how the bug survived; in the
+   dark theme a white chip plus --win-text-primary (near white) made the selected tab's label
+   invisible.
+   It now uses .workspace-container's --ws-sel rather than a hardcoded colour: that token already has
+   a per-theme value and is the same "lifted, brighter chip" the selected table row uses. */
 .sb-seg {
   display: flex;
   padding: 0;
@@ -1626,8 +1625,8 @@ select.form-input {
   background: transparent;
 }
 
-/* Ô chọn schema (chỉ Postgres) — nằm giữa dải tab và ô tìm kiếm của thanh bên.
-   Cùng chiều cao 30px với .sidebar-search-input ngay dưới nó. */
+/* The schema picker (Postgres only) — between the tab strip and the sidebar's search box.
+   The same 30px height as the .sidebar-search-input right below it. */
 .sidebar-schema-bar {
   display: flex;
   align-items: center;
@@ -1692,7 +1691,7 @@ select.form-input {
   box-shadow: none;
 }
 
-/* ————— Sidebar Tools Section (Phân vùng & Icon đẹp mắt) ————— */
+/* ————— The sidebar's Tools section (grouping and icons) ————— */
 .sb-tools-container {
   padding: 6px 8px 16px;
   display: flex;
@@ -1754,7 +1753,7 @@ select.form-input {
   transform: scale(1.06);
 }
 
-/* Biến thể màu pastel tươi tắn cho từng Tool */
+/* A bright pastel colour variant per tool */
 .sb-tool-icon-wrap.blue {
   background: rgba(2, 132, 199, 0.12);
   color: #0284c7;
@@ -1832,8 +1831,8 @@ select.form-input {
   text-overflow: ellipsis;
 }
 
-/* Vạch chia các nhóm trong mục CÔNG CỤ (chạy lệnh / xem cấu trúc / chuyển dữ liệu).
-   Mảnh và thụt lề theo item để phân nhóm mà không thêm tiêu đề con gây rối. */
+/* The dividers between groups in TOOLS (running statements / viewing structure / moving data).
+   Thin and indented to the items, so groups are separated without adding noisy subheadings. */
 .sidebar-tools-sep {
   height: 1px;
   background: var(--win-border);
@@ -2169,9 +2168,9 @@ select.form-input {
   color: #ffffff;
 }
 
-/* Dấu "chưa lưu": chấm thế chỗ nút đóng, rê chuột vào tab thì đổi lại thành
-   nút đóng. Hai phần tử chồng chỗ nhau chứ không thêm cột mới, nếu không thì
-   tab bị đội rộng ra rồi co lại mỗi lần bắt đầu/kết thúc sửa. */
+/* The "unsaved" mark: a dot takes the close button's place, and hovering the tab turns it back into
+   the close button. The two elements share one slot rather than adding a column, or the tab would
+   widen and shrink every time an edit begins or ends. */
 .tab-dirty-dot {
   width: 8px;
   height: 8px;
@@ -2193,15 +2192,14 @@ select.form-input {
   display: flex;
 }
 
-/* Kéo thả đổi thứ tự: tab đang cầm mờ đi, vạch accent chỉ chỗ sẽ thả vào.
-   Dùng inset box-shadow chứ không phải border để bề rộng tab không đổi giữa
-   chừng — đổi bề rộng khi đang kéo làm các tab khác nhảy dưới con trỏ.
+/* Drag to reorder: the held tab fades and an accent line marks where it will land.
+   An inset box-shadow rather than a border, so the tab's width never changes midway — a width change
+   during a drag makes the other tabs jump under the pointer.
 
-   Tab đang cầm được "nhấc lên": nền đặc + đổ bóng + nổi trên các tab khác, còn
-   TabManager dịch nó theo con trỏ bằng transform. Bản đầu chỉ đặt opacity: 0.45
-   và như thế không đủ — tab không active vốn đã là chữ xám trên nền trong suốt,
-   làm mờ thêm khiến nó biến mất chứ không nổi lên, nên nhìn vào không biết đang
-   cầm tab nào. */
+   The held tab is "lifted": an opaque background, a shadow, and stacked above the others, while
+   TabManager translates it with the pointer. The first version only set opacity: 0.45, which was not
+   enough — an inactive tab is already grey text on a transparent background, so fading it further
+   made it disappear rather than stand out, leaving no way to see which tab was being held. */
 .tab-item.tab-dragging {
   position: relative;
   z-index: 5;
@@ -2210,7 +2208,7 @@ select.form-input {
   color: var(--win-text-primary);
   border-radius: 6px;
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
-  /* Không transition transform: nó phải bám sát con trỏ tức thì. */
+  /* No transition on transform: it has to follow the pointer instantly. */
   transition: none;
 }
 
@@ -2223,17 +2221,16 @@ select.form-input {
 }
 
 /* ---------------------------------------------------------------------
-   Nhóm tab (kiểu Chrome). Màu của nhóm vào qua biến --tab-group-color đặt inline
-   trên .tab-group, nên mọi phần tử bên trong lấy được màu mà không cần style
-   inline ở từng chỗ.
+   Tab groups (Chrome-style). A group's colour comes in through the --tab-group-color variable set
+   inline on .tab-group, so every element inside picks the colour up without inline styles of its own.
    --------------------------------------------------------------------- */
 .tab-group {
   display: flex;
   align-items: flex-end;
   height: 100%;
   flex-shrink: 0;
-  /* Viền + nền nhạt bao cả chip lẫn các tab của nhóm: đây là thứ cho thấy nhóm
-     kéo dài tới đâu, vì bản thân tab trong nhóm trông y hệt tab thường. */
+  /* A border and faint background around both the chip and the group's tabs: this is what shows how
+     far the group reaches, since a tab inside a group looks exactly like an ordinary one. */
   border-top: 2px solid var(--tab-group-color);
   border-radius: 6px 6px 0 0;
   background: color-mix(in srgb, var(--tab-group-color) 12%, transparent);
@@ -2257,16 +2254,16 @@ select.form-input {
   background: color-mix(in srgb, var(--tab-group-color) 20%, transparent);
 }
 
-/* Đang kéo một tab và con trỏ nằm trong vùng nhóm này: nhóm sáng lên để biết
-   thả ra thì tab rơi vào đâu. Không có tín hiệu này thì việc "vào nhóm hay
-   không" chỉ lộ ra sau khi đã thả. */
+/* A tab is being dragged and the pointer is inside this group's area: the group lights up to show
+   where a release would land. Without that signal, whether it joins the group is revealed only after
+   the drop. */
 .tab-group.drop-target {
   background: color-mix(in srgb, var(--tab-group-color) 28%, transparent);
   box-shadow: inset 0 0 0 1px var(--tab-group-color);
 }
 
-/* Đang kéo nguyên nhóm bằng chip của nó: cả cụm được nhấc lên và bám theo con
-   trỏ, giống hệt cách một tab đơn được nhấc (xem .tab-item.tab-dragging). */
+/* A whole group is being dragged by its chip: the entire cluster lifts and follows the pointer,
+   exactly as a single tab does (see .tab-item.tab-dragging). */
 .tab-group.tab-group-dragging {
   position: relative;
   z-index: 6;
@@ -2290,7 +2287,7 @@ select.form-input {
   text-overflow: ellipsis;
 }
 
-/* Số tab đang bị giấu khi nhóm thu gọn. */
+/* How many tabs are hidden while the group is collapsed. */
 .tab-group-count {
   min-width: 16px;
   padding: 0 4px;
@@ -2301,8 +2298,8 @@ select.form-input {
   background: var(--tab-group-color);
 }
 
-/* Ô nhập khi đổi tên tại chỗ: nhỏ và nằm đúng chỗ cái nhãn, để nó đọc như đang
-   sửa chính cái nhãn đó chứ không phải một ô nhập mọc thêm giữa thanh tab. */
+/* The input for renaming in place: small and exactly where the label was, so it reads as editing that
+   label rather than as an input sprouting in the middle of the tab strip. */
 .tab-group-rename {
   width: 96px;
   height: 18px;
@@ -2315,7 +2312,7 @@ select.form-input {
   outline: none;
 }
 
-/* Dải chọn màu trong menu chuột phải. */
+/* The colour swatches in the context menu. */
 .tab-context-menu-colors {
   display: flex;
   gap: 6px;
@@ -6109,7 +6106,7 @@ select.form-input {
   gap: 16px;
 }
 
-/* ─── Context Menu (chuyển từ App.css vì App.css không được import) ─── */
+/* ─── The context menu (moved out of App.css, which is never imported) ─── */
 .context-menu-item {
   display: flex;
   align-items: center;
@@ -6137,8 +6134,8 @@ select.form-input {
   flex-shrink: 0;
 }
 
-/* Menu "Chạy" trong SqlEditor: span là nhãn văn bản (không phải icon 16px),
-   nên bỏ ràng buộc width:16px để nhãn không tràn/đè lên phím tắt. */
+/* The "Run" menu in SqlEditor: the span is a text label, not a 16px icon, so the width:16px
+   constraint is dropped or the label overflows onto the shortcut. */
 .sql-run-menu .context-menu-item span {
   width: auto;
   text-align: left;
@@ -6328,7 +6325,7 @@ select.form-input {
   min-height: 80px;
 }
 
-/* ── Monaco: câu lệnh dưới con trỏ (câu mà Ctrl+Enter sẽ chạy) ───────────── */
+/* ── Monaco: the statement under the caret (the one Ctrl+Enter runs) ─────── */
 .monaco-editor .sql-current-stmt {
   background: rgba(96, 165, 250, 0.07);
 }
@@ -6343,7 +6340,7 @@ select.form-input {
   opacity: 0.75;
 }
 
-/* Mũi tên "chạy câu lệnh này" ở lề trái (glyph margin) */
+/* The "run this statement" arrow in the gutter (the glyph margin) */
 .monaco-editor .sql-run-glyph {
   cursor: pointer;
 }
@@ -6352,7 +6349,7 @@ select.form-input {
   content: '▶';
   display: block;
   font-size: 9px;
-  /* khớp lineHeight của editor (SQL_EDITOR_OPTIONS.lineHeight) để mũi tên căn giữa dòng */
+  /* matches the editor's lineHeight (SQL_EDITOR_OPTIONS.lineHeight) so the arrow centres on the line */
   line-height: 18px;
   text-align: center;
   color: var(--win-accent);
@@ -6680,9 +6677,9 @@ input.rename-input {
 
 
 /* =====================================================================
-   Connection Manager — bố cục lại (sidebar + header profile + tab form)
-   Tham khảo cách sắp xếp của TablePlus / DataGrip: phần cấu hình nâng cao
-   (SSL, SSH) tách ra tab riêng để form chính luôn ngắn, không phải scroll.
+   Connection Manager — relaid out (sidebar + profile header + tabbed form).
+   Following how TablePlus and DataGrip arrange it: the advanced settings (SSL, SSH) move to tabs of
+   their own so the main form stays short and never has to scroll.
    ===================================================================== */
 .cm-shell {
   display: flex;
@@ -6692,8 +6689,8 @@ input.rename-input {
 }
 
 /* ————— Sidebar ————— */
-/* Bề rộng đi qua biến để media query màn hẹp chỉnh một chỗ duy nhất
-   (.cm-screen { --cm-side-w }) thay vì ghi đè width ở đây. */
+/* The width goes through a variable so the narrow-screen media query adjusts one place
+   (.cm-screen { --cm-side-w }) rather than overriding width here. */
 .cm-side {
   width: var(--cm-side-w);
   flex-shrink: 0;
@@ -6704,11 +6701,11 @@ input.rename-input {
   background: var(--win-bg-sidebar);
 }
 
-/* Cao đúng bằng thanh tiêu đề: sidebar chạy lên sát đỉnh cửa sổ nên phần nằm
-   ngang tầm thanh tiêu đề chỉ được chứa mỗi hàng tiêu đề này. Nhờ vậy mọi thứ
-   bên dưới nó bắt đầu cùng một mốc với nội dung panel phải (.cm-main cũng chừa
-   đúng --cm-tb-h). Chiều cao cố định thay cho padding dọc, nếu không hàng này
-   tự co theo nội dung và hai bên lệch nhau. */
+/* Exactly as tall as the title bar: the sidebar runs to the very top of the window, so the part level
+   with the title bar may hold nothing but this heading row. That way everything below it starts on
+   the same line as the right panel's content (.cm-main reserves the same --cm-tb-h). A fixed height
+   rather than vertical padding, or this row would size itself to its content and the two sides would
+   no longer line up. */
 .cm-side-head {
   display: flex;
   align-items: center;
@@ -6718,9 +6715,9 @@ input.rename-input {
   padding: 0 12px;
 }
 
-/* macOS: thanh tiêu đề kéo hết bề ngang nên sidebar bắt đầu *dưới* nó, không có
-   gì phải chừa — trả hàng tiêu đề về padding cũ, kẻo nó cao 50px vô cớ và lệch
-   với .cm-main-head bên phải. */
+/* macOS: the title bar spans the full width, so the sidebar begins *below* it and there is nothing to
+   reserve — the heading row goes back to its old padding, or it would stand 50px tall for no reason
+   and fall out of line with .cm-main-head on the right. */
 :root[data-os='macos'] .cm-side-head {
   height: auto;
   padding: 14px 12px 10px;
@@ -6778,7 +6775,7 @@ input.rename-input {
   cursor: not-allowed;
 }
 
-/* Nút tạo kết nối mới + menu chọn loại DB */
+/* The new-connection button and its DB-type menu */
 .cm-new-wrap {
   position: relative;
   padding: 0 10px 8px;
@@ -6855,7 +6852,7 @@ input.rename-input {
   background: var(--win-border);
 }
 
-/* Ô search */
+/* The search field */
 .cm-search {
   margin: 0 10px 8px;
   display: flex;
@@ -6887,8 +6884,8 @@ input.rename-input {
   height: 100% !important;
   padding: 0 !important;
   margin: 0 !important;
-  /* Khung + focus ring do .cm-search (phần tử cha) vẽ, input phải phẳng hoàn toàn
-     — kể cả outline mặc định của trình duyệt. */
+  /* The frame and focus ring are drawn by .cm-search (the parent), so the input has to be completely
+     flat — the browser's default outline included. */
   border: none !important;
   background: transparent !important;
   box-shadow: none !important;
@@ -6910,7 +6907,7 @@ input.rename-input {
   background: transparent !important;
 }
 
-/* Danh sách kết nối */
+/* The connection list */
 .cm-list {
   flex: 1;
   overflow-y: auto;
@@ -6988,7 +6985,7 @@ input.rename-input {
   font-weight: 600;
 }
 
-/* ————— DB Logo Badges & Avatars (Mặc định sạch đẹp + Hiệu ứng Ánh kim chạy lướt) ————— */
+/* ————— DB logo badges and avatars (a clean default plus a metallic glint sweep) ————— */
 .cm-badge {
   position: relative;
   width: 32px;
@@ -7012,7 +7009,7 @@ input.rename-input {
   transform: translateY(-1px) scale(1.03);
 }
 
-/* Vệt ánh kim chạy lướt qua icon (Animated Metallic Glint Sweep) */
+/* The metallic glint sweeping across the icon */
 .cm-badge::before,
 .cm-avatar::before {
   content: '';
@@ -7103,7 +7100,7 @@ input.rename-input {
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35));
 }
 
-/* Gradient thương hiệu mượt mà, tự nhiên */
+/* A smooth, natural brand gradient */
 .cm-badge.sqlite,
 .cm-avatar.sqlite {
   background: linear-gradient(145deg, #005a84 0%, #00334c 100%);
@@ -7223,8 +7220,8 @@ input.rename-input {
   display: flex;
 }
 
-/* Chiều cao dùng chung cho footer sidebar và footer pane phải, để đường kẻ trên
-   và nội dung hai bên thẳng đúng một hàng. Đổi ở đây là cả hai đổi theo. */
+/* One shared height for the sidebar footer and the right pane's footer, so their top rules and their
+   contents line up on a single row. Changing it here changes both. */
 .connection-manager-container {
   --cm-foot-h: 48px;
 }
@@ -7240,7 +7237,7 @@ input.rename-input {
   background: var(--win-bg-sidebar);
 }
 
-/* Cao tương đương item và có bo góc, viền đồng bộ */
+/* The same height as an item, with matching rounding and border */
 .cm-side-foot .cm-ghost-row {
   height: 34px;
   padding: 0 10px;
@@ -7276,7 +7273,7 @@ input.rename-input {
   font-weight: 600;
 }
 
-/* ————— Pane chính ————— */
+/* ————— The main pane ————— */
 .cm-main {
   flex: 1;
   display: flex;
@@ -7456,7 +7453,7 @@ input.rename-input {
   background: #10b981;
 }
 
-/* Vùng form */
+/* The form area */
 .cm-pane {
   flex: 1;
   overflow-y: auto;
@@ -7532,7 +7529,7 @@ input.rename-input {
   margin: 0;
 }
 
-/* Tiêu đề nhóm nhỏ bên trong một section (vd "Xác thực SSH"). */
+/* A small group heading inside a section (e.g. "SSH authentication"). */
 .cm-subhead {
   font-size: 12px;
   font-weight: 700;
@@ -7553,7 +7550,7 @@ input.rename-input {
   font-size: 12.5px;
 }
 
-/* Chừa chỗ cho mũi tên mặc định của select để chữ không bị đè lên. */
+/* Leaves room for the select's default arrow so the text is not overlapped. */
 .cm-pane select.form-input,
 .cm-modal select.form-input {
   height: 32px;
@@ -7592,7 +7589,7 @@ input.rename-input {
   font-size: 10.5px;
 }
 
-/* Ô "vừa nhập vừa chọn": input tự do + dropdown gợi ý tự dựng. */
+/* The type-or-pick field: a free-text input plus a hand-built suggestion dropdown. */
 .cm-combo {
   position: relative;
   display: flex;
@@ -7693,7 +7690,7 @@ input.rename-input {
   color: var(--win-text-primary);
 }
 
-/* Nút phụ nhỏ (Tải danh sách, Xoá tất cả...) */
+/* Small secondary buttons (Load list, Clear all…) */
 .cm-mini-btn {
   display: inline-flex;
   align-items: center;
@@ -7721,9 +7718,9 @@ input.rename-input {
   cursor: not-allowed;
 }
 
-/* Khối con (chứng chỉ SSL, AWS IAM, private key...) */
-/* Khối con chỉ dùng viền để nhóm nội dung — nền để trong suốt cho khớp với
-   phần còn lại của form (không tạo ô xám nổi lên giữa các field). */
+/* A sub-block (SSL certificates, AWS IAM, private keys…) */
+/* A sub-block groups its content with a border alone — the background stays transparent to match the
+   rest of the form (no grey box rising between the fields). */
 .cm-subcard {
   padding: 14px;
   border-radius: 10px;
@@ -7764,8 +7761,8 @@ input.rename-input {
   white-space: nowrap;
 }
 
-/* Ô nhập đường dẫn + nút chọn tệp trên cùng một dòng: input chiếm phần còn lại,
-   nút co về đúng bề rộng nội dung (mặc định .cm-file-btn rộng 100% cho grid). */
+/* A path field and a file-picker button on one row: the input takes what is left and the button
+   shrinks to its content (.cm-file-btn is 100% wide by default, for the grid). */
 .cm-file-row {
   display: flex;
   gap: 8px;
@@ -7799,7 +7796,7 @@ input.rename-input {
   background: var(--win-bg-card);
 }
 
-/* Công tắc bật/tắt (SSH tunnel, TLS Redis) */
+/* Toggle switches (SSH tunnel, Redis TLS) */
 .cm-switch-row {
   display: flex;
   align-items: flex-start;
@@ -7853,9 +7850,9 @@ input.rename-input {
   background: #fff;
 }
 
-/* Cảnh báo & thông báo */
-/* Cảnh báo nằm giữa form nên giữ nhẹ: nền nhạt, viền mảnh, nút chỉ viền —
-   đủ để chú ý mà không thành một khối vàng đè lên các field xung quanh. */
+/* Warnings and messages */
+/* A warning sits in the middle of the form, so it stays light: a faint background, a thin border and
+   an outline-only button — enough to notice without becoming a yellow slab over the fields. */
 .cm-warn {
   display: flex;
   align-items: center;
@@ -7917,8 +7914,8 @@ input.rename-input {
   color: #10b981;
 }
 
-/* Banner mờ dần đúng lúc ConnectionManager tự ẩn nó. Thời lượng phải khớp với
-   setTimeout trong component: successful 4s, error 8s. */
+/* The banner fades exactly as ConnectionManager dismisses it. The durations have to match the
+   component's setTimeout: 4s for success, 8s for an error. */
 @keyframes cmAlertLife {
   0% {
     opacity: 0;
@@ -7959,7 +7956,7 @@ input.rename-input {
   }
 }
 
-/* Nút hành động trong banner thông báo — lấy màu theo chính banner. */
+/* An action button inside a message banner — it takes the banner's own colour. */
 .cm-alert-btn {
   flex-shrink: 0;
   height: 24px;
@@ -8062,7 +8059,7 @@ input.rename-input {
   margin-bottom: 2px;
 }
 
-/* ————— Footer hành động ————— */
+/* ————— The action footer ————— */
 .cm-foot {
   display: flex;
   align-items: center;
@@ -8118,10 +8115,10 @@ input.rename-input {
   cursor: not-allowed;
 }
 
-/* ————— Modal dùng chung ————— */
-/* Chrome dưới đây phải khớp `Modal.tsx` — xem ghi chú ở đầu tệp đó. Riêng
-   .cm-modal vẫn tự dựng header/footer trong JSX nên header không có nền
-   tab-bar; bù lại nó dùng cùng backdrop, bo góc và bóng đổ. */
+/* ————— The shared modal ————— */
+/* The chrome below has to match `Modal.tsx` — see the note at the top of that file. .cm-modal is the
+   exception: it still builds its own header and footer in JSX, so the header has no tab-bar
+   background; in exchange it uses the same backdrop, radius and shadow. */
 .cm-modal-backdrop {
   position: fixed;
   inset: 0;
@@ -8171,7 +8168,7 @@ input.rename-input {
   gap: 8px;
 }
 
-/* Context menu kết nối */
+/* The connection context menu */
 .cm-ctx {
   position: fixed;
   z-index: 9999;
@@ -8185,7 +8182,7 @@ input.rename-input {
   backdrop-filter: blur(30px) saturate(180%);
 }
 
-/* Màn hình hẹp: thu gọn sidebar và bỏ preview connection string */
+/* Narrow screens: shrink the sidebar and drop the connection-string preview */
 @media (max-width: 980px) {
   .cm-screen {
     --cm-side-w: 232px;
@@ -8208,10 +8205,10 @@ input.rename-input {
 }
 
 
-/* Cột nội dung của pane phải: rộng tối đa 860px và canh giữa.
-   Dùng padding động thay vì wrapper riêng để header, tab bar, form và footer
-   luôn thẳng cùng một trục, đồng thời không để trống hẳn một khoảng lớn bên
-   phải khi cửa sổ rộng. Đặt sau mọi khai báo padding của 4 khối này. */
+/* The right pane's content column: at most 860px wide, centred.
+   Dynamic padding rather than a wrapper of its own, so the header, tab bar, form and footer all stay
+   on one axis and no large gap is left on the right when the window is wide. Declared after all four
+   blocks' own padding. */
 .cm-main-head,
 .cm-tabs,
 .cm-pane,
@@ -8222,36 +8219,34 @@ input.rename-input {
 
 
 /* =====================================================================
-   Nền màn hình kết nối — MỘT màu duy nhất
+   The connection screen's background — ONE colour
    ---------------------------------------------------------------------
-   Trước đây màn này dựng theo lối "liquid glass": một lớp aurora gradient
-   ở .cm-screen::before, rồi .cm-side / .cm-main / .cm-main-head phủ lên
-   những tấm kính khác độ đặc (--cm-glass-strong 0.60 vs --cm-glass-weak
-   0.34). Hệ quả là mỗi vùng ăn một quầng màu khác nhau — sidebar ngả
-   xanh, đỉnh panel phải ngả tím, đáy ngả lục — và mọi chỗ hai tấm kính
-   giáp nhau đều hiện thành một đường ghép màu.
+   This screen used to be built "liquid glass" style: an aurora gradient on .cm-screen::before, with
+   .cm-side / .cm-main / .cm-main-head laid over it as panes of differing opacity
+   (--cm-glass-strong 0.60 vs --cm-glass-weak 0.34). The result was that each region caught a
+   different tint — the sidebar leaning blue, the right panel's top leaning purple, its bottom
+   leaning green — and every join between two panes showed up as a coloured seam.
 
-   Nay toàn màn dùng đúng MỘT màu, tô một lần duy nhất ở .cm-screen. Tất
-   cả những gì bên trong (thanh tiêu đề, hai panel, header, footer) để
-   trong suốt, nên không còn chỗ nào cộng thêm alpha hay hắt màu riêng.
+   The whole screen now uses exactly ONE colour, painted once on .cm-screen. Everything inside it
+   (the title bar, both panels, the header, the footer) stays transparent, so nothing adds alpha or
+   casts a tint of its own.
 
-   Khi sửa tiếp: ĐỪNG tô nền lại cho .cm-side / .cm-main / .cm-main-head /
-   .cm-foot — thêm bất kỳ lớp nền nào vào đó là quay lại đúng hiện tượng
-   loang màu vừa bỏ. Nền của *ô nhập và nút* thì vẫn giữ (xem cuối khối),
-   vì chúng là control chứ không phải nền.
+   When editing further: do NOT paint a background back onto .cm-side / .cm-main / .cm-main-head /
+   .cm-foot — adding any background layer there brings back exactly the bleeding this removed. The
+   backgrounds of *inputs and buttons* stay (see the end of this block), because those are controls,
+   not background.
 
-   Các biến --cm-* khai báo ở .cm-screen vì thanh tiêu đề là anh em của
-   container nên không thừa kế được từ đó — NHƯNG cũng phải khai ở
-   .connection-manager-container, vì `ConnectionManager` còn được mount ở một
-   chỗ thứ hai: Modal "Thêm kết nối" (App.tsx), và ở đó không có .cm-screen nào
-   bọc ngoài. Thiếu chúng thì `.cm-side { width: var(--cm-side-w) }` mất giá trị
-   và sidebar giãn theo nội dung (danh sách rộng gấp đôi), `.cm-side-head
-   { height: var(--cm-tb-h) }` sập về 0 nên lệch hàng với .cm-main-head — đó là
-   lúc pill URL đè lên cụm chip bên cạnh tên kết nối.
+   The --cm-* variables are declared on .cm-screen because the title bar is the container's sibling
+   and cannot inherit from it — BUT they also have to be declared on .connection-manager-container,
+   because `ConnectionManager` is mounted in a second place too: the "Add connection" modal
+   (App.tsx), where no .cm-screen wraps it. Without them,
+   `.cm-side { width: var(--cm-side-w) }` loses its value and the sidebar grows with its content (a
+   list twice as wide), while `.cm-side-head { height: var(--cm-tb-h) }` collapses to 0 and falls out
+   of line with .cm-main-head — which is when the URL pill covers the chips beside the connection name.
 
-   Một khối, hai selector: giá trị vẫn chỉ tồn tại ở MỘT chỗ. Nhân đôi khối là
-   nhân đôi thứ sẽ lệch. --cm-tb-h nằm ở đây (không ở khối grid bên dưới) đúng vì
-   lý do đó: hai hàng tiêu đề phải cao bằng nhau ở cả hai chỗ mount.
+   One block, two selectors: the values still exist in ONE place. Duplicating the block duplicates the
+   thing that will drift. --cm-tb-h lives here (not in the grid block below) for exactly that reason:
+   the two heading rows have to be the same height in both mount points.
    ===================================================================== */
 .cm-screen,
 .connection-manager-container {
@@ -8279,19 +8274,20 @@ input.rename-input {
   background: transparent;
 }
 
-/* Khung bọc cả thanh tiêu đề lẫn .connection-manager-container (xem App.tsx).
-   Đây là phần tử DUY NHẤT tô nền của màn này — thanh tiêu đề nằm bên trong nên
-   được phủ cùng một màu, không còn đường ranh ở mép dưới của nó.
+/* The frame wrapping both the title bar and .connection-manager-container (see App.tsx).
+   It is the ONLY element painting this screen's background — the title bar sits inside it and so
+   takes the same colour, leaving no seam along its bottom edge.
 
-   Tên là cm-screen chứ không phải cm-shell: .cm-shell đã có chủ — đó là khung
-   flex *ngang* chứa .cm-side + .cm-main bên trong .connection-card (dòng ~3609,
-   ConnectionManager.tsx). Đặt trùng tên là khung đó thành flex dọc. */
-/* Lưới 2×2 để sidebar chạy lên sát đỉnh cửa sổ: container chiếm trọn cả 4 ô,
-   còn thanh tiêu đề chỉ nằm ở ô trên-phải và *đè* lên container. Xếp thanh tiêu
-   đề thành một hàng riêng phía trên như trước thì sidebar không thể cao hơn nó
-   được — nó nằm sâu trong ConnectionManager, không phải con của khung này. */
-/* `--cm-tb-h` khai ở khối token phía trên, không ở đây: khi nó nằm ở đây thì bản mount trong Modal
-   không thấy nó, và hai hàng tiêu đề (`.cm-side-head` / `.cm-main-head`) cao khác nhau. */
+   Named cm-screen rather than cm-shell: .cm-shell is taken — it is the *horizontal* flex frame
+   holding .cm-side + .cm-main inside .connection-card (around line 3609, ConnectionManager.tsx).
+   Reusing that name would turn that frame into a vertical flex. */
+/* A 2×2 grid so the sidebar can run to the very top of the window: the container occupies all four
+   cells while the title bar sits only in the top-right one and *overlays* it. Laying the title bar
+   out as its own row above, as before, makes it impossible for the sidebar to reach higher — the
+   sidebar is deep inside ConnectionManager, not a child of this frame. */
+/* `--cm-tb-h` is declared in the token block above rather than here: declared here, the Modal mount
+   cannot see it and the two heading rows (`.cm-side-head` / `.cm-main-head`) end up different
+   heights. */
 .cm-screen {
   position: relative;
   display: grid;
@@ -8315,16 +8311,16 @@ input.rename-input {
   min-height: 0;
 }
 
-/* Panel phải chừa đúng chiều cao thanh tiêu đề, vì thanh nằm đè lên nó. Con số
-   này phải khớp height của .title-bar — nếu đổi bên đó thì đổi --cm-tb-h ở đây.
-   App title bar: database switcher, environment, safe mode, transaction control.
-   grid item nên z-index: 1000 sẵn có của .title-bar có hiệu lực. */
+/* The right panel reserves exactly the title bar's height, because the bar overlays it. That number
+   has to match .title-bar's height — change it there and change --cm-tb-h here.
+   The title bar still receives the mouse despite coming before the container in the DOM: it is a grid
+   item, so .title-bar's existing z-index: 1000 takes effect. */
 .cm-screen .cm-main {
   padding-top: var(--cm-tb-h);
 }
 
-/* macOS: đèn giao thông của hệ điều hành nằm ở góc trên-trái thanh tiêu đề, nên
-   ở đây thanh phải kéo hết bề ngang và sidebar lùi xuống hàng dưới như cũ. */
+/* macOS: the OS traffic lights sit in the title bar's top-left corner, so there the bar spans the
+   full width and the sidebar drops back to the row below, as it used to. */
 :root[data-os='macos'] .cm-screen>.title-bar {
   grid-column: 1 / -1;
 }
@@ -8337,8 +8333,8 @@ input.rename-input {
   padding-top: 0;
 }
 
-/* Card không tự tô nền và không blur: nó chỉ còn là khung layout, để lộ đúng
-   màu nền của .cm-screen. */
+/* The card paints no background and applies no blur: it is only a layout frame now, showing
+   .cm-screen's colour through. */
 .connection-manager-container .connection-card {
   position: relative;
   z-index: 1;
@@ -8347,11 +8343,11 @@ input.rename-input {
   -webkit-backdrop-filter: none;
 }
 
-/* Bốn khối này ghi đè nền riêng mà chúng nhận từ các luật chung ở trên
-   (.cm-side lấy --win-bg-sidebar, .cm-main-head lấy --cm-glass, …). Trong suốt
-   hết để cả màn còn đúng một màu; ranh giới giữa chúng do border 1px lo, không
-   phải do khác màu nền. Không có backdrop-filter nào ở đây nữa: không còn lớp
-   aurora để blur, mà blur một nền đơn sắc thì chỉ tốn GPU. */
+/* These four blocks override the backgrounds they inherit from the general rules above (.cm-side
+   takes --win-bg-sidebar, .cm-main-head takes --cm-glass, …). All transparent, so the screen keeps
+   one colour; the boundaries between them are drawn by a 1px border, not by differing backgrounds.
+   No backdrop-filter here any more: there is no aurora layer left to blur, and blurring a flat colour
+   only costs GPU. */
 .cm-side,
 .cm-main,
 .cm-main-head,
@@ -8362,17 +8358,17 @@ input.rename-input {
   -webkit-backdrop-filter: none;
 }
 
-/* Popup/menu: giữ blur riêng nhưng thêm hairline + bóng theo tông kính
-   để cùng một chất liệu với panel. `.cm-modal` không nằm trong nhóm này —
-   nó dùng bóng đổ chuẩn của `Modal.tsx`. */
+/* Popups and menus: they keep their own blur but add a hairline and a glass-toned shadow, so they
+   share the panels' material. `.cm-modal` is not in this group — it uses `Modal.tsx`'s standard
+   shadow. */
 .cm-pop,
 .cm-combo-pop,
 .cm-ctx {
   box-shadow: 0 18px 44px var(--cm-glass-shadow), inset 0 1px 0 var(--cm-hairline);
 }
 
-/* Ô nhập trên nền kính: bớt đặc hơn mặc định để thấy màu loang phía sau,
-   nhưng vẫn đủ tương phản cho chữ. */
+/* Inputs on glass: less opaque than the default so the colour behind shows through, while keeping
+   enough contrast for the text. */
 .connection-manager-container .form-input {
   background: rgba(255, 255, 255, 0.55);
   border-color: rgba(15, 23, 42, 0.12);
@@ -8391,7 +8387,7 @@ input.rename-input {
   background: rgba(8, 10, 14, 0.70);
 }
 
-/* Panel/nút phụ cũng cần trong hơn để không thành mảng đặc trên kính. */
+/* Secondary panels and buttons also need more transparency, or they become solid patches on the glass. */
 .connection-manager-container .cm-switch-row {
   background: var(--cm-glass-weak);
 }
@@ -8428,9 +8424,9 @@ input.rename-input {
   background: var(--win-accent-secondary);
 }
 
-/* User tắt hiệu ứng trong suốt: màu nền duy nhất của màn thành đục hẳn, không
-   để vật liệu cửa sổ của hệ điều hành ăn qua nữa. Các panel vốn đã trong suốt
-   nên không phải làm gì thêm. */
+/* The user turned transparency effects off: the screen's single background colour becomes fully
+   opaque and the OS window material no longer shows through. The panels are transparent already, so
+   nothing more is needed. */
 @media (prefers-reduced-transparency: reduce) {
 
   .cm-screen,
@@ -8445,20 +8441,20 @@ input.rename-input {
 }
 
 
-/* macOS: cửa sổ không decoration thì hệ điều hành KHÔNG tự bo góc, phải tự bo
-   cho khớp windowEffects.radius (12px) — nếu không, nội dung vuông sẽ tràn ra
-   ngoài 4 góc tròn của lớp vibrancy. Windows 11 tự bo nên bỏ qua. */
+/* macOS: with decorations off the OS does NOT round the corners, so it has to be done here to match
+   windowEffects.radius (12px) — otherwise square content spills past the vibrancy layer's four
+   rounded corners. Windows 11 rounds them itself, so it is skipped. */
 [data-os='macos'] #root {
   border-radius: 12px;
   overflow: hidden;
 }
 
 
-/* Selection/hover trên nền kính -----------------------------------------
-   Mặc định của app dùng scrim TỐI (--win-bg-hover 0.05 / --win-bg-active 0.10
-   + viền 0.18 đen). Trên vật liệu kính, tô tối làm item trông như một viên xám
-   dán lên bề mặt. Kính thì ngược lại: lớp được chọn phải SÁNG hơn nền, có
-   hairline ở cạnh trên và bóng mềm để thấy nó nổi lên. */
+/* Selection and hover on glass ------------------------------------------
+   The app's defaults use a DARK scrim (--win-bg-hover 0.05 / --win-bg-active 0.10 plus a 0.18 black
+   border). On glass, darkening makes an item look like a grey tile stuck to the surface. Glass works
+   the other way round: the selected layer has to be BRIGHTER than its background, with a hairline on
+   its top edge and a soft shadow so it reads as lifted. */
 .connection-manager-container {
   --cm-item-hover: rgba(255, 255, 255, 0.42);
   --cm-item-active: linear-gradient(rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.66));
@@ -8481,7 +8477,7 @@ input.rename-input {
   box-shadow: 0 2px 10px var(--cm-glass-shadow), inset 0 1px 0 var(--cm-hairline);
 }
 
-/* Dòng "Sao lưu & Phục hồi" ở chân sidebar dùng cùng chất liệu để không lệch. */
+/* The "Backup & Restore" row at the sidebar’s foot uses the same material, so nothing looks out of place. */
 .connection-manager-container .cm-ghost-row:hover {
   background: var(--cm-item-hover);
 }
@@ -8494,8 +8490,8 @@ input.rename-input {
 
 
 
-/* Đèn trạng thái sau tên kết nối. Đây là thứ DUY NHẤT được nháy trên danh sách,
-   nên mọi chuyển động ở đây đều mang nghĩa "đang có việc chạy". */
+/* The status light after a connection's name. It is the ONLY thing allowed to blink in this list, so
+   any movement here means "something is running". */
 .cm-item-led {
   width: 7px;
   height: 7px;
@@ -8513,8 +8509,8 @@ input.rename-input {
   color: #ef4444;
 }
 
-/* Đang kết nối / đang kiểm tra: nhịp nhanh hơn nhãn cũ (1.1s) để đọc ra ngay là
-   "đang chạy", và opacity chạm 0.35 chứ không về 0 nên chấm không mất hẳn. */
+/* Connecting or testing: a faster beat than the old label's (1.1s) so it reads as "running" at a
+   glance, with opacity bottoming out at 0.35 rather than 0, so the dot never disappears. */
 .cm-item-led.busy {
   color: var(--win-accent);
   animation: cmLedPulse 1.1s ease-in-out infinite;
@@ -8540,16 +8536,16 @@ input.rename-input {
   }
 }
 
-/* Segmented control dùng chung ngôn ngữ thiết kế với sidebar & toolbar */
+/* The segmented control shares its design language with the sidebar and toolbar */
 .connection-manager-container .cm-seg {
   border-radius: 8px;
 }
 
 
 /* =====================================================================
-   Workspace (sau khi kết nối) — cùng ngôn ngữ thiết kế với màn hình kết nối:
-   nền kính, hairline sáng ở cạnh trên, mục đang chọn là chip SÁNG nổi lên
-   thay vì scrim tối.
+   The workspace (after connecting) — the same design language as the connection screen: a glass
+   background, a light hairline on the top edge, and a selected item as a BRIGHT lifted chip rather
+   than a dark scrim.
    ===================================================================== */
 .workspace-container {
   --ws-glass-weak: rgba(255, 255, 255, 0.30);
@@ -8560,9 +8556,9 @@ input.rename-input {
   --ws-sel: linear-gradient(rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.66));
   --ws-sel-border: rgba(255, 255, 255, 0.90);
   --ws-hover: rgba(255, 255, 255, 0.42);
-  /* Chiều cao dùng chung cho MỌI thanh chân: chân sidebar, thanh trạng thái của
-     SQL editor và thanh phân trang của DataGrid. Trước đây lần lượt là ~50px /
-     26px / 34px nên "Ngắt kết nối" không bao giờ thẳng hàng với thanh bên phải. */
+  /* One shared height for EVERY footer bar: the sidebar's foot, the SQL editor's status bar and
+     DataGrid's pagination bar. They used to be ~50px / 26px / 34px respectively, so "Disconnect" never
+     lined up with the bar on the right. */
   --ws-foot-h: 34px;
 }
 
@@ -8578,11 +8574,11 @@ input.rename-input {
 }
 
 /* ————— Sidebar —————
-   KHÔNG dùng backdrop-filter ở đây. Thuộc tính này tạo containing block cho con
-   position: fixed, mà Sidebar.tsx render 7 overlay fixed bên trong (modal Tạo
-   bảng, context menu, backdrop...) — chúng sẽ bị nhốt trong cột sidebar 240px và
-   bị overflow: hidden cắt mất. Đổi lại cũng không mất gì: phía sau sidebar chỉ là
-   một mảng nền phẳng nên blur không tạo khác biệt nhìn thấy được. */
+   Do NOT use backdrop-filter here. That property creates a containing block for position: fixed
+   descendants, and Sidebar.tsx renders 7 fixed overlays inside it (the Create table modal, context
+   menus, backdrops…) — they would be trapped in the 240px sidebar column and clipped by
+   overflow: hidden. Nothing is lost by dropping it: behind the sidebar is a flat background, so the
+   blur makes no visible difference. */
 .workspace-container .sidebar-navigation {
   background: var(--ws-glass-strong);
   box-shadow: inset 0 1px 0 var(--ws-hairline);
@@ -8611,8 +8607,8 @@ input.rename-input {
   background: var(--ws-hover);
 }
 
-/* Mục đang mở: chip sáng nổi lên. Màu chữ dùng biến theme thay vì #fff/#000
-   cứng, vì trên chip sáng thì chữ trắng biến mất ở giao diện sáng. */
+/* The open item: a bright lifted chip. The text colour comes from a theme variable rather than a
+   hardcoded #fff/#000, because white text disappears on a bright chip in the light theme. */
 .workspace-container .sidebar-item.active {
   background: var(--ws-sel);
   border-color: var(--ws-sel-border);
@@ -8622,8 +8618,8 @@ input.rename-input {
 }
 
 /* ————— Tab bar —————
-   Thanh tab hơi tối/lõm xuống để mảng nền sáng của tab đang xem nổi rõ. Nếu để
-   thanh sáng như panel thì tab active gần như hoà vào nền. */
+   The strip is slightly darker and recessed so the viewed tab's bright background stands out. Left as
+   bright as the panel, the active tab would blend into it. */
 .workspace-container .tab-bar {
   background: rgba(15, 23, 42, 0.07);
   box-shadow: inset 0 1px 0 var(--ws-hairline);
@@ -8633,16 +8629,16 @@ input.rename-input {
   background: rgba(0, 0, 0, 0.30);
 }
 
-/* Tab đầu tiên dán sát mép trái (không chừa lề): mảng nền của tab đang xem chạy
-   thẳng ra cạnh khung, không còn vệt nền thanh tab thừa ra bên trái. Lề phải vẫn
-   giữ để tab cuối không dính vào cụm nút +/v. */
+/* The first tab sits flush against the left edge with no margin: the viewed tab's background runs
+   right out to the frame, leaving no leftover strip of tab-bar background on its left. The right
+   margin stays, so the last tab does not touch the +/v cluster. */
 .workspace-container .tab-bar-items {
   gap: 2px;
   padding: 0 6px 0 0;
 }
 
-/* Tab phẳng, cao hết thanh: không viền, không bo góc. Bỏ luôn vạch chia dựng
-   đứng của bản gốc — phân tách dựa vào khoảng cách và mảng nền của tab đang xem. */
+/* Flat, full-height tabs: no border and no rounding. The original's vertical dividers go too —
+   separation comes from the spacing and from the viewed tab's background. */
 .workspace-container .tab-item {
   height: 32px;
   padding: 0 12px;
@@ -8657,10 +8653,10 @@ input.rename-input {
   color: var(--win-text-primary);
 }
 
-/* Phân biệt active / không active CHỈ bằng màu, và đẩy tương phản lên cao:
-   - active   : nền gần như trắng đục + chữ màu accent + đậm 700
-   - không    : nền trong suốt trên thanh xám + chữ màu mờ nhất
-   Ba yếu tố (nền, màu chữ, độ đậm) cùng lệch nhau nên không cần viền vẫn rõ. */
+/* Active and inactive are told apart by colour ALONE, with the contrast pushed high:
+   - active   : a near-opaque white background + accent-coloured text + weight 700
+   - inactive : a transparent background on the grey strip + the dimmest text colour
+   All three (background, text colour, weight) differ at once, so no border is needed to read it. */
 .workspace-container .tab-item {
   color: var(--win-text-disabled);
 }
@@ -8679,9 +8675,9 @@ input.rename-input {
   font-weight: 700;
 }
 
-/* Vạch chỉ chỗ thả phải lặp lại ở đây: `.workspace-container .tab-item.active`
-   ngay bên trên đặt box-shadow: none với specificity cao hơn luật gốc, nên nếu
-   không có hai dòng này thì kéo tới đúng tab đang xem sẽ không thấy vạch nào. */
+/* The drop indicator has to be repeated here: `.workspace-container .tab-item.active` just above sets
+   box-shadow: none at a higher specificity than the original rule, so without these two lines,
+   dragging onto the viewed tab would show no line at all. */
 .workspace-container .tab-item.tab-drop-before {
   box-shadow: inset 2px 0 0 var(--win-accent);
 }
@@ -8699,16 +8695,15 @@ input.rename-input {
   color: #ffffff;
 }
 
-/* Tab đang cầm, lặp lại trong khối này vì cùng lý do với vạch chỉ chỗ thả ở
-   trên: `.workspace-container .tab-item` đặt background trong suốt và
-   border-radius 0, còn hai luật `.active` (kể cả bản dark, có thêm
-   [data-theme] nên specificity cao hơn) ghi đè tiếp — luật gốc
-   `.tab-item.tab-dragging` không với tới. Phải đứng SAU cả hai luật active để
-   thắng ở thế cùng specificity.
+/* The held tab, repeated in this block for the same reason as the drop indicator above:
+   `.workspace-container .tab-item` sets a transparent background and border-radius 0, and the two
+   `.active` rules (the dark one included, which adds [data-theme] and so has higher specificity)
+   override further — the original `.tab-item.tab-dragging` cannot reach. It has to come AFTER both
+   active rules to win at equal specificity.
 
-   Nền lấy --win-bg-window cho cả hai theme: thanh tab luôn tối/xám hơn nền cửa
-   sổ, nên một mảng màu nền cửa sổ đọc ra là "được nhấc lên khỏi thanh" ở cả
-   giao diện sáng lẫn tối. */
+   The background takes --win-bg-window in both themes: the tab strip is always darker or greyer than
+   the window background, so a patch of window colour reads as "lifted off the strip" in the light and
+   the dark theme alike. */
 .workspace-container .tab-item.tab-dragging,
 [data-theme='dark'] .workspace-container .tab-item.tab-dragging {
   background: var(--win-bg-window);
@@ -8733,15 +8728,15 @@ input.rename-input {
   background: var(--ws-hover);
 }
 
-/* ————— Toolbar (Chạy / Định dạng / phân trang grid) ————— */
+/* ————— Toolbar (Run / Format / the grid's pagination) ————— */
 .workspace-container .sql-toolbar,
 .workspace-container .grid-toolbar {
   background: var(--ws-glass-weak);
   box-shadow: inset 0 1px 0 var(--ws-hairline);
 }
 
-/* ————— Ba thanh chân cùng chiều cao ————— */
-/* Bốn, kể từ khi sidebar Redis gộp số key + nút công cụ vào một thanh duy nhất. */
+/* ————— Three footer bars of equal height ————— */
+/* Four, since the Redis sidebar merged the key count and the tool buttons into a single bar. */
 .workspace-container .redis-keylist-footer,
 .workspace-container .sidebar-footer {
   height: var(--ws-foot-h);
@@ -8752,7 +8747,7 @@ input.rename-input {
   box-shadow: inset 0 1px 0 var(--ws-hairline);
 }
 
-/* Nút Ngắt kết nối thu lại cho vừa thanh chân 34px. */
+/* The Disconnect button shrinks to fit the 34px footer. */
 .workspace-container .sidebar-footer .btn {
   height: 26px;
   border-radius: 7px;
@@ -8773,12 +8768,12 @@ input.rename-input {
 
 
 /* =====================================================================
-   Modal "Tạo bảng mới"
-   Bảng cột có tới 8 cột (tên, kiểu, rỗng, khóa chính, tự tăng, mặc định,
-   chú thích, xóa) nên khung 740px cũ quá chật: tiêu đề tab bị xuống dòng,
-   các ô input bị bóp. Nới khung và cho bảng cuộn ngang khi cần.
+   The "New table" modal.
+   The column table has up to 8 columns (name, type, nullable, primary key, auto-increment, default,
+   comment, delete), so the old 740px frame was far too tight: tab headings wrapped and the inputs
+   were squeezed. The frame is widened and the table scrolls horizontally when it needs to.
    ===================================================================== */
-/* Chrome dưới đây phải khớp `Modal.tsx` — xem ghi chú ở đầu tệp đó. */
+/* The chrome below has to match `Modal.tsx` — see the note at the top of that file. */
 .ctm-backdrop {
   position: fixed;
   inset: 0;
@@ -8861,8 +8856,8 @@ input.rename-input {
   width: 100%;
 }
 
-/* Tab: dùng gạch chân accent, đếm số hiển thị bằng pill để tiêu đề không dài
-   thành hai dòng như bản cũ ("Cột dữ liệu (1)"). */
+/* Tabs: an accent underline, with the count shown as a pill so the heading does not run onto two
+   lines as it used to ("Columns (1)"). */
 .ctm-tabs {
   display: flex;
   gap: 2px;
@@ -8930,8 +8925,8 @@ input.rename-input {
   color: var(--win-text-disabled);
 }
 
-/* Bảng khai báo cột: cho cuộn ngang thay vì bóp các ô lại, và các ô nhập cao
-   đều nhau. */
+/* The column declaration table: it scrolls horizontally rather than squeezing the cells, and the
+   inputs are all the same height. */
 .ctm-body table {
   min-width: 100%;
 }
@@ -8952,16 +8947,15 @@ input.rename-input {
 
 
 /* =====================================================================
-   Tab Structure (xem/sửa cấu trúc bảng) — chuyển sang liquid glass.
-   Bản cũ tô đặc hoàn toàn ở giao diện sáng: .structure-section #ffffff,
-   th #f1f5f9, .segmented-control #e2e8f0 — nằm trên nền kính nhưng lại là
-   những mảng phẳng đục nên phá hết chất liệu.
+   The Structure tab (viewing and editing a table's structure) — moved to liquid glass.
+   The old version was fully opaque in the light theme: .structure-section #ffffff, th #f1f5f9,
+   .segmented-control #e2e8f0 — flat opaque patches sitting on glass, destroying the material.
    ===================================================================== */
 .workspace-container .structure-view-container {
   background: transparent;
 }
 
-/* Card từng nhóm (Cột dữ liệu / Chỉ mục / Khóa ngoại) */
+/* The card for each group (Columns / Indexes / Foreign keys) */
 .workspace-container .structure-section {
   background: var(--ws-glass-weak);
   border: 1px solid var(--win-border);
@@ -8980,7 +8974,7 @@ input.rename-input {
   color: var(--win-text-secondary);
 }
 
-/* Hàng tiêu đề bảng: mảng lõm trong suốt thay cho #f1f5f9 đặc */
+/* The table's header row: a transparent recessed panel instead of an opaque #f1f5f9 */
 .workspace-container .structure-table th {
   background: rgba(15, 23, 42, 0.05);
   border-bottom: 1px solid var(--win-border);
@@ -8999,7 +8993,7 @@ input.rename-input {
   background: var(--ws-hover);
 }
 
-/* ————— Segmented control (Data | Structure, và mọi chỗ khác dùng chung) ————— */
+/* ————— The segmented control (Data | Structure, and everywhere else that shares it) ————— */
 .workspace-container .segmented-control {
   padding: 0 !important;
   gap: 4px;
@@ -9056,7 +9050,7 @@ input.rename-input {
   box-shadow: none !important;
 }
 
-/* ————— Nút trên thanh công cụ (Thêm cột / Thêm chỉ mục / Definition...) ————— */
+/* ————— Toolbar buttons (Add column / Add index / Definition…) ————— */
 .workspace-container .sql-toolbar .btn-secondary {
   height: 28px;
   border-radius: 8px;
@@ -9084,12 +9078,12 @@ input.rename-input {
 }
 
 
-/* Dòng vừa thêm (chưa lưu) --------------------------------------------
-   --win-status-added chỉ là xanh 8% alpha nên trên nền trắng gần như không
-   thấy: người dùng bấm "+ Row" mà tưởng không có gì xảy ra. Tô đậm hơn và
-   thêm vạch xanh ở đầu dòng để nhận ra ngay đây là dòng chưa lưu.
-   Đặt trên > td (kèm !important) vì nền sọc chẵn/lẻ của .grid-table tr
-   sẽ phủ lên nền đặt ở thẻ tr. */
+/* A newly added, unsaved row ---------------------------------------------
+   --win-status-added is only green at 8% alpha, so on white it is nearly invisible: the user presses
+   "+ Row" and believes nothing happened. It is painted stronger, with a green bar at the row's start,
+   so an unsaved row is recognisable at a glance.
+   Applied to > td (with !important) because .grid-table tr's zebra striping would cover a background
+   set on the tr itself. */
 .grid-row-added>td {
   background: rgba(16, 185, 129, 0.15) !important;
 }
@@ -9102,7 +9096,7 @@ input.rename-input {
   background: rgba(16, 185, 129, 0.24) !important;
 }
 
-/* Ô chưa có giá trị trong dòng mới */
+/* A cell with no value yet, in a new row */
 .grid-cell-empty {
   color: var(--win-text-disabled);
   font-style: italic;
@@ -9111,10 +9105,10 @@ input.rename-input {
 
 
 /* =====================================================================
-   Cụm nút ở thanh chân bảng dữ liệu (+ Row / − Row / Lưu / Columns /
-   Import / Export / Filters / phân trang).
-   Bản cũ mỗi nút tự set inline background + border + height nên vừa lệch
-   nhau vừa đè mất glass (inline luôn thắng CSS). Gom về một họ class.
+   The button cluster in the data grid's footer (+ Row / − Row / Save / Columns / Import / Export /
+   Filters / pagination).
+   Each button used to set its own inline background, border and height, so they were both misaligned
+   and painted over the glass (inline always beats CSS). Gathered into one class family.
    ===================================================================== */
 .gp-btn {
   height: 24px;
@@ -9149,15 +9143,15 @@ input.rename-input {
   padding: 0 6px;
 }
 
-/* Đang bật (Columns / Export / Filters đang mở): tô accent nhạt + chữ accent
-   thay vì nền accent đặc + chữ trắng như bản cũ — đỡ chói trên nền kính. */
+/* Active (Columns / Export / Filters open): a faint accent background with accent text rather than a
+   solid accent background with white text — less glaring on glass. */
 .gp-btn.on {
   background: var(--win-accent-glow);
   border-color: var(--win-accent);
   color: var(--win-accent);
 }
 
-/* Xóa dòng: chỉ đỏ khi thực sự bấm được */
+/* Delete row: red only while it is actually clickable */
 .gp-btn.danger:not(:disabled) {
   color: #ef4444;
 }
@@ -9167,7 +9161,7 @@ input.rename-input {
   border-color: rgba(239, 68, 68, 0.45);
 }
 
-/* Lưu thay đổi: nút chính duy nhất trong cụm nên để nền đặc cho nổi */
+/* Save changes: the cluster's only primary button, so it keeps a solid background to stand out */
 .gp-btn.save {
   background: #10b981;
   border-color: #059669;
@@ -9193,7 +9187,7 @@ input.rename-input {
   background: #10b981;
 }
 
-/* ————— Cụm phân trang: một khối liền, gạch phân cách ở giữa ————— */
+/* ————— The pagination cluster: one continuous block with dividers between ————— */
 .gp-pager {
   display: inline-flex;
   align-items: center;
@@ -9255,7 +9249,7 @@ input.rename-input {
 }
 
 
-/* ————— Hộp thoại "Về TableNova" ————— */
+/* ————— The "About TableNova" dialog ————— */
 .about-dialog {
   position: relative;
   width: 420px;
@@ -9264,8 +9258,8 @@ input.rename-input {
   flex-direction: column;
   align-items: center;
   padding: 28px 24px 18px;
-  /* Bố cục riêng (logo giữa, không có thanh tiêu đề), nhưng khung ngoài —
-     bo góc, viền, bóng đổ — dùng đúng chrome của `Modal.tsx`. */
+  /* A layout of its own (a centred logo, no title bar), but the outer frame — radius, border, shadow —
+     uses `Modal.tsx`'s chrome exactly. */
   border-radius: 6px;
   border: 1px solid var(--win-border-strong);
   background: var(--win-bg-card);
@@ -9295,7 +9289,7 @@ input.rename-input {
   color: var(--win-text-primary);
 }
 
-/* Logo: bỏ nền trắng bo góc của bản cũ, thay bằng quầng sáng nhẹ cho hoà vào kính */
+/* The logo: the old rounded white background is gone, replaced by a soft glow that blends into the glass */
 .about-logo {
   width: 68px;
   height: 68px;
@@ -9328,7 +9322,7 @@ input.rename-input {
   color: var(--win-text-secondary);
 }
 
-/* Hàng chip các hệ DB được hỗ trợ — dùng lại logo thương hiệu ở DbIcons */
+/* The row of supported-engine chips — reusing the brand logos from DbIcons */
 .about-engines {
   display: flex;
   flex-wrap: wrap;
@@ -9404,11 +9398,11 @@ input.rename-input {
 
 
 /* =====================================================================
-   Menu nổi trong workspace (chuyển database, menu terminal, context menu bảng)
-   --win-bg-card chỉ 0.88 alpha nên 12% nội dung sidebar phía sau xuyên qua, mà
-   menu lại không có backdrop-filter để làm nhoè -> chữ phía sau đọc rõ và chồng
-   lên chữ trong menu. Menu là chỗ cần đọc chính xác nên để gần như đục hẳn,
-   chất "kính" giữ bằng blur + hairline chứ không bằng độ trong suốt.
+   Floating menus in the workspace (switching database, the terminal menu, a table's context menu).
+   --win-bg-card is only 0.88 alpha, so 12% of the sidebar behind shows through, and a menu has no
+   backdrop-filter to blur it -> the text behind stays legible and overlaps the menu's own. A menu is
+   somewhere that has to be read exactly, so it is near-opaque; the "glass" comes from blur and a
+   hairline rather than from transparency.
    ===================================================================== */
 .ws-menu {
   padding: 5px;
@@ -9425,7 +9419,7 @@ input.rename-input {
   box-shadow: 0 14px 36px rgba(0, 0, 0, 0.50), inset 0 1px 0 rgba(255, 255, 255, 0.10);
 }
 
-/* Mục trong menu: bo góc và cao đều nhau */
+/* Menu items: rounded, and all the same height */
 .ws-menu>div[class*='item'],
 .ws-menu>.context-menu-item,
 .ws-menu>.sidebar-context-item {
@@ -9433,18 +9427,18 @@ input.rename-input {
 }
 
 
-/* Card ở tab Structure nằm trong flex column có overflow-y: auto. Flex item mặc
-   định flex-shrink: 1 nên khi tổng chiều cao vượt khung, các card bị BÓP lại
-   thay vì để khung cuộn — cộng thêm overflow: hidden thì phần bị bóp bị cắt mất
-   (tiêu đề "CHỈ MỤC (INDEXES)" biến mất, hàng tiêu đề bảng bị cắt nửa).
-   flex-shrink: 0 giữ đúng chiều cao nội dung và trả việc cuộn về cho khung. */
+/* The Structure tab's cards live in a flex column with overflow-y: auto. A flex item defaults to
+   flex-shrink: 1, so once the total height exceeds the frame the cards are SQUEEZED instead of
+   letting the frame scroll — and with overflow: hidden on top, the squeezed part is clipped away (the
+   "INDEXES" heading disappears, the table's header row is cut in half).
+   flex-shrink: 0 keeps each card at its content height and hands scrolling back to the frame. */
 .structure-section {
   flex-shrink: 0;
 }
 
-/* Dòng vừa thêm ở tab Structure (cột / chỉ mục / khóa ngoại).
-   Bản cũ tô rgba(16,185,129,0.03) — 3% alpha, còn mờ hơn cả dòng mới ở
-   DataGrid nên bấm "Thêm cột" xong gần như không thấy gì. */
+/* A newly added row on the Structure tab (a column, index or foreign key).
+   The old version painted rgba(16,185,129,0.03) — 3% alpha, fainter even than DataGrid's new row, so
+   pressing "Add column" showed almost nothing. */
 .structure-row-new>td {
   background: rgba(16, 185, 129, 0.14) !important;
 }
@@ -9453,8 +9447,8 @@ input.rename-input {
   box-shadow: inset 3px 0 0 #10b981;
 }
 
-/* Context menu của tab: đưa về cùng chất liệu với .ws-menu (0.88 alpha + không
-   blur thì chữ phía sau xuyên qua, khó đọc). */
+/* A tab's context menu: brought to the same material as .ws-menu (at 0.88 alpha with no blur, the
+   text behind shows through and is hard to read). */
 .tab-context-menu {
   padding: 5px;
   border-radius: 10px;
@@ -9476,10 +9470,10 @@ input.rename-input {
 
 
 /* =====================================================================
-   Thanh lọc dữ liệu (Filters) — chuyển sang liquid glass, đồng bộ chiều cao.
-   Bản cũ: nền --win-bg-window đục, select/input tô #ffffff + viền #cbd5e1
-   hardcode (dark theme sai màu), nút cao 26px lệch với 28px ở nơi khác,
-   và đường kẻ gạch đứt trông rời rạc.
+   The data filter bar — moved to liquid glass, with heights brought into line.
+   The old version: an opaque --win-bg-window background, selects and inputs painted #ffffff with a
+   hardcoded #cbd5e1 border (wrong in the dark theme), 26px buttons out of line with the 28px used
+   elsewhere, and a dashed rule that looked disjointed.
    ===================================================================== */
 .visual-filter-container {
   background: var(--ws-glass-weak, rgba(255, 255, 255, 0.30));
@@ -9536,7 +9530,7 @@ input.rename-input {
   background: rgba(8, 10, 14, 0.70);
 }
 
-/* Nút phụ + nút icon: cùng chất liệu với .gp-btn ở thanh chân bảng */
+/* Secondary and icon buttons: the same material as .gp-btn in the grid's footer */
 .visual-filter-btn-apply,
 .visual-filter-btn-icon {
   height: 28px;
@@ -9578,8 +9572,8 @@ input.rename-input {
   background: rgba(255, 255, 255, 0.16);
 }
 
-/* Nút chính của thanh lọc: dùng accent xanh dương. Xanh lá được giữ riêng cho
-   "Lưu" ở thanh chân bảng — đó là hành động ghi xuống DB, còn lọc thì không. */
+/* The filter bar's primary button uses the blue accent. Green is reserved for "Save" in the grid's
+   footer — that action writes to the database, while filtering does not. */
 .visual-filter-btn-primary {
   height: 28px;
   padding: 0 16px;
@@ -9600,7 +9594,7 @@ input.rename-input {
   background: var(--win-accent-secondary);
 }
 
-/* Chân thanh lọc: đường kẻ liền mảnh thay cho gạch đứt */
+/* The filter bar's foot: a thin solid rule instead of a dashed one */
 .visual-filter-footer {
   margin-top: 2px;
   padding-top: 10px;
@@ -9624,9 +9618,9 @@ input.rename-input {
 
 
 /* =====================================================================
-   Xanh lá hệ thống của macOS. Thay cho #10b981 (emerald của Tailwind) —
-   tông macOS trong và tươi hơn, khớp với các nút màu khác đã chỉnh.
-   Dùng biến để nút "Áp dụng tất cả" và nút "Lưu" luôn cùng một màu.
+   macOS's system green, replacing #10b981 (Tailwind's emerald) — the macOS tone is clearer and
+   fresher, and matches the other buttons already adjusted.
+   A variable, so "Apply all" and "Save" always share one colour.
    ===================================================================== */
 :root,
 [data-theme='dark'] {
@@ -9639,7 +9633,7 @@ input.rename-input {
   --mac-green-hover: #1FB534;
 }
 
-/* Nút chính thanh lọc */
+/* The filter bar's primary button */
 .visual-filter-btn-primary {
   background: var(--mac-green);
   border-color: var(--mac-green-hover);
@@ -9650,7 +9644,7 @@ input.rename-input {
   background: var(--mac-green-hover);
 }
 
-/* Nút Lưu ở thanh chân bảng dữ liệu */
+/* The Save button in the data grid's footer */
 .gp-btn.save {
   background: var(--mac-green);
   border-color: var(--mac-green-hover);
@@ -9665,7 +9659,7 @@ input.rename-input {
   background: var(--mac-green);
 }
 
-/* Nút có icon trong thanh lọc cần canh giữa icon + chữ */
+/* A filter-bar button with an icon needs its icon and text centred together */
 .visual-filter-btn-apply {
   display: inline-flex;
   align-items: center;
@@ -9675,29 +9669,29 @@ input.rename-input {
 
 
 /* =====================================================================
-   CHUhide HOÁ NÚT TOÀN APP
+   STANDARDISING BUTTONS ACROSS THE APP
    ---------------------------------------------------------------------
-   Khảo sát: ~90 nút .btn nằm rải trong 12 file, .btn có định nghĩa chuẩn
-   nhưng bị inline style ghi đè mỗi nơi một số:
-     - 7 chiều cao khác nhau: 20/22/24/26/28/30/32px
-     - 7 bán kính khác nhau:  2/3/4/6/8/10/12px
-     - 10 cỡ chữ khác nhau:   9/9.5/10/10.5/11/11.5/12/13...
+   The survey: ~90 .btn buttons spread across 12 files. .btn has a proper definition, but inline
+   styles override it with a different number in every place:
+     - 7 different heights: 20/22/24/26/28/30/32px
+     - 7 different radii:   2/3/4/6/8/10/12px
+     - 10 different font sizes: 9/9.5/10/10.5/11/11.5/12/13…
 
-   Cách chuẩn hoá KHÔNG phải sửa 90 chỗ JSX:
+   The way to standardise them was NOT to edit 90 JSX sites:
 
-   1) border-radius + font-size dùng !important để thắng inline. Hai thuộc
-      tính này thuần thị giác, không ảnh hưởng dòng chảy layout.
-   2) min-height KHÔNG cần !important: theo spec min-height thắng height, nên
-      nút inline 20/22/24px tự được nâng lên 26px, nút cao hơn giữ nguyên.
-      Thanh công cụ chứa chúng cao 40px nên còn dư chỗ.
-   3) background/border/color KHÔNG ép. Nhiều nút dùng inline background để
-      báo trạng thái bật/tắt (Filters, Export, Columns, Chỉ đọc...) — ép
-      !important sẽ xoá mất tín hiệu trạng thái đó.
+   1) border-radius and font-size use !important to beat the inline styles. Both are purely visual and
+      do not affect layout flow.
+   2) min-height needs NO !important: by spec min-height beats height, so a button inlined at
+      20/22/24px is raised to 26px while taller ones are left alone. The toolbars holding them are
+      40px tall, so there is room.
+   3) background/border/color are NOT forced. Many buttons use an inline background to signal an
+      on/off state (Filters, Export, Columns, Read-only…) — forcing them with !important would erase
+      that signal.
    ===================================================================== */
-/* Đã xoá hết inline height/fontSize/borderRadius trên nút (56 chỗ) nên KHÔNG
-   còn cần !important — CSS là nguồn duy nhất một cách đường hoàng. Giai đoạn
-   ép !important trước đó tạo ra cái bẫy: JSX ghi height:'22px' mà render 28px,
-   người đọc code hiểu sai và mọi inline style mới thêm đều bị vô hiệu hoá. */
+/* Every inline height/fontSize/borderRadius on a button has since been removed (56 sites), so
+   !important is NO longer needed — the CSS is the single source, honestly. The earlier !important
+   phase created a trap: the JSX said height:'22px' while it rendered at 28px, so anyone reading the
+   code was misled and every newly added inline style was silently ignored. */
 .btn {
   height: 28px;
   gap: 6px;
@@ -9706,13 +9700,13 @@ input.rename-input {
   font-weight: 600;
 }
 
-/* Tier "compact" của workspace: tất cả về 28px cho thẳng hàng với .btn */
+/* The workspace’s "compact" tier: everything at 28px, in line with .btn */
 .gp-btn,
 .gp-pager {
   height: 28px;
 }
 
-/* Nút ghép "Chạy + ▾": mặt tiếp giáp phải phẳng */
+/* The split "Run + ▾" button: the joining edge has to be flat */
 .btn-join-l {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
@@ -9727,9 +9721,9 @@ input.rename-input {
   border-left: 1px solid rgba(255, 255, 255, 0.35);
 }
 
-/* Nút phụ: thêm hairline sáng cho cùng chất liệu với .gp-btn / .cm-btn.
-   Chỉ đặt box-shadow (inline hầu như không dùng thuộc tính này) nên không
-   đụng tới các nút đang tự tô background báo trạng thái. */
+/* Secondary buttons: a light hairline is added, to share the material of .gp-btn / .cm-btn.
+   Only box-shadow is set (inline styles hardly ever use that property), so buttons painting their own
+   background as a state signal are left untouched. */
 .btn-secondary {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
 }
@@ -9742,7 +9736,7 @@ input.rename-input {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
 }
 
-/* Đưa các họ nút tự viết về đúng một bán kính 8px với .btn */
+/* Brings the hand-written button families to the same 8px radius as .btn */
 .gp-btn,
 .gp-pager,
 .cm-btn,
@@ -9754,7 +9748,7 @@ input.rename-input {
   border-radius: 8px;
 }
 
-/* Nút chỉ có icon: giữ vuông vắn, bán kính nhỏ hơn cho cân với kích thước */
+/* Icon-only buttons stay square, with a smaller radius to suit their size */
 .cm-icon-btn,
 .title-bar-btn,
 .tab-new-btn,
@@ -9764,20 +9758,19 @@ input.rename-input {
 
 
 /* =====================================================================
-   TOKEN MÀU status
+   THE status COLOUR TOKENS
    ---------------------------------------------------------------------
-   Trước đây 3 màu này được viết thẳng dạng hex ở 48 chỗ rải khắp 12 file
-   (#10b981 x20, #ef4444 x21, #f59e0b x7). Hệ quả trực tiếp: khi nút Lưu và
-   "Áp dụng tất cả" đổi sang xanh macOS (#28CD41) thì 20 chỗ kia vẫn là
-   emerald #10b981 -> trong app tồn tại HAI màu xanh lá khác nhau.
+   These three colours used to be written as raw hex at 48 sites across 12 files (#10b981 ×20,
+   #ef4444 ×21, #f59e0b ×7). The direct consequence: when Save and "Apply all" moved to macOS green
+   (#28CD41), the other 20 stayed Tailwind's emerald #10b981 -> the app contained TWO different greens.
 
-   --st-ok trỏ thẳng vào --mac-green nên chỉ còn một nguồn sự thật cho màu
-   xanh; sửa một chỗ là đổi toàn bộ.
+   --st-ok points straight at --mac-green, so there is one source of truth for green; change it in one
+   place and everything follows.
 
-   Lưu ý khi dùng: chỉ đặt được trong CSS hoặc trong style={{ }}. KHÔNG đặt
-   vào prop color=/fill= của lucide, vì prop trở thành thuộc tính SVG mà
-   thuộc tính SVG không hiểu var() (icon sẽ mất màu). Muốn tô icon thì dùng
-   style={{ color: 'var(--st-ok)' }} — lucide default stroke="currentColor".
+   A note on use: they can only be set in CSS or inside style={{ }}. Do NOT put one in a lucide
+   color=/fill= prop, because the prop becomes an SVG attribute and SVG attributes do not understand
+   var() (the icon loses its colour). To colour an icon, use style={{ color: 'var(--st-ok)' }} —
+   lucide defaults to stroke="currentColor".
    ===================================================================== */
 :root,
 [data-theme='dark'] {
@@ -9794,9 +9787,9 @@ input.rename-input {
 
 
 /* =====================================================================
-   Terminal panel — header + ô chạy SQL
-   Panel luôn tối (#1c1c1e) kể cả ở giao diện sáng, nên các nút ở đây dùng
-   thang màu riêng thay vì .btn của app (nút sáng trên nền đen bị chói).
+   The terminal panel — its header and SQL box.
+   The panel is always dark (#1c1c1e) even in the light theme, so its buttons use a colour scale of
+   their own rather than the app's .btn (a light button on black glares).
    ===================================================================== */
 .tp-title {
   display: flex;
@@ -9823,8 +9816,8 @@ input.rename-input {
   text-overflow: ellipsis;
 }
 
-/* Đèn trạng thái phiên shell: trước đây phải đọc chữ trong terminal mới biết
-   phiên còn sống hay không. */
+/* The shell session's status light: it used to take reading the terminal's text to know whether the
+   session was still alive. */
 .tp-dot {
   width: 7px;
   height: 7px;
@@ -9883,7 +9876,7 @@ input.rename-input {
   padding: 0 7px;
 }
 
-/* Đang mở (menu/ô SQL đang bật) */
+/* Open (the menu or SQL box is showing) */
 .tp-btn.on {
   background: rgba(96, 165, 250, 0.22);
   border-color: rgba(96, 165, 250, 0.55);
@@ -9900,7 +9893,7 @@ input.rename-input {
   background: rgba(255, 159, 10, 0.3);
 }
 
-/* ————— Ô run SQL ————— */
+/* ————— The SQL run box ————— */
 .tp-sqlbar {
   display: flex;
   align-items: center;
@@ -9944,10 +9937,10 @@ input.rename-input {
 }
 
 
-/* Dropdown thuộc chrome của terminal -> cũng phải tối.
-   Trước đây header và 2 dropdown này tô bằng var(--win-bg-card): ở giao diện SÁNG
-   biến đó là trắng 88%, mà chữ/nút bên trong (.tp-title, .tp-btn) lại là màu sáng
-   dành cho nền tối -> sáng trên sáng, tàng hình hoàn toàn ở chế độ tab. */
+/* The dropdowns belong to the terminal's chrome -> they have to be dark too.
+   The header and these two dropdowns used to be painted with var(--win-bg-card): in the LIGHT theme
+   that is white at 88%, while the text and buttons inside (.tp-title, .tp-btn) are the light colours
+   meant for a dark background -> light on light, completely invisible in tab mode. */
 .tp-menu {
   border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.16);
@@ -9958,7 +9951,7 @@ input.rename-input {
   color: #e5e5e7;
 }
 
-/* Nội dung trong dropdown vốn dùng biến theme (sáng ở light theme) -> ép về tông tối */
+/* The dropdown's contents use theme variables (light in the light theme) -> forced back to dark tones */
 .tp-menu,
 .tp-menu * {
   --win-text-primary: #e5e5e7;
@@ -9982,9 +9975,9 @@ input.rename-input {
 }
 
 
-/* Thanh thông báo của app trong terminal panel. Đặt ngoài buffer xterm vì
-   PowerShell/PSReadLine tự vẽ lại dòng bằng cursor movement và sẽ ghi đè lên
-   bất cứ chữ nào app chèn vào buffer. */
+/* The app's message bar inside the terminal panel. Placed outside the xterm buffer because
+   PowerShell/PSReadLine redraws its line with cursor movement and would write over anything the app
+   inserted into the buffer. */
 .tp-banner {
   display: flex;
   align-items: center;
@@ -10038,10 +10031,10 @@ input.rename-input {
 
 
 /* =====================================================================
-   Thanh tiến độ Import/Export (ProgressBar.tsx) — <progress> native, tạo hình
-   lại cho khớp theme (dự án không dùng UI library nào). Bỏ thuộc tính value
-   thì phần tử ở trạng thái :indeterminate -> chạy vô định, dùng cho bước mà
-   backend làm trong một lần gọi nên không biết phần trăm.
+   The import/export progress bar (ProgressBar.tsx) — a native <progress>, restyled to match the theme
+   (this project uses no UI library). Omitting the value attribute puts the element in :indeterminate
+   -> it runs without a figure, which is what a step the backend does in a single call needs, since no
+   percentage is known.
    ===================================================================== */
 .tn-progress {
   -webkit-appearance: none;
@@ -10065,7 +10058,7 @@ input.rename-input {
   transition: width 120ms linear;
 }
 
-/* Vô định: tự vẽ vệt chạy bằng background của chính phần tử */
+/* Indeterminate: the moving stripe is drawn from the element's own background */
 .tn-progress:indeterminate {
   background:
     linear-gradient(90deg, transparent 0%, var(--win-accent) 50%, transparent 100%) no-repeat;
@@ -10088,18 +10081,17 @@ input.rename-input {
 }
 
 /* ---------------------------------------------------------------------
-   Biến thể hình thức của thanh tiến độ. Chọn ở popover kết nối (nhấn vào
-   cụm trạng thái giữa thanh tiêu đề), lưu qua utils/progressStyle.ts và
-   áp bằng data-progress-style trên <html> — giống hệt cách data-theme
-   hoạt động, nên biến thể sống được cả trong các dialog render qua portal.
+   The progress bar's visual variants. Chosen in the connection popover (by clicking the status
+   cluster in the middle of the title bar), stored through utils/progressStyle.ts and applied with
+   data-progress-style on <html> — exactly how data-theme works, so a variant survives inside dialogs
+   rendered through a portal.
 
-   Mỗi biến thể cần HAI luật: ::-webkit-progress-value cho lúc biết phần
-   trăm, và :indeterminate (nền của chính phần tử) cho lúc không biết.
-   Luật :indeterminate phải ghi đè background-repeat vì luật gốc đặt
-   no-repeat cho vệt chạy mặc định.
+   Each variant needs TWO rules: ::-webkit-progress-value for when a percentage is known, and
+   :indeterminate (the element's own background) for when it is not. The :indeterminate rule has to
+   override background-repeat, because the base rule sets no-repeat for the default sweep.
    --------------------------------------------------------------------- */
 
-/* Energy Square Wave: chuỗi khối vuông rời nhau, chạy đều như sóng vuông */
+/* Energy Square Wave: a row of separate squares moving evenly, like a square wave */
 [data-progress-style='energy'] .tn-progress::-webkit-progress-value {
   background: repeating-linear-gradient(90deg,
       var(--win-accent) 0 6px,
@@ -10126,7 +10118,7 @@ input.rename-input {
   }
 }
 
-/* Pulse: khối liền, nhấp nháy độ đậm */
+/* Pulse: one solid block, pulsing in intensity */
 [data-progress-style='pulse'] .tn-progress::-webkit-progress-value {
   background: var(--win-accent);
   animation: tn-progress-pulse 1.2s ease-in-out infinite;
@@ -10151,7 +10143,7 @@ input.rename-input {
   }
 }
 
-/* Stripes: sọc chéo bò tới, kiểu thanh tiến độ cổ điển */
+/* Stripes: diagonal stripes crawling forward, the classic progress bar */
 [data-progress-style='stripes'] .tn-progress::-webkit-progress-value {
   background-color: var(--win-accent);
   background-image: repeating-linear-gradient(-45deg,
@@ -10181,7 +10173,7 @@ input.rename-input {
   }
 }
 
-/* Comet: đầu sáng kéo theo đuôi mờ dần */
+/* Comet: a bright head trailing a fading tail */
 [data-progress-style='comet'] .tn-progress::-webkit-progress-value {
   background: linear-gradient(90deg,
       transparent 0%,
@@ -10200,12 +10192,12 @@ input.rename-input {
 
 
 /* =====================================================================
-   Data Generator (DataGeneratorDialog) — liquid glass.
+   The Data Generator (DataGeneratorDialog) — liquid glass.
 
-   Dialog render qua PORTAL ra <body> (xem Modal.tsx) nên nó nằm NGOÀI
-   .workspace-container, tức không thấy các biến --ws-* của workspace. Token
-   kính vì thế được khai lại ở đây cho cả hai giao diện; giữ đúng cùng giá trị
-   với --ws-* để hai nơi không trôi khỏi nhau.
+   The dialog renders through a PORTAL into <body> (see Modal.tsx), so it sits OUTSIDE
+   .workspace-container and cannot see the workspace's --ws-* variables. The glass tokens are
+   therefore redeclared here for both themes; keep them at exactly the --ws-* values so the two places
+   do not drift apart.
    ===================================================================== */
 .dgen {
   --dgen-glass: rgba(255, 255, 255, 0.42);
@@ -10237,7 +10229,7 @@ input.rename-input {
   --dgen-sel-border: rgba(255, 255, 255, 0.20);
 }
 
-/* Thanh điều khiển chung: card phẳng kính mờ đồng bộ với các pane. */
+/* The shared control bar: a flat frosted card matching the panes. */
 .dgen-bar {
   display: flex;
   align-items: center;
@@ -10257,7 +10249,7 @@ input.rename-input {
   margin: 0 2px;
 }
 
-/* Card kính cho từng pane (Bảng / Cột / Cấu hình / Xem trước) */
+/* A glass card per pane (Tables / Columns / Settings / Preview) */
 .dgen-pane {
   display: flex;
   flex-direction: column;
@@ -10305,8 +10297,9 @@ input.rename-input {
   flex: 1 1 auto;
 }
 
-/* Cửa sổ hẹp: bóp hai cột biên chứ không đổi số cột — ba pane phụ thuộc nhau
-   theo chiều ngang (chọn bảng -> cột -> cấu hình) nên xếp dọc sẽ mất mạch. */
+/* A narrow window squeezes the outer two columns rather than changing their number — the three panes
+   depend on each other horizontally (pick a table -> a column -> its settings), so stacking them
+   vertically would break that flow. */
 @media (max-width: 1120px) {
   .dgen-grid {
     grid-template-columns: 190px minmax(0, 1fr) 250px;
@@ -10325,12 +10318,12 @@ input.rename-input {
   gap: 3px;
 }
 
-/* Ô nhập trong hộp thoại nhỏ hơn mặc định của app (13px/6-10px) vì mật độ
-   thông tin ở đây cao; phần còn lại (nền, viền, focus ring) thừa hưởng từ
-   style input chung để không có ngoại lệ về màu. */
-/* `:not([type='checkbox'])` thay vì liệt kê từng type: style input CHUNG của app chỉ
-   khớp input[type="text"], nên một <input> không ghi type sẽ mất hết nền/viền. Ở đây
-   nền/viền được đặt lại đầy đủ để không phụ thuộc vào việc khai type. */
+/* Inputs in this dialog are smaller than the app's default (13px/6-10px) because the information
+   density here is high; everything else (background, border, focus ring) is inherited from the shared
+   input style, so there is no colour exception. */
+/* `:not([type='checkbox'])` rather than listing each type: the app's SHARED input style only matches
+   input[type="text"], so an <input> written without a type loses its background and border entirely.
+   Here the background and border are set in full, so nothing depends on the type being declared. */
 .dgen input:not([type='checkbox']),
 .dgen select,
 .dgen textarea {
@@ -10361,7 +10354,7 @@ input.rename-input {
   box-shadow: 0 0 0 3px var(--win-accent-glow);
 }
 
-/* 28px = chiều cao của .btn, để ô nhập và nút cạnh nhau thẳng hàng (textarea trừ ra). */
+/* 28px = .btn's height, so an input and a button side by side line up (textareas excepted). */
 .dgen input:not([type='checkbox']),
 .dgen select {
   height: 28px;
@@ -10388,8 +10381,8 @@ input.rename-input {
   cursor: pointer;
 }
 
-/* Một dòng trong danh sách bảng. Mục đang chọn là chip SÁNG nổi lên (giống
-   .sidebar-item.active của workspace), không phải scrim tối. */
+/* One row of the table list. The selected item is a BRIGHT lifted chip (like the workspace's
+   .sidebar-item.active), not a dark scrim. */
 .dgen-row {
   display: flex;
   align-items: center;
@@ -10423,8 +10416,8 @@ input.rename-input {
   border-collapse: collapse;
 }
 
-/* th phải gần đục: nó sticky, và một hàng trong suốt sẽ để chữ của dòng bên
-   dưới trượt xuyên qua. */
+/* The th has to be near-opaque: it is sticky, and a transparent row lets the text of the rows below
+   slide through it. */
 .dgen-table th {
   position: sticky;
   top: 0;
@@ -10486,7 +10479,7 @@ input.rename-input {
   line-height: 1.4;
 }
 
-/* Chip hiển thị seed: chỉ để đọc/ghi nhớ, nên là nhãn chứ không phải ô nhập. */
+/* The seed chip: only to be read and remembered, so it is a label rather than an input. */
 .dgen-chip {
   display: inline-flex;
   align-items: center;
@@ -10500,8 +10493,8 @@ input.rename-input {
   padding: 1px 4px 1px 9px;
 }
 
-/* Nút chỉ có icon: 7px như .cm-icon-btn/.title-bar-btn, và nhỏ hơn 28px của .btn vì
-   nó nằm trong thanh tiêu đề pane. */
+/* Icon-only buttons: 7px like .cm-icon-btn/.title-bar-btn, and smaller than .btn's 28px because they
+   sit in a pane's heading bar. */
 .dgen-icon-btn {
   display: inline-flex;
   align-items: center;
@@ -11340,7 +11333,7 @@ input.rename-input {
   min-width: 0;
 }
 
-/* ————— Cụm Segmented Data | Structure (đồng bộ với .gp-btn) ————— */
+/* ————— The Data | Structure segmented cluster (matching .gp-btn) ————— */
 .gp-segmented {
   display: inline-flex;
   align-items: center;
@@ -11663,8 +11656,9 @@ input.rename-input {
   margin: 0 8px;
 }
 
-/* Nút "đếm chính xác" cạnh số dòng ước lượng. Là một liên kết trong câu chứ không phải `.btn`:
-   nó nằm giữa dòng trạng thái 11px, và một nút cao 28px sẽ đội cả thanh dưới grid lên. */
+/* The "count exactly" control next to an estimated row count. A link within the sentence rather than
+   a `.btn`: it sits inside an 11px status line, and a 28px button would push the whole bar below the
+   grid upward. */
 .gp-count-exact {
   margin-left: 6px;
   padding: 0;
@@ -12029,7 +12023,7 @@ input.rename-input {
   background: #f03e33;
 }
 
-/* 3-Column Workspace (Tràn viền / Full bleed) */
+/* The 3-column workspace (full bleed) */
 .doc-workspace {
   flex: 1;
   display: grid;
@@ -12617,19 +12611,20 @@ input.rename-input {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   Quick Switcher (QuickSwitcherPopover.tsx)
+   The Quick Switcher (QuickSwitcherPopover.tsx)
 
-   Thay khối popup inline cũ trong TitleBar, khối đó dựng bằng ~40 object style
-   rải trong JSX: đổi một khoảng cách phải sửa nhiều chỗ, và không chỗ nào theo
-   được theme (nền, viền, chữ đều là giá trị cứng).
+   It replaces the old inline popup in TitleBar, which was built from ~40 style objects spread through
+   its JSX: changing one spacing meant editing several places, and none of them followed the theme
+   (background, border and text were all hardcoded).
    ───────────────────────────────────────────────────────────────────────────── */
 
-/* ─── Safe Mode popover (SafeModeControl) ───
-   Cùng họ với `.qs-pop` bên dưới và cố ý dùng chung `--win-bg-popover`: nền `--win-bg-window`
-   trong suốt ở theme sáng nên nhãn tab phía sau lọt qua. Portal + backdrop cũng vì popover này
-   mở từ trong `.tb-capsule` (overflow: hidden) nên nằm trong cây sẽ bị cắt. */
-/* Popover neo dưới một nút trên thanh tiêu đề. Safe Mode và Việc chạy nền dùng CHUNG hai rule
-   này (nền chặn + hộp) để sửa một bên là bên kia không lệch. */
+/* ─── The Safe Mode popover (SafeModeControl) ───
+   Of the same family as `.qs-pop` below and deliberately sharing `--win-bg-popover`: a
+   `--win-bg-window` background is transparent in the light theme, so the tab labels behind show
+   through. The portal and backdrop are there because this popover opens from inside `.tb-capsule`
+   (overflow: hidden), where staying in the tree would clip it. */
+/* A popover anchored below a title-bar button. Safe Mode and Background jobs SHARE these two rules
+   (the backdrop and the box), so fixing one cannot leave the other out of line. */
 .sm-backdrop,
 .jobs-backdrop {
   position: fixed;
@@ -12707,8 +12702,8 @@ input.rename-input {
   color: var(--win-text-secondary);
 }
 
-/* Tên command trong hộp thoại Safe Mode. Là một chip vừa đúng nội dung, không phải một khung rộng
-   hết dòng — khung đó đọc ra như một input bị disable. */
+/* The command name in the Safe Mode dialog. A chip sized to its content, not a box spanning the full
+   row — a full-width box reads as a disabled input. */
 .smg-cmd {
   display: inline-block;
   padding: 3px 9px;
@@ -12720,17 +12715,17 @@ input.rename-input {
   font-size: 11.5px;
 }
 
-/* Tên bảng/key mà lệnh nhắm vào, trong hộp thoại Safe Mode: mono + đậm để nó bật ra khỏi câu, vì
-   đó là từ người dùng cần đọc kỹ nhất trước khi bấm. */
+/* The table or key the command targets, in the Safe Mode dialog: monospaced and bold so it stands out
+   of the sentence, because it is the word the user most needs to read before pressing anything. */
 .smg-target {
   font-family: var(--win-font-mono, monospace);
   font-weight: 600;
   color: var(--win-text-primary);
 }
 
-/* Hàng chọn mức giới hạn thời gian câu lệnh. Sáu ô ngang, không phải sáu `.sm-item` xếp dọc:
-   chúng là sáu giá trị của MỘT thiết lập, còn danh sách dọc ở trên là sáu lựa chọn khác nhau —
-   trông giống nhau thì phải đọc chữ mới biết đang chọn cái gì. */
+/* The row of statement time limits. Six cells across, not six `.sm-item`s stacked: they are six values
+   of ONE setting, while the vertical list above is six different choices — looking alike would force
+   the user to read the text to know which kind of choice they are making. */
 .sm-seg {
   display: flex;
   gap: 4px;
@@ -12770,14 +12765,14 @@ input.rename-input {
   padding: 6px 10px 4px;
 }
 
-/* Chỉ đọc chặn hẳn thay vì hỏi, nên nó tách khỏi ba mức "hỏi" ở trên. */
+/* Read-only refuses outright rather than asking, so it is separated from the three "ask" levels above. */
 .sm-divider {
   height: 1px;
   margin: 5px 8px;
   background: var(--win-border);
 }
 
-/* Việc chạy nền (JobsTray). Dáng hộp lấy từ .sm-pop ở trên; đây chỉ là chiều rộng và danh sách. */
+/* Background jobs (JobsTray). The box shape comes from .sm-pop above; this is only its width and list. */
 .jobs-pop {
   width: 380px;
 }
@@ -12803,7 +12798,7 @@ input.rename-input {
   cursor: default;
 }
 
-/* Cao hơn nữa thì popover che gần hết cửa sổ; danh sách tự cuộn. */
+/* Any taller and the popover covers most of the window; the list scrolls itself. */
 .jobs-list {
   max-height: 320px;
   overflow-y: auto;
@@ -12880,7 +12875,7 @@ input.rename-input {
   flex-shrink: 0;
 }
 
-/* Số việc đang chạy, nằm cạnh cái chuông. */
+/* The count of running jobs, beside the bell. */
 .jobs-badge {
   font-size: 10px;
   font-weight: 600;
@@ -12938,7 +12933,7 @@ input.rename-input {
   }
 }
 
-/* Header Segmented Tabs — đồng bộ với .sb-seg / .cm-seg trong toàn app */
+/* The header's segmented tabs — matching .sb-seg / .cm-seg across the app */
 .qs-header {
   padding: 8px 10px 4px;
   background: transparent;
@@ -13078,7 +13073,7 @@ input.rename-input {
   color: var(--win-text-primary);
 }
 
-/* Danh sách kết nối / Databases */
+/* The connections / databases list */
 .qs-list {
   max-height: 320px;
   overflow-y: auto;
@@ -13244,7 +13239,7 @@ input.rename-input {
   opacity: 1;
 }
 
-/* Chip môi trường cao cấp */
+/* The refined environment chip */
 .qs-env-chip {
   flex: 0 0 auto;
   padding: 2px 7px;
@@ -13346,8 +13341,8 @@ input.rename-input {
   color: var(--win-accent);
 }
 
-/* Latency của kết nối (QuickSwitcherPopover). Chữ số đều bề rộng: danh sách này thẳng cột, mà `1 ms`
-   và `188 ms` bằng font tỉ lệ sẽ làm mỗi dòng lệch một chút. */
+/* A connection's latency (QuickSwitcherPopover). Tabular figures: this list is column-aligned, and
+   `1 ms` next to `188 ms` in a proportional font leaves every row slightly out. */
 .qs-ping {
   flex: 0 0 auto;
   color: var(--win-text-disabled);
@@ -13356,23 +13351,25 @@ input.rename-input {
   font-variant-numeric: tabular-nums;
 }
 
-/* Ping không thành công: kết nối còn trong registry nhưng server không trả lời. Đỏ vì đó là thứ đáng
-   biết TRƯỚC khi bấm vào, không phải sau. */
+/* A failed ping: the connection is still in the registry but the server does not answer. Red, because
+   that is worth knowing BEFORE clicking rather than after. */
 .qs-ping.is-dead {
   color: var(--st-danger, #ef4444);
   font-weight: 700;
 }
 /* ============================================================
-   Redis workspace
+   The Redis workspace
    ============================================================
-   Redis dùng chung khung với SQL (DbRail + Sidebar + TabManager + ActivePanel), nên phần lớn kiểu
-   dáng đã có sẵn. Nhóm này chỉ bù những chỗ Redis có mà SQL không:
-   sidebar rộng hơn (tên key dài hơn tên bảng), dòng thông báo trong tab, và trạng thái rỗng khi
-   key không còn — xem docs/redis-ui-unification-plan.md §2.4/§2.5.
-   Mọi màu đều lấy từ biến, nên Dark/Light theo cùng một bộ token với phần còn lại của app. */
+   Redis shares SQL's frame (DbRail + Sidebar + TabManager + ActivePanel), so most of the styling
+   already exists. This group only fills in what Redis has and SQL does not: a wider sidebar (a key
+   name is longer than a table name), the message line inside a tab, and the empty state when a key is
+   gone — see docs/redis-ui-unification-plan.md §2.4/§2.5.
+   Every colour comes from a variable, so dark and light follow the same token set as the rest of the
+   app. */
 
-/* Sidebar: rộng hơn `.sidebar-navigation` mặc định vì key Redis (`app:user:1234:session`) dài hơn
-   hẳn tên bảng, và cây theo namespace còn thụt thêm mỗi cấp một mức. */
+/* The sidebar is wider than the default `.sidebar-navigation` because a Redis key
+   (`app:user:1234:session`) is far longer than a table name, and the namespace tree indents one level
+   deeper at each step. */
 .redis-sidebar {
   width: 340px;
   min-width: 260px;
@@ -13382,14 +13379,14 @@ input.rename-input {
   flex: 1;
   display: flex;
   flex-direction: column;
-  /* Không có dòng này thì vùng cuộn bên trong đẩy cao cả cột thay vì tự cuộn. */
+  /* Without this line the inner scroll area stretches the whole column instead of scrolling itself. */
   min-height: 0;
 }
 
 /* Tool buttons, living inside `.redis-keylist-footer` rather than in a bar of their own.
    Six wrapped text buttons plus the key count made ~103px of permanent chrome at the bottom of the
    sidebar, and broke the rule that every footer bar is `--ws-foot-h` tall and lines up (see the
-   "Ba thanh chân cùng chiều cao" group). Icon-only keeps one click per tool without the wrap; the
+   "Three footer bars of equal height" group). Icon-only keeps one click per tool without the wrap; the
    label stays reachable as the tooltip. */
 .redis-sidebar-actions {
   display: flex;
@@ -13407,7 +13404,7 @@ input.rename-input {
   justify-content: center;
 }
 
-/* Thân một tab Redis: dòng thông báo trên cùng, nội dung cuộn bên dưới. */
+/* The body of a Redis tab: the message line on top, scrolling content below. */
 .redis-tab {
   flex: 1;
   display: flex;
@@ -13422,8 +13419,9 @@ input.rename-input {
   padding: 12px;
 }
 
-/* Dòng thông báo ok/lỗi. Nền pha loãng thay vì nền đặc: nó nằm ngay trên nội dung của tab và một
-   dải màu đặc ngang toàn bộ chiều rộng đọc như một lỗi nghiêm trọng kể cả khi chỉ báo "đã lưu". */
+/* The ok/error message line. A diluted background rather than a solid one: it sits directly above the
+   tab's content, and a solid band across the full width reads as a serious error even when it only
+   says "saved". */
 .redis-toast {
   display: flex;
   align-items: center;
@@ -13443,8 +13441,8 @@ input.rename-input {
   color: var(--st-danger, #ef4444);
 }
 
-/* Trạng thái rỗng của tab key: key đã hết TTL hoặc bị xoá từ nơi khác. Là chuyện bình thường của
-   Redis nên trình bày trung tính — không màu đỏ, không icon cảnh báo (§2.5). */
+/* A key tab's empty state: the key's TTL expired or it was deleted elsewhere. That is ordinary in
+   Redis, so it is presented neutrally — no red, no warning icon (§2.5). */
 .redis-empty {
   height: 100%;
   display: flex;
@@ -13475,11 +13473,12 @@ input.rename-input {
 }
 
 
-/* ---- Redis: danh sách key (KeyList) ----
-   Sáu `style={{}}` còn lại trong KeyList.tsx đều là giá trị động thật và cố ý giữ nguyên: chiều cao
-   hai spacer (do windowing tính), độ sâu + chiều cao mỗi dòng, màu badge tra theo TYPE_COLORS, và
-   toạ độ menu ngữ cảnh đo lúc chạy. Chiều cao dòng đặc biệt phải ở TS: nó phải bằng đúng ROW_HEIGHT
-   mà windowSlice dùng, và một bản sao trong CSS lệch đi thì danh sách cuộn sai chứ không báo lỗi. */
+/* ---- Redis: the key list (KeyList) ----
+   The six `style={{}}` left in KeyList.tsx are all genuinely dynamic values and are deliberately kept:
+   the two spacers' heights (computed by the windowing), each row's depth and height, the badge colour
+   looked up in TYPE_COLORS, and the context menu's coordinates measured at runtime. The row height in
+   particular has to be in TS: it must equal the ROW_HEIGHT windowSlice uses, and a copy in CSS that
+   drifts makes the list scroll wrongly rather than raise an error. */
 
 .redis-keylist-header {
   padding: 10px;
@@ -13514,8 +13513,8 @@ input.rename-input {
   white-space: nowrap;
 }
 
-/* Nút chỉ có icon. Không đặt `padding: 0` lên `.btn` chung — chiều cao 28px của .btn là thứ giữ
-   cho hàng nút thẳng hàng với ô select bên cạnh. */
+/* Icon-only buttons. Do not put `padding: 0` on the shared `.btn` — .btn's 28px height is what keeps
+   the button row aligned with the select beside it. */
 .redis-icon-btn {
   width: 28px;
   padding: 0;
@@ -13556,9 +13555,9 @@ input.rename-input {
   flex: 1;
 }
 
-/* Select trong header. Kiểu chung của app khớp `input[type="text"]`, không khớp `select`, nên nếu
-   không tả ở đây thì nó rơi về giao diện mặc định của trình duyệt (xem ghi chú .btn trong CLAUDE.md
-   — cùng một cái bẫy). */
+/* Selects in the header. The app's shared style matches `input[type="text"]` and not `select`, so
+   without a description here it falls back to the browser's default appearance (see the .btn note in
+   CLAUDE.md — the same trap). */
 .redis-keylist-select {
   background: var(--win-bg-window);
   border: 1px solid var(--win-border);
@@ -13586,7 +13585,7 @@ input.rename-input {
   flex-shrink: 0;
 }
 
-/* Ô nhập nằm TRONG khung tìm kiếm nên tự nó phải trong suốt — viền và nền là của khung ngoài. */
+/* The input sits INSIDE the search frame, so it must be transparent itself — the border and background belong to the frame. */
 .redis-keylist-search input {
   flex: 1;
   min-width: 0;
@@ -13611,7 +13610,7 @@ input.rename-input {
   flex-shrink: 0;
 }
 
-/* Quét dừng ở KEY_CAP: nói ra chuyện đó và mời quét tiếp, không bao giờ cắt im lặng. */
+/* The scan stopped at KEY_CAP: say so and offer to scan on, never truncate silently. */
 .redis-keylist-cap {
   padding: 6px 10px;
   font-size: 10px;
@@ -13665,7 +13664,7 @@ input.rename-input {
 }
 
 /* Takes the slack so the buttons stay pinned right, and ellipsises instead of pushing them out —
-   "Đang quét 12.345 key…" is longer than the idle text. */
+   "Scanning 12,345 keys…" is longer than the idle text. */
 .redis-keylist-count {
   flex: 1;
   min-width: 0;
@@ -13674,8 +13673,9 @@ input.rename-input {
   white-space: nowrap;
 }
 
-/* Một dòng của cây key. Độ thụt lấy từ biến `--redis-depth` mà TS đặt cho từng dòng — cách duy nhất
-   để giữ phần động (độ sâu) ở TS mà vẫn để công thức trình bày (10px + 12px mỗi cấp) ở CSS. */
+/* One row of the key tree. The indent comes from the `--redis-depth` variable TS sets per row — the
+   only way to keep the dynamic part (the depth) in TS while the presentation formula (10px + 12px per
+   level) stays in CSS. */
 .redis-row {
   display: flex;
   align-items: center;
@@ -13736,8 +13736,8 @@ input.rename-input {
   flex-shrink: 0;
 }
 
-/* Menu chuột phải trên một thư mục namespace. Dựng qua portal (xem KeyList.tsx) nên `position` và
-   `z-index` thuộc về nó, không thừa hưởng từ panel. */
+/* The context menu on a namespace folder. Built through a portal (see KeyList.tsx), so `position` and
+   `z-index` belong to it rather than being inherited from the panel. */
 .redis-folder-menu {
   position: fixed;
   z-index: 99999;
@@ -13782,13 +13782,13 @@ input.rename-input {
 }
 
 
-/* ---- Redis: bề mặt dùng chung ----
-   Năm class dưới đây thay cho năm object `CSSProperties` từng nằm trong `components/redis/shared.ts`.
-   Gom style vào một object và đặt tên cho nó không làm nó bớt là inline style: nó vẫn đi vào thuộc
-   tính `style` của thẻ, vẫn thắng mọi rule trong `index.css`, và vẫn không viết được :hover/:focus.
-   Đó là lý do chúng nằm ở đây. */
+/* ---- Redis: the shared surfaces ----
+   The five classes below replace five `CSSProperties` objects that used to live in
+   `components/redis/shared.ts`. Gathering styles into an object and giving it a name does not make it
+   any less an inline style: it still goes into the element's `style` attribute, still beats every rule
+   in `index.css`, and still cannot express :hover/:focus. That is why they live here. */
 
-/* Ô của bảng phần tử (hash/list/set/zset/stream), bảng slowlog và bảng phân tích. */
+/* A cell of the element table (hash/list/set/zset/stream), the slowlog table and the analysis table. */
 .redis-cell {
   font-family: var(--win-font-mono);
   font-size: 11px;
@@ -13800,13 +13800,13 @@ input.rename-input {
   white-space: nowrap;
 }
 
-/* Slow log: câu chạy quá 100ms. Ngưỡng nằm ở TS (nó là dữ liệu, không phải trình bày); ở đây chỉ
-   là màu tương ứng. */
+/* Slow log: a command that took over 100ms. The threshold lives in TS (it is data, not presentation);
+   this is only the colour that goes with it. */
 .redis-cell.slow {
   color: var(--st-danger);
 }
 
-/* Ô sửa tại chỗ trong bảng: viền accent để phân biệt với ô chỉ đọc bên cạnh. */
+/* An in-place edit cell in a table: an accent border tells it apart from the read-only cells beside it. */
 .redis-inline-input {
   width: 100%;
   background: var(--win-bg-card);
@@ -13819,8 +13819,8 @@ input.rename-input {
   outline: none;
 }
 
-/* Biến thể trong form (thêm entry vào stream): viền thường, vì ở đó nó không phải là "ô đang sửa"
-   giữa những ô chỉ đọc — nó là một ô nhập bình thường. */
+/* The form variant (adding an entry to a stream): an ordinary border, because there it is not "the cell
+   being edited" among read-only ones — it is simply an input. */
 .redis-inline-input.boxed {
   border-color: var(--win-border);
   padding: 4px 6px;
@@ -13841,7 +13841,7 @@ input.rename-input {
   padding: 3px 6px;
 }
 
-/* Vùng soạn giá trị string/JSON. */
+/* The editing area for a string/JSON value. */
 .redis-mono-box {
   flex: 1;
   width: 100%;
@@ -13857,7 +13857,7 @@ input.rename-input {
   outline: none;
 }
 
-/* Vùng log cuộn được của Console, Pub/Sub và Profiler. */
+/* The scrollable log area of the Console, Pub/Sub and the Profiler. */
 .redis-log-box {
   flex: 1;
   overflow: auto;
@@ -13869,7 +13869,7 @@ input.rename-input {
   font-size: 11px;
 }
 
-/* Pill: lệnh gợi ý trong Console (bấm được) và ghi chú trong StreamPanel (không bấm). */
+/* Pills: suggested commands in the Console (clickable) and notes in StreamPanel (not). */
 .redis-pill {
   font-size: 10px;
   padding: 2px 8px;
@@ -13881,7 +13881,7 @@ input.rename-input {
   font-family: var(--win-font-mono);
 }
 
-/* Giờ mới viết được, hồi còn là object thì không. */
+/* Only expressible now; as an object it was not. */
 .redis-pill:hover {
   border-color: var(--win-accent);
   color: var(--win-text-primary);
@@ -13898,7 +13898,7 @@ input.rename-input {
 }
 
 
-/* ---- Redis: trình xem giá trị (ValuePanel / CollectionTable / StreamPanel) ---- */
+/* ---- Redis: the value viewers (ValuePanel / CollectionTable / StreamPanel) ---- */
 
 .redis-value {
   display: flex;
@@ -13907,8 +13907,9 @@ input.rename-input {
   height: 100%;
 }
 
-/* Thanh công cụ dùng lại ở cả ba file: header của key, toolbar string/JSON, toolbar bảng phần tử,
-   toolbar consumer group. Bọc dòng vì nội dung là một dãy nhãn + nút dài ngắn tuỳ dữ liệu. */
+/* A toolbar reused across all three files: the key header, the string/JSON toolbar, the element
+   table's toolbar and the consumer-group toolbar. It wraps, because its content is a run of labels and
+   buttons whose length depends on the data. */
 .redis-value-bar {
   display: flex;
   align-items: center;
@@ -13951,8 +13952,8 @@ input.rename-input {
   padding: 0 10px;
 }
 
-/* Tab Entries/Groups của StreamPanel: tab đang chọn. Hồi còn inline thì đây là hai thuộc tính màu
-   gán theo điều kiện; thành class thì điều kiện chỉ còn là có/không một tên. */
+/* StreamPanel's Entries/Groups tabs: the selected one. Inline, this was two colour properties assigned
+   conditionally; as a class, the condition is merely whether a name is present. */
 .redis-value-btn.active {
   border-color: var(--win-accent);
   color: var(--win-accent);
@@ -13974,7 +13975,7 @@ input.rename-input {
   flex-shrink: 0;
 }
 
-/* Nhãn định dạng đã nhận ra (utf8 / json / hex…). */
+/* The detected format label (utf8 / json / hex…). */
 .redis-format-pill {
   font-size: 10px;
   padding: 2px 8px;
@@ -13984,7 +13985,7 @@ input.rename-input {
   font-weight: 600;
 }
 
-/* Dải cảnh báo trong thân tab (giá trị bị cắt bớt…). Cùng công thức pha loãng với .redis-toast. */
+/* A warning band inside a tab (a truncated value…). The same dilution formula as .redis-toast. */
 .redis-value-notice {
   padding: 6px 8px;
   border-radius: 4px;
@@ -14024,7 +14025,7 @@ input.rename-input {
   padding: 3px 6px;
 }
 
-/* Kiểu key mà app chưa có trình xem riêng (vector set, TimeSeries…). */
+/* Key types the app has no dedicated viewer for (vector sets, TimeSeries…). */
 .redis-unsupported {
   display: flex;
   flex-direction: column;
@@ -14063,7 +14064,7 @@ input.rename-input {
   color: var(--win-text-disabled);
 }
 
-/* ---- Bảng phần tử ---- */
+/* ---- The element table ---- */
 
 .redis-coll {
   display: flex;
@@ -14085,8 +14086,8 @@ input.rename-input {
   background: var(--win-bg-window);
 }
 
-/* Bảng field-value bên trong một entry stream: đã nằm trong khung có nền của entry rồi, thêm nền
-   nữa thành hai lớp chồng nhau. */
+/* The field-value table inside a stream entry: it already sits in the entry's own backgrounded frame,
+   so another background would stack two layers. */
 .redis-table-wrap.flat {
   background: transparent;
 }
@@ -14118,8 +14119,8 @@ input.rename-input {
   gap: 2px;
 }
 
-/* Nút chỉ-icon trong một ô. Trạng thái bận đi qua thuộc tính `disabled` thay vì hai giá trị style
-   tính theo cờ `busy` — cùng một hành vi, nhưng trình duyệt lo phần con trỏ. */
+/* An icon-only button in a cell. The busy state goes through the `disabled` attribute rather than two
+   style values computed from a `busy` flag — the same behaviour, with the browser handling the cursor. */
 .redis-cell-btn {
   background: transparent;
   border: none;
@@ -14160,7 +14161,7 @@ input.rename-input {
   color: var(--win-text-disabled);
 }
 
-/* Ô tìm kiếm hẹp trong toolbar bảng phần tử — cùng khung với ô pattern của sidebar, khác bề rộng. */
+/* The narrow search box in the element table's toolbar — the same frame as the sidebar's pattern box, a different width. */
 .redis-keylist-search.narrow {
   flex: 0 0 auto;
 }
@@ -14210,7 +14211,7 @@ input.rename-input {
   color: var(--win-text-disabled);
 }
 
-/* Form thêm entry: viền accent để tách khỏi danh sách entry ngay bên dưới, vốn cùng bo góc. */
+/* The add-entry form: an accent border separates it from the entry list right below, which shares its radius. */
 .redis-stream-form {
   border: 1px solid var(--win-accent);
   border-radius: 4px;
@@ -14254,9 +14255,9 @@ input.rename-input {
 }
 
 
-/* ---- Redis: các tab công cụ (Console, Pub/Sub, Profiler, Dashboard, SlowLog, Analysis) ---- */
+/* ---- Redis: the tool tabs (Console, Pub/Sub, Profiler, Dashboard, SlowLog, Analysis) ---- */
 
-/* Khung chung: Console/Pub/Sub/Profiler cao hết tab vì vùng log phải chiếm chỗ còn lại. */
+/* The shared frame: Console/Pub-Sub/Profiler fill the tab's height, because the log area has to take what is left. */
 .redis-console {
   display: flex;
   flex-direction: column;
@@ -14264,14 +14265,14 @@ input.rename-input {
   min-width: 0;
 }
 
-/* Console dựng bố cục sát mép (đường kẻ ngang chạy hết chiều rộng như khung SQL), nên nó tự bỏ
-   padding mà .redis-tab-body áp cho các tab khác. */
+/* The Console lays out flush to the edges (its horizontal rules run the full width, like the SQL
+   frame), so it drops the padding .redis-tab-body applies to the other tabs. */
 .redis-tab-body:has(> .redis-console) {
   padding: 0;
 }
 
-/* Dashboard/Analysis/SlowLog cuộn theo nội dung thay vì ghim chiều cao — chúng là các khối xếp
-   chồng, không có vùng nào cần "phần còn lại". */
+/* Dashboard/Analysis/SlowLog scroll with their content rather than pinning a height — they are stacked
+   blocks with no region needing "the rest". */
 .redis-panel {
   display: flex;
   flex-direction: column;
@@ -14357,8 +14358,8 @@ input.rename-input {
   color: var(--win-text-secondary);
 }
 
-/* Nút phụ dạng viền mảnh (Xoá lịch sử, Xoá log…). Không dùng `.btn` vì cao 28px thì át hẳn hàng
-   nhãn 10px mà nó đứng cùng. */
+/* Thin-outline secondary buttons (Clear history, Clear log…). Not `.btn`, because at 28px they would
+   overwhelm the 10px label row they stand beside. */
 .redis-ghost-btn {
   display: flex;
   align-items: center;
@@ -14452,8 +14453,8 @@ input.rename-input {
   flex-shrink: 0;
 }
 
-/* Gợi ý lệnh: nổi lên TRÊN ô nhập (bottom: 100%) vì ô nhập nằm sát đáy tab — thả xuống dưới thì
-   danh sách rơi ra ngoài vùng nhìn thấy. */
+/* Command suggestions open ABOVE the input (bottom: 100%) because the input sits at the tab's bottom
+   edge — dropping downwards would put the list off screen. */
 .redis-suggest {
   position: absolute;
   bottom: 100%;
@@ -14495,7 +14496,7 @@ input.rename-input {
   border-top: 1px solid var(--win-border);
 }
 
-/* Dòng cú pháp của lệnh đang gõ. */
+/* The syntax line of the command being typed. */
 .redis-syntax {
   font-size: 10px;
   font-family: var(--win-font-mono);
@@ -14555,7 +14556,7 @@ input.rename-input {
   color: var(--st-warning, #f59e0b);
 }
 
-/* ---- Thẻ số liệu (Dashboard, Analysis) ---- */
+/* ---- Stat tiles (Dashboard, Analysis) ---- */
 
 .redis-stat-grid {
   display: grid;
@@ -14605,15 +14606,15 @@ input.rename-input {
   margin-top: 0;
 }
 
-/* Thanh tỉ lệ bộ nhớ trong bảng phân tích. Bề rộng do dữ liệu quyết định nên vẫn ở inline. */
+/* The memory-share bar in the analysis table. Its width is decided by the data, so it stays inline. */
 .redis-bar {
   height: 8px;
   border-radius: 4px;
   background: var(--win-accent);
 }
 
-/* Cột bảng có bề rộng cố định. Đặt tên theo số pixel: chúng là bề rộng cột thật, không phải một
-   khái niệm — gọi là `.redis-col-id` thì lần sau đổi 60px thành 70px sẽ phải đổi cả tên. */
+/* Fixed-width table columns. Named after their pixel width: these are real column widths, not a
+   concept — calling one `.redis-col-id` would mean renaming it the next time 60px becomes 70px. */
 .redis-col-60 { width: 60px; }
 .redis-col-80 { width: 80px; }
 .redis-col-90 { width: 90px; }
@@ -14622,9 +14623,9 @@ input.rename-input {
 .redis-col-150 { width: 150px; }
 .redis-col-bar { width: 30%; }
 
-/* ---- Hộp thoại Redis (PromptDialog, BulkDeleteDialog) ----
-   `ModalBody style={{ gap }}` thì giữ nguyên: đó là API của `Modal.tsx` và style inline của nó cố ý
-   thắng mọi rule CSS — xem ghi chú trong CLAUDE.md. */
+/* ---- The Redis dialogs (PromptDialog, BulkDeleteDialog) ----
+   `ModalBody style={{ gap }}` stays as it is: that is `Modal.tsx`'s API, and its inline style
+   deliberately beats every CSS rule — see the note in CLAUDE.md. */
 
 .redis-dialog-label {
   font-size: 11px;
@@ -14694,10 +14695,10 @@ input.rename-input {
   color: var(--st-warning, #f59e0b);
 }
 
-/* ---- Dialog xuất / nhập keyspace (RedisTransferDialog) ---- */
+/* ---- The keyspace export/import dialog (RedisTransferDialog) ---- */
 
-/* Hai tab Xuất/Nhập. Dùng lại `.redis-value-btn.active` của tab Entries/Groups bên StreamPanel —
-   cùng hình dạng "hai nút, một cái đang chọn", nên không cần một bộ class thứ hai. */
+/* The Export/Import tabs. They reuse StreamPanel's `.redis-value-btn.active` from its Entries/Groups
+   tabs — the same "two buttons, one selected" shape, so no second class set is needed. */
 .redis-transfer-tabs {
   display: flex;
   gap: 6px;
@@ -14710,9 +14711,10 @@ input.rename-input {
   min-width: 0;
 }
 
-/* `<input type="file">` gốc bị ẩn sau một `<label class="btn">`: nút chọn tệp của trình duyệt
-   không style được, và ở đây nó phải trông như mọi nút khác trong dialog. Không dùng
-   `display: none` — Firefox bỏ luôn phần tử khỏi luồng và nhãn không còn kích hoạt được nó. */
+/* The native `<input type="file">` is hidden behind a `<label class="btn">`: the browser's file button
+   cannot be styled, and here it has to look like every other button in the dialog. Not
+   `display: none` — Firefox drops the element from the flow entirely and the label can no longer
+   activate it. */
 .redis-transfer-file-input {
   position: absolute;
   width: 1px;
@@ -14721,8 +14723,8 @@ input.rename-input {
   pointer-events: none;
 }
 
-/* Danh sách key lỗi. Cuộn thay vì giãn: một tệp lệch phiên bản thì MỌI key đều lỗi, và một dialog
-   dài 10.000 dòng thì không còn thấy nút nào. */
+/* The list of failed keys. It scrolls rather than growing: with a version-mismatched file EVERY key
+   fails, and a dialog 10,000 rows tall leaves no button in sight. */
 .redis-transfer-failed {
   margin-top: 6px;
   max-height: 120px;
@@ -14730,8 +14732,9 @@ input.rename-input {
   word-break: break-all;
 }
 
-/* Nút xoá hàng loạt. Trạng thái "chưa gõ đủ điều kiện" đi qua `:disabled` thay vì bốn thuộc tính
-   tính theo cờ `ready` — cờ đó vốn đã điều khiển `disabled`, nên CSS suy ra được. */
+/* The bulk-delete button. The "conditions not typed yet" state goes through `:disabled` rather than
+   four properties computed from a `ready` flag — that flag already drives `disabled`, so CSS can infer
+   it. */
 .redis-danger-btn {
   background: var(--st-danger);
   color: #fff;
@@ -14746,25 +14749,26 @@ input.rename-input {
 }
 
 
-/* Khung soạn lệnh của CLI Console.
-   Cao cố định ~38% tab: log ở dưới mới là thứ đọc nhiều nhất, nhưng buffer cần đủ chỗ cho một nhúm
-   lệnh mà không phải cuộn. min-height để nó không bẹp lại khi tab bị thu nhỏ. */
+/* The CLI Console's command editor.
+   A fixed ~38% of the tab: the log below is what gets read most, but the buffer needs room for a
+   handful of commands without scrolling. min-height keeps it from collapsing when the tab shrinks. */
 .redis-cli-editor {
   flex: 1 1 45%;
   min-height: 120px;
   overflow: hidden;
 }
 
-/* Dòng do app tự thêm vào log (đã chuyển db, đã dừng…), không phải phản hồi của server. */
+/* Lines the app itself adds to the log (switched db, stopped…), not the server's replies. */
 .redis-console-out.note {
   color: var(--win-text-secondary);
   font-style: italic;
 }
 
 
-/* ---- CLI Console: thanh hành động, tab kết quả, dòng trạng thái ----
-   Ba khối này dựng lại đúng thứ tự của khung truy vấn SQL. Nút Chạy nằm DƯỚI editor chứ không phải
-   trên: mắt người dùng đang ở dòng lệnh vừa gõ, và đó là chỗ gần nó nhất. */
+/* ---- The CLI Console: action bar, result tabs, status line ----
+   These three blocks reproduce the SQL query frame's order exactly. The Run button sits BELOW the
+   editor rather than above it: the user's eye is on the command they just typed, and that is the
+   closest place to it. */
 
 .redis-cli-actionbar {
   display: flex;
@@ -14777,7 +14781,7 @@ input.rename-input {
   background: var(--win-bg-tab-bar);
 }
 
-/* Vị trí con trỏ: mono để con số không nhảy qua lại khi đổi từ 9 sang 10. */
+/* The caret position: monospaced so the figures do not jump when 9 becomes 10. */
 .redis-cli-pos {
   font-family: var(--win-font-mono);
   font-size: 10px;
@@ -14793,8 +14797,8 @@ input.rename-input {
   background: var(--win-bg-tab-bar);
 }
 
-/* Nhãn "Kết quả" vẽ như một tab đang chọn, giống khung SQL — nó là thứ nói cho người dùng biết
-   vùng bên dưới là gì. Thiếu nó thì khung rỗng đọc y như một ô nhập thứ hai. */
+/* The "Result" label is drawn as a selected tab, like the SQL frame — it is what tells the user what
+   the area below is. Without it, an empty frame reads as a second input. */
 .redis-cli-result-tab {
   padding: 7px 2px;
   font-size: 11.5px;
@@ -14804,7 +14808,7 @@ input.rename-input {
   margin-bottom: -1px;
 }
 
-/* Vùng kết quả đã nằm trong khung có viền của chính nó, nên bỏ viền/bo góc của .redis-log-box. */
+/* The result area already sits inside its own bordered frame, so .redis-log-box's border and radius are dropped. */
 .redis-log-box.flush {
   border: none;
   border-radius: 0;
@@ -14831,9 +14835,10 @@ input.rename-input {
 }
 
 
-/* Đường kẻ kéo giữa thanh hành động và vùng kết quả — cùng chỗ, cùng bề dày 4px với khung SQL.
-   `resize: vertical` của CSS từng đứng ở đây: nó chỉ hiện một tay nắm nhỏ ở góc phải dưới, không
-   phải một đường kẻ kéo được suốt chiều ngang, nên không khớp với phần còn lại của app. */
+/* The drag rule between the action bar and the result area — the same place and the same 4px thickness
+   as the SQL frame. CSS's `resize: vertical` used to stand here: it shows only a small handle in the
+   bottom-right corner rather than a line draggable across the full width, so it did not match the rest
+   of the app. */
 .redis-cli-resizer {
   height: 4px;
   flex-shrink: 0;
