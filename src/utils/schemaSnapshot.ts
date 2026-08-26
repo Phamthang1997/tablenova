@@ -1,7 +1,7 @@
-// Snapshot & Diff schema -> sinh migration SQL.
-// Chụp toàn bộ cấu trúc DB hiện tại thành "ảnh chụp" (lưu localStorage / xuất file JSON),
-// so sánh ảnh chụp (baseline) với schema hiện tại (current), sinh script migration.
-// Tái dùng backend previewAlterTableSchema để sinh ALTER cho bảng thay đổi.
+// Schema snapshots and diffs -> generating migration SQL.
+// It captures the database's whole current structure as a "snapshot" (stored in localStorage or
+// exported as JSON), compares that baseline with the current schema, and generates a migration script.
+// It reuses the backend's previewAlterTableSchema to produce the ALTERs for changed tables.
 
 import { dbHelper, type SchemaInfo, type ColumnInfo } from './dbHelper';
 import { editorConnId } from '../sql/editorScope';

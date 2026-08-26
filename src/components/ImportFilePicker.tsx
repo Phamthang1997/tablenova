@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Modal, ModalBody, ModalFooter } from './Modal';
 
 /**
- * Định dạng tệp được phép nhập (dùng chung cho Import ở DataGrid và context menu Sidebar).
+ * The file formats allowed for import (shared by DataGrid's Import and the Sidebar's context menu).
  * `hintKey` is resolved through `t()` inside the component — this array is module
  * level, so it cannot hold already-translated text.
  */
@@ -20,17 +20,17 @@ const ALL_ACCEPT = IMPORT_FORMATS.map(f => f.ext).join(',');
 
 interface ImportFilePickerProps {
   open: boolean;
-  /** Bảng đích, nếu nhập vào bảng có sẵn. Bỏ trống = tạo bảng mới từ tên tệp. */
+  /** The target table, when importing into an existing one. Empty = create a new table from the file name. */
   targetTable?: string | null;
   onCancel: () => void;
-  /** Gọi khi người dùng bấm "Bắt đầu Nhập" với một tệp hợp lệ. */
+  /** Called when the user presses "Start import" with a valid file. */
   onConfirm: (file: File) => void;
 }
 
 /**
- * Popup hiện TRƯỚC hộp thoại chọn tệp của hệ điều hành: báo bảng đích + định dạng cho phép,
- * cho xem tên tệp đã chọn ở ô input, rồi mới mở dialog gốc khi bấm "Chọn tệp".
- * Cấu trúc bám theo modal "Xuất Cơ sở dữ liệu" để hai luồng Import/Export nhìn giống nhau.
+ * A dialog shown BEFORE the OS file picker: it states the target table and the allowed formats, shows
+ * the chosen file name in an input, and only opens the native dialog when "Choose file" is pressed.
+ * Its structure follows the "Export Database" modal, so the import and export flows look alike.
  */
 export const ImportFilePicker: React.FC<ImportFilePickerProps> = ({
   open,
@@ -44,7 +44,7 @@ export const ImportFilePicker: React.FC<ImportFilePickerProps> = ({
   const [file, setFile] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Mỗi lần mở lại là một lượt nhập mới -> xoá tệp/lỗi của lượt trước.
+  // Every reopen is a new import -> the previous run's file and errors are cleared.
   useEffect(() => {
     queueMicrotask(() => {
       if (open) {
@@ -71,7 +71,7 @@ export const ImportFilePicker: React.FC<ImportFilePickerProps> = ({
 
   const handlePickFormat = (ext: ImportExt) => {
     setFormat(ext);
-    // Tệp đã chọn không còn khớp định dạng mới -> bỏ để tránh nhập sai kiểu.
+    // The chosen file no longer matches the new format -> dropped, so nothing is imported as the wrong type.
     if (file && !file.name.toLowerCase().endsWith(ext)) setFile(null);
     setError(null);
   };
@@ -88,7 +88,7 @@ export const ImportFilePicker: React.FC<ImportFilePickerProps> = ({
       setError(t('importPicker.errUnsupported', { formats: ALL_ACCEPT.replace(/,/g, ', ') }));
       return;
     }
-    // Chọn tệp khác định dạng đang bật thì chuyển định dạng theo tệp, không báo lỗi.
+    // Choosing a file of another format switches the format to match it rather than raising an error.
     if (matched.ext !== format) setFormat(matched.ext);
     setError(null);
     setFile(picked);

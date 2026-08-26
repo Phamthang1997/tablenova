@@ -1,13 +1,13 @@
 import React from 'react';
 
 export interface ProgressState {
-  /** Nhãn mô tả bước đang chạy. */
+  /** A label describing the running step. */
   label: string;
-  /** Đã xong bao nhiêu phần việc. Bỏ trống -> thanh chạy vô định (không biết tiến độ). */
+  /** How many units are done. Omitted -> the bar runs indeterminately (no progress known). */
   current?: number;
-  /** Tổng số phần việc. */
+  /** The total number of units. */
   total?: number;
-  /** Dòng phụ: chi tiết bên trong phần việc đang chạy (ví dụ % dòng của bảng hiện tại). */
+  /** The sub-line: detail within the running unit (the current table's row percentage, say). */
   detail?: string;
 }
 
@@ -16,11 +16,11 @@ interface ProgressBarProps {
 }
 
 /**
- * Thanh tiến độ dùng chung cho các luồng Import/Export.
+ * The progress bar shared by the import/export flows.
  *
- * Dùng thẳng <progress> của HTML (dự án không có UI library nào; WebView2 là Chromium
- * nên tự có animation cho trạng thái vô định khi bỏ thuộc tính value). Phần tạo hình
- * nằm ở .tn-progress trong index.css.
+ * It uses HTML's <progress> directly (this project has no UI library; WebView2 is Chromium, so it
+ * animates the indeterminate state itself when the value attribute is omitted). The styling lives in
+ * .tn-progress in index.css.
  */
 export const ProgressBar: React.FC<ProgressBarProps> = ({ progress }) => {
   const { label, current, total, detail } = progress;
@@ -37,7 +37,7 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({ progress }) => {
           </span>
         )}
       </div>
-      {/* Không truyền value -> <progress> tự chạy vô định */}
+      {/* With no value passed, <progress> runs indeterminately by itself */}
       <progress
         className="tn-progress"
         {...(determinate ? { value: current, max: total } : {})}

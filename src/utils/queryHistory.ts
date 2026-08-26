@@ -17,13 +17,13 @@ export interface HistoryEntry {
   timestamp: string;
   conn?: string;
   db?: string;
-  /** Kết quả lần chạy — ghi bổ sung khi chạy xong (xem `recordHistoryResult`). */
+  /** The run's outcome — patched on when it finishes (see `recordHistoryResult`). */
   ok?: boolean;
   /** time run, ms. */
   ms?: number;
   rows?: number;
   affected?: number;
-  /** Thông điệp lỗi đã cắt ngắn; chỉ có khi `ok === false`. */
+  /** The truncated error message; present only when `ok === false`. */
   error?: string;
 }
 

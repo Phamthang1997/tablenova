@@ -1,10 +1,10 @@
-// Giải mã value chuỗi của Redis để hiển thị đẹp:
-//   1) Nếu gzip (magic 1f 8b) hoặc zlib (PHP gzcompress) -> giải nén bằng DecompressionStream native.
-//   2) if is PHP serialize (Laravel cache/model, Neos Flow VariableFrontend) -> unserialize -> JSON.
-//   3) if is igbinary (magic 00 00 00 02) -> unserialize -> JSON.
-//   4) if is JSON -> format.
-//   5) Còn lại -> text thô.
-// Không phụ thuộc thư viện ngoài.
+// Decoding a Redis string value for readable display:
+//   1) gzip (magic 1f 8b) or zlib (PHP gzcompress) -> decompressed with the native DecompressionStream.
+//   2) PHP serialize (Laravel cache/model, Neos Flow VariableFrontend) -> unserialized -> JSON.
+//   3) igbinary (magic 00 00 00 02) -> unserialized -> JSON.
+//   4) JSON -> formatted.
+//   5) Anything else -> raw text.
+// No external library involved.
 
 import i18n from '../i18n';
 
@@ -40,8 +40,8 @@ async function decompressIfNeeded(
   }
 }
 
-// Tách tên prop PHP: protected/private có dạng <NUL>*<NUL>name hoặc <NUL>Class<NUL>name.
-// Dùng fromCharCode(0) để không đưa ký tự null vào mã nguồn.
+// Splitting a PHP property name: protected/private ones look like <NUL>*<NUL>name or
+// <NUL>Class<NUL>name. fromCharCode(0) is used so no null character goes into the source.
 function cleanPropName(k: string): string {
   const parts = k.split(String.fromCharCode(0));
   return parts.length > 1 ? parts[parts.length - 1] : k;
@@ -60,7 +60,7 @@ function arrayFromEntries(entries: [unknown, unknown][]): any {
   return obj;
 }
 
-// Parser PHP serialize -> giá trị JS. Hoạt động trên byte (đúng với s:LEN là độ dài BYTE, hỗ trợ UTF-8).
+// A PHP serialize parser -> JS values. It works on bytes (matching s:LEN, which is a BYTE length, and so handles UTF-8).
 export function phpUnserialize(bytes: Uint8Array): any {
   const td = new TextDecoder();
   let i = 0;
@@ -79,7 +79,7 @@ export function phpUnserialize(bytes: Uint8Array): any {
     i++; // bỏ ';'
     return n;
   };
-  // Đọc phần LEN:"...." — với s: kết thúc bằng '";', với O: kết thúc bằng '":' (đều 2 byte -> bỏ 2 byte).
+  // Reads the LEN:"…" part — for s: it ends with '";', for O: with '":' (both 2 bytes -> skip 2).
   const readLenString = (): string => {
     const len = readIntUntil(0x3a /* : */);
     i++; // bỏ '"'
@@ -559,7 +559,7 @@ export async function decodeRedisValue(
         text: stringifyDecoded(igbinaryUnserialize(bytes)),
       };
     } catch {
-      /* rơi xuống raw */
+      /* falls through to raw */
     }
   }
   if (/^(N;|[abisdO]:)/.test(trimmed)) {

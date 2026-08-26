@@ -23,7 +23,7 @@ import i18n from '../i18n';
 export const EXACT: Record<string, string> = {
   'Chưa kết nối CSDL': 'backend.notConnected',
   'Kết nối đang ở chế độ chỉ đọc — tắt chế độ này trước khi ghi': 'backend.connReadOnly',
-  // oauth.rs — client id được nạp lúc biên dịch, có thể rỗng
+  // oauth.rs — the client id is baked in at compile time and may be empty
   'Chưa cấu hình Google OAuth client id cho bản dựng này': 'backend.oauthClientMissing',
   // tx_session.rs — transaction manual
   'Không có transaction nào đang mở': 'backend.txNotOpen',
@@ -31,8 +31,8 @@ export const EXACT: Record<string, string> = {
   'Transaction đang mở — hãy commit hoặc rollback trước khi bật lại auto-commit': 'backend.txPendingAutocommit',
   'Mức cô lập không hợp lệ cho hệ quản trị này': 'backend.txBadIsolation',
   'Phiên transaction không sẵn sàng': 'backend.txSessionNotReady',
-  // Ba câu dưới đây là message TRỌN VẸN chứ không ghép động: một khung dịch được + phần đuôi
-  // tiếng Việt nội suy vào sẽ hiện nửa Anh nửa Việt trong UI EN/JA.
+  // The three below are COMPLETE messages rather than assembled ones: a translatable frame with a
+  // Vietnamese tail interpolated into it would show half English, half Vietnamese in the EN/JA UI.
   'Transaction đang mở — hãy commit hoặc rollback trước khi đổi database': 'backend.txOpenSwitchDb',
   'Đang bật commit thủ công — hãy kết thúc transaction và chuyển về tự động trước khi phục hồi dữ liệu':
     'backend.txOpenRestore',
@@ -75,7 +75,7 @@ export const EXACT: Record<string, string> = {
     'backend.paramsSingleStatement',
   'Xác thực SSH thất bại: sai tài khoản, mật khẩu hoặc khóa.': 'backend.sshAuthFailed',
   'database không tồn tại': 'backend.databaseNotExist',
-  // db_compare.rs — cảnh báo (trả về trong mảng `warnings`, không phải lỗi)
+  // db_compare.rs — warnings (returned in the `warnings` array, not as errors)
   'Hai phía đang trỏ cùng một database.': 'backend.compareSameDatabase',
   'Hai bên lệch cột: chỉ so những cột có ở cả hai bên.': 'backend.compareColumnMismatch',
   'Thiếu tên bảng': 'backend.missingTableName',
@@ -123,7 +123,7 @@ export const NORMALIZED_ALIASES = new Set(['Chưa kết nối database']);
  */
 export const PATTERNS: { re: RegExp; key: string; nested?: boolean }[] = [
   { re: /^Lỗi khi chạy lệnh SQL: ([\s\S]*?)\. Chi tiết: ([\s\S]*)$/, key: 'backend.sqlFailed' },
-  // database.rs — hàng rào thời gian của một câu lệnh (`statementTimeoutSecs` của kết nối).
+  // database.rs — a statement's time fence (the connection's `statementTimeoutSecs`).
   { re: /^Câu lệnh đã chạy quá ([\d]+) giây và bị dừng$/, key: 'backend.statementTimeout' },
   { re: /^Lỗi tại câu lệnh:\n([\s\S]*)\n\nChi tiết: ([\s\S]*)$/, key: 'backend.sqlStatementFailed' },
   { re: /^Lỗi kết nối SSH tới ([^\s]+): ([\s\S]*)$/, key: 'backend.sshConnectFailed' },
@@ -139,10 +139,10 @@ export const PATTERNS: { re: RegExp; key: string; nested?: boolean }[] = [
   { re: /^Lỗi đọc nội dung private key: ([\s\S]*)$/, key: 'backend.readPrivateKeyFailed' },
   { re: /^PING lỗi: ([\s\S]*)$/, key: 'backend.pingFailed' },
   { re: /^Không thể kết nối Redis: ([\s\S]*)$/, key: 'backend.redisConnectFailed' },
-  // redis_db.rs — chặn lệnh & phân trang
+  // redis_db.rs — refused commands and pagination
   { re: /^Lệnh '([^']*)' bị chặn ở chế độ chỉ đọc$/, key: 'backend.redisReadOnlyCmd' },
-  // redis_db.rs — trần một lô DUMP/RESTORE. Con số nằm trong message (`TRANSFER_BATCH_MAX`) nên
-  // đây là regex, không phải một entry EXACT.
+  // redis_db.rs — the cap on a DUMP/RESTORE batch. The number is inside the message
+  // (`TRANSFER_BATCH_MAX`), so this is a regex rather than an EXACT entry.
   { re: /^Mỗi lượt chỉ nhận tối đa (\d+) key$/, key: 'backend.redisTransferBatchTooBig' },
   {
     re: /^Lệnh '([^']*)' cần kết nối riêng — dùng tab Pub\/Sub hoặc Profiler$/,
@@ -159,7 +159,7 @@ export const PATTERNS: { re: RegExp; key: string; nested?: boolean }[] = [
     nested: true,
   },
   { re: /^Chỉ phân tích ([\d]+) key lấy mẫu — số liệu là ước lượng\.$/, key: 'backend.redisAnalysisSampled' },
-  // redis_db.rs — chứng chỉ TLS của tab SSL
+  // redis_db.rs — the SSL tab's TLS certificates
   { re: /^Không đọc được chứng chỉ CA '([^']*)': ([\s\S]*)$/, key: 'backend.readCaCertFailed' },
   { re: /^Không đọc được chứng chỉ client '([^']*)': ([\s\S]*)$/, key: 'backend.readClientCertFailed' },
   { re: /^Không đọc được khoá client '([^']*)': ([\s\S]*)$/, key: 'backend.readClientKeyFailed' },
