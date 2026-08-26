@@ -88,16 +88,16 @@ const ObjectName: React.FC<{ name: string }> = ({ name }) => {
 };
 
 /**
- * Style của một dòng đối tượng.
+ * The style of one object row.
  *
- * Khai báo ở mức module chứ không viết inline trong JSX: object inline được tạo mới
- * mỗi lần render, nên React coi prop `style` là đã đổi và ghi lại DOM cho từng dòng,
- * kể cả khi không có gì thay đổi. Chỉ hai thứ thật sự phụ thuộc trạng thái (nền/màu
- * chữ và độ đậm khi dòng đang mở) mới được tính lúc render.
+ * Declared at module level rather than written inline in the JSX: an inline object is created anew on
+ * every render, so React sees the `style` prop as changed and rewrites the DOM for every row, even
+ * when nothing changed. Only the two things that genuinely depend on state (the background/text
+ * colour, and the weight while the row is open) are computed at render time.
  *
- * KHÔNG chuyển sang class CSS: inline style ghi đè `.workspace-container
- * .sidebar-item.active` trong index.css, nên đổi sang class sẽ đổi luôn viền và đổ
- * bóng của dòng đang chọn — nằm ngoài phạm vi thay đổi này.
+ * Do NOT move this to a CSS class: the inline style overrides `.workspace-container
+ * .sidebar-item.active` in index.css, so switching to a class would also change the selected row's
+ * border and shadow — outside the scope of this change.
  */
 const ROW_WRAP_STYLE: React.CSSProperties = { display: 'flex', flexDirection: 'column' };
 const ROW_STYLE: React.CSSProperties = {
@@ -108,13 +108,13 @@ const ROW_STYLE: React.CSSProperties = {
   gap: '6px',
 };
 /**
- * Dòng đang chọn: nền accent NHẠT chứ không phải accent đặc.
+ * The selected row: a FAINT accent background, not a solid one.
  *
- * Chữ để `--win-text-primary`, không phải `#ffffff` cứng — cùng lý do đã ghi ở
- * `.workspace-container .sidebar-item.active` trong index.css: nền nhạt ở giao diện
- * sáng làm chữ trắng biến mất. Viền và đổ bóng vẫn do class đó lo, inline chỉ đè
- * nền và màu chữ, nên dòng đang chọn vẫn phân biệt được với dòng đang highlight
- * bằng bàn phím (`.is-highlighted` cũng dùng accent-glow nhưng không có viền).
+ * The text stays `--win-text-primary` rather than a hardcoded `#ffffff` — the same reason recorded on
+ * `.workspace-container .sidebar-item.active` in index.css: a faint background in the light theme
+ * makes white text disappear. The border and shadow are still that class's job and the inline style
+ * only overrides background and text colour, so the selected row stays distinguishable from the one
+ * highlighted by keyboard (`.is-highlighted` uses accent-glow too, but has no border).
  */
 const ROW_STYLE_ACTIVE: React.CSSProperties = {
   ...ROW_STYLE,
@@ -226,9 +226,9 @@ const COL_TYPE_STYLE: React.CSSProperties = {
 };
 
 /**
- * Bốn tab phân đoạn ở đầu thanh bên. Bảng hằng giữ KEY dịch, không giữ chuỗi đã dịch:
- * ở mức module thì không gọi được hook, và `t()` phải nhận key literal (i18next.d.ts
- * kiểm tra kiểu ở từng call site) nên `as const` là bắt buộc.
+ * The four segmented tabs at the top of the sidebar. The constant table holds translation KEYS, not
+ * translated strings: a hook cannot be called at module level, and `t()` has to receive a literal key
+ * (i18next.d.ts type-checks each call site), which is why `as const` is required.
  */
 const SEG_TABS = [
   ['items', 'sidebar.tabItems'],
@@ -442,7 +442,7 @@ const TableDetailTree: React.FC<{ connId: string; tableName: string; schema: Sch
 type ObjectSection = 'tables' | 'views';
 
 interface ObjectItemProps {
-  /** Kết nối mà dòng này thuộc về — `TableDetailTree` cần để đọc check/trigger. */
+  /** The connection this row belongs to — `TableDetailTree` needs it to read checks and triggers. */
   connId: string;
   item: TableItem;
   /** Block, and position within it: Shift+click needs both to take the range from the anchor. */
@@ -452,8 +452,8 @@ interface ObjectItemProps {
   isActive: boolean;
   isSelected: boolean;
   isExpanded: boolean;
-  /** undefined = chưa mở hoặc chưa nạp xong. Không truyền object mặc định: một object
-   *  mới mỗi lần render sẽ phá memo của MỌI dòng đang đóng. */
+  /** undefined = not expanded yet, or still loading. No default object is passed: a fresh object each
+   *  render would break the memo of EVERY closed row. */
   schema: SchemaInfo | undefined;
   isLoadingCols: boolean;
   highlightRef: React.RefObject<HTMLDivElement | null>;
@@ -465,11 +465,11 @@ interface ObjectItemProps {
 }
 
 /**
- * Một dòng bảng/view trong danh sách bên trái.
+ * One table/view row in the left list.
  *
- * memo hóa vì danh sách vẽ lại toàn bộ sau mỗi ký tự gõ vào ô tìm kiếm và sau mỗi
- * lần mở/đóng một bảng. Để memo có tác dụng, MỌI callback truyền vào đây phải giữ
- * nguyên identity — xem các useCallback trong Sidebar.
+ * Memoised because the list redraws in full on every keystroke in the search box and every time a
+ * table is expanded or collapsed. For the memo to do anything, EVERY callback passed in here has to
+ * keep its identity — see the useCallbacks in Sidebar.
  */
 const ObjectItem = memo(function ObjectItem({
   connId,
@@ -488,9 +488,9 @@ const ObjectItem = memo(function ObjectItem({
   onToggleExpand,
   onRequestDrop,
 }: ObjectItemProps) {
-  // useTranslation ngay trong dòng thay vì nhận `t` qua prop: kiểu trả về của `t` không
-  // gán được vào `string` khi đi qua prop, mà ép kiểu thì mất luôn kiểm tra key của
-  // i18next.d.ts. Hook cũng tự lo việc vẽ lại khi đổi ngôn ngữ.
+  // useTranslation inside the row rather than taking `t` as a prop: `t`'s return type will not
+  // assign to `string` through a prop, and casting it away loses i18next.d.ts's key checking. The
+  // hook also handles redrawing on a language switch by itself.
   const { t } = useTranslation();
   const isView = item.type === 'view';
 
@@ -520,8 +520,8 @@ const ObjectItem = memo(function ObjectItem({
           </span>
         )}
 
-        {/* Không ép màu icon nữa: `#ffffff` cứng sẽ tàng hình trên nền nhạt. index.css
-            đã có sẵn màu icon riêng cho trạng thái active theo từng theme. */}
+        {/* The icon colour is no longer forced: a hardcoded `#ffffff` disappears on a faint
+            background. index.css already carries a per-theme icon colour for the active state. */}
         {isView ? (
           <Layers size={14} className="icon-view" />
         ) : (
@@ -549,11 +549,11 @@ const ObjectItem = memo(function ObjectItem({
 });
 
 interface SidebarProps {
-  /** Kết nối mà component này thao tác lên. Truyền tường minh, không đọc id ambient (§4.1). */
+  /** The connection this component acts on. Passed explicitly, never read from the ambient id (§4.1). */
   connId: string;
   dbName: string;
   dbType: 'sqlite' | 'postgres' | 'mysql';
-  /** Chế độ chỉ đọc: chặn mọi lệnh ghi phát sinh từ sidebar (drop/truncate/rename/create). */
+  /** Read-only mode: refuses every write the sidebar can issue (drop/truncate/rename/create). */
   readOnly?: boolean;
   onSelectTable: (name: string, viewMode?: 'data' | 'structure') => void;
   onNewQuery: () => void;
@@ -565,14 +565,14 @@ interface SidebarProps {
   onExportTable: (tableName: string) => void;
   onExportDatabase: () => void;
   onImportDatabase: () => void;
-  /** Nhập tệp CSV/JSON/XLSX vào một bảng MỚI (khác onImportDatabase là phục hồi cả dump). */
+  /** Imports a CSV/JSON/XLSX file into a NEW table (unlike onImportDatabase, which restores a whole dump). */
   onImportNewTable?: () => void;
   onOpenDbInfo?: () => void;
   onOpenAllDbStats?: () => void;
   onSchemaMigration?: () => void;
   onCompareDatabases?: () => void;
   onMcpSettings?: () => void;
-  /** Mở Data Generator. Có tên bảng = mở sẵn với bảng đó (từ menu ngữ cảnh của bảng). */
+  /** Opens the Data Generator. With a table name it opens preselected on that table (from its context menu). */
   onGenerateData?: (tableName?: string) => void;
   onTableRenamed?: (oldName: string, newName: string) => void;
   onTableDropped?: (tableName: string) => void;
@@ -586,9 +586,9 @@ interface SidebarProps {
    * to refuse and the old database keeps its tabs and its transaction.
    */
   onDatabaseOpened?: (connId: string, name: string, schema?: string | null) => void;
-  /** Schema đang chọn (chỉ Postgres). Nguồn sự thật là backend — xem App.tsx. */
+  /** The selected schema (Postgres only). The backend is the source of truth — see App.tsx. */
   schema?: string | null;
-  /** Đổi schema xong: App cập nhật state + khoá localStorage, Sidebar tự nạp lại danh sách. */
+  /** After a schema change: App updates state and the localStorage key, and the Sidebar reloads its list. */
   onSchemaChanged?: (name: string) => void;
   onOpenQueryWithSql?: (sql: string) => void;
   onOpenRoutineTab?: (name: string, kind: 'procedure' | 'function') => void;
@@ -628,8 +628,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const { t } = useTranslation();
 
-  // Chặn thao tác ghi khi bật Chỉ đọc. Gọi ở NGAY điểm bấm (trước khi mở hộp xác nhận) để người
-  // Block actions when in read-only mode
+  // Refuses writes while read-only is on. Called AT the click site, before any confirmation dialog
+  // opens, so the user is told immediately rather than after answering one.
   const blockedByReadOnly = useCallback((): boolean => {
     if (!readOnly) return false;
     alert(t('sidebar.errReadOnly'));
@@ -690,8 +690,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
     return groups;
   };
-  // View/hàm/thủ tục mặc định THU GỌN: phần lớn thời gian người dùng làm việc với danh sách
-  // bảng, ba nhóm này chỉ mở khi cần (đang gõ tìm kiếm thì vẫn tự mở, xem isOpen()).
+  // Views, functions and procedures are COLLAPSED by default: most of the time the user is working
+  // with the table list, and these three groups only open when needed (they still open on their own
+  // while a search is being typed — see isOpen()).
   const [collapsed, setCollapsed] = useState<{ tables: boolean; views: boolean; functions: boolean; procedures: boolean }>({ tables: false, views: true, functions: true, procedures: true });
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -700,9 +701,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [tableSchemaMap, setTableSchemaMap] = useState<Record<string, SchemaInfo>>({});
   const [loadingColumns, setLoadingColumns] = useState<Record<string, boolean>>({});
 
-  // Hai map này chỉ được ĐỌC để quyết định có gọi backend hay không. Đọc qua ref nên
-  // toggleTableExpanded giữ nguyên identity; nếu để chúng trong deps thì mỗi lần mở một
-  // bảng là callback đổi -> mọi dòng re-render và React.memo ở ObjectItem thành vô nghĩa.
+  // These two maps are only READ, to decide whether the backend needs calling. Read through a ref so
+  // toggleTableExpanded keeps its identity; putting them in the deps would change the callback every
+  // time a table is expanded -> every row re-renders and React.memo on ObjectItem means nothing.
   const columnsMapRef = useRef(tableSchemaMap);
   const loadingColumnsRef = useRef(loadingColumns);
   useEffect(() => {
@@ -710,7 +711,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     loadingColumnsRef.current = loadingColumns;
   }, [tableSchemaMap, loadingColumns]);
 
-  // isExpanded do chính dòng đó truyền vào, nên không cần đọc expandedTables ở đây.
+  // isExpanded is passed in by the row itself, so expandedTables need not be read here.
   const toggleTableExpanded = useCallback(async (tableName: string, isExpanded: boolean, e: React.MouseEvent) => {
     e.stopPropagation();
     const willExpand = !isExpanded;
@@ -729,13 +730,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   }, [connId]);
 
-  // Kéo viền phải để đổi độ rộng thanh bên.
+  // Drag the right edge to change the sidebar's width.
   const rootRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(readStoredWidth);
   const [resizing, setResizing] = useState(false);
 
-  // Nghe trên window (không phải trên tay nắm) để con trỏ chạy ra ngoài thanh bên
-  // vẫn kéo tiếp được; tắt userSelect để không bôi đen chữ trong lúc kéo.
+  // Listens on window rather than on the handle, so the drag continues when the pointer leaves the
+  // sidebar; userSelect is turned off so text is not selected while dragging.
   useEffect(() => {
     if (!resizing) return;
     const onMove = (e: MouseEvent) => {
@@ -757,7 +758,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     };
   }, [resizing]);
 
-  // Ghi khi thả chuột, không ghi trong lúc kéo (mỗi mousemove một lần ghi localStorage).
+  // Written on mouse-up, not during the drag (that would be one localStorage write per mousemove).
   useEffect(() => {
     if (resizing) return;
     localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width));
@@ -792,7 +793,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
    *  callbacks (see handleRowSelect), which is why it cannot live in their deps. */
   const sectionListsRef = useRef<Record<ObjectSection, TableItem[]>>({ tables: [], views: [] });
 
-  // Vị trí menu chuột phải sau khi đo kích thước thật (tránh tràn khỏi cửa sổ)
+  // The context menu's position after its real size has been measured (so it cannot overflow the window)
   const menuRef = useRef<HTMLDivElement>(null);
   const [menuPos, setMenuPos] = useState<MenuRect | null>(null);
 
@@ -809,7 +810,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const [renameState, setRenameState] = useState<{ tableName: string; value: string } | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-  // Menu "+" ở tiêu đề Danh sách bảng và hộp thoại tạo view
+  // The "+" menu on the Tables heading, and the create-view dialog
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [showCreateView, setShowCreateView] = useState(false);
   const [newView, setNewView] = useState({ name: '', sql: '' });
@@ -883,17 +884,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setRefreshing(true);
     const list = await dbHelper.getTables(connId);
     setTables(list);
-    // Nạp thêm hàm & thủ tục (đối tượng CSDL)
+    // Also loads functions and procedures (the database objects)
     const objs = await dbHelper.getDatabaseObjects(connId);
     setFunctions(objs.functions || []);
     setProcedures(objs.procedures || []);
     setRefreshing(false);
   };
 
-  // `fetchTables` giờ BẮT `connId`, nên hai effect dưới không được giữ closure của lần render cũ:
-  // sau khi đổi kết nối, một handler cũ sẽ nạp bảng của kết nối trước. Nó lại là hàm thường (identity
-  // đổi mỗi render) nên đưa thẳng vào deps là vòng lặp vô tận — đọc qua ref là khuôn `CLAUDE.md` đã
-  // ghi cho đúng tình huống này.
+  // `fetchTables` now CAPTURES `connId`, so the two effects below must not hold an old render's
+  // closure: after a connection switch, a stale handler would load the previous connection's tables.
+  // It is also a plain function (new identity every render), so putting it straight into the deps is
+  // an endless loop — reading through a ref is the pattern `CLAUDE.md` records for exactly this case.
   const connIdRef = useRef(connId);
   const fetchTablesRef = useRef(fetchTables);
   useEffect(() => {
@@ -901,12 +902,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
     fetchTablesRef.current = fetchTables;
   });
 
-  // Danh sách schema cho ô chọn. Rỗng với MySQL/SQLite (backend trả mảng rỗng), nên chỉ cần
-  // kiểm tra độ dài là biết có hiện ô chọn hay không.
+  // The schema list for the picker. Empty on MySQL/SQLite (the backend returns an empty array), so a
+  // length check is all it takes to decide whether to show the picker at all.
   //
-  // Nạp lại khi ĐỔI DATABASE: database mới có tập schema riêng, danh sách cũ là của server
-  // trước đó. Giá trị đang chọn thì lấy từ prop `schema` (nguồn là backend), không giữ ở đây —
-  // hai bản sao sẽ lệch nhau ngay lần đổi database đầu tiên.
+  // Reloaded on a DATABASE change: a new database has its own set of schemas, and the old list
+  // belongs to the previous one. The selected value comes from the `schema` prop (the backend is its
+  // source) and is not kept here — two copies would drift apart on the very first database switch.
   useEffect(() => {
     if (dbType !== 'postgres') {
       queueMicrotask(() => setSchemas([]));
@@ -949,8 +950,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
     if (!name || name === schema || switchingSchema) return;
     setSwitchingSchema(true);
     try {
-      // set_current_schema từ chối schema không tồn tại — báo đúng lời backend thay vì để ô chọn
-      // hiển thị một schema mà mọi truy vấn sau đó không dùng.
+      // set_current_schema refuses a schema that does not exist — report the backend's own words
+      // rather than leaving the picker showing a schema no later query will use.
       const res = await dbHelper.setSchema(connId, name);
       if (res.success) onSchemaChanged?.(res.schema || name);
       else alert(t('sidebar.errSwitchSchema', { message: res.error || '' }));
@@ -976,7 +977,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  // `schema` cũng nằm trong deps: đổi schema là đổi hẳn tập bảng, y như đổi database.
+  // `schema` is in the deps too: changing schema changes the whole set of tables, exactly as changing database does.
   useEffect(() => {
     fetchTablesRef.current();
     // After a database switch the old selection points at names that no longer exist —
@@ -985,8 +986,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
       setSelection({ section: 'tables', names: [] });
       anchorRef.current = -1;
     });
-    // `connId` nằm trong deps: hai kết nối có thể trỏ CÙNG tên database (cùng `sakila` trên hai
-    // server), lúc đó `dbName` không đổi và sidebar sẽ hiện bảng của kết nối cũ.
+    // `connId` is in the deps: two connections can point at the SAME database name (`sakila` on two
+    // servers), where `dbName` does not change and the sidebar would show the old connection's tables.
   }, [connId, dbName, schema]);
 
   useEffect(() => {
@@ -1009,13 +1010,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
     };
   }, []);
 
-  // Focus ô tìm kiếm: Ctrl+K / Cmd+K.
+  // Focuses the search box: Ctrl+K / Cmd+K.
   //
-  // `Ctrl+P` đã bị bỏ khỏi đây. Nó là listener trên `window` kèm `preventDefault`, nên nó **giành**
-  // Ctrl+P trước mọi thứ khác — kể cả mục "Ẩn/hiện thanh bên" trong menu thanh tiêu đề, mục đó quảng
-  // cáo `Ctrl+P` nhưng chưa bao giờ chạy. Bộ phím giờ theo VS Code và mỗi phím một nghĩa:
-  // `Ctrl+Shift+P` mở Quick Switcher, `Ctrl+B` ẩn/hiện thanh bên (cả hai ở `TitleBar.tsx`), còn ô
-  // này giữ `Ctrl+K`.
+  // `Ctrl+P` was removed from here. It was a `window` listener with `preventDefault`, so it **claimed**
+  // Ctrl+P ahead of everything else — including the title menu's "Toggle sidebar" entry, which
+  // advertised `Ctrl+P` and never once ran. The key set now follows VS Code, one meaning per key:
+  // `Ctrl+Shift+P` opens the Quick Switcher and `Ctrl+B` toggles the sidebar (both in
+  // `TitleBar.tsx`), while this box keeps `Ctrl+K`.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
@@ -1053,9 +1054,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     });
   }, []);
 
-  // App tạo lại handleSelectTable mỗi lần render (App.tsx: hàm thường, không useCallback),
-  // nên truyền thẳng xuống ObjectItem sẽ phá memo mỗi khi App render. Đọc qua ref —
-  // cùng cách App.tsx đã dùng cho selectTableRef.
+  // App recreates handleSelectTable on every render (App.tsx: a plain function, not a useCallback),
+  // so passing it straight down to ObjectItem would break the memo whenever App renders. Read through
+  // a ref — the same way App.tsx already does for selectTableRef.
   const onSelectTableRef = useRef(onSelectTable);
   useEffect(() => {
     onSelectTableRef.current = onSelectTable;
@@ -1090,7 +1091,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     onSelectTableRef.current(name);
   }, []);
 
-  // blockedByReadOnly đọc prop readOnly và t nên cũng đổi identity mỗi render.
+  // blockedByReadOnly reads the readOnly prop and t, so its identity changes every render too.
   const blockedByReadOnlyRef = useRef(blockedByReadOnly);
   useEffect(() => {
     blockedByReadOnlyRef.current = blockedByReadOnly;
@@ -1166,8 +1167,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setIsCreateModalOpen(true);
   };
 
-  // Tạo view: ghép CREATE VIEW <tên> AS <câu SELECT> rồi chạy qua execute_query.
-  // Định danh trích dẫn theo dialect giống các chỗ khác trong file (MySQL backtick).
+  // Creating a view: assemble CREATE VIEW <name> AS <SELECT> and run it through execute_query.
+  // Identifiers are quoted per dialect, as elsewhere in this file (backticks on MySQL).
   const handleCreateView = async () => {
     if (blockedByReadOnly()) return;
     const name = newView.name.trim();
@@ -1276,9 +1277,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // `t` is the translation function, and shadowing it hides it from the body.
   const matchesSearch = useMemo(() => buildMatcher(searchTerm), [searchTerm]);
 
-  // Bảng và view tách thành hai nhóm riêng (trước đây chung một danh sách, chỉ khác icon).
-  // useMemo: mỗi ký tự gõ vào ô tìm kiếm làm Sidebar render lại, và App render lại cũng
-  // kéo theo Sidebar — không có memo thì bốn lượt filter chạy lại cả những lần không liên quan.
+  // Tables and views are split into two groups (they used to share one list, differing only by icon).
+  // useMemo: every keystroke in the search box re-renders the Sidebar, and an App render drags the
+  // Sidebar along — without the memo, four filtering passes re-run even on unrelated renders.
   const filteredTables = useMemo(
     () => tables.filter((item) => item.type !== 'view' && matchesSearch(item.name)),
     [tables, matchesSearch]
@@ -1290,14 +1291,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const filteredFunctions = useMemo(() => functions.filter((f) => matchesSearch(f)), [functions, matchesSearch]);
   const filteredProcedures = useMemo(() => procedures.filter((p) => matchesSearch(p)), [procedures, matchesSearch]);
 
-  // Khi đang gõ tìm kiếm thì luôn coi như mở để thấy kết quả (bỏ qua trạng thái thu gọn)
+  // While a search is being typed, groups count as open so results are visible (the collapsed state is ignored)
   const isSearching = searchTerm.trim() !== '';
   const isOpen = (key: 'tables' | 'views' | 'functions' | 'procedures') => isSearching || !collapsed[key];
   const toggleSection = (key: 'tables' | 'views' | 'functions' | 'procedures') => setCollapsed((c) => ({ ...c, [key]: !c[key] }));
 
-  // Điều hướng bằng ↑/↓ ngay trong ô tìm kiếm (ô này đã nhận Ctrl+P/Ctrl+K nên người
-  // dùng kỳ vọng hành vi quick-open). Chỉ tính các mục ĐANG hiển thị, nếu không mũi
-  // tên sẽ chạy qua những dòng nằm trong nhóm đang thu gọn.
+  // ↑/↓ navigation from inside the search box (which already takes Ctrl+P/Ctrl+K, so quick-open
+  // behaviour is what the user expects). Only the items CURRENTLY visible count; otherwise the arrows
+  // would walk through rows inside a collapsed group.
   const navItems = [
     ...(isOpen('tables') ? filteredTables : []),
     ...(isOpen('views') ? filteredViews : []),
@@ -1363,8 +1364,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
         isActive={activeTable === item.name}
         isSelected={selection.section === section && selectionSet.has(item.name)}
         isExpanded={isExpanded}
-        // Chỉ truyền khi đang mở: một giá trị mặc định mới mỗi render sẽ phá memo của
-        // mọi dòng đang đóng.
+        // Passed only while expanded: a fresh default value each render would break the memo of every
+        // closed row.
         schema={isExpanded ? tableSchemaMap[item.name] : undefined}
         isLoadingCols={!!loadingColumns[item.name]}
         highlightRef={highlightRef}
@@ -1475,7 +1476,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <div className="sidebar-navigation" ref={rootRef} style={{ width: `${width}px` }}>
-      {/* Tay nắm kéo ở viền phải */}
+      {/* The drag handle on the right edge */}
       <div
         className={`sidebar-resizer${resizing ? ' is-resizing' : ''}`}
         role="separator"
@@ -1500,9 +1501,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
         ))}
       </div>
 
-      {/* Ô chọn schema — chỉ Postgres. MySQL coi schema là database (đã có ô chọn database ở
-          thanh tiêu đề) và SQLite thì luôn là `main`, nên `list_schemas` trả rỗng ở cả hai và
-          khối này tự biến mất mà không cần kiểm tra dbType ở đây. */}
+      {/* The schema picker — Postgres only. MySQL treats a schema as a database (and the title bar
+          already has a database picker) while SQLite is always `main`, so `list_schemas` returns
+          empty on both and this block disappears by itself without a dbType check here. */}
       {schemas.length > 0 && (
         <div className="sidebar-schema-bar">
           <Layers size={13} className="sidebar-schema-icon" />
@@ -1514,8 +1515,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
             aria-label={t('sidebar.schema')}
             onChange={(e) => handleSchemaChange(e.target.value)}
           >
-            {/* Chỉ xuất hiện khi backend chưa báo được schema nào (probe lỗi) — không để ô chọn
-                hiện bừa một tên mà backend không dùng. */}
+            {/* Appears only while the backend has reported no schema (the probe failed) — the picker
+                must not show a name at random that the backend is not using. */}
             {!schema && <option value="">{t('sidebar.schema')}</option>}
             {schemas.map((name) => (
               <option key={name} value={name}>
@@ -2049,8 +2050,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                               <div
                                 key={item.id}
                                 style={{
-                                  // Thẻ trong panel -> --win-bg-card (mờ, nằm trên panel),
-                                  // không phải nền popover.
+                                  // A card inside a panel -> --win-bg-card (translucent, sitting on
+                                  // the panel), not the popover background.
                                   background: 'var(--win-bg-card)',
                                   border: '1px solid var(--win-border)',
                                   borderRadius: '8px',
@@ -2215,7 +2216,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         )}
       </div>
 
-      {/* Floating Context Menu — vị trí được chỉnh lại theo kích thước thật để không tràn */}
+      {/* The floating context menu — repositioned to its real size so it cannot overflow */}
       {contextMenu && (() => {
         const isView = tables.find(item => item.name === contextMenu.tableName)?.type === 'view';
         const object = isView ? t('sidebar.objectView') : t('sidebar.objectTable');
@@ -2224,7 +2225,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           position: 'fixed',
           top: menuPos ? menuPos.top : contextMenu.y,
           left: menuPos ? menuPos.left : contextMenu.x,
-          // Chưa đo xong thì ẩn để không thấy menu nhảy chỗ
+          // Hidden until measured, so the menu is never seen jumping into place
           visibility: menuPos ? 'visible' : 'hidden',
           zIndex: 99999,
           minWidth: '170px',
@@ -2295,12 +2296,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
             position: 'fixed',
             top: menuPos ? menuPos.top : contextMenu.y,
             left: menuPos ? menuPos.left : contextMenu.x,
-            // Chưa đo xong thì ẩn để không thấy menu nhảy chỗ
+            // Hidden until measured, so the menu is never seen jumping into place
             visibility: menuPos ? 'visible' : 'hidden',
             zIndex: 99999,
             minWidth: '170px'
           }}>
-            {/* Tiêu đề: cho biết menu đang tác động lên bảng nào */}
+            {/* The heading: says which table the menu is acting on */}
             <div style={{
               padding: '6px 12px',
               fontSize: '10px',
@@ -2361,8 +2362,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
             >
               {t('sidebar.ctxExport')}
             </div>
-            {/* Sinh dữ liệu test cho đúng bảng này (ghi dữ liệu -> chặn khi Chỉ đọc, và không có
-                nghĩa với view). */}
+            {/* Generates test data for this table (it writes, so read-only blocks it, and it means
+                nothing for a view). */}
             {onGenerateData && !isView && (
               <div
                 onClick={(e) => {
@@ -2529,7 +2530,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 onChange={(e) => setNewView({ ...newView, sql: e.target.value })}
                 onKeyDown={(e) => {
                   if (e.key === 'Escape') setShowCreateView(false);
-                  // Ctrl/Cmd + Enter để tạo nhanh, Enter thường vẫn xuống dòng
+                  // Ctrl/Cmd + Enter creates it; a plain Enter still inserts a newline
                   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) handleCreateView();
                 }}
                 placeholder="SELECT * FROM ..."
@@ -2734,9 +2735,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
             </label>
 
-            {/* Trên Postgres, tắt kiểm tra khóa ngoại KHÔNG đủ để truncate một bảng đang bị bảng
-                khác tham chiếu (đó là kiểm tra ở tầng catalog, không phải trigger) — chỉ CASCADE
-                qua được, và nó truncate luôn các bảng con. Dialect khác không có mệnh đề này. */}
+            {/* On Postgres, turning FK checks off is NOT enough to truncate a table another table
+                references (that check lives in the catalog, not in a trigger) — only CASCADE gets
+                through, and it truncates the child tables as well. The other dialects have no such
+                clause. */}
             {dbType === 'postgres' && (
               <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer', userSelect: 'none' }}>
                 <input
@@ -2807,8 +2809,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
             </label>
 
-            {/* CASCADE chỉ Postgres mới thực thi thật (SQLite lỗi cú pháp, MySQL nuốt từ khóa),
-                nên chỉ hiện ở Postgres — backend cũng từ chối nếu bị gọi ở dialect khác. */}
+            {/* Only Postgres really executes CASCADE (SQLite errors on the syntax, MySQL swallows the
+                keyword), so it is shown on Postgres alone — and the backend refuses it on the other
+                dialects too. */}
             {dbType === 'postgres' && (
               <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer', userSelect: 'none' }}>
                 <input

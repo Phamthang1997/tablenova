@@ -7,24 +7,25 @@ import { TAB_GROUP_COLORS, type TabGroup } from '../utils/tabGroups';
 export interface TabInfo {
   id: string;
   /**
-   * Kết nối mà tab này chạy trên.
+   * The connection this tab runs on.
    *
-   * Trước đây ràng buộc tab↔kết nối là **ngoại tại**: cả danh sách tab nằm dưới một khoá
-   * localStorage của kết nối đang mở, và đổi kết nối là thay trọn danh sách. Giờ tab của nhiều kết
-   * nối cùng nằm trong state, nên mỗi tab phải tự mang kết nối của nó — thanh tab lọc theo đây, và
-   * mọi component bên trong tab nhận `connId` này chứ không phải "kết nối đang chọn".
+   * The tab↔connection binding used to be **external**: the whole tab list sat under one localStorage
+   * key belonging to the open connection, and switching connection replaced the list wholesale. Now
+   * several connections' tabs live in state together, so each tab has to carry its own connection —
+   * the strip filters on this, and every component inside a tab receives this `connId` rather than
+   * "the selected connection".
    *
-   * Không bắt buộc: bản lưu trong localStorage từ trước khi có trường này không có nó, và được gán
-   * lúc khôi phục (xem `restoreTabs`).
+   * Optional: saves in localStorage from before this field existed do not have it, and it is assigned
+   * at restore time (see `restoreTabs`).
    */
   connId?: string;
   /**
-   * Bảy loại `redis-*` là tab của một kết nối Redis — cùng thanh tab, cùng kéo thả, cùng nhóm màu
-   * with tab SQL (`docs/redis-ui-unification-plan.md` §2.2).
+   * The seven `redis-*` kinds are a Redis connection's tabs — the same strip, the same drag and drop,
+   * the same colour groups as the SQL tabs (`docs/redis-ui-unification-plan.md` §2.2).
    *
-   * Không loại nào mang `dbIndex`: một `conn_id` **là** một `(server, db index)` (§2.1), nên db
-   * index nằm ở `connId` ở trên. Thêm nó vào đây là dựng lại đúng cái trạng thái dùng chung mà
-   * Giai đoạn 0 vừa gỡ bỏ.
+   * None of them carries a `dbIndex`: a `conn_id` **is** a `(server, db index)` pair (§2.1), so the
+   * db index lives in `connId` above. Adding it here would rebuild exactly the shared state Phase 0
+   * had just removed.
    */
   type:
     | 'table'
@@ -44,21 +45,23 @@ export interface TabInfo {
   routineInfo?: { name: string; kind: 'procedure' | 'function'; sql: string };
   viewInfo?: { name: string; sql: string };
   /**
-   * Tab `redis-key`. `keyType` chỉ để vẽ badge lúc chưa nạp xong giá trị — nguồn sự thật là lần
-   * đọc key thật sự, vì kiểu có thể đã đổi (key bị xoá rồi tạo lại) giữa hai phiên.
+   * A `redis-key` tab. `keyType` is only there to draw the badge before the value has loaded — the
+   * source of truth is the actual key read, because the type may have changed (the key deleted and
+   * recreated) between sessions.
    */
   redisKeyInfo?: { keyName: string; keyType?: string };
   config?: any;       // cấu hình kết nối cho tab terminal
   floating?: boolean; // terminal: đang ở chế độ cửa sổ nổi
-  /** Nhóm chứa tab này. Bỏ trống = tab rời. Xem TabGroup. */
+  /** The group holding this tab. Empty = a loose tab. See TabGroup. */
   groupId?: string;
 }
 
 
 /**
- * Icon cho từng loại tab Redis trong dropdown danh sách tab.
+ * The icon for each kind of Redis tab in the tab-list dropdown.
  *
- * Thanh tab cố ý KHÔNG vẽ icon (xem `renderTab`) — chỉ dropdown vẽ, nên bảng này chỉ dùng ở đó.
+ * The strip itself deliberately draws NO icons (see `renderTab`) — only the dropdown does, so this
+ * table is used there alone.
  */
 const REDIS_TAB_ICON: Record<string, React.FC<{ size?: number; style?: React.CSSProperties }>> = {
   'redis-key': Key,
@@ -73,7 +76,7 @@ const REDIS_TAB_ICON: Record<string, React.FC<{ size?: number; style?: React.CSS
 interface TabManagerProps {
   tabs: TabInfo[];
   activeTabId: string | null;
-  /** Tab còn sửa đổi chưa commit -> hiện chấm thay cho nút đóng. */
+  /** A tab with uncommitted edits -> a dot is shown in place of the close button. */
   dirtyTabId?: string | null;
   onSelectTab: (id: string) => void;
   onCloseTab: (id: string, e?: React.MouseEvent) => void;
@@ -81,8 +84,8 @@ interface TabManagerProps {
   onCloseTabsToRight?: (id: string) => void;
   onCloseAll?: () => void;
   /**
-   * Kéo thả đổi thứ tự tab. Chỉ số tính trên mảng `tabs`; `groupId` là nhóm mà
-   * con trỏ đang nằm trong vùng của nó lúc thả (undefined = ngoài mọi nhóm).
+   * Reordering tabs by drag. The indices are into the `tabs` array; `groupId` is the group whose area
+   * the pointer was inside when it was dropped (undefined = outside every group).
    */
   onReorderTabs?: (from: number, to: number, groupId: string | undefined) => void;
   onNewQueryTab: () => void;
@@ -95,7 +98,7 @@ interface TabManagerProps {
   onRenameGroup?: (groupId: string, name: string) => void;
   onSetGroupColor?: (groupId: string, color: string) => void;
   onToggleGroup?: (groupId: string) => void;
-  /** Kéo chip nhóm -> dời nguyên nhóm tới chỗ tab ở `targetIndex`. */
+  /** Dragging a group's chip -> move the whole group to where the tab at `targetIndex` sits. */
   onMoveGroup?: (groupId: string, targetIndex: number) => void;
   onCloseGroup?: (groupId: string) => void;
 }
@@ -136,9 +139,9 @@ export const TabManager: React.FC<TabManagerProps> = ({
 
   const [showListDropdown, setShowListDropdown] = useState(false);
 
-  // Đổi tên nhóm sửa tại chỗ trên chip (nháy đúp, hoặc từ menu chuột phải) thay
-  // vì mở một hộp thoại — tên nhóm là nhãn ngắn, dựng cả một Modal cho nó thì
-  // nặng hơn giá trị mang lại.
+  // Renaming a group is edited in place on the chip (double-click, or from the context menu) rather
+  // than in a dialog — a group name is a short label, and building a whole Modal for it costs more
+  // than it gives.
   const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
 
@@ -150,30 +153,29 @@ export const TabManager: React.FC<TabManagerProps> = ({
   };
 
   const itemsRef = useRef<HTMLDivElement>(null);
-  // Trạng thái kéo: `from` là tab đang cầm, `to` là chỗ nó sẽ rơi vào, `dx` là
-  // quãng đã kéo tính từ điểm bấm — tab được dịch đúng bằng dx nên nó bám theo
-  // con trỏ. Đây mới là thứ cho biết đang cầm tab nào: chỉ làm mờ tab đi thì
-  // trên tab không active (vốn đã chữ xám, nền trong suốt) gần như không thấy.
+  // The drag state: `from` is the tab being held, `to` is where it will land, and `dx` is how far it
+  // has travelled from the press point — the tab is translated by exactly dx, so it follows the
+  // pointer. This is what shows which tab is being held: merely fading it is nearly invisible on an
+  // inactive tab, which is already grey text on a transparent background.
   const [drag, setDrag] = useState<
     { from: number; to: number; dx: number; toGroup: string | undefined } | null
   >(null);
-  // Kéo nguyên một nhóm bằng chip của nó. Tách khỏi `drag` (kéo một tab) vì hai
-  // thao tác có đơn vị khác nhau: một bên dời một tab, một bên dời cả dải.
+  // Dragging a whole group by its chip. Kept apart from `drag` (dragging one tab) because the two
+  // gestures work in different units: one moves a tab, the other moves an entire run.
   const [groupDrag, setGroupDrag] = useState<{ groupId: string; to: number; dx: number } | null>(null);
-  // Sau một lần kéo, pointerup vẫn sinh tiếp một click -> bỏ qua click đó, nếu
-  // không thì thả tab ở đâu cũng kèm việc chuyển sang tab đó (và thả chip nhóm
-  // ở đâu cũng kèm thu gọn/mở nhóm đó).
+  // After a drag, pointerup still produces a click -> that click is ignored, or every tab drop would
+  // also switch to that tab (and every group-chip drop would also collapse or expand it).
   const skipClickRef = useRef(false);
 
-  // Cuộn ngang bằng con lăn dọc: thanh tab là overflow-x với scrollbar bị ẩn,
-  // nên khi tràn thì không có cách nào cuộn ngoài dropdown danh sách tab.
-  // Phải tự addEventListener với passive: false — handler onWheel của React
-  // được gắn ở gốc dưới dạng passive nên preventDefault() trong đó vô hiệu.
+  // Horizontal scrolling from a vertical wheel: the strip is overflow-x with its scrollbar hidden, so
+  // once it overflows there is no way to scroll it other than the tab-list dropdown.
+  // addEventListener has to be called by hand with passive: false — React's onWheel handler is
+  // attached at the root as passive, which makes preventDefault() inside it do nothing.
   useEffect(() => {
     const el = itemsRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
-      // Shift+lăn đã là cuộn ngang sẵn của trình duyệt, để nguyên.
+      // Shift+wheel is already the browser's horizontal scroll; leave it alone.
       if (e.shiftKey || e.deltaY === 0) return;
       if (el.scrollWidth <= el.clientWidth) return;
       e.preventDefault();
@@ -183,10 +185,10 @@ export const TabManager: React.FC<TabManagerProps> = ({
     return () => el.removeEventListener('wheel', onWheel);
   }, []);
 
-  // Tab vừa chọn có thể đang nằm ngoài vùng nhìn thấy (mở từ sidebar, từ F12...).
-  // Tra theo data-tab-id chứ không theo el.children[i]: từ khi có nhóm, con trực
-  // tiếp của thanh tab có thể là một cụm .tab-group bọc nhiều tab, nên chỉ số con
-  // không còn trùng chỉ số trong mảng `tabs`.
+  // A freshly selected tab may be off screen (opened from the sidebar, from F12…).
+  // Looked up by data-tab-id rather than el.children[i]: since groups exist, a direct child of the
+  // strip may be a .tab-group cluster wrapping several tabs, so child indices no longer match indices
+  // in the `tabs` array.
   useEffect(() => {
     if (!activeTabId) return;
     const node = itemsRef.current?.querySelector<HTMLElement>(
@@ -196,11 +198,11 @@ export const TabManager: React.FC<TabManagerProps> = ({
   }, [activeTabId, tabs]);
 
   /**
-   * Chỉ số (trong mảng `tabs`) của tab nằm dưới toạ độ x; ngoài hai đầu thì kẹp
-   * về tab hiển thị đầu/cuối.
+   * The index (into the `tabs` array) of the tab under coordinate x; past either end it clamps to the
+   * first or last visible tab.
    *
-   * Đọc chỉ số thật từ data-tab-index thay vì lấy vị trí trong danh sách node:
-   * nhóm đang thu gọn giấu tab của nó đi, nên thứ tự node không còn liên tục.
+   * The real index is read from data-tab-index rather than taken from a node's position in the list: a
+   * collapsed group hides its tabs, so the node order is no longer contiguous.
    */
   const indexAtX = (x: number, fallback: number): number => {
     const el = itemsRef.current;
@@ -215,14 +217,13 @@ export const TabManager: React.FC<TabManagerProps> = ({
   };
 
   /**
-   * Nhóm mà toạ độ x đang nằm trong vùng của nó, hoặc undefined nếu ở ngoài mọi
-   * nhóm.
+   * The group whose area coordinate x falls inside, or undefined when outside every group.
    *
-   * Xác định bằng hình học của chính cụm .tab-group chứ không suy từ hai tab hàng
-   * xóm: cách suy hàng xóm làm thả vào MÉP nhóm không nhận nhóm, mà thả vào mép
-   * phải mới là thao tác tự nhiên nhất khi muốn thêm tab vào cuối một nhóm. Đo
-   * theo vùng cũng là cách duy nhất thả được vào một nhóm đang thu gọn — lúc đó
-   * nhóm chỉ còn cái chip, không có tab nào để làm hàng xóm.
+   * Decided from the geometry of the .tab-group cluster itself rather than inferred from the two
+   * neighbouring tabs: inferring from neighbours makes a drop on the group's EDGE fail to join it,
+   * and the right edge is the most natural gesture for appending a tab to a group. Measuring the area
+   * is also the only way to drop into a collapsed group — there the group is just its chip, with no
+   * tabs to be neighbours.
    */
   const groupAtX = (x: number): string | undefined => {
     const el = itemsRef.current;
@@ -234,9 +235,9 @@ export const TabManager: React.FC<TabManagerProps> = ({
     return undefined;
   };
 
-  // Kéo thả bằng pointer event chứ không phải HTML5 drag-and-drop: cửa sổ Tauri
-  // bật sẵn drag-drop cấp hệ điều hành, thứ này nuốt mất sự kiện drag trong
-  // webview trên Windows. Pointer event không phụ thuộc vào đó.
+  // Drag and drop with pointer events rather than HTML5 drag-and-drop: a Tauri window has OS-level
+  // drag-drop enabled, which swallows drag events inside the webview on Windows. Pointer events do
+  // not depend on it.
   const handleTabPointerDown = (e: React.PointerEvent, index: number) => {
     if (e.button !== 0 || !onReorderTabs) return;
     const startX = e.clientX;
@@ -247,7 +248,7 @@ export const TabManager: React.FC<TabManagerProps> = ({
 
     const onMove = (ev: PointerEvent) => {
       const dx = ev.clientX - startX;
-      // Ngưỡng 4px để một cú bấm hơi rung tay không bị hiểu là kéo.
+      // A 4px threshold, so a slightly shaky click is not read as a drag.
       if (!moved && Math.abs(dx) < 4) return;
       moved = true;
       to = indexAtX(ev.clientX, index);
@@ -261,8 +262,8 @@ export const TabManager: React.FC<TabManagerProps> = ({
       setDrag(null);
       if (!moved) return;
       skipClickRef.current = true;
-      // Đổi nhóm cũng là một thay đổi, kể cả khi chỉ số không đổi: thả một tab
-      // rời lên đúng mép nhóm bên cạnh giữ nguyên vị trí nhưng phải vào nhóm.
+      // A group change counts as a change even when the index does not: dropping a loose tab exactly
+      // on a neighbouring group's edge keeps its position but must still join the group.
       if (to !== index || toGroup !== startGroup) onReorderTabs(index, to, toGroup);
     };
 
@@ -290,7 +291,7 @@ export const TabManager: React.FC<TabManagerProps> = ({
       window.removeEventListener('pointercancel', onUp);
       setGroupDrag(null);
       if (!moved) return;
-      // Chặn cú click sinh ra sau pointerup, kẻo kéo nhóm xong lại thu gọn nó.
+      // Blocks the click that follows pointerup, or finishing a group drag would also collapse it.
       skipClickRef.current = true;
       if (to >= 0) onMoveGroup(groupId, to);
     };
@@ -317,9 +318,9 @@ export const TabManager: React.FC<TabManagerProps> = ({
     e.preventDefault();
     e.stopPropagation();
     
-    // Bounds check to keep context menu on screen. Phần nhóm làm menu dài ra
-    // theo số nhóm hiện có, nên ước lượng phải cộng thêm chứ không để cứng 150 —
-    // menu tràn đáy màn hình thì mục cuối bấm không tới.
+    // Bounds check to keep the context menu on screen. The groups section makes the menu grow with
+    // however many groups exist, so the estimate has to add for them rather than assume a fixed 150 —
+    // a menu overflowing the bottom of the screen leaves its last entry unreachable.
     const ctxTabGroupId = tabs.find((tb) => tb.id === tabId)?.groupId;
     const menuWidth = 180;
     const menuHeight = 150 + 30 + groups.length * 26 + (ctxTabGroupId ? 120 : 0);
@@ -341,9 +342,9 @@ export const TabManager: React.FC<TabManagerProps> = ({
     });
   };
 
-  // Cắt mảng tab thành các cụm liên tiếp cùng nhóm. Dựa hoàn toàn vào bất biến
-  // "tab cùng nhóm nằm liền nhau" mô tả ở TabGroup; groupId trỏ tới nhóm đã bị
-  // xoá thì coi như tab rời, không cần dọn dẹp gì thêm ở đây.
+  // Cuts the tab array into runs of consecutive same-group tabs. It relies entirely on the "one group
+  // stays adjacent" invariant described in TabGroup; a groupId pointing at a deleted group counts as a
+  // loose tab, so no extra cleanup is needed here.
   const segments: { group: TabGroup | null; items: { tab: TabInfo; index: number }[] }[] = [];
   tabs.forEach((tab, index) => {
     const group = (tab.groupId ? groups.find((g) => g.id === tab.groupId) : null) ?? null;
@@ -358,9 +359,9 @@ export const TabManager: React.FC<TabManagerProps> = ({
   const renderTab = ({ tab, index }: { tab: TabInfo; index: number }) => {
     const isActive = tab.id === activeTabId;
     const isDirty = tab.id === dirtyTabId;
-    // Vạch chỉ chỗ thả: kéo sang trái thì vạch nằm trước tab đích, sang
-    // phải thì nằm sau — đúng chỗ tab sẽ rơi vào sau khi splice. Áp cho cả kéo
-    // một tab lẫn kéo nguyên nhóm; với nhóm thì mốc so sánh là tab ĐẦU của nhóm.
+    // The drop indicator: dragging left puts the line before the target tab, dragging right puts it
+    // after — exactly where the tab lands once spliced. It applies to dragging one tab and a whole
+    // group alike; for a group the reference point is its FIRST tab.
     const groupStart = groupDrag
       ? tabs.findIndex((it) => it.groupId === groupDrag.groupId)
       : -1;
@@ -382,14 +383,14 @@ export const TabManager: React.FC<TabManagerProps> = ({
       <div
         key={tab.id}
         className={classes}
-        // Hai thuộc tính data này là cách duy nhất để phần kéo thả biết node nào
-        // ứng với tab nào: con trực tiếp của thanh tab không còn 1:1 với mảng
-        // `tabs` từ khi có cụm nhóm và nhóm thu gọn.
+        // These two data attributes are the only way the drag code knows which node belongs to which
+        // tab: the strip's direct children stopped being 1:1 with the `tabs` array once group clusters
+        // and collapsed groups existed.
         data-tab-id={tab.id}
         data-tab-index={index}
-        // Chỉ dịch bằng transform, không đụng tới layout: các tab còn lại
-        // đứng yên nên vạch chỉ chỗ thả không nhảy theo, và scrollWidth của
-        // thanh tab không đổi giữa chừng khi kéo ra khỏi mép.
+        // Moved by transform only, never touching layout: the other tabs stay put so the drop
+        // indicator does not jump with them, and the strip's scrollWidth does not change midway when
+        // dragging past its edge.
         style={isDragging ? { transform: `translateX(${drag!.dx}px)` } : undefined}
         onPointerDown={(e) => handleTabPointerDown(e, index)}
         onClick={() => {
@@ -399,8 +400,8 @@ export const TabManager: React.FC<TabManagerProps> = ({
           }
           onSelectTab(tab.id);
         }}
-        // Chuột giữa đóng tab. Chặn mousedown vì nút giữa mở chế độ
-        // cuộn tự động của trình duyệt trước cả khi auxclick bắn ra.
+        // Middle click closes a tab. mousedown is blocked because the middle button opens the
+        // browser's autoscroll mode before auxclick even fires.
         onMouseDown={(e) => {
           if (e.button === 1) e.preventDefault();
         }}
@@ -411,9 +412,9 @@ export const TabManager: React.FC<TabManagerProps> = ({
         }}
         onContextMenu={(e) => handleContextMenu(e, tab.id)}
       >
-        {/* Bỏ icon loại tab: tab chỉ phân biệt bằng màu (nền sáng + chữ
-            đậm cho tab đang xem), tiêu đề đã đủ cho biết đó là bảng hay
-            truy vấn. Danh sách tab ở dropdown vẫn giữ icon. */}
+        {/* No per-kind icon: tabs are distinguished by colour alone (a lighter background and bolder
+            text for the one being viewed), and the title already says whether it is a table or a
+            query. The dropdown's tab list still keeps its icons. */}
         <span className="tab-title" title={tab.label}>
           {tab.label}
         </span>
@@ -435,8 +436,8 @@ export const TabManager: React.FC<TabManagerProps> = ({
   };
 
   const renderGroup = (group: TabGroup, items: { tab: TabInfo; index: number }[]) => {
-    // Nhóm chứa tab đang xem thì luôn mở, kể cả khi đã đánh dấu thu gọn: giấu
-    // đúng cái tab đang hiển thị nội dung là trạng thái không đọc được.
+    // The group holding the viewed tab is always expanded, even when marked collapsed: hiding the very
+    // tab whose content is on screen is an unreadable state.
     const holdsActive = items.some((it) => it.tab.id === activeTabId);
     const collapsed = !!group.collapsed && !holdsActive;
     const renaming = renamingGroupId === group.id;
@@ -444,14 +445,14 @@ export const TabManager: React.FC<TabManagerProps> = ({
     return (
       <div
         key={group.id}
-        // data-group-id: groupAtX() đo vùng của cụm này để biết tab đang được
-        // thả vào nhóm nào, nên id phải đọc được từ DOM.
+        // data-group-id: groupAtX() measures this cluster's area to know which group a tab is being
+        // dropped into, so the id has to be readable from the DOM.
         data-group-id={group.id}
         className={[
           'tab-group',
           collapsed ? 'collapsed' : '',
-          // Sáng lên khi con trỏ đang ở trong vùng nhóm và tab được kéo sẽ rơi
-          // vào đây — nếu không thì không có gì cho biết thả ra sẽ vào nhóm nào.
+          // Lit while the pointer is inside the group's area and the dragged tab would land here —
+          // otherwise nothing says which group a release would join.
           drag && drag.toGroup === group.id ? 'drop-target' : '',
           isDragging ? 'tab-group-dragging' : '',
         ].filter(Boolean).join(' ')}
@@ -462,7 +463,7 @@ export const TabManager: React.FC<TabManagerProps> = ({
       >
         <div
           className="tab-group-chip"
-          // Kéo chip = dời nguyên nhóm. Bấm (không kéo) = thu gọn / mở ra.
+          // Dragging the chip moves the whole group. Clicking it (without dragging) collapses or expands.
           onPointerDown={(e) => handleGroupPointerDown(e, group.id)}
           onClick={() => {
             if (skipClickRef.current) {
@@ -502,8 +503,9 @@ export const TabManager: React.FC<TabManagerProps> = ({
     );
   };
 
-  // Tab đang mở menu chuột phải, và nhóm của nó (nếu có). Đặt tên biến lặp là
-  // `tb` chứ không phải `t`: `t` ở đây là hàm dịch, bị che là mất i18n cả file.
+  // The tab whose context menu is open, and its group when it has one. The loop variable is named
+  // `tb` rather than `t`: `t` here is the translation function, and shadowing it loses i18n for the
+  // whole file.
   const ctxTab = tabs.find((tb) => tb.id === contextMenu.tabId);
   const ctxGroup = (ctxTab?.groupId ? groups.find((g) => g.id === ctxTab.groupId) : null) ?? null;
 
@@ -591,16 +593,15 @@ export const TabManager: React.FC<TabManagerProps> = ({
         </div>
       )}
 
-      {/* Menu chuột phải render QUA PORTAL ra <body>, không để tại chỗ trong
-          .tab-bar. Menu dùng position: fixed với toạ độ clientX/clientY của
-          viewport, nhưng .tab-bar có backdrop-filter (xem nhóm selector ở đầu
-          index.css) mà thuộc tính đó tạo containing block mới cho con fixed —
-          để trong đó thì toạ độ bị tính từ góc thanh tab, tức menu lệch xuống
-          đúng chiều cao thanh tiêu đề và sang phải đúng bề rộng sidebar. Cùng
-          cái bẫy đã ghi ở Modal.tsx.
+      {/* The context menu renders THROUGH A PORTAL into <body>, not in place inside .tab-bar. The menu
+          is position: fixed with the viewport's clientX/clientY, but .tab-bar has backdrop-filter (see
+          the selector group at the top of index.css) and that property creates a new containing block
+          for fixed children — inside it, the coordinates are measured from the strip's corner, putting
+          the menu exactly one title-bar height too low and one sidebar width too far right. The same
+          trap recorded in Modal.tsx.
 
-          Ngược lại, .tab-list-dropdown (danh sách tab, nút ⌄) KHÔNG portal:
-          nó là position: absolute neo vào chính .tab-bar, đúng như mong muốn. */}
+          The opposite holds for .tab-list-dropdown (the tab list, the ⌄ button), which is NOT
+          portalled: it is position: absolute anchored to .tab-bar itself, which is what it wants. */}
       {contextMenu.visible && createPortal(
         <div
           className="tab-context-menu"
@@ -658,8 +659,8 @@ export const TabManager: React.FC<TabManagerProps> = ({
                 <span>{t('tabs.newGroup')}</span>
               </div>
 
-              {/* Chuyển sang nhóm khác. Nhóm hiện tại của tab bị loại khỏi danh
-                  sách: chọn nó cũng không đổi gì mà lại trông như một hành động. */}
+              {/* Move to another group. The tab's current group is excluded from the list: picking it
+                  would change nothing while still looking like an action. */}
               {groups
                 .filter((g) => g.id !== ctxGroup?.id)
                 .map((g) => (
