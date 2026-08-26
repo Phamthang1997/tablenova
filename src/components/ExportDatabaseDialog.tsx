@@ -12,36 +12,38 @@ export interface DatabaseExportOptions {
   format: DatabaseExportFormat;
   tables: string[];
   /**
-   * Tên nào trong `tables` là VIEW chứ không phải bảng. Dump SQL phải tạo view SAU toàn bộ
-   * bảng và không xuất dữ liệu của view — xem `orderViewsByDependency` ở exportHelper.ts.
+   * Which names in `tables` are VIEWs rather than tables. A SQL dump has to create views AFTER every
+   * table and must not export a view's data — see `orderViewsByDependency` in exportHelper.ts.
    */
   views: string[];
   /**
-   * Function/procedure được chọn. Chỉ có nghĩa với định dạng SQL và khi bật "kèm cấu trúc";
-   * dump ghi chúng SAU bảng và view vì thân routine tham chiếu tới đó.
+   * The selected functions and procedures. Meaningful only for the SQL format with "include
+   * structure" on; the dump writes them AFTER tables and views, because a routine's body references
+   * them.
    */
   routines: { name: string; kind: 'function' | 'procedure' }[];
-  /** Trigger được chọn — ghi cuối cùng, sau cả routine (trigger có thể gọi hàm). */
+  /** The selected triggers — written last, after the routines (a trigger may call a function). */
   triggers: string[];
-  /** MySQL scheduled event; Postgres/SQLite không có nên luôn rỗng. */
+  /** MySQL scheduled events; Postgres and SQLite have none, so this is always empty. */
   events: string[];
   filename: string;
   sqlOptions: { dropTable: boolean; includeStructure: boolean; includeContent: boolean };
   compressGzip: boolean;
-  /** Thư mục lưu tệp; null = tải qua WebView về thư mục tải xuống của hệ thống. */
+  /** The directory to save into; null = download through the WebView into the system's downloads folder. */
   dir: string | null;
-  // KHÔNG còn tham số tiến độ: lần xuất chạy như job nền (utils/jobs.ts) và báo tiến độ vào
-  // JobsTray. Popup đóng ngay khi job được xếp, nên một callback vào đây chỉ vẽ cho không ai xem.
+  // There is NO progress parameter any more: the export runs as a background job (utils/jobs.ts) and
+  // reports into JobsTray. The dialog closes as soon as the job is queued, so a callback here would
+  // only draw for nobody.
 }
 
 interface ExportDatabaseDialogProps {
-  /** Kết nối mà component này thao tác lên. Truyền tường minh, không đọc id ambient (§4.1). */
+  /** The connection this component acts on. Passed explicitly, never read from the ambient id (§4.1). */
   connId: string;
   open: boolean;
   onClose: () => void;
-  /** Trả về true nếu xuất xong (popup tự đóng), false để giữ popup lại cho người dùng sửa. */
+  /** Returns true when the export finished (the dialog closes itself), false to keep it open for edits. */
   onSubmit: (options: DatabaseExportOptions) => Promise<boolean>;
-  /** Database đang mở — dùng để gợi ý tên tệp khi xuất nhiều đối tượng. */
+  /** The open database — used to suggest a file name when exporting several objects. */
   dbName?: string;
 }
 
@@ -69,20 +71,21 @@ const labelStyle: React.CSSProperties = {
 };
 
 /**
- * Một dòng trong danh sách chọn. Kèm `kind` vì tên KHÔNG đủ để định danh: một database có thể
- * có bảng `payment` và trigger `payment` cùng lúc, và mỗi loại được ghi vào dump theo một cách
- * khác nhau (bảng có dữ liệu, view chỉ định nghĩa, routine/trigger phải bọc DELIMITER).
+ * One row of the selection list. It carries `kind` because a name is NOT enough to identify it: a
+ * database can hold a table `payment` and a trigger `payment` at once, and each kind is written into
+ * the dump differently (a table has data, a view only a definition, and routines and triggers need a
+ * DELIMITER wrapper).
  */
 type ExportObjKind = 'table' | 'view' | 'function' | 'procedure' | 'trigger' | 'event';
 interface ExportObj {
   name: string;
   kind: ExportObjKind;
-  /** Bảng chủ của trigger (chỉ có với kind === 'trigger'). */
+  /** The trigger's owning table (present only when kind === 'trigger'). */
   table?: string;
 }
 const objKey = (o: ExportObj) => `${o.kind}:${o.name}`;
 
-/** Nhãn nhỏ cạnh tên; bảng không có nhãn vì đó là trường hợp mặc định. */
+/** The small label next to a name; tables have none, since they are the default case. */
 const BADGE_KEY = {
   view: 'exportDialog.viewBadge',
   function: 'exportDialog.funcBadge',
@@ -92,12 +95,12 @@ const BADGE_KEY = {
 } as const satisfies Record<Exclude<ExportObjKind, 'table'>, string>;
 
 /**
- * Thứ tự nhóm trong danh sách, cũng là thứ tự ghi vào dump.
+ * The order of the groups in the list, which is also the order they are written into the dump.
  *
- * Danh sách được chia nhóm chứ không để phẳng: một database cỡ sakila có hơn hai chục bảng
- * đứng trước, nên routine và trigger rơi xuống dưới đáy vùng cuộn và người dùng tưởng là
- * chúng không được xuất. Dòng tóm tắt phía trên danh sách cũng vì lý do đó — nó nói ngay có
- * bao nhiêu đối tượng mỗi loại mà không cần cuộn.
+ * The list is grouped rather than flat: a database the size of sakila has two dozen tables ahead of
+ * everything else, so routines and triggers fall below the fold and the user assumes they are not
+ * being exported. The summary line above the list exists for the same reason — it says how many of
+ * each kind there are without any scrolling.
  */
 const KIND_ORDER = ['table', 'view', 'function', 'procedure', 'event', 'trigger'] as const;
 const LABEL_KEY = {
@@ -105,42 +108,42 @@ const LABEL_KEY = {
   ...BADGE_KEY,
 } as const satisfies Record<ExportObjKind, string>;
 
-// Routine/trigger chỉ xuất được ra .sql — các định dạng còn lại là dữ liệu bảng.
+// Routines and triggers can only go into .sql — the other formats are table data.
 const isSqlOnlyKind = (k: ExportObjKind) => k !== 'table' && k !== 'view';
 
-// Bỏ dấu để tìm bảng không phân biệt dấu (giống ô tìm kiếm ở Sidebar).
+// Diacritics are stripped so table search ignores them (as the Sidebar's search box does).
 const COMBINING_MARKS = new RegExp('[\\u0300-\\u036f]', 'g');
 const removeAccents = (s: string) =>
   s.normalize('NFD').replace(COMBINING_MARKS, '').toLowerCase();
 
 /**
- * Popup "Xuất Cơ sở dữ liệu" — layout 2 cột: trái là cấu hình (tên tệp, định dạng,
- * tuỳ chọn SQL), phải là danh sách bảng chiếm hết chiều cao nên không phải cuộn cả popup.
+ * The "Export Database" dialog — a two-column layout: settings on the left (file name, format, SQL
+ * options) and the table list on the right, filling the height so the dialog itself never scrolls.
  */
 export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ connId, open, onClose, onSubmit, dbName }) => {
   const { t } = useTranslation();
-  // Tên tệp gợi ý theo lựa chọn, nhưng người dùng gõ tay là dừng gợi ý (`filenameTouched`) —
-  // không thì mỗi lần tick thêm một bảng lại xoá mất tên họ vừa đặt.
+  // The file name is suggested from the selection, but typing stops the suggestions
+  // (`filenameTouched`) — otherwise every extra table ticked would erase the name they just chose.
   const [filename, setFilename] = useState('');
   const [filenameTouched, setFilenameTouched] = useState(false);
-  // Dấu thời gian chốt MỘT lần lúc mở popup: nếu tính lại theo từng lần render thì con số
-  // trong ô nhảy liên tục trong lúc người dùng đang tick chọn.
+  // The timestamp is fixed ONCE when the dialog opens: recomputing it per render makes the number in
+  // the field jump around while the user is ticking things.
   const [stamp, setStamp] = useState('');
   const [format, setFormat] = useState<DatabaseExportFormat>('sql');
   const [dropTable, setDropTable] = useState(true);
   const [includeStructure, setIncludeStructure] = useState(true);
   const [includeContent, setIncludeContent] = useState(true);
   const [compressGzip, setCompressGzip] = useState(false);
-  // Bảng + view + function/procedure + trigger, theo thứ tự sẽ được ghi vào dump.
+  // Tables + views + functions/procedures + triggers, in the order they will be written into the dump.
   const [objects, setObjects] = useState<ExportObj[]>([]);
-  // Khoá `kind:name`, không phải tên trần — xem ExportObj.
+  // Keyed `kind:name`, not by a bare name — see ExportObj.
   const [selected, setSelected] = useState<string[]>([]);
   const [search, setSearch] = useState('');
   const [tablesLoading, setTablesLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dir, setDir] = useState(getLastExportDir());
-  // DDL của từng view, nạp nền sau khi có danh sách — chỉ dùng để cảnh báo thiếu bảng nguồn.
+  // Each view's DDL, loaded in the background once the list exists — used only to warn about a missing source table.
   const [viewDefs, setViewDefs] = useState<{ name: string; sql: string }[]>([]);
 
   useEffect(() => {
@@ -154,15 +157,15 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ conn
     });
     let cancelled = false;
     (async () => {
-      // Ba nguồn: getTables (bảng+view), getDatabaseObjects (routine), getAllTriggers.
-      // Routine/trigger không lấy được thì trả mảng rỗng chứ không làm hỏng cả popup.
+      // Three sources: getTables (tables and views), getDatabaseObjects (routines), getAllTriggers.
+      // A failure to fetch routines or triggers returns an empty array rather than breaking the dialog.
       const [list, dbObjs, triggers] = await Promise.all([
         dbHelper.getTables(connId),
         dbHelper.getDatabaseObjects(connId),
         dbHelper.getAllTriggers(connId),
       ]);
       if (cancelled) return;
-      // Không đặt tên tham số là `t` — đó là hàm dịch.
+      // Do not name the parameter `t` — that is the translation function.
       const viewSet = new Set(list.filter((item) => item.type === 'view').map((item) => item.name));
       const all: ExportObj[] = [
         ...list.map((item) => ({ name: item.name, kind: viewSet.has(item.name) ? ('view' as const) : ('table' as const) })),
@@ -175,8 +178,8 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ conn
       setSelected(all.map(objKey));
       setTablesLoading(false);
 
-      // Nạp DDL của view sau, KHÔNG chặn danh sách: nó chỉ phục vụ cảnh báo "view thiếu bảng
-      // nguồn", và mỗi view là một lần gọi backend nên không đáng bắt người dùng chờ.
+      // View DDL is loaded afterwards and does NOT block the list: it only feeds the "view is missing
+      // its source table" warning, and each view is a backend call, which is not worth waiting for.
       const viewNames = [...viewSet];
       if (viewNames.length > 0) {
         const defs = await Promise.all(
@@ -200,8 +203,8 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ conn
 
   if (!open) return null;
 
-  // Định dạng không phải SQL chỉ xuất được dữ liệu bảng -> routine/trigger biến khỏi danh sách
-  // (vẫn giữ trong `selected` để chọn lại SQL là còn nguyên lựa chọn cũ).
+  // A non-SQL format can only export table data -> routines and triggers vanish from the list (they
+  // stay in `selected`, so switching back to SQL restores the previous choice intact).
   const listable = format === 'sql' ? objects : objects.filter((o) => !isSqlOnlyKind(o.kind));
   const shown = search.trim()
     ? listable.filter((o) => removeAccents(o.name).includes(removeAccents(search.trim())))
@@ -209,11 +212,12 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ conn
   const allShownSelected = shown.length > 0 && shown.every((o) => selected.includes(objKey(o)));
 
   /**
-   * Trigger đi theo bảng chủ của nó.
+   * A trigger follows its owning table.
    *
-   * `mysqldump` mặc định xuất trigger cùng với bảng, và đó cũng là điều người dùng chờ đợi:
-   * bỏ chọn hết rồi tick đúng một bảng thì trigger của bảng đó phải nằm trong dump. Trigger
-   * vẫn có dòng riêng để bỏ chọn lẻ được, nhưng thao tác trên bảng thì kéo theo cả chúng.
+   * `mysqldump` exports triggers with their table by default, and it is what the user expects:
+   * clearing everything and ticking exactly one table has to put that table's triggers in the dump.
+   * Triggers still have rows of their own so they can be unticked individually, but acting on a table
+   * carries them along.
    */
   const triggerKeysOf = (tableName: string) =>
     objects
@@ -240,8 +244,8 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ conn
   };
 
   /**
-   * Chọn đúng MỘT đối tượng -> lấy tên đối tượng đó; nhiều hơn -> lấy tên database.
-   * Kèm dấu thời gian để hai lần xuất liên tiếp không ghi đè lên nhau.
+   * Exactly ONE object selected -> its own name is used; more than one -> the database's name.
+   * A timestamp comes along so two exports in a row do not overwrite each other.
    */
   const chosenNow = listable.filter((o) => selected.includes(objKey(o)));
   const suggestedName = `${safeFileBase(
@@ -249,12 +253,12 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ conn
   )}_${stamp}`;
   const effectiveFilename = filenameTouched ? filename : suggestedName;
 
-  // Nhóm theo loại, giữ thứ tự KIND_ORDER; loại nào không có đối tượng thì biến mất hẳn.
+  // Grouped by kind in KIND_ORDER; a kind with no objects disappears entirely.
   const groups = KIND_ORDER
     .map((kind) => ({ kind, items: shown.filter((o) => o.kind === kind) }))
     .filter((g) => g.items.length > 0);
 
-  // Chip đếm ở trên cũng là nút chọn/bỏ cả nhóm.
+  // The count chip above doubles as the select/deselect button for the whole group.
   const kindItems = (kind: ExportObjKind) => listable.filter((o) => o.kind === kind);
   const isKindFullySelected = (kind: ExportObjKind) => {
     const items = kindItems(kind);
@@ -268,7 +272,7 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ conn
     );
   };
 
-  // Cảnh báo (không tự tích thêm): view được chọn mà bảng nó đọc thì không.
+  // A warning (nothing is ticked automatically): a selected view whose source table is not selected.
   const selectedNames = new Set(chosenNow.map((o) => o.name.toLowerCase()));
   const tableNames = objects.filter((o) => o.kind === 'table').map((o) => o.name);
   const viewWarnings =
@@ -291,7 +295,7 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ conn
     try {
       const ok = await onSubmit({
         format,
-        // Giữ nguyên hợp đồng cũ: `tables` gồm cả view, `views` chỉ đánh dấu cái nào là view.
+        // The old contract is kept: `tables` includes the views, and `views` merely marks which are views.
         tables: chosen.filter((o) => o.kind === 'table' || o.kind === 'view').map((o) => o.name),
         views: chosen.filter((o) => o.kind === 'view').map((o) => o.name),
         routines: chosen
@@ -324,7 +328,7 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ conn
       height="540px"
       zIndex={9999}
     >
-      {/* Thân: 2 cột — cấu hình | danh sách bảng */}
+      {/* The body: two columns — settings | the table list */}
       <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
         <div style={{
           width: '340px',
@@ -473,8 +477,8 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ conn
             style={{ height: '28px', fontSize: '11px', width: '100%' }}
           />
 
-          {/* Tóm tắt số lượng theo loại — nằm NGOÀI vùng cuộn, để biết ngay có routine/trigger
-              hay không mà không phải kéo qua hết danh sách bảng. */}
+          {/* The per-kind count summary — OUTSIDE the scroll area, so whether there are routines or
+              triggers is visible at once without scrolling past every table. */}
           {!tablesLoading && objects.length > 0 && (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
               {KIND_ORDER.map((kind) => {
@@ -502,7 +506,7 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ conn
             </div>
           )}
 
-          {/* Chỉ cảnh báo, không tự tích thêm: xuất một phần là nhu cầu chính đáng. */}
+          {/* A warning only, nothing ticked automatically: a partial export is a legitimate thing to want. */}
           {viewWarnings.length > 0 && (
             <div style={{
               fontSize: '10.5px',
@@ -545,8 +549,8 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ conn
             ) : (
               groups.map((group) => (
                 <React.Fragment key={group.kind}>
-                  {/* Tiêu đề nhóm dính ở đầu vùng cuộn: với sakila, 23 bảng đẩy routine và
-                      trigger xuống tận đáy, không có tiêu đề thì tưởng chúng không được xuất. */}
+                  {/* The group heading sticks to the top of the scroll area: with sakila, 23 tables push
+                      routines and triggers all the way down, and without a heading they look excluded. */}
                   <div style={{
                     position: 'sticky',
                     top: '-8px',
@@ -567,7 +571,7 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ conn
                       <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}>
                         <input type="checkbox" checked={selected.includes(key)} onChange={() => toggleOne(key)} />
                         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{obj.name}</span>
-                        {/* Trigger đi theo bảng chủ -> nói rõ là bảng nào. */}
+                        {/* A trigger follows its owning table -> say which one. */}
                         {obj.table && (
                           <span style={{ fontSize: '10px', color: 'var(--win-text-secondary)', flexShrink: 0 }}>
                             {t('exportDialog.triggerOn', { table: obj.table })}

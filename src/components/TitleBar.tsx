@@ -23,9 +23,9 @@ import { ConfirmDialog } from './ConfirmDialog';
 
 interface TitleBarProps {
   hasConnection: boolean;
-  /** Kết nối đang hiển thị — `TxControl` lọc sự kiện `tx-state-changed` theo id này. */
+  /** The connection on screen — `TxControl` filters `tx-state-changed` events on this id. */
   connId?: string;
-  /** `connKey(config)` của kết nối đang xem — Safe Mode lưu theo server. Xem SafeModeControl.tsx. */
+  /** The viewed connection's `connKey(config)` — Safe Mode is stored per server. See SafeModeControl.tsx. */
   connKey?: string;
   readOnly?: boolean;
   onToggleReadOnly?: () => void;
@@ -36,10 +36,10 @@ interface TitleBarProps {
     version?: string;
     tls?: string;
   };
-  /** Tên + màu của profile đang kết nối, hiển thị & sửa được trong popover kết nối. */
+  /** The connected profile's name and colour, shown and editable in the connection popover. */
   activeProfileName?: string;
   activeProfileColor?: string;
-  /** Môi trường của kết nối đang xem. Trường riêng của profile, không suy từ màu. */
+  /** The viewed connection's environment. A field of the profile's own, never inferred from the colour. */
   activeProfileEnv?: ConnEnv;
   onProfileChange?: (patch: { name?: string; color?: string; env?: ConnEnv }) => void;
   theme?: 'dark' | 'light';
@@ -57,14 +57,15 @@ interface TitleBarProps {
   onShowAbout?: () => void;
   onShowWhatsNew?: () => void;
   onToggleTerminal?: () => void;
-  /** Panel AI Copilot đang mở -> tô nút bằng màu accent. */
+  /** The AI Copilot panel is open -> the button takes the accent colour. */
   aiOpen?: boolean;
   onToggleAiAssistant?: () => void;
-  /** Người dùng chọn một database khác -> backend đã mở nó thành kết nối MỚI (`open_database`). */
+  /** The user picked another database -> the backend has opened it as a NEW connection (`open_database`). */
   onDatabaseOpened?: (connId: string, dbName: string, schema?: string | null) => void;
   /**
-   * Kết nối đang mở, cho Quick Switcher. Truyền vào chứ không đọc `list_connections` ở đây: nhãn,
-   * môi trường và config chỉ App biết (backend không trả config vì nó mang credential).
+   * The open connections, for the Quick Switcher. Passed in rather than read from `list_connections`
+   * here: the label, the environment and the config are known only to App (the backend never returns
+   * a config, because it carries credentials).
    */
   openConns?: SwitcherConn[];
   onSelectConnection?: (connId: string) => void;
@@ -119,7 +120,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
   // Database Switcher Popover state
   const [showDbPopover, setShowDbPopover] = useState(false);
   const [dbPopoverPos, setDbPopoverPos] = useState<{ top: number; left: number } | null>(null);
-  /** Nút database — neo của popover, cần cả khi mở bằng Ctrl+P (không có sự kiện chuột). */
+  /** The database button — the popover's anchor, needed even when opened with Ctrl+P, where there is no mouse event. */
   const dbBtnRef = useRef<HTMLButtonElement>(null);
   const [showCreateDbModal, setShowCreateDbModal] = useState(false);
   /** Database awaiting drop confirmation — see handleDropDb. */
@@ -130,9 +131,9 @@ export const TitleBar: React.FC<TitleBarProps> = ({
   const [showConnPopover, setShowConnPopover] = useState(false);
   const [connPopoverPos, setConnPopoverPos] = useState<{ top: number; left: number } | null>(null);
 
-  // Trạng thái phiên: hỏi ở đây chứ không ở DbConnectionStatusPill, vì cả dòng
-  // chữ giữa thanh tiêu đề lẫn popover chi tiết đều đọc chung một nguồn — trước
-  // đây version/TLS trên dòng chữ là giá trị cứng trong App.tsx.
+  // The session's status is asked for here rather than in DbConnectionStatusPill, because both the
+  // text in the middle of the title bar and the details popover read one source — the version and TLS
+  // in that text used to be hardcoded in App.tsx.
   const [connStatus, setConnStatus] = useState<ConnectionStatus | null>(null);
 
   useEffect(() => {
@@ -146,7 +147,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
         const info = await dbHelper.getConnectionStatus();
         if (alive && info.isConnected) setConnStatus(info);
       } catch {
-        // Ping lỗi: giữ nguyên số liệu cũ, không xoá trắng cụm trạng thái.
+        // A failed ping keeps the previous figures rather than blanking the status cluster.
       }
     };
     refresh();
@@ -164,7 +165,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
       return;
     }
     const rect = e.currentTarget.getBoundingClientRect();
-    // Neo giữa cụm trạng thái, kẹp trong màn hình để popover không tràn ra ngoài.
+    // Anchored to the middle of the status cluster and clamped to the screen, so the popover cannot overflow.
     const width = 320;
     const left = Math.min(
       Math.max(10, rect.left + rect.width / 2 - width / 2),
@@ -174,11 +175,12 @@ export const TitleBar: React.FC<TitleBarProps> = ({
     setShowConnPopover(true);
   };
 
-  // Danh sách database do `QuickSwitcherPopover` tự nạp khi nó mở — không nạp trước ở đây nữa: làm
-  // vậy thì popup chỉ hiện sau khi truy vấn xong, tức bấm rồi phải chờ mới thấy gì.
+  // The database list is loaded by `QuickSwitcherPopover` itself when it opens — no longer prefetched
+  // here: doing that made the popup appear only after the query returned, so a click was followed by
+  // a wait before anything showed.
   //
-  // Vị trí tính từ ref của nút, không từ `e.currentTarget`: `Ctrl+Shift+P` cũng mở popover này và
-  // bàn phím không có sự kiện chuột nào để đọc toạ độ ra.
+  // The position comes from the button's ref rather than `e.currentTarget`: `Ctrl+Shift+P` also opens
+  // this popover, and a keyboard has no mouse event to read coordinates from.
   const openDbPopover = () => {
     if (!hasConnection) return;
     const rect = dbBtnRef.current?.getBoundingClientRect();
@@ -190,17 +192,18 @@ export const TitleBar: React.FC<TitleBarProps> = ({
   const handleOpenDbPopover = () => openDbPopover();
 
   /**
-   * Phím tắt điều hướng, theo đúng quy ước VS Code — nơi người dùng đã có phản xạ sẵn.
+   * The navigation shortcuts, following VS Code's conventions — where the user's reflexes already are.
    *
-   *   `Ctrl+Shift+P` → Quick Switcher (VS Code: Command Palette)
-   *   `Ctrl+B`       → ẩn/hiện thanh bên
-   *   `Ctrl+K`       → focus ô tìm kiếm của Sidebar (giữ nguyên, xem `Sidebar.tsx`)
+   *   `Ctrl+Shift+P` → Quick Switcher (VS Code: the Command Palette)
+   *   `Ctrl+B`       → toggle the sidebar
+   *   `Ctrl+K`       → focus the Sidebar's search box (unchanged; see `Sidebar.tsx`)
    *
-   * `Ctrl+P` trơn cố ý để trống. Trước đây nó mang **hai** nghĩa và không nghĩa nào là cái người dùng
-   * thấy: menu quảng cáo nó là "ẩn/hiện thanh bên", còn listener của Sidebar giành nó trước để focus
-   * ô tìm kiếm. Giờ mỗi phím có đúng một nghĩa, và nhãn trong menu nói đúng thứ sẽ xảy ra.
+   * Plain `Ctrl+P` is deliberately left empty. It used to carry **two** meanings and neither was what
+   * the user saw: the menu advertised it as "toggle sidebar" while the Sidebar's listener claimed it
+   * first to focus the search box. Now each key has exactly one meaning, and the menu label says what
+   * will actually happen.
    *
-   * Với Shift giữ, `e.key` của phím P là `'P'` — nên phải `toLowerCase()` rồi mới so.
+   * With Shift held, `e.key` for P is `'P'` — so it has to be `toLowerCase()`d before comparing.
    */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -217,7 +220,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-    // `openDbPopover` đọc `hasConnection` và ref; ref ổn định, nên đây là toàn bộ deps thật.
+    // `openDbPopover` reads `hasConnection` and a ref; the ref is stable, so these are all the real deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showDbPopover, hasConnection, onToggleSidebar]);
 
@@ -276,9 +279,9 @@ export const TitleBar: React.FC<TitleBarProps> = ({
     }
   };
 
-  // Dòng chữ giữa thanh tiêu đề. Ưu tiên số liệu thật của phiên, lùi về
-  // activeConnectionInfo khi lần ping đầu chưa về. Postgres trả version dạng
-  // "16.2 (Debian 16.2-1...)" nên chỉ lấy token đầu, kẻo đẩy phần còn lại ra ngoài.
+  // The text in the middle of the title bar. It prefers the session's real figures and falls back to
+  // activeConnectionInfo before the first ping returns. Postgres reports a version like
+  // "16.2 (Debian 16.2-1...)", so only the first token is taken, or the rest pushes everything out.
   const statusLine = React.useMemo(() => {
     const host = connStatus?.host || activeConnectionInfo?.host || 'LOCAL';
     const driver = (connStatus?.dbType || activeConnectionInfo?.dbType || '').toUpperCase();
@@ -368,8 +371,8 @@ export const TitleBar: React.FC<TitleBarProps> = ({
     {
       title: t('titlebar.menuView'),
       items: [
-        // `Ctrl+B` chứ không phải `Ctrl+P`: nhãn cũ chưa bao giờ đúng vì listener của Sidebar giành
-        // Ctrl+P trước để focus ô tìm kiếm. Giờ nhãn này có một binding thật đứng sau nó.
+        // `Ctrl+B` rather than `Ctrl+P`: the old label was never true, because the Sidebar's listener
+        // claimed Ctrl+P first to focus its search box. This label now has a real binding behind it.
         { label: t('titlebar.toggleSidebar'), Icon: PanelLeft, onClick: onToggleSidebar, shortcut: 'Ctrl+B', disabled: !hasConnection },
         { label: t('titlebar.toggleTheme'), Icon: SunMoon, onClick: onToggleTheme },
         { label: t('titlebar.reload'), Icon: RotateCw, onClick: () => window.location.reload(), separatorBefore: true },
@@ -398,10 +401,10 @@ export const TitleBar: React.FC<TitleBarProps> = ({
   const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
   /**
-   * Một nút của cụm công cụ. `offline` = vẫn hiện khi chưa kết nối; App.tsx dựng
-   * ConnectionManager đúng khi `!hasConnection`, nên cờ này cũng chính là "nút
-   * này có nghĩa gì ở màn hình quản lý kết nối không" — mọi nút thao tác trên DB
-   * đều bị ẩn hẳn ở đó thay vì hiện ra dưới dạng xám không bấm được.
+   * One button of the toolbar cluster. `offline` = still shown while nothing is connected; App.tsx
+   * renders ConnectionManager exactly when `!hasConnection`, so this flag is also "does this button
+   * mean anything on the connection manager screen" — every button that acts on a database is hidden
+   * there outright rather than shown greyed out.
    */
   interface Tool {
     key: string;
@@ -409,8 +412,8 @@ export const TitleBar: React.FC<TitleBarProps> = ({
     el: React.ReactNode;
   }
 
-  // Dựng các cụm công cụ theo nhóm logic.
-  // Gạch ngăn chỉ xuất hiện giữa các nhóm chức năng, không xuất hiện giữa từng nút lẻ.
+  // The toolbar clusters are built by logical group.
+  // A separator appears only between functional groups, never between individual buttons.
   const renderCapsuleGroups = (groups: Tool[][]) => {
     const visibleGroups = groups
       .map(grp => grp.filter(tool => hasConnection || tool.offline))
@@ -434,10 +437,10 @@ export const TitleBar: React.FC<TitleBarProps> = ({
     );
   };
 
-  // Ở màn kết nối, sidebar chạy lên sát đỉnh cửa sổ nên góc trái thanh tiêu đề
-  // không còn là của thanh nữa — nút ⋮ chuyển sang cụm phải. Menu vì thế phải
-  // mở ngược hướng: neo mép phải và bung menu con sang trái, không thì nó tràn
-  // ra ngoài màn hình.
+  // On the connection screen the sidebar runs to the very top of the window, so the title bar's left
+  // corner is no longer the bar's own — the ⋮ button moves to the right cluster. The menu therefore
+  // has to open the other way: anchored to the right edge with submenus opening leftwards, or it
+  // overflows the screen.
   const menuOnRight = !hasConnection;
 
   const menuTool: Tool = {
@@ -513,7 +516,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
   };
 
   const leftToolGroups: Tool[][] = [
-    // Nhóm 1: Điều hướng & Menu chính
+    // Group 1: navigation and the main menu
     [
       {
         key: 'sidebar',
@@ -525,7 +528,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
       },
       ...(menuOnRight ? [] : [menuTool]),
     ],
-    // Nhóm 2: Quản lý kết nối & Chế độ an toàn
+    // Group 2: connection management and safety modes
     [
       {
         key: 'new-connection',
@@ -544,9 +547,10 @@ export const TitleBar: React.FC<TitleBarProps> = ({
         ),
       },
       {
-        // Chỉ đọc là mức khắt khe nhất của cùng một thang "kết nối này bảo vệ tới đâu", nên nó nằm
-        // trong menu Safe Mode chứ không còn là công tắc riêng: hai nút cạnh nhau bắt người dùng
-        // suy ra từ hai chỗ mới biết một câu DELETE sẽ ra sao. Xem SafeModeControl.tsx.
+        // Read-only is the strictest step of the same "how far does this connection protect me" scale,
+        // so it lives inside the Safe Mode menu rather than as a switch of its own: two buttons side by
+        // side made the user combine two places to work out what a DELETE would do. See
+        // SafeModeControl.tsx.
         key: 'safe-mode',
         el: (
           <SafeModeControl
@@ -560,7 +564,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
         ),
       },
     ],
-    // Nhóm 3: Công cụ Database & Query Editor
+    // Group 3: database tools and the query editor
     [
       {
         key: 'databases',
@@ -594,7 +598,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
   ];
 
   const rightToolGroups: Tool[][] = [
-    // Nhóm 1: Công cụ làm việc chính (Docs, So sánh, Terminal, AI Copilot)
+    // Group 1: the main working tools (Docs, Compare, Terminal, AI Copilot)
     [
       ...(menuOnRight ? [menuTool] : []),
       {
@@ -645,7 +649,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
         ),
       },
     ],
-    // Nhóm 2: Tiện ích hệ thống (Phím tắt & Tải lại)
+    // Group 2: system utilities (Shortcuts and Reload)
     [
       {
         key: 'shortcuts',
@@ -715,9 +719,9 @@ export const TitleBar: React.FC<TitleBarProps> = ({
 
       {/* Right Section: Unified Right Toolbar Capsule + Window Controls */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0, ...({ WebkitAppRegion: 'no-drag' } as any) }}>
-        {/* Transaction thuộc về kết nối (một connection cho cả app) nên control nằm ở đây,
-            not at toolbar of fromng tab. Xem TxControl.tsx. */}
-        {/* Việc chạy nền: cùng lý do đặt chỗ với TxControl. Xem JobsTray.tsx. */}
+        {/* A transaction belongs to a connection, so the control lives here rather than in each tab's
+            toolbar. See TxControl.tsx. */}
+        {/* Background jobs: placed here for the same reason as TxControl. See JobsTray.tsx. */}
         <JobsTray />
         <TxControl
           connected={hasConnection}
