@@ -5,24 +5,24 @@ import type { ConnectionStatus } from '../utils/dbHelper';
 import { CONN_ENVS, envLabelKey, normalizeEnv, type ConnEnv } from '../utils/connEnv';
 
 /**
- * Bảng chi tiết kết nối, mở khi bấm vào cụm trạng thái giữa thanh tiêu đề.
+ * The connection details panel, opened by clicking the status cluster in the middle of the title bar.
  *
- * Không dựng từ Modal.tsx: đây là popover neo theo cụm trạng thái chứ không
- * phải hộp thoại giữa màn hình, và nó không chặn thao tác phía sau. Vẫn render
- * qua portal vì thanh tiêu đề nằm trong nhánh có backdrop-filter — position:
- * fixed trong đó chỉ phủ được phần thanh tiêu đề (xem ghi chú ở Modal.tsx).
+ * Not built from Modal.tsx: this is a popover anchored to the status cluster rather than a dialog in
+ * the middle of the screen, and it does not block what is behind it. It still renders through a
+ * portal, because the title bar lives in a branch with backdrop-filter — a position: fixed element
+ * inside that can only cover the title bar itself (see the note in Modal.tsx).
  */
 
 interface ConnectionInfoPopoverProps {
-  /** Vị trí đã tính sẵn từ getBoundingClientRect của cụm trạng thái. */
+  /** The position, precomputed from the status cluster's getBoundingClientRect. */
   anchor: { top: number; left: number };
   status: ConnectionStatus | null;
-  /** Tên + màu của profile đang kết nối (rỗng khi kết nối không đến từ profile nào). */
+  /** The connected profile's name and colour (empty when the connection came from no profile). */
   profileName: string;
   profileColor: string;
-  /** Môi trường của profile đang kết nối. Trường riêng, không suy từ màu. */
+  /** The connected profile's environment. A field of its own, never inferred from the colour. */
   profileEnv: ConnEnv;
-  /** Đổi tên/màu/môi trường -> ghi thẳng vào profile trong localStorage (App.tsx làm việc đó). */
+  /** Changing name/colour/environment writes straight into the profile in localStorage (App.tsx does it). */
   onProfileChange: (patch: { name?: string; color?: string; env?: ConnEnv }) => void;
   onDisconnect: () => void;
   onReconnect: () => Promise<{ success: boolean; message?: string }>;
@@ -30,8 +30,8 @@ interface ConnectionInfoPopoverProps {
   onClose: () => void;
 }
 
-// Bảng màu nhãn kết nối. Chuỗi rỗng = không gắn màu; giữ ở vị trí thứ hai cho
-// khớp thứ tự của thiết kế (xanh lá trước, rồi ô trắng "bỏ màu").
+// The connection label palette. An empty string means no colour; it sits second to match the design's
+// order (green first, then the white "no colour" swatch).
 const TAG_COLORS = [
   { value: '#86efac', labelKey: 'connInfo.colorGreen' },
   { value: '', labelKey: 'connInfo.colorNone' },
@@ -146,9 +146,9 @@ export const ConnectionInfoPopover: React.FC<ConnectionInfoPopoverProps> = ({
           display: 'flex',
           flexDirection: 'column',
           gap: '12px',
-          // --win-bg-popover, KHÔNG phải --win-bg-modal: biến đó chưa từng được khai báo
-          // trong index.css nên nó luôn rơi về #ffffff, làm thẻ này trắng ở giao diện tối
-          // và mọi nhãn --win-text-secondary bên trong thành gần như vô hình.
+          // --win-bg-popover, NOT --win-bg-modal: that variable was never declared in index.css, so it
+          // always fell back to #ffffff, making this card white in the dark theme and every
+          // --win-text-secondary label inside it nearly invisible.
           background: 'var(--win-bg-popover)',
           border: '1px solid var(--win-border-strong)',
           borderRadius: '12px',
@@ -158,7 +158,7 @@ export const ConnectionInfoPopover: React.FC<ConnectionInfoPopoverProps> = ({
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Tên kết nối + màu nhãn */}
+        {/* The connection's name and label colour */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <input
             type="text"
@@ -187,7 +187,7 @@ export const ConnectionInfoPopover: React.FC<ConnectionInfoPopoverProps> = ({
                   padding: 0,
                   borderRadius: '5px',
                   cursor: 'pointer',
-                  // Ô "không màu" lấy đúng nền popover để nó đọc là trống, không phải trắng.
+                  // The "no colour" swatch takes the popover’s own background, so it reads as empty rather than white.
                   background: c.value || 'var(--win-bg-popover)',
                   border:
                     profileColor === c.value
@@ -199,8 +199,9 @@ export const ConnectionInfoPopover: React.FC<ConnectionInfoPopoverProps> = ({
           </div>
         </div>
 
-        {/* Môi trường. Ngay dưới tên + màu vì đó là bộ ba "kết nối này là cái gì", nhưng là ô riêng:
-            màu bên trên thuần trang trí, còn ô này bật chỉ-đọc và xác nhận hai bước. */}
+        {/* The environment. Directly below the name and colour, because together they are "what this
+            connection is" — but in a field of its own: the colour above is purely decorative, while
+            this one turns read-only on and demands a two-step confirmation. */}
         <div style={{ ...cardStyle, display: 'flex', alignItems: 'center', gap: '8px' }}>
           <span style={{ fontSize: '11px', color: 'var(--win-text-secondary)', flexShrink: 0 }}>
             {t('connEnv.label')}
@@ -217,13 +218,13 @@ export const ConnectionInfoPopover: React.FC<ConnectionInfoPopoverProps> = ({
           </select>
         </div>
 
-        {/* Máy chủ */}
+        {/* The server */}
         <div style={cardStyle}>
           <InfoRow label={t('connInfo.server')} value={hostLabel} />
           <InfoRow label={t('connInfo.host')} value={status?.host || unknown} />
         </div>
 
-        {/* Phiên hiện tại */}
+        {/* The current session */}
         <div style={cardStyle}>
           <InfoRow label={t('connInfo.driver')} value={driverLabel} />
           <InfoRow label={t('connInfo.db')} value={status?.database || unknown} />

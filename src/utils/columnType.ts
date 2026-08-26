@@ -43,14 +43,14 @@ export function typeBase(raw: string | null | undefined): string {
 }
 
 /**
- * Các giá trị của một kiểu `enum(...)` / `set(...)`, đã bỏ dấu nháy.
+ * The values of an `enum(...)` / `set(...)` type, with their quotes removed.
  *
- * Đây là toàn bộ nền của gợi ý giá trị: MySQL trả `COLUMN_TYPE` nên chuỗi kiểu **đã mang sẵn**
- * danh sách giá trị, không phải hỏi database thêm câu nào. Trả mảng rỗng cho mọi kiểu khác, nên
- * cột `int`/`varchar` tự khắc không gợi ý gì mà không cần luật riêng.
+ * This is the entire basis of value completion: MySQL returns `COLUMN_TYPE`, so the type string
+ * **already carries** the value list and no extra query is sent. Every other type returns an empty
+ * array, which is why an `int`/`varchar` column suggests nothing without needing a rule of its own.
  *
- * Tự tách chứ không `split(',')`: giá trị có thể chứa dấu phẩy (`enum('a,b','c')`) và dấu nháy
- * đơn được nhân đôi để thoát (`'it''s'`).
+ * Split by hand rather than with `split(',')`: a value can contain a comma (`enum('a,b','c')`) and a
+ * single quote is escaped by doubling it (`'it''s'`).
  */
 export function enumValues(raw: string | null | undefined): string[] {
   const { head, args } = splitType(raw);
