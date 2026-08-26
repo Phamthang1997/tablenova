@@ -3,9 +3,9 @@ import { moveGroup, moveTabIntoGroup, reorderTabs } from '../tabGroups';
 import type { TabInfo } from '../../components/TabManager';
 
 /**
- * Mỗi ca test kiểm tra cùng một thứ: sau thao tác, các tab cùng nhóm còn nằm
- * liền nhau hay không. Đó là bất biến duy nhất mà thanh tab dựa vào để dựng cụm
- * nhóm — vỡ nó thì một nhóm hiện thành hai cụm trùng tên.
+ * Every case checks the same thing: after the operation, are one group's tabs still adjacent? That is
+ * the only invariant the tab strip relies on to build its group clusters — break it and one group
+ * renders as two clusters sharing a name.
  */
 
 const tab = (id: string, groupId?: string): TabInfo => ({
@@ -19,7 +19,7 @@ const tab = (id: string, groupId?: string): TabInfo => ({
 const ids = (list: TabInfo[]) => list.map((it) => it.id);
 const groupOf = (list: TabInfo[], id: string) => list.find((it) => it.id === id)?.groupId;
 
-/** Mọi nhóm xuất hiện đúng một dải liên tục. */
+/** Every group appears as exactly one contiguous run. */
 function groupsAreContiguous(list: TabInfo[]): boolean {
   const seen = new Set<string>();
   let previous: string | undefined;
@@ -60,9 +60,9 @@ describe('moveTabIntoGroup', () => {
     expect(groupsAreContiguous(next)).toBe(true);
   });
 
-  // Ca này từng khẳng định ngược lại (tab về cuối danh sách) và đó là bug: bấm
-  // "Nhóm mới" trên một tab ở giữa thì thấy nó nhảy sang tận phải. Chrome giữ
-  // nguyên chỗ và mọc header nhóm ngay trước tab.
+  // This case used to assert the opposite (the tab moving to the end of the list) and that was the
+  // bug: pressing "New group" on a tab in the middle sent it flying to the far right. Chrome keeps it
+  // in place and grows the group header right before it.
   it('tạo nhóm mới cho một tab rời -> tab đứng yên tại chỗ', () => {
     const list = [tab('a'), tab('b'), tab('c')];
     const next = moveTabIntoGroup(list, 'b', 'g-new');
@@ -74,7 +74,7 @@ describe('moveTabIntoGroup', () => {
   it('tạo nhóm mới cho tab đang nằm GIỮA nhóm khác -> ra ngay sau nhóm cũ', () => {
     const list = [tab('a', 'g1'), tab('b', 'g1'), tab('c', 'g1'), tab('d')];
     const next = moveTabIntoGroup(list, 'b', 'g-new');
-    // Giữ nguyên chỗ ở đây sẽ cắt g1 thành [a] ... [c], nên b phải ra sau g1.
+    // Staying put here would cut g1 into [a] … [c], so b has to come after g1.
     expect(ids(next)).toEqual(['a', 'c', 'b', 'd']);
     expect(groupOf(next, 'b')).toBe('g-new');
     expect(groupsAreContiguous(next)).toBe(true);
@@ -103,9 +103,9 @@ describe('reorderTabs', () => {
     expect(groupsAreContiguous(next)).toBe(true);
   });
 
-  // Ca này trước đây khẳng định ngược lại. Suy nhóm từ hai tab hàng xóm khiến
-  // thả vào MÉP nhóm không nhận nhóm — mà thả vào mép phải chính là thao tác tự
-  // nhiên nhất khi muốn thêm tab vào cuối một nhóm.
+  // This case used to assert the opposite. Inferring the group from the two neighbouring tabs made a
+  // drop on the group's EDGE fail to join it — and the right edge is the most natural gesture for
+  // appending a tab to a group.
   it('thả vào mép nhóm vẫn vào nhóm, kể cả khi vị trí không đổi', () => {
     const list = [tab('a', 'g1'), tab('b', 'g1'), tab('c')];
     const next = reorderTabs(list, 2, 2, 'g1');
@@ -144,8 +144,8 @@ describe('moveGroup', () => {
     expect(groupsAreContiguous(next)).toBe(true);
   });
 
-  // Thả rơi vào giữa dải một nhóm khác thì phải bật ra mép của nhóm đó, chèn
-  // thẳng vào giữa sẽ cắt nhóm kia làm đôi.
+  // A drop landing in the middle of another group's run has to be pushed out to that group's edge;
+  // inserting straight into the middle would cut it in two.
   it('không bao giờ chèn vào giữa một nhóm khác', () => {
     const list = [tab('a', 'g2'), tab('b', 'g2'), tab('c', 'g2'), tab('d', 'g1')];
     const next = moveGroup(list, 'g1', 1);

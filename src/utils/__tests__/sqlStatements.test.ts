@@ -148,13 +148,13 @@ describe('splitStatements — lệnh DELIMITER của MySQL', () => {
   });
 
   it('không nhận DELIMITER khi không ở đầu dòng', () => {
-    // 'SELECT 1 DELIMITER //' là SQL sai, nhưng tuyệt đối không được đổi dấu kết thúc câu
+    // 'SELECT 1 DELIMITER //' is invalid SQL, but it must never change the statement terminator
     expect(splitStatements('SELECT 1 DELIMITER //; SELECT 2;')).toHaveLength(2);
   });
 });
 
-// SQLite không có lệnh DELIMITER, nên thân trigger phải được nhận diện ngay ở bộ tách —
-// nếu không, dump xuất ra có trigger sẽ không nhập lại được ("incomplete input").
+// SQLite has no DELIMITER command, so a trigger body has to be recognised by the splitter itself —
+// without that, an exported dump containing a trigger cannot be re-imported ("incomplete input").
 describe('splitStatements — thân trigger BEGIN...END', () => {
   it('giữ nguyên một câu CREATE TRIGGER dù thân có nhiều dấu ;', () => {
     const sql = [
@@ -233,8 +233,8 @@ describe('resolveAliases', () => {
   });
 
   it('bảng ngay sau một bảng không alias vẫn được nhận', () => {
-    // Trước đây nhóm alias khớp rồi mới loại 'JOIN', nên con trỏ regex đã trượt qua và
-    // 'b' bị bỏ hẳn — hover trên b.* không tra được bảng.
+    // The alias group used to match and only then discard 'JOIN', so the regex cursor had already
+    // moved past and 'b' was dropped entirely — hovering b.* found no table.
     const m = resolveAliases('SELECT * FROM a JOIN b ON a.id = b.id');
     expect(m.get('a')).toBe('a');
     expect(m.get('b')).toBe('b');
@@ -261,9 +261,10 @@ describe('collectTableRefs', () => {
     expect(collectTableRefs('SELECT * FROM orders WHERE x = 1')[0].alias).toBeUndefined();
   });
 
-  // Hai ca dưới đây là lý do hàm này tồn tại: parser ANTLR trả entity thiếu/rỗng khi câu
-  // lệnh còn gõ dở (Postgres bỏ mất bảng vừa JOIN ở ca 1; MySQL trả 0 entity ở ca 2),
-  // làm mất alias -> gợi ý cột rơi về "mọi bảng" và không gợi ý được điều kiện JOIN.
+  // The two cases below are why this function exists: the ANTLR parser returns missing or empty
+  // entities while a statement is half-typed (Postgres drops the freshly joined table in case 1;
+  // MySQL returns zero entities in case 2), which loses the aliases -> column completion falls back to
+  // "every table" and the JOIN condition cannot be suggested at all.
   it('câu JOIN chưa gõ điều kiện: vẫn thấy cả hai bảng', () => {
     const refs = collectTableRefs('SELECT * FROM city c\nJOIN address a on ');
     expect(refs).toEqual([
@@ -315,8 +316,8 @@ describe('statementAt', () => {
 });
 
 describe('analyzeStatements', () => {
-  // Đường tô sáng câu lệnh dùng analyzeStatements (mask 1 lần) thay cho splitStatements + statementAt
-  // -> phải cho cùng kết quả ở MỌI vị trí con trỏ.
+  // The statement-highlight path uses analyzeStatements (masking once) instead of splitStatements +
+  // statementAt -> it has to give the same answer at EVERY caret position.
   const samples = [
     'SELECT 1;\nSELECT 2;\nSELECT 3',
     "SELECT * FROM t WHERE a = 'x;y'; SELECT 2;",
@@ -385,7 +386,7 @@ describe('formatSql', () => {
     const out = formatSql(src, 'postgres');
     expect(out).toContain('WITH');
     expect(out).toContain('JOIN');
-    // Không được mất mệnh đề nào
+    // No clause may be lost
     expect(out.toLowerCase()).toContain('recent');
     expect(out.toLowerCase()).toContain('orders');
   });
@@ -399,7 +400,7 @@ describe('formatSql', () => {
   });
 
   it('trả nguyên văn khi đang gõ dở / parser lỗi (không làm hỏng nội dung)', () => {
-    // sql-formatter ném lỗi với ngoặc chưa đóng hoặc chuỗi chưa kết thúc
+    // sql-formatter throws on an unclosed paren or an unterminated string
     for (const broken of ['SELECT * FROM (', "SELECT 'chưa đóng nháy"]) {
       expect(formatSql(broken, 'mysql')).toBe(broken);
     }
@@ -455,7 +456,7 @@ describe('findUnsafeStatements', () => {
     expect(kinds('UPDATE users SET active = 0 WHERE id = 1')).toEqual([]);
   });
 
-  // Cùng luật mask với DELETE: WHERE nằm trong chuỗi không cứu được câu lệnh.
+  // The same masking rule as DELETE: a WHERE inside a string does not save the statement.
   it('vẫn cảnh báo UPDATE khi WHERE chỉ nằm trong chuỗi', () => {
     expect(kinds("UPDATE users SET note = 'no WHERE here'")).toEqual(['updateNoWhere']);
   });
@@ -485,13 +486,13 @@ describe('findUnsafeStatements', () => {
     expect(kinds(sql)).toEqual(['deleteNoWhere', 'dropTable']);
   });
 
-  // WHERE nằm trong comment thì không chạy -> vẫn phải cảnh báo (hướng an toàn).
+  // A WHERE inside a comment does not run -> it still has to warn (the safe direction).
   it('không bị comment qua mặt', () => {
     expect(kinds('DELETE FROM t -- WHERE id = 1')).toEqual(['deleteNoWhere']);
     expect(kinds('DELETE FROM t /* WHERE id = 1 */')).toEqual(['deleteNoWhere']);
   });
 
-  // Ngược lại: từ khoá nằm trong chuỗi/tên có nháy không được tính là câu lệnh thật.
+  // Conversely: a keyword inside a string or a quoted name must not count as a real statement.
   it('không báo nhầm khi DROP TABLE nằm trong chuỗi', () => {
     expect(kinds("DELETE FROM logs WHERE msg = 'drop table x'")).toEqual([]);
     expect(kinds("INSERT INTO t VALUES ('DELETE FROM u')")).toEqual([]);
@@ -585,7 +586,7 @@ describe('describeStatement', () => {
 });
 
 describe('enclosingCall', () => {
-  // `|` đánh dấu con trỏ; ký tự đó bị bỏ ra trước khi gọi.
+  // `|` marks the caret; that character is stripped before the call.
   const at = (marked: string) => {
     const offset = marked.indexOf('|');
     return enclosingCall(marked.slice(0, offset) + marked.slice(offset + 1), offset);
@@ -607,8 +608,8 @@ describe('enclosingCall', () => {
   });
 
   it('ngoặc dùng để nhóm biểu thức không phải lời gọi hàm', () => {
-    // `SELECT` có mục trong bộ tài liệu, nên nới lỏng chỗ này là mỗi lần mở ngoặc lại nhảy ra
-    // bảng cú pháp của SELECT.
+    // `SELECT` has an entry in the docs set, so loosening this makes every opening paren pop up
+    // SELECT's syntax table.
     expect(at('SELECT (a + |')).toBeNull();
     expect(at('SELECT count (|')).toBeNull();
   });
