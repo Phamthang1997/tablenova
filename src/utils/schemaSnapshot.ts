@@ -44,7 +44,7 @@ export function deleteSnapshot(name: string): void {
   persist(listSnapshots().filter((s) => s.name !== name));
 }
 
-// Chụp schema hiện tại: duyệt các bảng, lấy cấu trúc + DDL từng bảng.
+// Snapshot the current schema: walk the tables, take each one's structure and DDL.
 export async function captureCurrentSchema(name: string, dbType: string, database?: string): Promise<SchemaSnapshot> {
   const items = await dbHelper.getTables(editorConnId());
   const tables: Record<string, TableSnapshot> = {};
@@ -86,7 +86,7 @@ function fkKey(fk: { column: string; refTable: string; refColumn: string }): str
   return `${fk.column}->${fk.refTable}.${fk.refColumn}`;
 }
 
-// Diff một bảng: dựng payload để biến baseline (b) thành current (c).
+// Diff one table: build the payload that turns the baseline (b) into the current one (c).
 function diffTable(b: SchemaInfo, c: SchemaInfo): TableAlterPayload {
   const bCols = new Map((b.columns || []).map((col) => [col.name, col]));
   const cCols = new Map((c.columns || []).map((col) => [col.name, col]));
@@ -124,7 +124,7 @@ function summarize(p: TableAlterPayload): string[] {
   return out;
 }
 
-// So sánh baseline (ảnh chụp cũ) với current (hiện tại). Migration biến baseline -> current.
+// Compare the baseline (the old snapshot) with the current schema. The migration turns baseline -> current.
 export function diffSchemas(baseline: SchemaSnapshot, current: SchemaSnapshot): SchemaDiff {
   const bNames = Object.keys(baseline.tables);
   const cNames = Object.keys(current.tables);
@@ -143,7 +143,7 @@ export function diffSchemas(baseline: SchemaSnapshot, current: SchemaSnapshot): 
   return { addedTables, droppedTables, changedTables, identical };
 }
 
-// Sinh script migration từ diff. Bảng mới dùng DDL đã lưu; bảng xóa -> DROP; bảng đổi -> ALTER (qua backend).
+// Generate the migration script from a diff. A new table uses the stored DDL; a removed one -> DROP; a changed one -> ALTER (through the backend).
 export async function buildMigrationSql(
   diff: SchemaDiff,
   current: SchemaSnapshot,

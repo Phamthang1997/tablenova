@@ -409,7 +409,7 @@ export const App: React.FC = () => {
         const buf = await file.arrayBuffer();
         const rows = await parseXlsx(buf);
         if (rows.length === 0) throw new Error(t('dataGrid.errXlsxEmpty'));
-        setGlobalImportFileType('json'); // dòng dạng object, đi chung nhánh ghi DB với CSV/JSON
+        setGlobalImportFileType('json'); // object-shaped rows, sharing the DB-write branch with CSV/JSON
         setGlobalImportPendingRows(rows);
         setShowGlobalImportModal(true);
       } catch (err: any) {

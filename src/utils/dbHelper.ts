@@ -190,7 +190,7 @@ export interface DbConnectionConfig {
   user?: string;
   password?: string;
   database?: string;
-  dbIndex?: number; // Redis: chỉ số database 0-15
+  dbIndex?: number; // Redis: the database index, 0-15
   sshEnabled?: boolean;
   sshHost?: string;
   sshPort?: number;
@@ -333,7 +333,7 @@ export interface GridChange {
 export interface RedisKeyItem {
   key: string;
   type: string; // string | hash | list | set | zset | stream
-  ttl: number; // -1 = không hết hạn, -2 = không tồn tại
+  ttl: number; // -1 = no expiry, -2 = does not exist
 }
 
 export interface RedisValueDetail {
@@ -344,7 +344,7 @@ export interface RedisValueDetail {
   memory: number | null;
   /** The collection's element count (HLEN/LLEN/SCARD/ZCARD/XLEN); null for a string. */
   length?: number | null;
-  value: any; // shape tùy kind (xem redis_get_key backend)
+  value: any; // the shape depends on kind (see redis_get_key in the backend)
   message?: string;
 }
 

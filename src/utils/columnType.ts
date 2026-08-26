@@ -76,11 +76,11 @@ export function enumValues(raw: string | null | undefined): string[] {
   return out;
 }
 
-/** Nhóm kiểu, đủ thô để so sánh được giữa ba dialect. */
+/** The type family, coarse enough to be comparable across the three dialects. */
 export type TypeFamily = 'number' | 'string' | 'date' | 'bool' | 'binary' | 'json' | 'other';
 
-// Khớp theo TỪ trong `head`, không phải theo tiền tố chuỗi. `timestamp without time zone` và
-// `character varying` đều có nhiều từ, còn khớp tiền tố thì `int` sẽ nuốt luôn `interval`.
+// Matched WORD by word inside `head`, not as a string prefix. `timestamp without time zone` and
+// `character varying` both hold several words, and with prefix matching `int` would swallow `interval`.
 const FAMILY_WORDS: [TypeFamily, Set<string>][] = [
   ['number', new Set([
     'int', 'int2', 'int4', 'int8', 'integer', 'tinyint', 'smallint', 'mediumint', 'bigint',
@@ -102,11 +102,12 @@ const FAMILY_WORDS: [TypeFamily, Set<string>][] = [
 ];
 
 /**
- * Nhóm của một kiểu cột, dùng cho những kiểm tra chỉ cần biết "số hay chữ hay ngày".
+ * A column type's family, for checks that only need to know "number or text or date".
  *
- * Cố ý thô: mục đích duy nhất là bắt những so sánh sai rõ ràng (`int_col = 'abc'`), nên phân
- * biệt `int` với `bigint` không giúp gì mà chỉ thêm chỗ để sai. Không nhận ra thì trả `other`,
- * và mọi kiểm tra đọc giá trị này đều phải hiểu `other` là "không kết luận gì".
+ * Coarse on purpose: its single job is to catch obviously wrong comparisons (`int_col = 'abc'`), so
+ * telling `int` from `bigint` would help nothing and only add somewhere to be wrong. Anything
+ * unrecognised comes back as `other`, and every check reading this value has to read `other` as
+ * "no conclusion".
  */
 export function typeFamily(raw: string | null | undefined): TypeFamily {
   const words = typeBase(raw).toLowerCase().split(/[\s_]+/).filter(Boolean);

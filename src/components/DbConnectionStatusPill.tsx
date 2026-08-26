@@ -3,15 +3,15 @@ import type { ConnectionStatus } from '../utils/dbHelper';
 
 interface DbConnectionStatusPillProps {
   /**
-   * Trạng thái phiên, do TitleBar hỏi định kỳ.
+   * The session status, polled by TitleBar.
    *
-   * Pill trước đây tự gọi `getConnectionStatus` mỗi 6 giây. Popover chi tiết
-   * kết nối cần đúng dữ liệu đó, và dòng chữ giữa thanh tiêu đề cũng vậy, nên
-   * việc hỏi được đưa lên TitleBar — nếu để nguyên thì mỗi chỗ hiển thị lại
-   * ping database một nhịp riêng.
+   * The pill used to call `getConnectionStatus` itself every 6 seconds. The connection-details
+   * popover needs exactly that data, and so does the line in the middle of the title bar, so the
+   * asking moved up to TitleBar — left as it was, each place displaying it would ping the database
+   * on a beat of its own.
    */
   status: ConnectionStatus | null;
-  /** Tốc độ chuyển tải dòng/bytes nếu có thao tác active (ví dụ 33 b/s) */
+  /** The row/byte transfer rate while an operation is active (33 b/s, say). */
   activeSpeed?: string;
 }
 

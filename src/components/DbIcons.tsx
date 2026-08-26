@@ -1,8 +1,8 @@
-// Logo chính thức của từng hệ quản trị CSDL.
-// Path data lấy từ simple-icons v16.27.1 (path data: CC0-1.0). Nhãn hiệu và logo
-// thuộc chủ sở hữu tương ứng — dùng ở đây chỉ để nhận diện sản phẩm.
-// Vendor sẵn 4 path thay vì thêm dependency runtime: mỗi logo là một <path> trong
-// viewBox 24x24, tô bằng currentColor nên tự đổi màu theo chỗ đặt.
+// The official logo of each database system.
+// The path data comes from simple-icons v16.27.1 (path data: CC0-1.0). The trademarks and logos
+// belong to their respective owners — they are used here only to identify the products.
+// The four paths are vendored rather than adding a runtime dependency: each logo is one <path> in a
+// 24x24 viewBox, filled with currentColor so it takes the colour of wherever it is placed.
 import React from 'react';
 
 interface DbIconProps {

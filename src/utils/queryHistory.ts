@@ -28,11 +28,11 @@ export interface HistoryEntry {
 }
 
 /**
- * Kết quả của MỘT LẦN CHẠY (có thể gồm nhiều câu lệnh), nên `ok: false` nghĩa là
- * "có ít nhất một câu lệnh lỗi" — giống mô hình một dòng một lần chạy của UI.
+ * The outcome of ONE RUN (which may hold several statements), so `ok: false` means "at least one
+ * statement failed" — matching the UI's one-row-per-run model.
  */
 export interface HistoryRunResult {
-  /** Bỏ trống khi lần chạy bị người dùng dừng giữa chừng: không thành công, cũng không lỗi. */
+  /** Left empty when the user stopped the run midway: neither a success nor an error. */
   ok?: boolean;
   ms: number;
   rows?: number;
@@ -47,7 +47,7 @@ export interface SavedQueryEntry extends HistoryEntry {
 export const HISTORY_KEY = 'sql_query_history';
 export const SAVED_KEY = 'sql_saved_queries';
 
-/** Lỗi driver có thể dài cả nghìn ký tự; lịch sử chỉ cần đủ để nhận ra chuyện gì. */
+/** A driver error can run to thousands of characters; the history only needs enough to recognise what happened. */
 export const ERROR_MAX_LENGTH = 200;
 
 /** Kept per connection, not globally — a chatty database must not evict the others. */
@@ -186,8 +186,8 @@ export function addHistoryEntry(
 }
 
 /**
- * Ghi kết quả lên dòng lịch sử đã tạo lúc bắt đầu chạy. Dòng có thể đã bị xoá
- * (tab khác) trong lúc câu lệnh chạy — khi đó không tạo lại, chỉ bỏ qua.
+ * Writes the outcome onto the history row created when the run started. That row may have been
+ * deleted (from another tab) while the statement ran — in which case it is skipped, not recreated.
  */
 export function recordHistoryResult(id: string, result: HistoryRunResult): HistoryEntry[] {
   const list = loadHistory();

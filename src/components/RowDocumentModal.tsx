@@ -111,7 +111,7 @@ export const RowDocumentModal: React.FC<RowDocumentModalProps> = ({
   const [copiedAll, setCopiedAll] = useState(false);
   const [jsonText, setJsonText] = useState('');
 
-  // Tự động nhận diện theme sáng / tối từ attribute data-theme của ứng dụng
+  // Detect the light/dark theme from the app's own data-theme attribute
   const [isDark, setIsDark] = useState<boolean>(() => {
     return document.documentElement.getAttribute('data-theme') !== 'light';
   });
@@ -145,7 +145,7 @@ export const RowDocumentModal: React.FC<RowDocumentModalProps> = ({
     }
   }, [currentRow]);
 
-  // Phím tắt điều hướng Alt+Left / Alt+Right
+  // The Alt+Left / Alt+Right navigation shortcuts
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -193,7 +193,7 @@ export const RowDocumentModal: React.FC<RowDocumentModalProps> = ({
     } catch {}
   }, [jsonText]);
 
-  // Sinh câu lệnh SQL INSERT từ dòng hiện tại
+  // Build an INSERT statement from the current row
   const copyAsSqlInsert = useCallback(() => {
     if (!currentRow) return;
     const cols = columns.map(c => c.name);
@@ -208,14 +208,14 @@ export const RowDocumentModal: React.FC<RowDocumentModalProps> = ({
     copyToClipboard(sql);
   }, [currentRow, columns, tableName, copyToClipboard]);
 
-  // Lọc trường cho Table View
+  // Filter the fields for the Table View
   const filteredColumns = useMemo(() => {
     if (!searchField.trim()) return columns;
     const query = searchField.toLowerCase().trim();
     return columns.filter(c => c.name.toLowerCase().includes(query) || (c.type || '').toLowerCase().includes(query));
   }, [columns, searchField]);
 
-  // Parsed Object cho Tree View (tự parse các trường JSON string nếu có)
+  // The parsed object for the Tree View (JSON-string fields are parsed too, where present)
   const treeData = useMemo(() => {
     if (!currentRow) return {};
     const res: Record<string, any> = {};

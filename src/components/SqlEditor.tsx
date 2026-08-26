@@ -1003,7 +1003,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     refreshStatementHighlight();
 
     registerSqlFormatter(dbType);
-    void catalog.getTables(connId); // nạp nền catalog cho autocomplete/hover
+    void catalog.getTables(connId); // warm the catalog in the background for completion and hover
     const cleanupInspection = attachEditorInspection(monaco, editor);
     editor.onDidDispose(() => {
       cleanupInspection();
@@ -1117,7 +1117,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     let errText: string | null = null;
     let cancelled = false;
     const t0 = performance.now();
-    let tFirst = 0; // thời điểm nhận batch dữ liệu đầu tiên (~ thực thi xong, bắt đầu tải)
+    let tFirst = 0; // when the first batch of data arrived (~ execution done, transfer starting)
 
     // Tauri's Channel sends messages out of Rust fire-and-forget, so they can still be queued when
     // invoke()'s promise resolves. Waiting on the invoke alone totals up a half-filled `acc` -> the
@@ -1172,7 +1172,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       errText = t('sqlEditor.errQuery', { message: String(e) });
     }
 
-    flush(); // phản chiếu lần cuối (đảm bảo batch cuối cùng đã vào state)
+    flush(); // one last mirror (so the final batch has reached the state)
 
     const totalRows = acc.reduce((s, r) => s + r.data.length, 0);
     const affectedTotal = acc.reduce((s, r) => s + (r.affected || 0), 0);
@@ -1342,7 +1342,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   const handleRun = (paneId: 1 | 2 = focusedEditor) => {
     const editor = getPaneEditor(paneId);
     if (!editor) return;
-    flushSqlSync(paneId); // chạy -> chốt luôn nội dung ra state/cha
+    flushSqlSync(paneId); // running -> push the content out to the state/parent right away
     executeSql(getTextToRun(paneId), paneId);
   };
 
