@@ -6,13 +6,42 @@ import { Check, Copy, Plug, RefreshCw, Trash2 } from 'lucide-react';
 import { Modal, ModalBody } from './Modal';
 import { dbHelper } from '../utils/dbHelper';
 import type { McpAuditEntry, McpStatus, OpenConnection } from '../utils/dbHelper';
+import { MCP_CLIENTS, mcpClient, type McpClientId } from '../utils/mcpClients';
+import { readMcpPrefs, setMcpAutoStart, setMcpPort } from '../utils/mcpPrefs';
 
 /** Mirrors `policy::DEFAULT_ROW_LIMIT` / `MAX_ROW_LIMIT`. Shown, not configurable in this build. */
 const ROW_LIMIT_DEFAULT = 100;
 const ROW_LIMIT_MAX = 1000;
 
+/**
+ * Mirrors `policy::MAX_TIMEOUT`, in seconds.
+ *
+ * Worth stating in the dialog rather than leaving as a surprise: an AI's heavy query being cut at 30s
+ * looks like a bug from the client side, and the user is the only one who can see why. A lower
+ * per-server statement timeout still wins - this is the ceiling, not the value.
+ */
+const TIMEOUT_CEILING_SECS = 30;
+
 /** How many rows the list keeps. The log itself is capped in `mcp/audit.rs`, not here. */
 const LOG_VIEW_CAP = 200;
+
+/**
+ * Remembers the picked client so re-opening this dialog does not land on someone else's client.
+ *
+ * `tf_mcp_client` is global on purpose: which AI client the user runs is not a property of any
+ * connection, so it takes no `connKey`/`scopeKey` scope.
+ */
+const CLIENT_KEY = 'tf_mcp_client';
+
+function readClient(): McpClientId {
+  try {
+    const saved = localStorage.getItem(CLIENT_KEY);
+    if (saved) return mcpClient(saved).id;
+  } catch {
+    // A blocked localStorage must not cost the user the whole dialog.
+  }
+  return MCP_CLIENTS[0].id;
+}
 
 interface Props {
   onClose: () => void;
@@ -29,6 +58,8 @@ export function McpServerSettingsModal({ onClose }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState<'token' | 'config' | null>(null);
+  const [clientId, setClientId] = useState<McpClientId>(readClient);
+  const [autoStart, setAutoStart] = useState(() => readMcpPrefs().autoStart);
 
   const refresh = useCallback(async () => {
     try {
@@ -83,27 +114,40 @@ export function McpServerSettingsModal({ onClose }: Props) {
 
   const toggleServer = () =>
     run(async () => {
-      if (status?.running) await dbHelper.mcpStop();
-      else await dbHelper.mcpStart(Number(port) || undefined);
+      if (status?.running) {
+        await dbHelper.mcpStop();
+        return;
+      }
+      const wanted = Number(port) || undefined;
+      await dbHelper.mcpStart(wanted);
+      // Remembered only after the start SUCCEEDED, so a port that cannot bind is never the one
+      // autostart tries on the next run.
+      setMcpPort(wanted);
     });
+
+  const toggleAutoStart = (on: boolean) => {
+    setAutoStart(on);
+    setMcpAutoStart(on);
+  };
 
   const running = !!status?.running;
   const sharedCount = connections.filter((c) => c.mcpExposed).length;
 
+  const pickClient = (id: McpClientId) => {
+    setClientId(id);
+    try {
+      localStorage.setItem(CLIENT_KEY, id); // 'tf_mcp_client' - global, see the constant above.
+    } catch {
+      // Losing the preference is not worth failing the click over.
+    }
+  };
+
+  const activeClient = mcpClient(clientId);
+
   // Built from the port the server is ACTUALLY bound to, never from the default constant: a
   // generated snippet naming a port nothing listens on is worse than no snippet at all.
-  const configSnippet = JSON.stringify(
-    {
-      mcpServers: {
-        tablenova: {
-          url: status?.url || `http://127.0.0.1:${port}/mcp`,
-          headers: { Authorization: `Bearer ${token}` },
-        },
-      },
-    },
-    null,
-    2,
-  );
+  const endpoint = status?.url || `http://127.0.0.1:${port}/mcp`;
+  const configSnippet = activeClient.build(endpoint, token);
 
   /**
    * What one log row says on its right-hand side.
@@ -115,6 +159,10 @@ export function McpServerSettingsModal({ onClose }: Props) {
   const outcomeLabel = (e: McpAuditEntry): string => {
     if (e.ok) return `${e.ms} ms`;
     switch (e.denial) {
+      case 'badOrigin':
+        return t('mcp.denialBadOrigin');
+      case 'badToken':
+        return t('mcp.denialBadToken');
       case 'notShared':
         return t('mcp.denialNotShared');
       case 'notReadOnly':
@@ -133,8 +181,11 @@ export function McpServerSettingsModal({ onClose }: Props) {
       title={t('mcp.title')}
       icon={<Plug size={13} />}
       onClose={onClose}
-      width="720px"
-      maxHeight="82vh"
+      // Wider than the other dialogs on purpose: the two cautions and the per-client target line are
+      // full sentences, and at 720px each one wrapped to two lines - which is what pushed the
+      // Requests section below the fold and made the whole body scroll.
+      width="880px"
+      maxHeight="90vh"
       zIndex={10000}
     >
       <ModalBody>
@@ -160,6 +211,15 @@ export function McpServerSettingsModal({ onClose }: Props) {
             {running ? t('mcp.stop') : t('mcp.start')}
           </button>
         </div>
+        <label className="mcp-check">
+          <input
+            type="checkbox"
+            checked={autoStart}
+            disabled={busy}
+            onChange={(e) => toggleAutoStart(e.target.checked)}
+          />
+          {t('mcp.autoStart')}
+        </label>
         <p className="mcp-hint">{t('mcp.portHint')}</p>
         {error && <p className="mcp-error">{error}</p>}
 
@@ -193,6 +253,11 @@ export function McpServerSettingsModal({ onClose }: Props) {
         <section className="mcp-section">
           <h4 className="mcp-section-title">{t('mcp.shared')}</h4>
           <p className="mcp-hint">{t('mcp.sharedHint')}</p>
+          {/* The tick is per connection, but the REACH is the whole server: `information_schema`,
+              `SHOW DATABASES` and a qualified `other_db.tbl` are all read statements, so `policy.rs`
+              passes them. Saying "per connection, not per server" here - which this used to - is the
+              one wrong sentence a security screen cannot afford. */}
+          <p className="mcp-warn">{t('mcp.sharedReach')}</p>
           {connections.length === 0 ? (
             <p className="mcp-empty">{t('mcp.sharedEmpty')}</p>
           ) : (
@@ -220,18 +285,38 @@ export function McpServerSettingsModal({ onClose }: Props) {
           )}
           <p className="mcp-hint">{t('mcp.readOnlyNote')}</p>
           <p className="mcp-hint">
-            {t('mcp.rowLimit')}: {ROW_LIMIT_DEFAULT} (max {ROW_LIMIT_MAX})
+            {t('mcp.rowLimit')}: {ROW_LIMIT_DEFAULT} (max {ROW_LIMIT_MAX}) &middot;{' '}
+            {t('mcp.timeLimit', { n: TIMEOUT_CEILING_SECS })}
           </p>
         </section>
 
         <section className="mcp-section">
           <h4 className="mcp-section-title">{t('mcp.config')}</h4>
           <p className="mcp-hint">{t('mcp.configHint')}</p>
+          <div className="mcp-client-tabs">
+            {MCP_CLIENTS.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                aria-pressed={c.id === activeClient.id}
+                className={c.id === activeClient.id ? 'mcp-client-tab active' : 'mcp-client-tab'}
+                onClick={() => pickClient(c.id)}
+              >
+                {t(c.labelKey)}
+              </button>
+            ))}
+          </div>
+          <p className="mcp-hint">{t(activeClient.targetKey)}</p>
           <pre className="mcp-config">{configSnippet}</pre>
           <button className="btn btn-secondary" onClick={() => copy('config', configSnippet)}>
             {copied === 'config' ? <Check size={11} /> : <Copy size={11} />}
-            {copied === 'config' ? t('mcp.tokenCopied') : t('mcp.copyConfig')}
+            {copied === 'config'
+              ? t('mcp.tokenCopied')
+              : activeClient.isCommand
+                ? t('mcp.copyCommand')
+                : t('mcp.copyConfig')}
           </button>
+          <p className="mcp-warn">{t('mcp.configMismatch')}</p>
         </section>
 
         <section className="mcp-section">

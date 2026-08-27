@@ -84,8 +84,11 @@ export interface McpAuditEntry {
   sqlTruncated: boolean;
   ms: number;
   ok: boolean;
-  /** Absent when `ok`. */
-  denial?: 'notShared' | 'notReadOnly' | 'manualTransaction' | 'failed';
+  /**
+   * Absent when `ok`. Mirrors `mcp::audit::Denial` — `badOrigin`/`badToken` are the two door layers,
+   * refused before any tool runs, so they carry no `connId` or `sql`.
+   */
+  denial?: 'badOrigin' | 'badToken' | 'notShared' | 'notReadOnly' | 'manualTransaction' | 'failed';
   /** Which defence layer refused; `0` when the database itself failed. */
   layer?: number;
   message?: string;

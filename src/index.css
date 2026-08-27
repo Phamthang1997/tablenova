@@ -15354,8 +15354,8 @@ input.rename-input {
 .mcp-section {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding-top: 10px;
+  gap: 5px;
+  padding-top: 8px;
   border-top: 1px solid var(--win-border);
 }
 .mcp-section-title {
@@ -15373,6 +15373,14 @@ input.rename-input {
   margin: 0;
   font-size: 11px;
   color: var(--win-danger, #ef4444);
+}
+/* Notes that CORRECT a belief the user is likely to hold ("sharing is per connection", "this
+   snippet works everywhere"). They read as a caution rather than as another grey hint, because on a
+   security screen a wrong belief the UI never contradicts is the actual failure. */
+.mcp-warn {
+  margin: 0;
+  font-size: 11px;
+  color: var(--win-warning, #f59e0b);
 }
 .mcp-empty {
   margin: 0;
@@ -15401,6 +15409,9 @@ input.rename-input {
   flex: 1;
   font-family: var(--win-font-mono);
 }
+/* The two variable-length lists here (connections, request log) scroll INSIDE their own box. Their
+   caps are what keep the dialog one fixed height: without them a busy log or a dozen open
+   connections grows the body until the sections below it fall off the bottom. */
 .mcp-conn-list {
   list-style: none;
   margin: 0;
@@ -15408,7 +15419,7 @@ input.rename-input {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  max-height: 160px;
+  max-height: 132px;
   overflow-y: auto;
 }
 .mcp-conn-list label {
@@ -15429,6 +15440,38 @@ input.rename-input {
 .mcp-conn-meta {
   font-size: 10.5px;
   color: var(--win-text-secondary);
+}
+.mcp-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--win-text-secondary);
+  cursor: pointer;
+}
+.mcp-client-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.mcp-client-tab {
+  padding: 4px 10px;
+  border: 1px solid var(--win-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--win-text-secondary);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.mcp-client-tab:hover {
+  background: var(--win-bg-hover);
+}
+.mcp-client-tab.active {
+  border-color: var(--win-accent);
+  background: var(--win-bg-hover);
+  color: var(--win-text-primary);
 }
 .mcp-config {
   margin: 0;

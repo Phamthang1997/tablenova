@@ -61,6 +61,7 @@ import { invalidateCatalog } from './sql/catalog';
 import { splitStatements } from './sql/statements';
 import { connKey, scopeKey, tabsStorageKey, tabsStorageKeyCandidates } from './utils/connKey';
 import { connectSavedProfile } from './utils/connectProfile';
+import { readMcpPrefs } from './utils/mcpPrefs';
 import type { SavedProfile } from './components/ConnectionManager';
 import { updateProfileDisplay } from './utils/connectionProfiles';
 import { applyProgressStyle, getProgressStyle } from './utils/progressStyle';
@@ -151,6 +152,14 @@ const QueryTabPanel = React.memo(function QueryTabPanel(props: QueryTabPanelProp
 
 /** Rows per batch when importing into an existing table, so progress can be reported. */
 const IMPORT_BATCH_SIZE = 500;
+
+/**
+ * Has the MCP autostart attempt already been made this run?
+ *
+ * Module-level rather than a ref because it must survive a remount: StrictMode mounts `App` twice in
+ * dev, and a second `mcp_start` answers "already running" — an error object for a non-event.
+ */
+let mcpAutoStarted = false;
 
 function parseCSV(text: string): string[][] {
   const result: string[][] = [];
@@ -353,6 +362,24 @@ export const App: React.FC = () => {
   // blocker (uncommitted transaction, running job). With two independent listeners, whichever
   // resolves first calls `destroy()` and kills the other's dialog too — see utils/closeGuard.ts.
   React.useEffect(() => installCloseGuard(), []);
+
+  // Bring the MCP server back up if the user asked for that. Lives here rather than in
+  // `McpServerSettingsModal` because the modal is unmounted almost all of the time, and rather than
+  // in Rust's `app/setup.rs` because the durable answer is in `localStorage` (see utils/mcpPrefs.ts).
+  // Starting the listener shares nothing by itself: `mcp_exposed` is per-run, so an AI client
+  // connecting to a freshly autostarted server sees an empty connection list until the user ticks one.
+  React.useEffect(() => {
+    if (mcpAutoStarted) return;
+    // Module-level, not a ref: StrictMode mounts this twice in dev and the second `mcp_start` would
+    // come back "already running" — a real error object for a non-event.
+    mcpAutoStarted = true;
+    const { autoStart, port } = readMcpPrefs();
+    if (!autoStart) return;
+    void dbHelper.mcpStart(port).catch(() => {
+      // A taken port or a backend that is not there (plain `vite-dev`) must not break app boot. The
+      // Settings screen reports the real status and its Start button says why.
+    });
+  }, []);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showDocModal, setShowDocModal] = useState(false);
   const [docQuery] = useState('');
