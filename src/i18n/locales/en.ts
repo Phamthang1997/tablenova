@@ -2790,7 +2790,7 @@ const en = {
     clientAntigravity: 'Antigravity',
     clientGeneric: 'Other (Cursor…)',
     targetClaudeCode:
-      'Run both lines in a terminal — the first only matters when re-registering. Do not paste into settings.json: Claude Code ignores MCP servers there and will not warn you.',
+      'Run these in a terminal — the first two only matter when re-registering. Scope is user, not project: a project-scoped entry can be visible to the CLI and still invisible to the session. Do not paste into settings.json: Claude Code ignores MCP servers there and will not warn you.',
     targetAntigravity:
       'Save into ~/.gemini/config/mcp_config.json, or use Manage MCP Servers → View raw config.',
     targetGeneric: "Save into your client's MCP config file — for Cursor that is .cursor/mcp.json.",

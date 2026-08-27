@@ -2763,7 +2763,7 @@ const vi: typeof en = {
     clientAntigravity: 'Antigravity',
     clientGeneric: 'Khác (Cursor…)',
     targetClaudeCode:
-      'Chạy cả hai dòng trong terminal — dòng đầu chỉ cần khi đăng ký lại. Đừng dán vào settings.json: Claude Code không đọc MCP server ở đó và cũng không báo lỗi.',
+      'Chạy trong terminal — hai dòng đầu chỉ cần khi đăng ký lại. Scope là user, không phải project: một entry theo project có thể CLI thấy mà session lại không. Đừng dán vào settings.json: Claude Code không đọc MCP server ở đó và cũng không báo lỗi.',
     targetAntigravity:
       'Lưu vào ~/.gemini/config/mcp_config.json, hoặc dùng Manage MCP Servers → View raw config.',
     targetGeneric: 'Lưu vào tệp cấu hình MCP của client — với Cursor là .cursor/mcp.json.',

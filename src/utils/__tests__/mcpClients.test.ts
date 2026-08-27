@@ -29,12 +29,23 @@ describe('mcpClients', () => {
   });
 
   // `claude mcp add` does not merge onto an existing name, so the command has to be re-runnable:
-  // after a Regenerate the repair is a replace, and it must be the same thing to copy.
-  it('leads with remove so the Claude Code command can be run again', () => {
+  // after a Regenerate the repair is a replace, and it must be the same thing to copy. Both scopes
+  // are cleared so a stale project-scoped entry cannot shadow the user-scoped one.
+  it('clears both scopes first so the Claude Code command can be run again', () => {
     const lines = built('claudeCode').split('\n');
-    expect(lines).toHaveLength(2);
-    expect(lines[0]).toBe('claude mcp remove tablenova');
-    expect(lines[1]).toContain('claude mcp add');
+    expect(lines).toHaveLength(3);
+    expect(lines[0]).toBe('claude mcp remove tablenova -s local');
+    expect(lines[1]).toBe('claude mcp remove tablenova -s user');
+    expect(lines[2]).toContain('claude mcp add');
+  });
+
+  // The bug this scope flag exists for: a project-scoped entry is keyed by absolute path, and on
+  // Windows the CLI canonicalizes that key to the on-disk casing while a session uses whatever its
+  // shell wrote - so the CLI reports Connected while the session loads zero tools. User scope writes
+  // to the top-level `mcpServers`, which no project key touches.
+  it('registers Claude Code at user scope, never the default local', () => {
+    const add = built('claudeCode').split('\n')[2];
+    expect(add).toContain('--scope user');
   });
 
   // Antigravity's docs: `url` and `httpUrl` are not supported.

@@ -45,18 +45,29 @@ export const MCP_CLIENTS = [
     /** Shell lines, so the button offers to copy a command rather than a config. */
     isCommand: true,
     /**
-     * Two lines, and the `remove` is the load-bearing one.
+     * Three lines, and every one of them is load-bearing on a machine that is not this one.
      *
-     * `claude mcp add` on a name that already exists does not merge - so the moment the token is
-     * regenerated, the fix is to replace the entry, not to add it again. Leading with `remove` makes
-     * this command **re-runnable**: one thing to copy whether it is first-time setup or a repair
-     * after Regenerate. On a machine with nothing registered the first line just prints "not found"
-     * and the second still runs, which is a cheaper cost than two variants of the instruction that
-     * the user has to choose between while something is already broken.
+     * **`--scope user`, never the default `local`.** A project-scoped entry lives under an absolute
+     * path key in `~/.claude.json`, and on Windows the CLI and the session runtime disagree about
+     * that key: `claude mcp add`/`list` canonicalize to the on-disk casing (`C:/…`) while a session
+     * opened from Git Bash or an IDE uses `c:/…`. Both entries then exist, only one carries
+     * `mcpServers`, and the result is the worst shape a setup bug can take - the CLI reports
+     * **✔ Connected** while the session loads **zero** tools, with nothing anywhere to explain it.
+     * User scope writes to the top-level `mcpServers`, which no project key touches. Cost, stated in
+     * the dialog: the server is then offered in every project.
+     *
+     * **The two `remove` lines** make this re-runnable and leave no shadow. `claude mcp add` does not
+     * merge onto an existing name, so after a Regenerate the repair is a *replace*; and clearing
+     * `local` too is what stops a stale project-scoped entry from shadowing the user-scoped one on a
+     * machine that was set up before this. On a fresh machine both lines just print "not found" and
+     * the third still runs - cheaper than making the user choose between two variants of the
+     * instruction while something is already broken.
      */
     build: (url: string, token: string) =>
-      `claude mcp remove ${SERVER_NAME}\n` +
-      `claude mcp add --transport http ${SERVER_NAME} ${url} --header "Authorization: Bearer ${token}"`,
+      `claude mcp remove ${SERVER_NAME} -s local\n` +
+      `claude mcp remove ${SERVER_NAME} -s user\n` +
+      `claude mcp add --transport http ${SERVER_NAME} ${url} ` +
+      `--header "Authorization: Bearer ${token}" --scope user`,
   },
   {
     id: 'antigravity',

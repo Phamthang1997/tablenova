@@ -2757,7 +2757,7 @@ const ja: typeof en = {
     clientAntigravity: 'Antigravity',
     clientGeneric: 'その他 (Cursor など)',
     targetClaudeCode:
-      '両方の行をターミナルで実行してください。1 行目は再登録のときだけ必要です。settings.json に貼らないこと: Claude Code はそこから MCP サーバーを読まず、警告も出しません。',
+      'ターミナルで実行してください。最初の 2 行は再登録のときだけ必要です。スコープは project ではなく user です — project スコープの登録は CLI からは見えてもセッションからは見えないことがあります。settings.json に貼らないこと: Claude Code はそこから MCP サーバーを読まず、警告も出しません。',
     targetAntigravity:
       '~/.gemini/config/mcp_config.json に保存するか、Manage MCP Servers → View raw config を使ってください。',
     targetGeneric:
