@@ -17,8 +17,10 @@ import { collectColumns, inferColType } from '../utils/importPreview';
 import { ProgressBar, type ProgressState } from './ProgressBar';
 import { ImportFilePicker } from './ImportFilePicker';
 import { ExportTableDialog } from './ExportTableDialog';
+import ReactDOM from 'react-dom';
 import { Modal, ModalBody, ModalFooter } from './Modal';
 import { LazyModalFallback } from './LazyEditorFallback';
+import { MediaCellPreview, MediaViewerModal, detectMedia, type MediaInfo } from './media';
 
 // Lazy because `RowDocumentModal` has a JSON tab built on `@monaco-editor/react`: a static import
 // here is a static path from the entry to Monaco, and it undoes the `React.lazy` of `SqlEditor` and
@@ -353,6 +355,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
 
   // Quick Look Modal State
   const [quickLookCell, setQuickLookCell] = useState<{ colName: string; value: any } | null>(null);
+  const [mediaViewerTarget, setMediaViewerTarget] = useState<{ media: MediaInfo; colName: string; tableName: string } | null>(null);
 
   // Schema View Toggle
   const [viewMode, setViewMode] = useState<'data' | 'structure'>(initialViewMode);
@@ -1800,7 +1803,12 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
                                 </span>
                               </div>
                             ) : (
-                              renderCellWithHighlight(cellVal, quickSearchQuery)
+                              <MediaCellPreview
+                                value={cellVal}
+                                columnName={col.name}
+                                tableName={tableName}
+                                fallbackText={renderCellWithHighlight(cellVal, quickSearchQuery)}
+                              />
                             )}
                           </td>
                         );
@@ -1921,7 +1929,12 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
                                 </span>
                               </div>
                             ) : (
-                              renderCellWithHighlight(cellVal, quickSearchQuery)
+                              <MediaCellPreview
+                                value={cellVal}
+                                columnName={col.name}
+                                tableName={tableName}
+                                fallbackText={renderCellWithHighlight(cellVal, quickSearchQuery)}
+                              />
                             )}
                           </td>
                         );
@@ -2648,6 +2661,28 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
             <span>🔍</span> {t('dataGrid.ctxQuickLook')}
           </button>
           {(() => {
+            const media = detectMedia(contextMenu.cellValue, contextMenu.colName);
+            if (media) {
+              return (
+                <button
+                  className="context-menu-item"
+                  onClick={() => {
+                    const cm = contextMenu;
+                    setContextMenu(null);
+                    setMediaViewerTarget({
+                      media,
+                      colName: cm.colName,
+                      tableName,
+                    });
+                  }}
+                >
+                  <span>🖼️</span> {t('dataGrid.ctxViewImage', 'Xem ảnh (Media Viewer)')}
+                </button>
+              );
+            }
+            return null;
+          })()}
+          {(() => {
             const fk = getFkInfo(contextMenu.colName);
             if (fk && contextMenu.cellValue !== null && contextMenu.cellValue !== undefined && contextMenu.cellValue !== '') {
               return (
@@ -2705,6 +2740,18 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
             <button className="btn btn-primary" style={{ background: 'var(--st-ok)', borderColor: 'var(--st-ok)' }} onClick={() => setQuickLookCell(null)}>{t('common.close')}</button>
           </ModalFooter>
         </Modal>
+      )}
+
+      {/* ─── Media / Image Viewer Modal (from Context Menu or Click) ─── */}
+      {mediaViewerTarget && typeof document !== 'undefined' && ReactDOM.createPortal(
+        <MediaViewerModal
+          isOpen={!!mediaViewerTarget}
+          onClose={() => setMediaViewerTarget(null)}
+          media={mediaViewerTarget.media}
+          columnName={mediaViewerTarget.colName}
+          tableName={mediaViewerTarget.tableName}
+        />,
+        document.body
       )}
 
       {/* ─── The transaction preview modal (the SQL, before committing) ─── */}

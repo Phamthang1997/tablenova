@@ -15491,7 +15491,7 @@ input.rename-input {
   padding: 0;
   display: flex;
   flex-direction: column;
-  max-height: 220px;
+  max-height: 160px;
   overflow-y: auto;
   font-size: 11px;
 }
@@ -15527,3 +15527,444 @@ input.rename-input {
   flex: 0 0 auto;
   color: var(--win-text-secondary);
 }
+
+/* ==========================================================================
+   Media / Image Viewer Component Styles (TableNova)
+   Adheres to AGENTS.md: pure CSS classes, theme variables, no hardcoded inline styles.
+   ========================================================================== */
+
+/* --- Checkerboard Pattern Backgrounds (for transparent PNG/SVG) --- */
+.media-checkerboard-bg {
+  background-color: #1a1c23;
+  background-image:
+    linear-gradient(45deg, #282a36 25%, transparent 25%),
+    linear-gradient(-45deg, #282a36 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #282a36 75%),
+    linear-gradient(-45deg, transparent 75%, #282a36 75%);
+  background-size: 12px 12px;
+  background-position: 0 0, 0 6px, 6px -6px, -6px 0px;
+}
+
+[data-theme='light'] .media-checkerboard-bg {
+  background-color: #f1f5f9;
+  background-image:
+    linear-gradient(45deg, #e2e8f0 25%, transparent 25%),
+    linear-gradient(-45deg, #e2e8f0 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #e2e8f0 75%),
+    linear-gradient(-45deg, transparent 75%, #e2e8f0 75%);
+}
+
+/* --- Inline Cell Preview Component --- */
+.media-cell-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+
+.media-cell-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.media-cell-preview-btn {
+  position: relative;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid var(--win-border-strong, #3b4252);
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  background: transparent;
+  transition: transform 0.12s ease, border-color 0.12s ease;
+}
+
+.media-cell-preview-btn:hover {
+  transform: scale(1.1);
+  border-color: var(--win-accent, #3b82f6);
+}
+
+.media-cell-thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.media-cell-fallback-icon {
+  color: var(--win-text-secondary, #94a3b8);
+  opacity: 0.8;
+}
+
+.media-cell-hover-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.media-cell-preview-btn:hover .media-cell-hover-overlay {
+  opacity: 1;
+}
+
+.media-cell-type-tag {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background-color: var(--win-bg-card, rgba(255, 255, 255, 0.06));
+  color: var(--win-accent, #3b82f6);
+  border: 1px solid var(--win-border, rgba(255, 255, 255, 0.12));
+  letter-spacing: 0.3px;
+}
+
+/* --- Hover Popover Preview --- */
+.media-hover-popover {
+  position: fixed;
+  z-index: 10000;
+  width: 260px;
+  background: var(--win-bg-popover, #1e222b);
+  border: 1px solid var(--win-border-strong, #434c5e);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
+  padding: 8px;
+  cursor: pointer;
+  animation: mediaPopoverFadeIn 0.14s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+[data-theme='light'] .media-hover-popover {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.16), 0 2px 8px rgba(15, 23, 42, 0.08);
+}
+
+@keyframes mediaPopoverFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.media-hover-img-wrapper {
+  width: 100%;
+  height: 200px;
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--win-border, rgba(255, 255, 255, 0.08));
+}
+
+.media-hover-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.media-hover-error {
+  font-size: 11px;
+  color: var(--st-danger, #ef4444);
+  text-align: center;
+  padding: 20px;
+}
+
+.media-hover-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+  padding: 0 2px;
+}
+
+.media-hover-badge-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.media-type-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background-color: var(--win-accent, #3b82f6);
+  color: #ffffff;
+  text-transform: uppercase;
+}
+
+.media-dim-badge {
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  color: var(--win-text-secondary, #94a3b8);
+  font-weight: 500;
+}
+
+.media-size-badge {
+  font-size: 11px;
+  color: var(--win-text-muted, #64748b);
+  font-family: var(--font-mono, monospace);
+}
+
+/* --- Fullscreen Lightbox Modal --- */
+.media-lightbox-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10500;
+  background: rgba(0, 0, 0, 0.78);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: mediaBackdropFadeIn 0.18s ease-out;
+}
+
+@keyframes mediaBackdropFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.media-lightbox-container {
+  position: relative;
+  width: 90vw;
+  height: 88vh;
+  max-width: 1400px;
+  max-height: 900px;
+  background: var(--win-bg-window, #14171f);
+  border: 1px solid var(--win-border-strong, #383e4a);
+  border-radius: 12px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.75);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+[data-theme='light'] .media-lightbox-container {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.25);
+}
+
+/* Lightbox Header */
+.media-lightbox-header {
+  height: 46px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--win-border, rgba(255, 255, 255, 0.08));
+  background: var(--win-bg-card, rgba(255, 255, 255, 0.02));
+  flex-shrink: 0;
+}
+
+.media-lightbox-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.media-lightbox-icon {
+  color: var(--win-accent, #3b82f6);
+}
+
+.media-lightbox-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--win-text-primary, #f1f5f9);
+}
+
+.media-lightbox-close-btn {
+  background: transparent;
+  border: none;
+  color: var(--win-text-secondary, #94a3b8);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.12s ease;
+}
+
+.media-lightbox-close-btn:hover {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--st-danger, #ef4444);
+}
+
+/* Lightbox Viewport & Backgrounds */
+.media-lightbox-viewport {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+}
+
+.media-bg-dark {
+  background-color: #0b0d13;
+  background-image: radial-gradient(circle at 50% 50%, #171a23 0%, #090a0f 100%);
+}
+
+.media-bg-black {
+  background-color: #000000;
+}
+
+.media-bg-light {
+  background-color: #f1f5f9;
+  background-image: radial-gradient(circle at 50% 50%, #ffffff 0%, #e2e8f0 100%);
+}
+
+.media-bg-checkerboard {
+  background-color: #12141a;
+  background-image:
+    linear-gradient(45deg, #1c1f28 25%, transparent 25%),
+    linear-gradient(-45deg, #1c1f28 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #1c1f28 75%),
+    linear-gradient(-45deg, transparent 75%, #1c1f28 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0px;
+}
+
+.media-lightbox-transform-layer {
+  transition: transform 0.08s ease-out;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.media-lightbox-img {
+  max-width: 80vw;
+  max-height: 70vh;
+  object-fit: contain;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+  border-radius: 6px;
+}
+
+/* Lightbox Bottom Floating Toolbar */
+.media-lightbox-toolbar {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--win-bg-popover, rgba(26, 30, 40, 0.88));
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--win-border-strong, rgba(255, 255, 255, 0.15));
+  border-radius: 28px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  z-index: 10;
+}
+
+[data-theme='light'] .media-lightbox-toolbar {
+  background: rgba(255, 255, 255, 0.92);
+  border-color: #cbd5e1;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.15);
+}
+
+.media-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.media-toolbar-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--win-border, rgba(255, 255, 255, 0.12));
+  margin: 0 2px;
+}
+
+.media-toolbar-btn {
+  background: transparent;
+  border: none;
+  color: var(--win-text-secondary, #94a3b8);
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  transition: all 0.12s ease;
+}
+
+.media-toolbar-btn:hover {
+  background: var(--win-bg-hover, rgba(255, 255, 255, 0.1));
+  color: var(--win-text-primary, #ffffff);
+}
+
+.media-toolbar-btn.active {
+  background: var(--win-accent, #3b82f6);
+  color: #ffffff;
+}
+
+.media-zoom-label {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  min-width: 48px;
+  justify-content: center;
+}
+
+.media-btn-text {
+  font-size: 12px;
+}
+
+.media-check-icon {
+  color: var(--st-ok, #22c55e);
+}
+
+/* Background Color Preset Dot Icons */
+.media-bg-icon {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  display: inline-block;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+.dark-icon {
+  background: #181b24;
+}
+
+.black-icon {
+  background: #000000;
+}
+
+.light-icon {
+  background: #f1f5f9;
+}
+
+.checker-icon {
+  background: #1c1f28;
+  background-image: linear-gradient(45deg, #2d3240 25%, transparent 25%), linear-gradient(-45deg, #2d3240 25%, transparent 25%);
+  background-size: 6px 6px;
+}
+

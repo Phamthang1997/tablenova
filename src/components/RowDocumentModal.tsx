@@ -7,6 +7,7 @@ import {
 import Editor from '@monaco-editor/react';
 import { Modal, ModalBody, ModalFooter } from './Modal';
 import type { ColumnInfo } from '../utils/dbHelper';
+import { MediaCellPreview } from './media';
 
 export interface RowDocumentModalProps {
   isOpen: boolean;
@@ -373,7 +374,12 @@ export const RowDocumentModal: React.FC<RowDocumentModalProps> = ({
                                 {val === null ? (
                                   <span className="grid-cell-null">NULL</span>
                                 ) : (
-                                  strVal
+                                  <MediaCellPreview
+                                    value={val}
+                                    columnName={col.name}
+                                    tableName={tableName}
+                                    fallbackText={strVal}
+                                  />
                                 )}
                               </div>
                               <button

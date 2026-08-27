@@ -24,6 +24,7 @@ import * as catalog from '../sql/catalog';
 import { willPromptForSql } from '../utils/safeMode';
 import { resolveResultEditability, type ResultEditability, type NotEditableReason } from '../sql/editableResult';
 import { SqlSnippetPanel } from './SqlSnippetPanel';
+import { MediaCellPreview } from './media';
 
 // Registers smart completion + hover + theme + rename provider (shared, run once)
 setupSqlCompletion();
@@ -2676,7 +2677,12 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                                     </span>
                                   </div>
                                 ) : (
-                                  String(cellVal)
+                                  <MediaCellPreview
+                                    value={cellVal}
+                                    columnName={col}
+                                    tableName={pTarget?.table}
+                                    fallbackText={String(cellVal)}
+                                  />
                                 )}
                               </td>
                             );
