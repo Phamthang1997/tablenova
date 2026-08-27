@@ -80,6 +80,22 @@ async fn guard_origin(State(g): State<Guard>, req: Request<Body>, next: Next) ->
         return deny(StatusCode::FORBIDDEN, "host not allowed", Denial::BadOrigin, &req);
     }
 
+    // OAuth discovery: answer 404, and do NOT audit it.
+    //
+    // Clients probe `/.well-known/oauth-protected-resource` before they trust a configured header.
+    // Those probes carry no `Authorization` by design, so falling through to layer 2 gave them a 401
+    // plus `WWW-Authenticate: Bearer` - which invites an OAuth flow this server does not implement
+    // (§7: bearer on loopback is the right threat model, OAuth is for remote servers) - and, worse,
+    // filled the Requests panel with red "Wrong or missing token" rows for entirely expected client
+    // behaviour. A panel built to make real denials visible cannot afford that noise, so this is the
+    // one path that is refused without a log line: nothing was denied, we simply do not serve it.
+    //
+    // After the Origin/Host checks on purpose: a probe from a browser page still gets 403 and still
+    // gets audited. 404 leaks nothing either way, but layer 1 keeps its jurisdiction.
+    if req.uri().path().starts_with("/.well-known/") {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
     next.run(req).await
 }
 
@@ -305,6 +321,16 @@ pub(super) mod server_tests {
         line
     }
 
+    /// A raw GET, for the paths a client probes before it trusts its configured header.
+    pub(super) async fn get_status(port: u16, path: &str, headers: &str) -> String {
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).await.expect("connect");
+        let req = format!("GET {path} HTTP/1.1\r\n{headers}Connection: close\r\n\r\n");
+        stream.write_all(req.as_bytes()).await.expect("write");
+        let mut line = String::new();
+        BufReader::new(stream).read_line(&mut line).await.expect("read");
+        line
+    }
+
     #[tokio::test]
     async fn both_doors_answer_before_the_protocol_does() {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
@@ -346,6 +372,13 @@ pub(super) mod server_tests {
 
         let wrong = status_line(port, &format!("{host}Authorization: Bearer nope\r\n"), init).await;
         assert!(wrong.contains("401"), "wrong token got through: {wrong}");
+
+        // OAuth discovery must be 404, never 401: a 401 here tells the client to go start an OAuth
+        // flow we do not implement, and it lands in the audit panel as a denial that never happened.
+        let disco = get_status(port, "/.well-known/oauth-protected-resource", &host).await;
+        assert!(disco.contains("404"), "oauth discovery should 404, got: {disco}");
+        let disco_mcp = get_status(port, "/.well-known/oauth-protected-resource/mcp", &host).await;
+        assert!(disco_mcp.contains("404"), "nested discovery should 404, got: {disco_mcp}");
 
         // The real thing. What rmcp answers is rmcp's business; what matters here is that neither
         // door turned it away.

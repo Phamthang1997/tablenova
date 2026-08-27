@@ -231,14 +231,21 @@ impl ConnRegistry {
             .map(|(id, e)| {
                 (
                     id.clone(),
+                    // **snake_case, unlike `list()` above.** This shape is read by an AI client and
+                    // nothing else, and the field it must send back is spelled `connection_id` -
+                    // tool parameters derive their names from Rust struct fields (`ConnArgs`). When
+                    // this returned `connectionId`, the client had to read one spelling and send
+                    // another; a real client got `failed to deserialize parameters: missing field
+                    // 'connection_id'` for doing the obvious thing. The whole object follows the
+                    // parameter convention so there is one casing on the MCP wire, not two.
                     serde_json::json!({
-                        "connectionId": &**id,
+                        "connection_id": &**id,
                         "database": e.db,
                         "dialect": e.conn.dialect(),
                         "schema": e.current_schema,
                         // What the AI is allowed to attempt. It cannot write in this build either
                         // way, but a connection the user has additionally locked is worth saying.
-                        "readOnly": e.read_only,
+                        "read_only": e.read_only,
                     }),
                 )
             })

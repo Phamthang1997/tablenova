@@ -82,13 +82,25 @@ impl TableNovaMcp {
     #[tool(
         description = "List the database connections the TableNova user has shared with AI clients. \
                        Always call this first: every other tool needs a connection_id from here, and \
-                       connections the user did not share are invisible."
+                       connections the user did not share are invisible. Each entry carries \
+                       connection_id, database, dialect, schema and read_only - pass connection_id \
+                       back verbatim."
     )]
     async fn tablenova_list_connections(&self) -> Result<CallToolResult, McpError> {
         audited("tablenova_list_connections", None, None, catalog::list_connections()).await
     }
 
-    #[tool(description = "List the databases (or schemas) reachable on one connection.")]
+    // "(or schemas)" was wrong: `list_databases_inner` reads `pg_database` on Postgres and
+    // `SHOW DATABASES` on MySQL, so it never returns a schema. SQLite returns an empty array (one
+    // file is one database) - said out loud, because an AI that gets `[]` with no explanation reads
+    // it as a broken tool. And the names are NOT actionable: there is no tool to open one, so the
+    // description has to stop a model from trying a database name as a connection_id.
+    #[tool(
+        description = "List the other databases on the same server as this connection. Informational \
+                       only: you cannot switch to one, and a database name is not a connection_id - \
+                       only tablenova_list_connections yields those. Empty on SQLite, where one file \
+                       is one database."
+    )]
     async fn tablenova_list_databases(
         &self,
         Parameters(a): Parameters<ConnArgs>,
@@ -102,9 +114,15 @@ impl TableNovaMcp {
         .await
     }
 
+    // The description said "with row count estimates" and the body has never returned one:
+    // `get_tables_inner` yields `name` + `type` on all three dialects and nothing else. That lie
+    // costs real tokens rather than just being untidy - a model that believes it calls this for row
+    // counts, does not find them, and then issues one `tablenova_query` per table. So the promise is
+    // corrected AND the model is told where counts actually come from.
     #[tool(
-        description = "List the tables and views of the database a connection is open on, with row \
-                       count estimates."
+        description = "List the tables and views of the database a connection is open on. Returns \
+                       name and type only - no row counts. For counts, use tablenova_query with \
+                       SELECT COUNT(*), or one query against information_schema.tables."
     )]
     async fn tablenova_list_tables(
         &self,
@@ -119,6 +137,13 @@ impl TableNovaMcp {
         .await
     }
 
+    // This one's promise checks out: `get_table_schema_inner` really does return columns (name,
+    // type, nullable, isPrimaryKey, defaultValue, autoIncrement), indexes and foreignKeys.
+    //
+    // Its keys are camelCase while every tool PARAMETER is snake_case, and that stays. Unlike
+    // `list_mcp_exposed` - MCP-only, so renaming its `connectionId` to `connection_id` cost nothing -
+    // this body is shared with the UI's schema viewer, so renaming here breaks the UI for a
+    // consistency an AI never has to round-trip. Do not "fix" it.
     #[tool(
         description = "Describe one table: columns, types, nullability, primary key, foreign keys \
                        and indexes. Prefer this over SELECT * when you only need the shape."
@@ -153,11 +178,19 @@ impl TableNovaMcp {
         .await
     }
 
+    // Three things the old text left the model to discover by failing. `WITH` is the expensive one:
+    // a CTE is the first shape an analytical query reaches for, `policy::READ_HEADS` is a whitelist
+    // of five heads that does not include it (a CTE can end in INSERT on Postgres, and nothing here
+    // parses far enough to tell), so every such attempt was one refused round trip. Also: one
+    // statement per call, and DESC counts - the old list named four of the five allowed heads.
     #[tool(
-        description = "Run ONE read-only SQL statement (SELECT, EXPLAIN, SHOW, DESCRIBE) and return \
-                       the rows. Writes and DDL are refused - ask the user to run those in TableNova \
-                       themselves. Check `truncated` in the result before drawing conclusions from a \
-                       row count."
+        description = "Run ONE read-only SQL statement and return the rows. Allowed heads: SELECT, \
+                       EXPLAIN, SHOW, DESCRIBE, DESC. Everything else is refused, including WITH \
+                       (rewrite a CTE as a subquery) and more than one statement per call. Writes \
+                       and DDL are refused - ask the user to run those in TableNova themselves. \
+                       `limit` trims the result AFTER the database has run the whole query, so check \
+                       `truncated` before drawing conclusions from a row count, and prefer your own \
+                       LIMIT/COUNT(*) for big tables."
     )]
     async fn tablenova_query(
         &self,
