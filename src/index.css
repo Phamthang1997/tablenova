@@ -15968,3 +15968,793 @@ input.rename-input {
   background-size: 6px 6px;
 }
 
+/* ==========================================================================
+   Visual Chart & BI Lite Component Styles
+   ========================================================================== */
+
+/* Main Visualizer Container */
+.bi-visualizer-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  background: var(--win-bg-window, #151821);
+  color: var(--win-text-primary, #f1f5f9);
+  overflow: hidden;
+  position: relative;
+}
+
+.bi-visualizer-container.bi-modal-mode {
+  border-radius: 8px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  border: 1px solid var(--win-border-strong, rgba(255, 255, 255, 0.12));
+}
+
+/* Header Bar */
+.bi-header {
+  height: 40px;
+  padding: 0 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--win-border, rgba(255, 255, 255, 0.08));
+  background: var(--win-bg-card, rgba(255, 255, 255, 0.02));
+  flex-shrink: 0;
+}
+
+.bi-header-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bi-header-icon {
+  color: var(--win-accent, #3b82f6);
+}
+
+.bi-header-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--win-text-primary, #f1f5f9);
+}
+
+.bi-badge-count {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 12px;
+  background: var(--win-bg-card, rgba(255, 255, 255, 0.06));
+  color: var(--win-text-secondary, #94a3b8);
+  border: 1px solid var(--win-border, rgba(255, 255, 255, 0.08));
+}
+
+.bi-close-btn {
+  background: transparent;
+  border: none;
+  color: var(--win-text-secondary, #94a3b8);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.12s ease;
+}
+
+.bi-close-btn:hover {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--st-danger, #ef4444);
+}
+
+/* Control Toolbar */
+.bi-toolbar-container {
+  padding: 6px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--win-border, rgba(255, 255, 255, 0.06));
+  background: var(--win-bg-panel, rgba(20, 24, 33, 0.7));
+  backdrop-filter: blur(8px);
+  flex-shrink: 0;
+}
+
+.bi-toolbar-section {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.bi-section-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--win-text-secondary, #94a3b8);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+/* Chart Type Button Group */
+.bi-btn-group {
+  display: flex;
+  align-items: center;
+  background: var(--win-bg-card, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--win-border, rgba(255, 255, 255, 0.1));
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.bi-type-btn {
+  background: transparent;
+  border: none;
+  color: var(--win-text-secondary, #94a3b8);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 7px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.12s ease;
+}
+
+.bi-type-btn:hover {
+  color: var(--win-text-primary, #ffffff);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.bi-type-btn.active {
+  background: var(--win-accent, #3b82f6);
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.bi-rotate-90 {
+  transform: rotate(90deg);
+}
+
+/* Dropdown Selects */
+.bi-select {
+  background: var(--win-bg-input, rgba(255, 255, 255, 0.05));
+  border: 1px solid var(--win-border, rgba(255, 255, 255, 0.12));
+  color: var(--win-text-primary, #f1f5f9);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.12s ease;
+}
+
+.bi-select:focus {
+  border-color: var(--win-accent, #3b82f6);
+}
+
+/* Measure Multi-selection Pills */
+.bi-measure-pills {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.bi-measure-pill {
+  background: var(--win-bg-card, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--win-border, rgba(255, 255, 255, 0.1));
+  color: var(--win-text-secondary, #94a3b8);
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.12s ease;
+}
+
+.bi-measure-pill:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--win-text-primary, #ffffff);
+}
+
+.bi-measure-pill.selected {
+  background: hsla(217, 91%, 60%, 0.2);
+  border-color: var(--win-accent, #3b82f6);
+  color: var(--win-accent, #3b82f6);
+  font-weight: 600;
+}
+
+/* Toolbar Dividers and Spacers */
+.bi-toolbar-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--win-border, rgba(255, 255, 255, 0.1));
+  margin: 0 2px;
+}
+
+.bi-toolbar-spacer {
+  flex: 1;
+}
+
+/* Icon Toggle Buttons */
+.bi-icon-toggle {
+  background: transparent;
+  border: 1px solid var(--win-border, rgba(255, 255, 255, 0.1));
+  color: var(--win-text-secondary, #94a3b8);
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.12s ease;
+}
+
+.bi-icon-toggle:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--win-text-primary, #ffffff);
+}
+
+.bi-icon-toggle.active {
+  background: hsla(217, 91%, 60%, 0.18);
+  border-color: var(--win-accent, #3b82f6);
+  color: var(--win-accent, #3b82f6);
+}
+
+/* Action Buttons (Copy, Export) */
+.bi-action-btn {
+  background: var(--win-bg-card, rgba(255, 255, 255, 0.06));
+  border: 1px solid var(--win-border, rgba(255, 255, 255, 0.12));
+  color: var(--win-text-primary, #f1f5f9);
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  transition: all 0.12s ease;
+}
+
+.bi-action-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.bi-action-btn.primary {
+  background: var(--win-accent, #3b82f6);
+  border-color: var(--win-accent, #3b82f6);
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.bi-action-btn.primary:hover {
+  filter: brightness(1.1);
+}
+
+.bi-text-success {
+  color: var(--st-ok, #22c55e);
+}
+
+/* KPI Summary Bar */
+.bi-kpi-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px;
+  background: var(--win-bg-card, rgba(255, 255, 255, 0.02));
+  border-bottom: 1px solid var(--win-border, rgba(255, 255, 255, 0.06));
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+
+.bi-kpi-card {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 10px;
+  background: var(--win-bg-panel, rgba(255, 255, 255, 0.03));
+  border: 1px solid var(--win-border, rgba(255, 255, 255, 0.08));
+  border-radius: 6px;
+  min-width: 120px;
+}
+
+.bi-kpi-label {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--win-text-secondary, #94a3b8);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.bi-kpi-value {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--win-text-primary, #f1f5f9);
+  font-family: var(--font-mono, monospace);
+  margin-top: 1px;
+}
+
+.bi-kpi-sub {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--win-text-secondary, #94a3b8);
+}
+
+/* Main Canvas Area */
+.bi-canvas-container {
+  flex: 1;
+  position: relative;
+  padding: 14px;
+  min-height: 0;
+  height: 100%;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+
+.bi-canvas-wrapper {
+  position: relative;
+  height: 100%;
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+}
+
+.bi-canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* Empty State */
+.bi-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  color: var(--win-text-secondary, #94a3b8);
+  text-align: center;
+}
+
+.bi-empty-icon {
+  color: var(--st-warn, #f59e0b);
+  opacity: 0.8;
+}
+
+.bi-empty-text {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--win-text-primary, #f1f5f9);
+}
+
+.bi-empty-sub {
+  font-size: 11px;
+  color: var(--win-text-secondary, #94a3b8);
+}
+
+/* --- Light Mode Theme Overrides for Visual BI Lite --- */
+[data-theme='light'] .bi-visualizer-container {
+  background: var(--win-bg-window, #f8fafc);
+  color: var(--win-text-primary, #0f172a);
+}
+
+[data-theme='light'] .bi-header {
+  background: var(--win-bg-card, #ffffff);
+  border-bottom-color: var(--win-border, #e2e8f0);
+}
+
+[data-theme='light'] .bi-header-title {
+  color: #0f172a;
+}
+
+[data-theme='light'] .bi-badge-count {
+  background: #f1f5f9;
+  color: #64748b;
+  border-color: #e2e8f0;
+}
+
+[data-theme='light'] .bi-toolbar-container {
+  background: var(--win-bg-card, #ffffff);
+  border-bottom-color: var(--win-border, #e2e8f0);
+}
+
+[data-theme='light'] .bi-section-label {
+  color: #64748b;
+}
+
+[data-theme='light'] .bi-btn-group {
+  background: #f1f5f9;
+  border-color: #e2e8f0;
+}
+
+[data-theme='light'] .bi-type-btn {
+  color: #64748b;
+}
+
+[data-theme='light'] .bi-type-btn:hover {
+  color: #0f172a;
+  background: #e2e8f0;
+}
+
+[data-theme='light'] .bi-type-btn.active {
+  background: var(--win-accent, #3b82f6);
+  color: #ffffff;
+}
+
+[data-theme='light'] .bi-select {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  color: #0f172a;
+}
+
+[data-theme='light'] .bi-measure-pill {
+  background: #f1f5f9;
+  border-color: #e2e8f0;
+  color: #64748b;
+}
+
+[data-theme='light'] .bi-measure-pill:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+[data-theme='light'] .bi-measure-pill.selected {
+  background: #eff6ff;
+  border-color: #3b82f6;
+  color: #2563eb;
+}
+
+[data-theme='light'] .bi-toolbar-divider {
+  background: #e2e8f0;
+}
+
+[data-theme='light'] .bi-icon-toggle {
+  border-color: #e2e8f0;
+  color: #64748b;
+}
+
+[data-theme='light'] .bi-icon-toggle:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+[data-theme='light'] .bi-icon-toggle.active {
+  background: #eff6ff;
+  border-color: #3b82f6;
+  color: #2563eb;
+}
+
+[data-theme='light'] .bi-action-btn {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  color: #334155;
+}
+
+[data-theme='light'] .bi-action-btn:hover {
+  background: #f8fafc;
+}
+
+[data-theme='light'] .bi-kpi-bar {
+  background: #ffffff;
+  border-bottom-color: #e2e8f0;
+}
+
+[data-theme='light'] .bi-kpi-card {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+}
+
+[data-theme='light'] .bi-kpi-label {
+  color: #64748b;
+}
+
+[data-theme='light'] .bi-kpi-value {
+  color: #0f172a;
+}
+
+[data-theme='light'] .bi-kpi-sub {
+  color: #64748b;
+}
+
+[data-theme='light'] .bi-empty-text {
+  color: #0f172a;
+}
+
+[data-theme='light'] .bi-empty-sub {
+  color: #64748b;
+}
+
+/* ==========================================================================
+   Database Compare Dialog - Unified Pipeline Control Card Styles
+   ========================================================================== */
+
+.db-compare-unified-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--win-bg-card);
+  border: 1px solid var(--win-border);
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+
+/* Pipeline Direction Row */
+.db-compare-pipeline-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+}
+
+.db-compare-side-box {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.db-compare-side-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.db-compare-side-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+.db-compare-side-tag.source-tag {
+  color: #10b981;
+}
+
+.db-compare-side-tag.target-tag {
+  color: #3b82f6;
+}
+
+.db-compare-side-hint {
+  font-size: 10.5px;
+  color: var(--win-text-secondary);
+}
+
+.db-compare-select-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.db-compare-select {
+  width: 100%;
+  height: 32px;
+  padding: 0 28px 0 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--win-text-primary);
+  background: var(--win-bg-window);
+  border: 1px solid var(--win-border);
+  border-radius: 6px;
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  transition: all 0.15s ease;
+}
+
+.db-compare-select:focus {
+  border-color: var(--win-accent);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+}
+
+.db-compare-select-chevron {
+  position: absolute;
+  right: 10px;
+  pointer-events: none;
+  color: var(--win-text-secondary);
+  display: flex;
+  align-items: center;
+}
+
+.db-compare-input {
+  height: 32px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--win-text-primary);
+  background: var(--win-bg-window);
+  border: 1px solid var(--win-border);
+  border-radius: 6px;
+  outline: none;
+}
+
+.db-compare-input:focus {
+  border-color: var(--win-accent);
+}
+
+.db-compare-pipeline-bridge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 0 4px;
+}
+
+.db-compare-swap-circle-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--win-border);
+  background: var(--win-bg-window);
+  color: var(--win-text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.db-compare-swap-circle-btn:hover {
+  color: var(--win-accent);
+  border-color: var(--win-accent);
+  background: var(--win-bg-hover);
+  transform: rotate(180deg) scale(1.06);
+}
+
+.db-compare-bridge-label {
+  font-size: 9.5px;
+  font-weight: 600;
+  color: var(--win-text-disabled);
+  letter-spacing: 0.5px;
+}
+
+/* Integrated Actions Bottom Strip */
+.db-compare-actions-strip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--win-bg-card);
+  border-top: 1px solid var(--win-border);
+  flex-wrap: wrap;
+}
+
+[data-theme='dark'] .db-compare-actions-strip {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.db-compare-tab-pill-group {
+  display: inline-flex;
+  align-items: center;
+  background: var(--win-bg-hover, rgba(0, 0, 0, 0.05));
+  border: 1px solid var(--win-border);
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.db-compare-tab-pill {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--win-text-secondary);
+  font-size: 11.5px;
+  font-weight: 500;
+  padding: 4px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.db-compare-tab-pill:hover {
+  color: var(--win-text-primary);
+}
+
+.db-compare-tab-pill.active {
+  background: var(--win-bg-card, #ffffff);
+  color: var(--win-accent);
+  font-weight: 600;
+  border-color: var(--win-border);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme='dark'] .db-compare-tab-pill.active {
+  background: var(--win-accent);
+  color: #ffffff;
+  border-color: transparent;
+}
+
+.db-compare-check-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--win-text-secondary);
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.12s ease;
+}
+
+.db-compare-check-item:hover {
+  color: var(--win-text-primary);
+}
+
+.db-compare-primary-run-btn {
+  margin-left: auto;
+  padding: 6px 20px;
+  font-size: 11.5px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  background: var(--win-accent);
+  color: #ffffff;
+  border: 1px solid transparent;
+  box-shadow: 0 2px 6px rgba(59, 130, 246, 0.3);
+  transition: all 0.15s ease;
+}
+
+.db-compare-primary-run-btn:hover:not(:disabled) {
+  background: var(--win-accent-hover, #2563eb);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+  transform: translateY(-1px);
+}
+
+.db-compare-primary-run-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* Empty State */
+.db-compare-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+  gap: 10px;
+  text-align: center;
+}
+
+.db-compare-empty-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: var(--win-bg-card);
+  border: 1px solid var(--win-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--win-accent);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+}
+
+.db-compare-empty-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--win-text-primary);
+}
+
+.db-compare-empty-desc {
+  font-size: 11.5px;
+  color: var(--win-text-secondary);
+  max-width: 480px;
+  line-height: 1.5;
+}
+
+

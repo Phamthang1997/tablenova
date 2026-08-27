@@ -709,6 +709,8 @@ const en = {
     loadingData: 'Loading data...',
     dataTab: 'Data',
     structureTab: 'Structure',
+    chartTab: 'Chart',
+    chartViewTitle: 'Visualize table data with charts',
     addRowTitle: 'Add a new row',
     deleteRowTitle: 'Delete the selected row',
     rowLabel: 'Row',
@@ -1668,7 +1670,9 @@ const en = {
   compare: {
     title: 'Compare 2 databases',
     sourceLabel: 'Source (A)',
+    sourceHint: 'Baseline source',
     targetLabel: 'Target (B)',
+    targetHint: 'Target to be updated',
     currentDatabase: '(current database)',
     schemaPlaceholder: 'schema (default: public)',
     sqlitePathPlaceholder: 'path\\to\\file.db',
@@ -1694,6 +1698,8 @@ const en = {
     errRun: 'Comparison failed: {{message}}',
     copied: 'SQL copied.',
 
+    emptyTitleStructure: 'Compare 2 Database Schemas',
+    emptyTitleData: 'Compare Table Data (Data Diff)',
     emptyHintStructure:
       'Pick a database on each side, then press "Compare structure" to see the tables, columns, indexes and foreign keys that differ — plus the SQL that makes B match A.',
     emptyHintData:

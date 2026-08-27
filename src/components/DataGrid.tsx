@@ -9,7 +9,7 @@ import type { SchemaInfo, ColumnInfo, GridChange } from '../utils/dbHelper';
 import {
   Save, RotateCcw, Plus, ChevronLeft, ChevronRight,
   CheckCircle2, AlertTriangle, Minus, Copy, Calendar, ArrowUpRight,
-  Search, X, ChevronDown, FileUp, FileDown
+  Search, X, ChevronDown, FileUp, FileDown, BarChart2
 } from 'lucide-react';
 import { StructureViewer } from './StructureViewer';
 import { parseXlsx } from '../utils/xlsxReader';
@@ -21,6 +21,7 @@ import ReactDOM from 'react-dom';
 import { Modal, ModalBody, ModalFooter } from './Modal';
 import { LazyModalFallback } from './LazyEditorFallback';
 import { MediaCellPreview, MediaViewerModal, detectMedia, type MediaInfo } from './media';
+import { DataVisualizer } from './chart';
 
 // Lazy because `RowDocumentModal` has a JSON tab built on `@monaco-editor/react`: a static import
 // here is a static path from the entry to Monaco, and it undoes the `React.lazy` of `SqlEditor` and
@@ -358,7 +359,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
   const [mediaViewerTarget, setMediaViewerTarget] = useState<{ media: MediaInfo; colName: string; tableName: string } | null>(null);
 
   // Schema View Toggle
-  const [viewMode, setViewMode] = useState<'data' | 'structure'>(initialViewMode);
+  const [viewMode, setViewMode] = useState<'data' | 'structure' | 'chart'>(initialViewMode);
   const [structSection, setStructSection] = useState<'columns' | 'indexes' | 'fks' | 'check_constraints' | 'triggers' | 'partitions' | 'ddl'>('columns');
   const [showFilterBar, setShowFilterBar] = useState<boolean>(() =>
     !!(initialFilter && initialFilter.column)
@@ -1654,6 +1655,12 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
           activeSection={structSection}
           onSectionChange={setStructSection}
         />
+      ) : viewMode === 'chart' ? (
+        <DataVisualizer
+          rows={rows}
+          columnNames={columns.map(c => c.name)}
+          tableName={tableName}
+        />
       ) : (
         <div className="grid-table-container">
           {loading && rows.length === 0 ? (
@@ -1960,7 +1967,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
       {/* The background, top border and height come from the .grid-pagination class so this bar is
           exactly as tall as the sidebar's footer (--ws-foot-h); inline styles would override the glass. */}
       <div className="grid-pagination gp-container">
-        {/* Left segment: Data | Structure & + Row */}
+        {/* Left segment: Data | Structure | Chart & + Row */}
         <div className="gp-left-section">
           <button
             className={`gp-btn ${viewMode === 'data' ? 'on' : ''}`}
@@ -1969,14 +1976,23 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
             {t('dataGrid.dataTab')}
           </button>
 
-          {viewMode === 'data' ? (
-            <button
-              className="gp-btn"
-              onClick={() => { setViewMode('structure'); setStructSection('columns'); }}
-            >
-              {t('dataGrid.structureTab')}
-            </button>
-          ) : (
+          <button
+            className={`gp-btn ${viewMode === 'structure' ? 'on' : ''}`}
+            onClick={() => { setViewMode('structure'); setStructSection('columns'); }}
+          >
+            {t('dataGrid.structureTab')}
+          </button>
+
+          <button
+            className={`gp-btn ${viewMode === 'chart' ? 'on' : ''}`}
+            onClick={() => setViewMode('chart')}
+            title={t('dataGrid.chartViewTitle', 'Visualize table data with charts')}
+          >
+            <BarChart2 size={12} />
+            <span>{t('dataGrid.chartTab', 'Chart')}</span>
+          </button>
+
+          {viewMode === 'structure' && (
             <>
               <button
                 className={`gp-btn ${structSection === 'columns' ? 'on' : ''}`}

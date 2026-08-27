@@ -701,6 +701,8 @@ const vi: typeof en = {
     loadingData: 'Đang tải dữ liệu...',
     dataTab: 'Data',
     structureTab: 'Structure',
+    chartTab: 'Biểu đồ',
+    chartViewTitle: 'Trực quan hóa dữ liệu bảng dưới dạng biểu đồ',
     addRowTitle: 'Thêm dòng mới',
     deleteRowTitle: 'Xóa dòng đang chọn',
     rowLabel: 'Row',
@@ -1652,9 +1654,11 @@ const vi: typeof en = {
 
   // So sánh hai database (DbCompareDialog + db_compare.rs)
   compare: {
-    title: 'So sánh 2 database',
+    title: 'So sánh 2 Database',
     sourceLabel: 'Nguồn (A)',
+    sourceHint: 'Cơ sở dữ liệu nguồn chuẩn',
     targetLabel: 'Đích (B)',
+    targetHint: 'Cơ sở dữ liệu đích sẽ sửa đổi',
     currentDatabase: '(database đang mở)',
     schemaPlaceholder: 'schema (mặc định: public)',
     sqlitePathPlaceholder: 'đường\\dẫn\\tệp.db',
@@ -1680,6 +1684,8 @@ const vi: typeof en = {
     errRun: 'So sánh thất bại: {{message}}',
     copied: 'Đã sao chép SQL.',
 
+    emptyTitleStructure: 'So sánh cấu trúc 2 Database',
+    emptyTitleData: 'So sánh dữ liệu các bảng (Data Diff)',
     emptyHintStructure:
       'Chọn database cho mỗi phía rồi bấm "So cấu trúc" để xem bảng, cột, index, khóa ngoại khác nhau — kèm SQL sửa B cho khớp A.',
     emptyHintData:

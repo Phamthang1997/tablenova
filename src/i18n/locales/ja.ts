@@ -698,6 +698,8 @@ const ja: typeof en = {
     loadingData: 'データを読み込み中...',
     dataTab: 'データ',
     structureTab: '構造',
+    chartTab: 'グラフ',
+    chartViewTitle: 'テーブルデータをグラフで可視化',
     addRowTitle: '新しい行を追加',
     deleteRowTitle: '選択中の行を削除',
     rowLabel: '行',
@@ -1650,7 +1652,9 @@ const ja: typeof en = {
   compare: {
     title: '2つのデータベースを比較',
     sourceLabel: 'ソース (A)',
+    sourceHint: '基準となるデータベース',
     targetLabel: 'ターゲット (B)',
+    targetHint: '変更が適用される側',
     currentDatabase: '(接続中のデータベース)',
     schemaPlaceholder: 'スキーマ (既定: public)',
     sqlitePathPlaceholder: 'パス\\ファイル.db',
@@ -1676,6 +1680,8 @@ const ja: typeof en = {
     errRun: '比較に失敗しました: {{message}}',
     copied: 'SQL をコピーしました。',
 
+    emptyTitleStructure: '2つのデータベース構造を比較',
+    emptyTitleData: 'テーブルデータの比較 (Data Diff)',
     emptyHintStructure:
       '各側のデータベースを選び「構造を比較」を押すと、異なるテーブル・列・インデックス・外部キーと、B を A に合わせる SQL が表示されます。',
     emptyHintData:

@@ -25,6 +25,7 @@ import { willPromptForSql } from '../utils/safeMode';
 import { resolveResultEditability, type ResultEditability, type NotEditableReason } from '../sql/editableResult';
 import { SqlSnippetPanel } from './SqlSnippetPanel';
 import { MediaCellPreview } from './media';
+import { DataVisualizer } from './chart';
 
 // Registers smart completion + hover + theme + rename provider (shared, run once)
 setupSqlCompletion();
@@ -91,7 +92,7 @@ function registerSqlFormatter(dbType: string) {
     monaco.languages.registerDocumentFormattingEditProvider(lang, formatProvider)
   );
 }
-import { Play, Clipboard, Trash2, CheckCircle2, AlertTriangle, ChevronLeft, ChevronRight, Copy, AlignLeft, History, X, Bookmark, ChevronDown, MoreHorizontal, SlidersHorizontal, Star, Columns, Rows, Settings, Network, Zap, FileText, Square, Calendar } from 'lucide-react';
+import { Play, Clipboard, Trash2, CheckCircle2, AlertTriangle, ChevronLeft, ChevronRight, Copy, AlignLeft, History, X, Bookmark, ChevronDown, MoreHorizontal, SlidersHorizontal, Star, Columns, Rows, Settings, Network, Zap, FileText, Square, Calendar, BarChart2 } from 'lucide-react';
 import { getQueryParamsConfig, saveQueryParamsConfig, extractQueryParams, buildParameterizedSql, type QueryParamsConfig } from '../utils/queryParamHelper';
 import { buildExplainQuery, explainJsonLabel, parseExplainOutput, supportsJsonExplain, type ExplainResult } from '../utils/explainHelper';
 import {
@@ -283,6 +284,10 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   const [pageSize2, setPageSize2] = useState(50);
   const [showCopyDropdown2, setShowCopyDropdown2] = useState(false);
   const [runningQueryId2, setRunningQueryId2] = useState<string | null>(null);
+
+  // Result visualization view modes ('grid' | 'chart')
+  const [pane1ViewMode, setPane1ViewMode] = useState<'grid' | 'chart'>('grid');
+  const [pane2ViewMode, setPane2ViewMode] = useState<'grid' | 'chart'>('grid');
 
   const [userEditorHeight, setUserEditorHeight] = useState<number | null>(
     initialEditorHeight ?? null
@@ -2400,8 +2405,32 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
             )}
           </div>
 
-          {pResults.length > 0 && (
-            <div style={{ display: 'flex', gap: '4px', alignItems: 'center', padding: '2px 0' }}>
+            {pResults.length > 0 && (
+            <div style={{ display: 'flex', gap: '6px', alignItems: 'center', padding: '2px 0' }}>
+              {/* Grid / Chart View Mode Toggle */}
+              <div style={{ display: 'inline-flex', alignItems: 'center', background: 'var(--win-bg-card)', border: '1px solid var(--win-border)', borderRadius: '6px', padding: '1px' }}>
+                <button
+                  type="button"
+                  className={`gp-btn ${(paneId === 1 ? pane1ViewMode : pane2ViewMode) === 'grid' ? 'on' : ''}`}
+                  onClick={() => (paneId === 1 ? setPane1ViewMode('grid') : setPane2ViewMode('grid'))}
+                  style={{ padding: '2px 6px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '3px' }}
+                  title="Table Grid View"
+                >
+                  <Rows size={11} />
+                  <span>Grid</span>
+                </button>
+                <button
+                  type="button"
+                  className={`gp-btn ${(paneId === 1 ? pane1ViewMode : pane2ViewMode) === 'chart' ? 'on' : ''}`}
+                  onClick={() => (paneId === 1 ? setPane1ViewMode('chart') : setPane2ViewMode('chart'))}
+                  style={{ padding: '2px 6px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '3px' }}
+                  title="Visualize with Chart"
+                >
+                  <BarChart2 size={11} />
+                  <span>Chart</span>
+                </button>
+              </div>
+
               {pEditability.editable ? (
                 <span
                   title={t('sqlEditor.editableHint', { table: pEditability.table })}
@@ -2488,6 +2517,13 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
               )}
 
               {!pErrorMsg && (pResults.length > 0 || pColumns.length > 0) && (
+                (paneId === 1 ? pane1ViewMode : pane2ViewMode) === 'chart' ? (
+                  <DataVisualizer
+                    rows={pResults}
+                    columnNames={pColumns}
+                    title={t('sqlEditor.chartResultsTitle', 'Query Results Visualization')}
+                  />
+                ) : (
                 <div className="grid-table-container" style={{ height: '100%' }}>
                   <table className="grid-table">
                     <thead>
@@ -2692,6 +2728,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                     </tbody>
                   </table>
                 </div>
+                )
               )}
             </>
           )}
