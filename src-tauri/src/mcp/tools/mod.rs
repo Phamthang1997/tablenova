@@ -224,24 +224,14 @@ async fn audited(
 
     match outcome {
         Ok(result) => {
-            record(entry);
+            audit::record(entry);
             Ok(result)
         }
         Err(refusal) => {
             let message = refusal.error.message.to_string();
-            record(entry.denied(refusal.denial, message));
+            audit::record(entry.denied(refusal.denial, message));
             Err(refusal.error)
         }
-    }
-}
-
-/// Put one entry in the log, if the app is up.
-///
-/// A request answered before setup finished is not worth failing over - the client already has its
-/// answer, and there is no window listening to be told about it either.
-fn record(entry: audit::Entry) {
-    if let Some(state) = crate::state::parked_state() {
-        state.mcp.audit.record(entry);
     }
 }
 

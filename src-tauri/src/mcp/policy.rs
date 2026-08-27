@@ -20,6 +20,32 @@ pub const DEFAULT_ROW_LIMIT: usize = 100;
 /// one hopeful `limit` from turning into a full table decode.
 pub const MAX_ROW_LIMIT: usize = 1000;
 
+/// The hard ceiling on how long ONE MCP read may run.
+///
+/// The plan (§4.4) said "reuse the user's `statement_timeout`, the ceiling protects the database and
+/// who typed the query does not change that". Half right: `stmt_timeout()` reads
+/// `statementTimeoutSecs` and `unwrap_or(0)`, and `0` means **no timeout at all** - which is the
+/// default. So on an ordinary connection the stated brake did not exist, and §4.3 accepts decoding a
+/// full result before trimming it, which together means an AI's `SELECT * FROM huge_table` had
+/// nothing stopping it.
+///
+/// A separate ceiling for MCP is justified by the one asymmetry the plan itself names: the user can
+/// SEE their own query and press Stop, and an AI's query has no UI to stop - §4.4 says so in the
+/// same breath as calling timeout the brake. Where timeout is the only brake, it cannot be optional.
+const MAX_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// How long an MCP read may run: the user's own limit, but never above `MAX_TIMEOUT`.
+///
+/// **The smaller of the two, not the user's outright.** A lower setting is the user asking for
+/// stricter, and that applies to an AI as much as to them; a higher one (or none) still lands on the
+/// ceiling, because nobody is watching this query to cut it short by hand.
+pub fn mcp_timeout(user: Option<std::time::Duration>) -> std::time::Duration {
+    match user {
+        Some(d) if d < MAX_TIMEOUT => d,
+        _ => MAX_TIMEOUT,
+    }
+}
+
 /// Statement heads that only read.
 ///
 /// A **whitelist**, and the exact set `src/utils/safeMode.ts` uses, so "what counts as a read" has
@@ -34,9 +60,9 @@ pub struct Target {
     /// Postgres only, and `None` elsewhere - exactly what `qualified()` expects, so a table name
     /// built here lands in the schema the user is actually looking at rather than in `public`.
     pub schema: Option<String>,
-    /// The statement time limit the user configured for this SERVER. An AI client inherits it: the
-    /// ceiling exists to protect the database, and who typed the query does not change that.
-    pub timeout: Option<std::time::Duration>,
+    /// The statement time limit this read runs under. **Never `None`** - unlike the UI's own paths,
+    /// an MCP read always has a limit; see `mcp_timeout`.
+    pub timeout: std::time::Duration,
 }
 
 /// The connection behind a `connection_id` from the wire, if the user shared it.
@@ -53,7 +79,7 @@ pub fn resolve(state: &AppState, connection_id: &str) -> Result<Target, Refusal>
     Ok(Target {
         conn: ctx.conn().clone(),
         schema: ctx.raw_schema().map(str::to_owned),
-        timeout: crate::database::stmt_timeout(&ctx.server().config()),
+        timeout: mcp_timeout(crate::database::stmt_timeout(&ctx.server().config())),
     })
 }
 
@@ -200,6 +226,19 @@ mod tests {
         assert!(ensure_single_read("SELECT 1;").is_ok(), "one statement with a trailing ;");
         // The splitter's whole job: this is ONE statement, not two.
         assert!(ensure_single_read("SELECT 'a;b' FROM t").is_ok());
+    }
+
+    #[test]
+    fn an_mcp_read_always_has_a_limit_and_never_a_longer_one() {
+        use std::time::Duration;
+        // The default case, and the one this exists for: `statementTimeoutSecs` unset means
+        // `stmt_timeout` returns None, which used to mean no brake at all.
+        assert_eq!(mcp_timeout(None), MAX_TIMEOUT);
+        // Stricter than us is the user asking for stricter, and it applies to an AI too.
+        assert_eq!(mcp_timeout(Some(Duration::from_secs(5))), Duration::from_secs(5));
+        // Looser than us still lands on the ceiling: nobody is watching this query to stop it.
+        assert_eq!(mcp_timeout(Some(Duration::from_secs(3600))), MAX_TIMEOUT);
+        assert_eq!(mcp_timeout(Some(MAX_TIMEOUT)), MAX_TIMEOUT);
     }
 
     #[test]

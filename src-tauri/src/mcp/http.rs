@@ -18,6 +18,7 @@ use rmcp::transport::streamable_http_server::{
 };
 use tokio_util::sync::CancellationToken;
 
+use super::audit::{self, Denial};
 use super::tools::TableNovaMcp;
 
 /// The path AI clients point at: `http://127.0.0.1:<port>/mcp`.
@@ -63,7 +64,7 @@ async fn guard_origin(State(g): State<Guard>, req: Request<Body>, next: Next) ->
         Some(v) => v.to_str().map(is_loopback_origin).unwrap_or(false),
     };
     if !origin_ok {
-        return deny(StatusCode::FORBIDDEN, "origin not allowed");
+        return deny(StatusCode::FORBIDDEN, "origin not allowed", Denial::BadOrigin, &req);
     }
 
     // HTTP/2 carries the authority in the pseudo-header rather than in `Host`; axum surfaces it on
@@ -76,7 +77,7 @@ async fn guard_origin(State(g): State<Guard>, req: Request<Body>, next: Next) ->
         .map(str::to_owned)
         .or_else(|| req.uri().authority().map(|a| a.as_str().to_owned()));
     if !host.map(|h| is_expected_host(&h, g.port)).unwrap_or(false) {
-        return deny(StatusCode::FORBIDDEN, "host not allowed");
+        return deny(StatusCode::FORBIDDEN, "host not allowed", Denial::BadOrigin, &req);
     }
 
     next.run(req).await
@@ -94,14 +95,21 @@ async fn guard_token(State(g): State<Guard>, req: Request<Body>, next: Next) -> 
 
     match presented {
         Some(t) if super::auth::verify(&t, &g.token) => next.run(req).await,
-        // `WWW-Authenticate` is what tells a client it needs to send a token rather than that its
-        // request was malformed - the difference between a fixable config and a mystery.
-        _ => (
-            StatusCode::UNAUTHORIZED,
-            [(header::WWW_AUTHENTICATE, "Bearer")],
-            "missing or invalid bearer token\n",
-        )
-            .into_response(),
+        _ => {
+            const MSG: &str = "missing or invalid bearer token";
+            audit::record(
+                audit::entry(&req_label(&req), None, None, 0)
+                    .denied(Denial::BadToken, MSG.to_string()),
+            );
+            // `WWW-Authenticate` is what tells a client it needs to send a token rather than that
+            // its request was malformed - the difference between a fixable config and a mystery.
+            (
+                StatusCode::UNAUTHORIZED,
+                [(header::WWW_AUTHENTICATE, "Bearer")],
+                format!("{MSG}\n"),
+            )
+                .into_response()
+        }
     }
 }
 
@@ -167,7 +175,27 @@ fn is_loopback_name(name: &str) -> bool {
     matches!(name, "127.0.0.1" | "localhost" | "::1")
 }
 
-fn deny(code: StatusCode, msg: &'static str) -> Response {
+/// What the log calls a request that never reached a tool.
+///
+/// Layers 1 and 2 refuse before `rmcp` has parsed the JSON-RPC body, so there is no tool name to
+/// record yet - the method and path are the whole truth we have, and they read as what they are
+/// rather than as a tool that does not exist.
+fn req_label(req: &Request<Body>) -> String {
+    format!("{} {}", req.method(), req.uri().path())
+}
+
+/// Refuse, and **write it down**.
+///
+/// The recording is the point, not a nicety. These two layers are the ones that fire while a user is
+/// still pointing a client at us - a wrong token, a stale port - and they used to leave no trace at
+/// all, so the Requests panel read "no request yet" while the client was being turned away on every
+/// retry. That is the one state a log like this exists to make visible.
+///
+/// Cost accepted: a client retrying in a loop writes one entry per attempt, so a misconfigured
+/// client can push real entries out of the 500-deep ring. Bounded and self-inflicted, and coalescing
+/// would mean the panel undercounting what actually happened - measure before trading that away.
+fn deny(code: StatusCode, msg: &'static str, denial: Denial, req: &Request<Body>) -> Response {
+    audit::record(audit::entry(&req_label(req), None, None, 0).denied(denial, msg.to_string()));
     (code, format!("{msg}\n")).into_response()
 }
 

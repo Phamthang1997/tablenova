@@ -33,6 +33,10 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Denial {
+    /// Layer 1: `Origin` or `Host` was not loopback-on-our-port.
+    BadOrigin,
+    /// Layer 2: the bearer token was absent or wrong.
+    BadToken,
     /// Layer 3: the connection is not shared with MCP clients (or does not exist).
     NotShared,
     /// Layer 4: not a single read statement.
@@ -46,6 +50,8 @@ pub enum Denial {
 impl Denial {
     fn layer(self) -> u8 {
         match self {
+            Denial::BadOrigin => 1,
+            Denial::BadToken => 2,
             Denial::NotShared => 3,
             Denial::NotReadOnly => 4,
             Denial::ManualTransaction => 4,
@@ -151,6 +157,21 @@ pub fn entry(tool: &str, conn_id: Option<&str>, sql: Option<&str>, ms: u64) -> E
     }
 }
 
+/// Put one entry in the log, if the app is up.
+///
+/// The single writer for **both** callers: the tool wrapper in `tools/mod.rs` and the two HTTP
+/// guards in `http.rs`. They record from different places for the same reason - a request the user
+/// cannot see is a request they cannot diagnose - and two copies of the "is the app up yet" dance
+/// would be one place for the door to stop reporting.
+///
+/// A request answered before setup finished is not worth failing over: the client already has its
+/// answer, and there is no window listening to be told about it either.
+pub fn record(entry: Entry) {
+    if let Some(state) = crate::state::parked_state() {
+        state.mcp.audit.record(entry);
+    }
+}
+
 impl Entry {
     pub fn denied(mut self, denial: Denial, message: String) -> Self {
         self.ok = false;
@@ -203,6 +224,24 @@ mod tests {
         let f = entry("tablenova_query", Some("c1"), Some("SELECT 1"), 3)
             .denied(Denial::Failed, "syntax error".to_string());
         assert_eq!(f.layer, Some(0));
+    }
+
+    /// The two layers that actually fire while a user is still setting a client up. They used to be
+    /// recorded nowhere, so the panel said "no request yet" while the client was being turned away
+    /// at the door on every retry - the one state this log exists to make visible.
+    #[test]
+    fn the_door_layers_report_themselves() {
+        let origin = entry("POST /mcp", None, None, 0)
+            .denied(Denial::BadOrigin, "origin not allowed".to_string());
+        assert_eq!(origin.layer, Some(1));
+        let token = entry("POST /mcp", None, None, 0)
+            .denied(Denial::BadToken, "missing or invalid bearer token".to_string());
+        assert_eq!(token.layer, Some(2));
+        // The layer must survive serialisation: the UI switches on `denial`, and falls back to
+        // `layer` for a variant it does not know yet.
+        let wire = json!(token);
+        assert_eq!(wire["denial"], "badToken");
+        assert_eq!(wire["layer"], 2);
     }
 }
 

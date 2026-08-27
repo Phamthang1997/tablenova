@@ -33,7 +33,7 @@ pub async fn preview_table(
     let sql = format!("SELECT * FROM {table} LIMIT {limit}");
 
     let started = Instant::now();
-    let results = with_timeout(target.timeout, execute_raw_sql_pooled(&target.conn, sql))
+    let results = with_timeout(Some(target.timeout), execute_raw_sql_pooled(&target.conn, sql))
         .await
         .map_err(passthrough)?;
     // The database already applied the limit, so nothing here was cut off after the fact.
@@ -52,7 +52,7 @@ pub async fn query(
     let limit = policy::row_limit(limit);
 
     let started = Instant::now();
-    let results = with_timeout(target.timeout, execute_raw_sql_pooled(&target.conn, sql.to_string()))
+    let results = with_timeout(Some(target.timeout), execute_raw_sql_pooled(&target.conn, sql.to_string()))
         .await
         .map_err(passthrough)?;
     json_result(&shape(results, limit, started, true))
