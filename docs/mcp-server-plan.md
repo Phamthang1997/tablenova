@@ -519,11 +519,16 @@ DLL giao diện. Đây cũng là điều kiện cần cho cầu stdio ở V2.
 được client nào**: cùng một endpoint streamable HTTP, ba client gọi tên field URL ba kiểu và **bỏ qua
 kiểu của nhau mà không báo lỗi**.
 
-| Client | Field | Nếu sai |
-|:--|:--|:--|
-| Claude Code | `"type": "http"` + `url`, hoặc `--transport http` | thiếu `type` → mặc định **stdio**, đi tìm `command` không có |
-| Antigravity | `serverUrl` (`~/.gemini/config/mcp_config.json`) | docs nói rõ `url`/`httpUrl` không hỗ trợ |
-| Cursor & phần còn lại | `url` trơn | — |
+| Client | Field | Nếu sai | Đã kiểm |
+|:--|:--|:--|:--|
+| Claude Code | `"type": "http"` + `url`, hoặc `--transport http` | thiếu `type` → mặc định **stdio**, đi tìm `command` không có | `claude mcp list` → ✔ Connected; `initialize` + 6 `tools/call` chạy qua chính endpoint đó |
+| Antigravity | `serverUrl` (`~/.gemini/config/mcp_config.json`) | docs nói rõ `url`/`httpUrl` không hỗ trợ | **chạy thật**: `initialize` → `notifications/initialized` → `list_connections` → `list_tables` |
+| Cursor & phần còn lại | `url` trơn | — | chưa (không có client để thử) |
+
+Hai client đã kiểm trả về **cùng một kết quả** trên cùng database (`albums1`, `test`, `test12`,
+`test_group`), nên bảng trên là quan sát chứ không phải suy luận từ docs. Một chi tiết phụ nhưng
+xác nhận đúng tiền đề của §3.3: `connection_id` hai lần chạy khác nhau (`fc62a1bd…` rồi `a05e7aa9…`)
+vì nó được mint mới mỗi lần connect — đó chính là lý do không được khoá chính sách bền theo nó.
 
 Ba cái bẫy nữa, cả ba đều **im lặng**:
 
