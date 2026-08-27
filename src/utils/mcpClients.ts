@@ -24,6 +24,16 @@
 /** The server name every client registers us under. */
 const SERVER_NAME = 'tablenova';
 
+/** What every builder is handed. One object, so adding a field does not touch four signatures. */
+export interface McpTarget {
+  /** The endpoint the server is actually bound to. */
+  url: string;
+  token: string;
+  /** This app's own executable, for the `--mcp-stdio` config. */
+  exePath: string;
+  port: number;
+}
+
 /** The `mcpServers` wrapper the JSON clients share. Only the field naming the URL differs. */
 function serverJson(urlField: Record<string, string>, token: string): string {
   return JSON.stringify(
@@ -63,7 +73,7 @@ export const MCP_CLIENTS = [
      * the third still runs - cheaper than making the user choose between two variants of the
      * instruction while something is already broken.
      */
-    build: (url: string, token: string) =>
+    build: ({ url, token }: McpTarget) =>
       `claude mcp remove ${SERVER_NAME} -s local\n` +
       `claude mcp remove ${SERVER_NAME} -s user\n` +
       `claude mcp add --transport http ${SERVER_NAME} ${url} ` +
@@ -74,14 +84,43 @@ export const MCP_CLIENTS = [
     labelKey: 'mcp.clientAntigravity',
     targetKey: 'mcp.targetAntigravity',
     isCommand: false,
-    build: (url: string, token: string) => serverJson({ serverUrl: url }, token),
+    /**
+     * **stdio, not `serverUrl` - for portability, and one fewer secret.**
+     *
+     * `serverUrl` is the correct config and it worked here, until Antigravity's HTTP client began
+     * failing before any request reached us (its own log, at every IDE startup: `failed to get server
+     * directory`). A Node bridge fixed that first, but a script under `scripts/` only exists on a
+     * machine that has the repo, so its absolute path cannot travel. The app speaking stdio itself
+     * has neither problem: the path is this executable, which the dialog knows on whatever machine it
+     * is running on - the whole point being that another machine needs no hand-editing.
+     *
+     * **No `env`, no token.** The proxy reads the keyring itself, so the bearer never lands in the
+     * client's plaintext config - the §8 risk this had been living with.
+     *
+     * `--port` is written out rather than left to the default: the default lives in `mcp/server.rs`,
+     * and a config that silently disagrees with the bound port is the exact failure this dialog
+     * exists to prevent.
+     */
+    build: ({ exePath, port }: McpTarget) =>
+      JSON.stringify(
+        {
+          mcpServers: {
+            [SERVER_NAME]: {
+              command: exePath || 'tablenova',
+              args: ['--mcp-stdio', '--port', String(port)],
+            },
+          },
+        },
+        null,
+        2,
+      ),
   },
   {
     id: 'generic',
     labelKey: 'mcp.clientGeneric',
     targetKey: 'mcp.targetGeneric',
     isCommand: false,
-    build: (url: string, token: string) => serverJson({ url }, token),
+    build: ({ url, token }: McpTarget) => serverJson({ url }, token),
   },
 ] as const;
 

@@ -1,20 +1,27 @@
 import { describe, it, expect } from 'vitest';
 import en from '../../i18n/locales/en';
-import { MCP_CLIENTS, mcpClient, type McpClientId } from '../mcpClients';
+import { MCP_CLIENTS, mcpClient, type McpClientId, type McpTarget } from '../mcpClients';
 
-const URL = 'http://127.0.0.1:45124/mcp';
-const TOKEN = 'deadbeef';
+const TARGET: McpTarget = {
+  url: 'http://127.0.0.1:45124/mcp',
+  token: 'deadbeef',
+  exePath: 'C:/Program Files/TableNova/tablenova.exe',
+  port: 45124,
+};
 
 function built(id: McpClientId): string {
-  return mcpClient(id).build(URL, TOKEN);
+  return mcpClient(id).build(TARGET);
 }
 
 describe('mcpClients', () => {
-  it('gives every client the endpoint and the token', () => {
+  // Each client must reach the same server. HOW differs - two speak HTTP and carry the token, one
+  // spawns this executable and carries none - so the shared assertion is only that nothing is blank.
+  it('gives every client something addressable', () => {
     for (const c of MCP_CLIENTS) {
-      const out = c.build(URL, TOKEN);
-      expect(out, c.id).toContain(URL);
-      expect(out, c.id).toContain(`Bearer ${TOKEN}`);
+      const out = c.build(TARGET);
+      expect(out.trim(), c.id).not.toBe('');
+      const addressable = out.includes(TARGET.url) || out.includes(TARGET.exePath);
+      expect(addressable, `${c.id} names neither the url nor the exe`).toBe(true);
     }
   });
 
@@ -25,6 +32,8 @@ describe('mcpClients', () => {
     const out = built('claudeCode');
     expect(out).toContain('claude mcp add');
     expect(out).toContain('--transport http');
+    expect(out).toContain(TARGET.url);
+    expect(out).toContain(`Bearer ${TARGET.token}`);
     expect(out).not.toContain('mcpServers');
   });
 
@@ -39,35 +48,43 @@ describe('mcpClients', () => {
     expect(lines[2]).toContain('claude mcp add');
   });
 
-  // The bug this scope flag exists for: a project-scoped entry is keyed by absolute path, and on
-  // Windows the CLI canonicalizes that key to the on-disk casing while a session uses whatever its
-  // shell wrote - so the CLI reports Connected while the session loads zero tools. User scope writes
-  // to the top-level `mcpServers`, which no project key touches.
+  // On Windows a project-scoped entry is keyed by absolute path, and the CLI canonicalizes that key
+  // to the on-disk casing while a session uses whatever its shell wrote - so the CLI reports
+  // Connected while the session loads zero tools. User scope writes to the top-level `mcpServers`,
+  // which no project key touches.
   it('registers Claude Code at user scope, never the default local', () => {
-    const add = built('claudeCode').split('\n')[2];
-    expect(add).toContain('--scope user');
+    expect(built('claudeCode').split('\n')[2]).toContain('--scope user');
   });
 
-  // Antigravity's docs: `url` and `httpUrl` are not supported.
-  it('uses serverUrl for Antigravity and nothing else', () => {
-    const parsed = JSON.parse(built('antigravity'));
-    const entry = parsed.mcpServers.tablenova;
-    expect(entry.serverUrl).toBe(URL);
-    expect(entry.url).toBeUndefined();
-    expect(entry.httpUrl).toBeUndefined();
-    expect(entry.headers.Authorization).toBe(`Bearer ${TOKEN}`);
+  // Antigravity gets the stdio config: its HTTP client fails before reaching us in at least one
+  // install, and an absolute path to a repo script cannot travel to another machine. The exe can.
+  it('points Antigravity at this executable over stdio, with the port spelled out', () => {
+    const entry = JSON.parse(built('antigravity')).mcpServers.tablenova;
+    expect(entry.command).toBe(TARGET.exePath);
+    expect(entry.args).toEqual(['--mcp-stdio', '--port', String(TARGET.port)]);
+    // The whole reason to prefer this shape: no bearer token in the client's plaintext config.
+    expect(JSON.stringify(entry)).not.toContain(TARGET.token);
+    expect(entry.env).toBeUndefined();
+  });
+
+  // A missing exe path must still produce a runnable-looking config rather than `"command": ""`.
+  it('falls back to a bare command name when the OS will not say where we are', () => {
+    const entry = JSON.parse(mcpClient('antigravity').build({ ...TARGET, exePath: '' })).mcpServers
+      .tablenova;
+    expect(entry.command).toBe('tablenova');
   });
 
   it('uses the bare url field for the generic client', () => {
     const entry = JSON.parse(built('generic')).mcpServers.tablenova;
-    expect(entry.url).toBe(URL);
+    expect(entry.url).toBe(TARGET.url);
     expect(entry.serverUrl).toBeUndefined();
+    expect(entry.headers.Authorization).toBe(`Bearer ${TARGET.token}`);
   });
 
-  // The three spellings must stay mutually exclusive: the moment two clients produce the same text,
-  // the picker has stopped earning its place and one of them is being handed a config that fails.
+  // The three spellings must stay distinct: the moment two clients produce the same text, the picker
+  // has stopped earning its place and one of them is being handed a config that fails.
   it('produces a distinct payload per client', () => {
-    const outs = MCP_CLIENTS.map((c) => c.build(URL, TOKEN));
+    const outs = MCP_CLIENTS.map((c) => c.build(TARGET));
     expect(new Set(outs).size).toBe(MCP_CLIENTS.length);
   });
 
@@ -75,8 +92,7 @@ describe('mcpClients', () => {
   it('names translation keys that exist', () => {
     for (const c of MCP_CLIENTS) {
       for (const key of [c.labelKey, c.targetKey]) {
-        const leaf = key.replace(/^mcp\./, '');
-        expect(en.mcp, key).toHaveProperty(leaf);
+        expect(en.mcp, key).toHaveProperty(key.replace(/^mcp\./, ''));
       }
     }
   });

@@ -34,6 +34,16 @@ use super::audit::{self, Refusal};
 pub struct ConnArgs {
     /// From tablenova_list_connections. OMIT this when the user has shared exactly one
     /// connection - the tool then uses it. Required only when several are shared.
+    //
+    // `with = "String"` overrides only the SCHEMA, not the deserialisation. Without it, schemars
+    // renders `Option<String>` as `"type": ["string", "null"]`, and a type ARRAY is outside the
+    // schema subset Gemini/Antigravity accepts for function calling - it rejected the whole
+    // `tools/list`, closed the client, and surfaced it as an unrelated `session not found`. The field
+    // needs `#[serde(default)]` next to it to stay OUT of `required`: `with` makes schemars see a
+    // plain String, and a plain String is required unless serde says it has a default. Without that
+    // line the schema demanded the very argument this change exists to let callers omit.
+    #[serde(default)]
+    #[schemars(with = "String")]
     pub connection_id: Option<String>,
 }
 
@@ -41,6 +51,16 @@ pub struct ConnArgs {
 pub struct TableArgs {
     /// From tablenova_list_connections. OMIT this when the user has shared exactly one
     /// connection - the tool then uses it. Required only when several are shared.
+    //
+    // `with = "String"` overrides only the SCHEMA, not the deserialisation. Without it, schemars
+    // renders `Option<String>` as `"type": ["string", "null"]`, and a type ARRAY is outside the
+    // schema subset Gemini/Antigravity accepts for function calling - it rejected the whole
+    // `tools/list`, closed the client, and surfaced it as an unrelated `session not found`. The field
+    // needs `#[serde(default)]` next to it to stay OUT of `required`: `with` makes schemars see a
+    // plain String, and a plain String is required unless serde says it has a default. Without that
+    // line the schema demanded the very argument this change exists to let callers omit.
+    #[serde(default)]
+    #[schemars(with = "String")]
     pub connection_id: Option<String>,
     /// Unqualified table or view name, as tablenova_list_tables reports it.
     pub table_name: String,
@@ -50,10 +70,24 @@ pub struct TableArgs {
 pub struct PreviewArgs {
     /// From tablenova_list_connections. OMIT this when the user has shared exactly one
     /// connection - the tool then uses it. Required only when several are shared.
+    //
+    // `with = "String"` overrides only the SCHEMA, not the deserialisation. Without it, schemars
+    // renders `Option<String>` as `"type": ["string", "null"]`, and a type ARRAY is outside the
+    // schema subset Gemini/Antigravity accepts for function calling - it rejected the whole
+    // `tools/list`, closed the client, and surfaced it as an unrelated `session not found`. The field
+    // needs `#[serde(default)]` next to it to stay OUT of `required`: `with` makes schemars see a
+    // plain String, and a plain String is required unless serde says it has a default. Without that
+    // line the schema demanded the very argument this change exists to let callers omit.
+    #[serde(default)]
+    #[schemars(with = "String")]
     pub connection_id: Option<String>,
     /// Unqualified table or view name, as tablenova_list_tables reports it.
     pub table_name: String,
     /// Rows to return. Default 100, capped at 1000.
+    // Same reason as `connection_id` above: an un-annotated `Option<usize>` renders as
+    // `"type": ["integer", "null"]`, and a type array is outside the schema subset Gemini accepts.
+    #[serde(default)]
+    #[schemars(with = "usize")]
     pub limit: Option<usize>,
 }
 
@@ -61,10 +95,24 @@ pub struct PreviewArgs {
 pub struct QueryArgs {
     /// From tablenova_list_connections. OMIT this when the user has shared exactly one
     /// connection - the tool then uses it. Required only when several are shared.
+    //
+    // `with = "String"` overrides only the SCHEMA, not the deserialisation. Without it, schemars
+    // renders `Option<String>` as `"type": ["string", "null"]`, and a type ARRAY is outside the
+    // schema subset Gemini/Antigravity accepts for function calling - it rejected the whole
+    // `tools/list`, closed the client, and surfaced it as an unrelated `session not found`. The field
+    // needs `#[serde(default)]` next to it to stay OUT of `required`: `with` makes schemars see a
+    // plain String, and a plain String is required unless serde says it has a default. Without that
+    // line the schema demanded the very argument this change exists to let callers omit.
+    #[serde(default)]
+    #[schemars(with = "String")]
     pub connection_id: Option<String>,
     /// Exactly ONE read statement: SELECT, EXPLAIN, SHOW, DESCRIBE or DESC.
     pub sql: String,
     /// Rows to return. Default 100, capped at 1000.
+    // Same reason as `connection_id` above: an un-annotated `Option<usize>` renders as
+    // `"type": ["integer", "null"]`, and a type array is outside the schema subset Gemini accepts.
+    #[serde(default)]
+    #[schemars(with = "usize")]
     pub limit: Option<usize>,
 }
 

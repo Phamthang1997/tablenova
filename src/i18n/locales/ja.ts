@@ -2759,7 +2759,7 @@ const ja: typeof en = {
     targetClaudeCode:
       'ターミナルで実行してください。最初の 2 行は再登録のときだけ必要です。スコープは project ではなく user です — project スコープの登録は CLI からは見えてもセッションからは見えないことがあります。settings.json に貼らないこと: Claude Code はそこから MCP サーバーを読まず、警告も出しません。',
     targetAntigravity:
-      '~/.gemini/config/mcp_config.json に保存するか、Manage MCP Servers → View raw config を使ってください。',
+      '~/.gemini/config/mcp_config.json に保存するか、Manage MCP Servers → View raw config を使ってください。これは URL ではなく stdio で TableNova を起動します — Antigravity の HTTP クライアントはサーバーに到達する前に失敗することがあり、この方式ならトークンをファイルに書く必要もありません。',
     targetGeneric:
       'クライアントの MCP 設定ファイルに保存してください — Cursor なら .cursor/mcp.json です。',
     configMismatch:

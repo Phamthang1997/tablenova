@@ -147,7 +147,12 @@ export function McpServerSettingsModal({ onClose }: Props) {
   // Built from the port the server is ACTUALLY bound to, never from the default constant: a
   // generated snippet naming a port nothing listens on is worse than no snippet at all.
   const endpoint = status?.url || `http://127.0.0.1:${port}/mcp`;
-  const configSnippet = activeClient.build(endpoint, token);
+  const configSnippet = activeClient.build({
+    url: endpoint,
+    token,
+    exePath: status?.exePath ?? '',
+    port: Number(port) || status?.port || 0,
+  });
 
   /**
    * What one log row says on its right-hand side.

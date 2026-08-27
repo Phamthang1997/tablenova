@@ -5515,6 +5515,7 @@ dependencies = [
  "portable-pty",
  "redis",
  "regex",
+ "reqwest",
  "rmcp",
  "rusqlite",
  "russh",

@@ -15,7 +15,7 @@ Phạm vi đã chốt:
 |---|---|
 | Transport | **Streamable HTTP** qua SDK chính thức `rmcp`, bind loopback. Không dựng endpoint `/sse` riêng (§2.3) |
 | Ghi dữ liệu qua MCP | **Ngoài phạm vi V1.** Không có `execute_mutation` cho tới khi có lớp 5 (§3.5) |
-| Cầu stdio (`--mcp`) | **Ngoài phạm vi V1** — không chạy được như bản đầu mô tả (§0.4, §7) |
+| Cầu stdio (`--mcp-stdio`) | **Đã làm** — một `if` trước `tauri::Builder`, không cần single-instance. §0.4 lo quá mức; §7 ghi lý do làm sớm |
 | Kết nối được phơi cho AI | **Mặc định TẮT**, người dùng tự tích từng kết nối (§3.3) |
 | Đường thực thi | Pooled connection, **không** nhảy vào transaction thủ công của người dùng (§2.2) |
 | Redis | Ngoài phạm vi (§7) |
@@ -100,7 +100,8 @@ nay"), và gần như chỉ là một lớp vỏ JSON-RPC bọc quanh command đ
 
 - `tablenova_mutate` + lớp phê duyệt tương tác (§3.5), **và** việc hòa giải nó với Safe Mode để
   repo không có hai chính sách phê duyệt lệch nhau.
-- Cầu stdio cho client chỉ nói stdio.
+- ~~Cầu stdio cho client chỉ nói stdio.~~ — **đã làm trong V1**, sớm hơn kế hoạch, vì một client mục
+  tiêu thực sự cần (§6 Bước 3, bẫy 6). Nó cũng là đường duy nhất không đặt token vào config client.
 - Audit log ghi ra tệp.
 
 ### 1.3. Ngoài phạm vi (§7 ghi lý do)
@@ -540,6 +541,34 @@ Ba cái bẫy nữa, cả ba đều **im lặng**:
    một thư mục cùng tồn tại, khác nhau đúng ở chữ hoa của ổ đĩa: `c:/workspace/table` và
    `C:/workspace/table`. (`ConvertFrom-Json` còn từ chối parse cả tệp vì coi đó là khoá trùng.)
 
+4. **`Option<T>` để trơn phát `"type": ["string","null"]`, và một `type` dạng MẢNG nằm ngoài schema
+   subset Gemini nhận cho function calling.** Nó từ chối cả `tools/list`, nên UI hiện **0 tools** kèm
+   một lỗi không liên quan gì tới schema. Sửa: `#[serde(default)]` **cộng** `#[schemars(with = "…")]`
+   — cần cả hai, vì `with` cho type scalar còn `serde(default)` là thứ giữ field ngoài `required`
+   (thiếu nó thì schema đòi đúng cái tham số vừa được làm optional để cho phép bỏ).
+
+5. **Antigravity cache định nghĩa tool xuống ĐĨA** (`~/.gemini/antigravity-ide/mcp/<server>/`), và
+   `Refresh` không fetch lại. Đây là bẫy đắt nhất buổi này: nó làm **năm** thay đổi server liên tiếp
+   trở thành vô hình — thông báo lỗi không đổi **một chữ** qua stateful↔stateless, 401↔404, và hai
+   hình dạng schema. Dấu hiệu nhận ra: thông báo lỗi bất biến khi server đã đổi. Sửa: xoá thư mục đó
+   rồi restart IDE. **Trước khi kết luận bất cứ điều gì về server, kiểm chỗ này.**
+
+6. **HTTP path của MCP client trong Antigravity có thể hỏng độc lập với server.** Log của chính nó, ở
+   **mọi** lần khởi động IDE: `mcp_manager.go: Failed to write server states, eagerly loading all
+   tools: failed to get server directory`. Nó mở một kênh listen server→client tên
+   `subscriptions/listen` và bỏ cả tool list khi kênh đó lỗi, rồi báo ra dưới dạng `session not found`
+   với session id **rỗng** — một câu nội bộ, không phản ánh response nào của ta. Đây là điều kiện §7
+   đặt ra cho cầu stdio ("chỉ thêm nếu một client mục tiêu thực sự cần"), và nó đã thoả bằng đo. Với
+   client này, tab Antigravity trong dialog phát config `--mcp-stdio`, không phát `serverUrl`.
+
+**Hai lần chữa sai đã ghi lại, vì cái giá của chúng là thật.** Đứng trước triệu chứng ở bẫy 5 và 6,
+hai thay đổi server đã được thực hiện và **cả hai đều phải revert**: `legacy_session_mode = false`
+(stateless bỏ kênh `GET /mcp`, 200 → 405, làm hỏng vĩnh viễn một client đang chạy) và `.well-known`
+trả 404 thay vì 401 (đổi handshake auth, trong khi mục tiêu thật chỉ là **dẹp nhiễu trong panel** —
+nay đạt bằng cách không ghi audit cho path đó, không chạm status code). Bài học chung: khi thông báo
+lỗi của client **không đổi** trong lúc server đã đổi, thủ phạm nằm ở phía client — đừng sửa server
+thêm nữa.
+
    Cơ chế, đã xác lập bằng đo chứ không phải suy luận: **CLI và session runtime resolve khác nhau.**
    `claude mcp add`/`list` canonicalize theo casing thật trên đĩa (`C:/…`) bất kể shell nào gọi —
    nên CLI luôn báo *✔ Connected*. Còn **session** dùng đường dẫn như shell của nó viết ra, và một
@@ -579,8 +608,11 @@ tồn tại, hai middleware ghi qua `audit::record()` (một người ghi duy nh
 - [ ] Cơ chế park request → event → hộp thoại → channel, có timeout.
 - [ ] `tablenova_mutate` + hộp thoại nói rõ "không nằm trong transaction của bạn".
 - [ ] Audit log ghi tệp.
-- [ ] Cầu stdio: một proxy mỏng stdio↔HTTP loopback, cờ xử lý **trước** `tauri::Builder`, cộng
-      plugin single-instance (§0.4).
+- [x] Cầu stdio: một proxy mỏng stdio↔HTTP loopback, cờ xử lý **trước** `tauri::Builder` — **không**
+      cần plugin single-instance. §0.4 lo đúng một nửa: nó đúng rằng mở app thứ hai là sai, nhưng mode
+      proxy **không bao giờ chạm tầng cửa sổ** (`mcp/stdio.rs::serve()` không quay lại `run()`), nên
+      không có hai instance nào tranh nhau. Toàn bộ phần bootstrap là **một `if`** ở đầu `app/run.rs`.
+      Làm sớm hơn V2 vì có điều kiện thật — xem Bước 3 bên dưới, bẫy thứ sáu.
 
 ---
 
@@ -588,8 +620,11 @@ tồn tại, hai middleware ghi qua `audit::record()` (một người ghi duy nh
 
 - **Endpoint `/sse` như transport chính** — bản cũ của spec (§2.3). Chỉ thêm nếu một client mục tiêu
   thực sự cần, và khi đó nó là đường tương thích.
-- **`tablenova.exe --mcp` ở V1** — §0.4. Cần arg parsing trước `tauri::Builder` + single-instance +
-  một proxy; cả ba đều là thay đổi ở tầng bootstrap, không đáng để chặn V1.
+- ~~**`tablenova.exe --mcp` ở V1**~~ — **đã làm**, dưới tên `--mcp-stdio` (`mcp/stdio.rs`). Ước lượng
+  "ba thay đổi ở tầng bootstrap" hoá ra là **một `if`**: single-instance không cần, vì proxy không
+  chạm tầng cửa sổ. Nó cũng mang hai món lợi ngoài dự tính — config của client chỉ còn `command` +
+  `args` (đường dẫn exe mà dialog tự biết, nên **máy khác không phải sửa tay**), và **không còn token
+  trong config client** vì proxy tự đọc keyring.
 - **Tool Redis** — 40+ command với mô hình quyền riêng. Sau V1, nếu có nhu cầu thật.
 - **Truy vấn liên-kết-nối** — cùng lý do `multi-connection-plan.md` đã loại: không có engine nào để
   join hai kết nối, và giả vờ có là hứa sai với AI.
@@ -610,7 +645,10 @@ tồn tại, hai middleware ghi qua `audit::record()` (một người ghi duy nh
 - **Một AI client cấu hình sai có thể quét cả database.** Timeout + giới hạn dòng hãm được tác động,
   không hãm được số lượng lời gọi. Nếu thành vấn đề: rate limit trong `policy.rs`, đo trước rồi làm.
 - **Token nằm trong file cấu hình của AI client** (`.cursor/mcp.json` và tương đương) — thường là
-  plaintext, và có khi bị commit vào repo. Settings nên nói thẳng điều này cạnh nút Copy.
+  plaintext, và có khi bị commit vào repo. Settings nói thẳng điều này cạnh nút Copy, và `.mcp.json`
+  đã vào `.gitignore`. **Đóng cho đường `--mcp-stdio`**: config đó chỉ có `command` + `args`, proxy tự
+  đọc keyring, nên không có token nào để rò. Vẫn mở cho hai đường HTTP, và đó là lý do thứ hai để
+  ưu tiên stdio ở client nào cũng dùng được nó.
 - ~~**`exposed` là per-`conn_id` trong Rust nhưng bền theo `connKey` ở frontend.**~~ — **đã đóng**
   bằng cách không lưu bền nó: xem §3.3. Không còn nơi thứ hai thì không còn chỗ lệch.
 

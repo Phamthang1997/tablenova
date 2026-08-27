@@ -2765,7 +2765,7 @@ const vi: typeof en = {
     targetClaudeCode:
       'Chạy trong terminal — hai dòng đầu chỉ cần khi đăng ký lại. Scope là user, không phải project: một entry theo project có thể CLI thấy mà session lại không. Đừng dán vào settings.json: Claude Code không đọc MCP server ở đó và cũng không báo lỗi.',
     targetAntigravity:
-      'Lưu vào ~/.gemini/config/mcp_config.json, hoặc dùng Manage MCP Servers → View raw config.',
+      'Lưu vào ~/.gemini/config/mcp_config.json, hoặc dùng Manage MCP Servers → View raw config. Bản này gọi TableNova qua stdio thay vì dùng URL, vì HTTP client của Antigravity có thể lỗi trước khi tới server — và nó không cần token trong tệp.',
     targetGeneric: 'Lưu vào tệp cấu hình MCP của client — với Cursor là .cursor/mcp.json.',
     configMismatch:
       'Mỗi client gọi tên field URL một kiểu và bỏ qua kiểu của client khác, nên cấu hình dành cho client khác sẽ lỗi mà không báo gì.',

@@ -71,6 +71,8 @@ export interface McpStatus {
   running: boolean;
   port: number;
   url: string;
+  /** This app's own executable, for the `--mcp-stdio` client config. */
+  exePath: string;
 }
 
 /** One request an AI client made. Mirrors `mcp/audit.rs`. */

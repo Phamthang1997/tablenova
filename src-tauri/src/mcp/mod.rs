@@ -28,9 +28,10 @@
 
 mod audit;
 mod auth;
-mod http;
+pub(crate) mod http;
 mod policy;
 mod server;
+pub mod stdio;
 mod tools;
 
 pub mod commands;

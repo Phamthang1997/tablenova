@@ -38,6 +38,24 @@ struct Guard {
 /// `Origin`/`Host` is added last and runs first, which is what we want: a request from a web page
 /// must be turned away before anything looks at its credentials.
 pub fn router(port: u16, token: Arc<str>, cancel: CancellationToken) -> Router {
+    // **Session mode stays ON (rmcp's default) - now a measured decision, not an unexamined one.**
+    //
+    // Turning it off (`with_legacy_session_mode(false)`) looked right, and the reasoning was sound as
+    // far as it went: nothing here needs a session - the tools are stateless reads, and the only real
+    // state, which connection is shared, lives in `AppState` rather than in the transport - and
+    // SEP-2567 removes sessions from protocol 2026-07-28 anyway. It also promised to kill a genuine
+    // annoyance: in session mode every TableNova restart invalidates every client's session, which
+    // reaches the user as `session not found`.
+    //
+    // It broke a client that had been working. Stateless has no server-to-client stream, so
+    // `GET /mcp` answers **405** where session mode answers **200** - and Antigravity opens exactly
+    // that stream (its own name for it is `subscriptions/listen`), then abandons its whole tool list
+    // when it cannot. Measured both ways against the real client.
+    //
+    // So the trade is deliberate: keep sessions, and a restart of TableNova costs connected clients
+    // one reconnect. That is a transient with an obvious remedy; the alternative was a permanent
+    // failure for one of the two clients this build is actually tested against. Anyone tempted to
+    // flip this again should read `docs/mcp-server-plan.md` §6 Bước 3 first.
     let service = StreamableHttpService::new(
         || Ok(TableNovaMcp::new()),
         LocalSessionManager::default().into(),
@@ -80,23 +98,19 @@ async fn guard_origin(State(g): State<Guard>, req: Request<Body>, next: Next) ->
         return deny(StatusCode::FORBIDDEN, "host not allowed", Denial::BadOrigin, &req);
     }
 
-    // OAuth discovery: answer 404, and do NOT audit it.
-    //
-    // Clients probe `/.well-known/oauth-protected-resource` before they trust a configured header.
-    // Those probes carry no `Authorization` by design, so falling through to layer 2 gave them a 401
-    // plus `WWW-Authenticate: Bearer` - which invites an OAuth flow this server does not implement
-    // (§7: bearer on loopback is the right threat model, OAuth is for remote servers) - and, worse,
-    // filled the Requests panel with red "Wrong or missing token" rows for entirely expected client
-    // behaviour. A panel built to make real denials visible cannot afford that noise, so this is the
-    // one path that is refused without a log line: nothing was denied, we simply do not serve it.
-    //
-    // After the Origin/Host checks on purpose: a probe from a browser page still gets 403 and still
-    // gets audited. 404 leaks nothing either way, but layer 1 keeps its jurisdiction.
-    if req.uri().path().starts_with("/.well-known/") {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-
     next.run(req).await
+}
+
+/// Is this one of the OAuth discovery paths a client probes before trusting a configured header?
+///
+/// Used to keep those probes **out of the audit log**, and for nothing else. An earlier version also
+/// answered them with 404 instead of letting them reach layer 2, on the reasoning that a 401 plus
+/// `WWW-Authenticate: Bearer` invites an OAuth flow this server does not implement. That conflated
+/// two separate things - "do not spam the log" and "change the status code" - and only the first was
+/// ever the goal. The second broke a client that had been working, so the wire behaviour is back to
+/// what it was: these probes fall through and get the ordinary 401.
+fn is_oauth_discovery(path: &str) -> bool {
+    path.starts_with("/.well-known/")
 }
 
 /// Layer 2. `Authorization: Bearer <token>`, compared in constant time against the token minted into
@@ -113,10 +127,14 @@ async fn guard_token(State(g): State<Guard>, req: Request<Body>, next: Next) -> 
         Some(t) if super::auth::verify(&t, &g.token) => next.run(req).await,
         _ => {
             const MSG: &str = "missing or invalid bearer token";
-            audit::record(
-                audit::entry(&req_label(&req), None, None, 0)
-                    .denied(Denial::BadToken, MSG.to_string()),
-            );
+            // Same rule as `deny`: an OAuth discovery probe is expected to arrive without a token,
+            // so it is refused identically but never written to the log.
+            if !is_oauth_discovery(req.uri().path()) {
+                audit::record(
+                    audit::entry(&req_label(&req), None, None, 0)
+                        .denied(Denial::BadToken, MSG.to_string()),
+                );
+            }
             // `WWW-Authenticate` is what tells a client it needs to send a token rather than that
             // its request was malformed - the difference between a fixable config and a mystery.
             (
@@ -211,7 +229,13 @@ fn req_label(req: &Request<Body>) -> String {
 /// client can push real entries out of the 500-deep ring. Bounded and self-inflicted, and coalescing
 /// would mean the panel undercounting what actually happened - measure before trading that away.
 fn deny(code: StatusCode, msg: &'static str, denial: Denial, req: &Request<Body>) -> Response {
-    audit::record(audit::entry(&req_label(req), None, None, 0).denied(denial, msg.to_string()));
+    // Everything is refused the same way; only the LOGGING is conditional. An OAuth discovery probe
+    // carries no `Authorization` by design, so auditing it would fill the panel with red rows for
+    // entirely expected client behaviour - and a panel built to make real denials visible cannot
+    // afford that. The client still gets the same answer it always did.
+    if !is_oauth_discovery(req.uri().path()) {
+        audit::record(audit::entry(&req_label(req), None, None, 0).denied(denial, msg.to_string()));
+    }
     (code, format!("{msg}\n")).into_response()
 }
 
@@ -373,12 +397,12 @@ pub(super) mod server_tests {
         let wrong = status_line(port, &format!("{host}Authorization: Bearer nope\r\n"), init).await;
         assert!(wrong.contains("401"), "wrong token got through: {wrong}");
 
-        // OAuth discovery must be 404, never 401: a 401 here tells the client to go start an OAuth
-        // flow we do not implement, and it lands in the audit panel as a denial that never happened.
+        // OAuth discovery is refused like anything else without a token - deliberately NOT a 404.
+        // Answering 404 here (an earlier version did) changed the handshake for a client that had
+        // been working; the log noise those probes caused is suppressed in `deny`/`guard_token`
+        // instead, which was the only real goal. See `is_oauth_discovery`.
         let disco = get_status(port, "/.well-known/oauth-protected-resource", &host).await;
-        assert!(disco.contains("404"), "oauth discovery should 404, got: {disco}");
-        let disco_mcp = get_status(port, "/.well-known/oauth-protected-resource/mcp", &host).await;
-        assert!(disco_mcp.contains("404"), "nested discovery should 404, got: {disco_mcp}");
+        assert!(disco.contains("401"), "oauth discovery should 401 like the rest: {disco}");
 
         // The real thing. What rmcp answers is rmcp's business; what matters here is that neither
         // door turned it away.

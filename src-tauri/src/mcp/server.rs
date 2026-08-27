@@ -29,11 +29,18 @@ pub struct McpStatus {
     pub port: u16,
     /// What goes into an AI client config. Empty while stopped, so no one can copy a dead URL.
     pub url: String,
+    /// This executable, for the `--mcp-stdio` client config.
+    ///
+    /// Reported even while stopped - unlike `url`, it is not a live endpoint that could be copied
+    /// dead, and a client configured this way starts the proxy on demand rather than needing the
+    /// server up at copy time. Empty only if the OS refuses to say, in which case the dialog falls
+    /// back to naming the flag without a path.
+    pub exe_path: String,
 }
 
 impl McpStatus {
     fn stopped(port: u16) -> Self {
-        McpStatus { running: false, port, url: String::new() }
+        McpStatus { running: false, port, url: String::new(), exe_path: exe_path() }
     }
 
     fn running(port: u16) -> Self {
@@ -41,8 +48,20 @@ impl McpStatus {
             running: true,
             port,
             url: format!("http://127.0.0.1:{port}{}", http::MOUNT_PATH),
+            exe_path: exe_path(),
         }
     }
+}
+
+/// The path of this binary, with forward slashes.
+///
+/// JSON config files are where this ends up, and a Windows backslash has to be escaped there - a path
+/// the user pastes wrongly is a support question, while forward slashes work on every platform and in
+/// every client that takes a `command`.
+fn exe_path() -> String {
+    std::env::current_exe()
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_default()
 }
 
 struct Running {

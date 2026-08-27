@@ -2792,7 +2792,7 @@ const en = {
     targetClaudeCode:
       'Run these in a terminal — the first two only matter when re-registering. Scope is user, not project: a project-scoped entry can be visible to the CLI and still invisible to the session. Do not paste into settings.json: Claude Code ignores MCP servers there and will not warn you.',
     targetAntigravity:
-      'Save into ~/.gemini/config/mcp_config.json, or use Manage MCP Servers → View raw config.',
+      'Save into ~/.gemini/config/mcp_config.json, or use Manage MCP Servers → View raw config. This one spawns TableNova over stdio instead of using the URL, because Antigravity’s HTTP client can fail before reaching the server — and it needs no token in the file.',
     targetGeneric: "Save into your client's MCP config file — for Cursor that is .cursor/mcp.json.",
     configMismatch:
       'Each client names the URL field differently and ignores the others, so a config meant for another client fails silently.',
