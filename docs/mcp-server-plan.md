@@ -525,10 +525,19 @@ kiểu của nhau mà không báo lỗi**.
 | Antigravity | `serverUrl` (`~/.gemini/config/mcp_config.json`) | docs nói rõ `url`/`httpUrl` không hỗ trợ |
 | Cursor & phần còn lại | `url` trơn | — |
 
-Hai cái bẫy nữa, cả hai đều **im lặng**: Claude Code **không** đọc MCP server từ `settings.json`
-(schema đó `additionalProperties: true`, nên khối dán vào đấy được editor nhận và client bỏ qua), và
-`claude mcp add` **không merge** vào tên đã tồn tại, nên sau mỗi lần Regenerate việc phải làm là
-*thay*, không phải *thêm*.
+Ba cái bẫy nữa, cả ba đều **im lặng**:
+
+1. Claude Code **không** đọc MCP server từ `settings.json` (schema đó `additionalProperties: true`,
+   nên khối dán vào đấy được editor nhận và client bỏ qua).
+2. `claude mcp add` **không merge** vào tên đã tồn tại, nên sau mỗi lần Regenerate việc phải làm là
+   *thay*, không phải *thêm*.
+3. Trên Windows, `~/.claude.json` khoá project theo đường dẫn tuyệt đối, và **hai** entry cho cùng
+   một thư mục có thể cùng tồn tại, khác nhau đúng ở chữ hoa của ổ đĩa — `c:/workspace/table` và
+   `C:/workspace/table` — mà chỉ một trong hai mang block `mcpServers`. Shell nào normalize ra dạng
+   còn lại thì `claude mcp list` báo không có server nào, tức tính năng trông như hỏng trong khi
+   config vẫn đúng. Đo thật: từ Git Bash (`/c/workspace/table` → `c:/…`, entry rỗng) không thấy gì;
+   từ PowerShell (`C:\workspace\table` → `C:/…`) thấy đủ. **Triệu chứng "tool biến mất" thì kiểm chỗ
+   này trước.**
 
 Kết quả: Settings phát **hướng dẫn theo client** (`utils/mcpClients.ts`, ba dáng, khoá bằng
 `__tests__/mcpClients.test.ts`) chứ không phát một khối JSON dùng chung; với Claude Code nó phát hai
