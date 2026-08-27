@@ -223,6 +223,23 @@ impl ConnRegistry {
     /// itself would be one forgotten `.filter()` away from listing production. Redis entries are
     /// dropped too - MCP has no Redis tools, so an exposed Redis connection would be a name an AI
     /// could see but never use.
+    /// Ids of the SQL connections shared with MCP clients.
+    ///
+    /// Exists so `policy::pick_connection` can answer "is there exactly one?" without building and
+    /// re-parsing the JSON that `list_mcp_exposed` returns. Same filter as that function, and it has
+    /// to stay the same filter: a Redis connection counted here would make a lone Redis the "only
+    /// shared connection" for tools that cannot touch it.
+    pub fn mcp_exposed_ids(&self) -> Vec<String> {
+        let map = match self.inner.lock() {
+            Ok(m) => m,
+            Err(e) => e.into_inner(),
+        };
+        map.iter()
+            .filter(|(_, e)| e.mcp_exposed && e.conn.sql().is_some())
+            .map(|(id, _)| (**id).to_string())
+            .collect()
+    }
+
     pub fn list_mcp_exposed(&self) -> Result<Vec<Value>, String> {
         let map = self.inner.lock().map_err(|e| e.to_string())?;
         let mut out: Vec<(SessionId, Value)> = map

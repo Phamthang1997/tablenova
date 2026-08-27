@@ -19,12 +19,12 @@ use crate::mcp::policy;
 /// The SQL is ours, so the limit goes into the statement and the database does the work - the
 /// opposite of `query` below, and the reason the two are separate tools rather than one with a flag.
 pub async fn preview_table(
-    connection_id: &str,
+    connection_id: Option<&str>,
     table_name: &str,
     limit: Option<usize>,
 ) -> Result<CallToolResult, Refusal> {
     let state = app_state()?;
-    let target = policy::resolve(&state, connection_id)?;
+    let (target, _) = policy::resolve(&state, connection_id)?;
     let limit = policy::row_limit(limit);
 
     // `qualified` quotes the identifier and, on Postgres, prefixes the schema the user is actually
@@ -42,12 +42,12 @@ pub async fn preview_table(
 
 /// One read statement, written by the caller.
 pub async fn query(
-    connection_id: &str,
+    connection_id: Option<&str>,
     sql: &str,
     limit: Option<usize>,
 ) -> Result<CallToolResult, Refusal> {
     let state = app_state()?;
-    let target = policy::resolve(&state, connection_id)?;
+    let (target, _) = policy::resolve(&state, connection_id)?;
     policy::ensure_single_read(sql)?;
     let limit = policy::row_limit(limit);
 

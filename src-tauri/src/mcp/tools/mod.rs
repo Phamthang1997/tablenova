@@ -32,22 +32,25 @@ use super::audit::{self, Refusal};
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ConnArgs {
-    /// From tablenova_list_connections.
-    pub connection_id: String,
+    /// From tablenova_list_connections. OMIT this when the user has shared exactly one
+    /// connection - the tool then uses it. Required only when several are shared.
+    pub connection_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct TableArgs {
-    /// From tablenova_list_connections.
-    pub connection_id: String,
+    /// From tablenova_list_connections. OMIT this when the user has shared exactly one
+    /// connection - the tool then uses it. Required only when several are shared.
+    pub connection_id: Option<String>,
     /// Unqualified table or view name, as tablenova_list_tables reports it.
     pub table_name: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct PreviewArgs {
-    /// From tablenova_list_connections.
-    pub connection_id: String,
+    /// From tablenova_list_connections. OMIT this when the user has shared exactly one
+    /// connection - the tool then uses it. Required only when several are shared.
+    pub connection_id: Option<String>,
     /// Unqualified table or view name, as tablenova_list_tables reports it.
     pub table_name: String,
     /// Rows to return. Default 100, capped at 1000.
@@ -56,8 +59,9 @@ pub struct PreviewArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct QueryArgs {
-    /// From tablenova_list_connections.
-    pub connection_id: String,
+    /// From tablenova_list_connections. OMIT this when the user has shared exactly one
+    /// connection - the tool then uses it. Required only when several are shared.
+    pub connection_id: Option<String>,
     /// Exactly ONE read statement: SELECT, EXPLAIN, SHOW, DESCRIBE or DESC.
     pub sql: String,
     /// Rows to return. Default 100, capped at 1000.
@@ -81,10 +85,11 @@ impl TableNovaMcp {
 
     #[tool(
         description = "List the database connections the TableNova user has shared with AI clients. \
-                       Always call this first: every other tool needs a connection_id from here, and \
-                       connections the user did not share are invisible. Each entry carries \
-                       connection_id, database, dialect, schema and read_only - pass connection_id \
-                       back verbatim."
+                       You do NOT need this first: every other tool takes connection_id as optional \
+                       and uses the only shared connection when it is omitted. Call this when a tool \
+                       says several are shared, or when the user asks what is available. Each entry \
+                       carries connection_id, database, dialect, schema and read_only - pass \
+                       connection_id back verbatim."
     )]
     async fn tablenova_list_connections(&self) -> Result<CallToolResult, McpError> {
         audited("tablenova_list_connections", None, None, catalog::list_connections()).await
@@ -107,9 +112,9 @@ impl TableNovaMcp {
     ) -> Result<CallToolResult, McpError> {
         audited(
             "tablenova_list_databases",
-            Some(&a.connection_id),
+            a.connection_id.as_deref(),
             None,
-            catalog::list_databases(&a.connection_id),
+            catalog::list_databases(a.connection_id.as_deref()),
         )
         .await
     }
@@ -130,9 +135,9 @@ impl TableNovaMcp {
     ) -> Result<CallToolResult, McpError> {
         audited(
             "tablenova_list_tables",
-            Some(&a.connection_id),
+            a.connection_id.as_deref(),
             None,
-            catalog::list_tables(&a.connection_id),
+            catalog::list_tables(a.connection_id.as_deref()),
         )
         .await
     }
@@ -154,9 +159,9 @@ impl TableNovaMcp {
     ) -> Result<CallToolResult, McpError> {
         audited(
             "tablenova_describe_table",
-            Some(&a.connection_id),
+            a.connection_id.as_deref(),
             Some(&a.table_name),
-            catalog::describe_table(&a.connection_id, &a.table_name),
+            catalog::describe_table(a.connection_id.as_deref(), &a.table_name),
         )
         .await
     }
@@ -171,9 +176,9 @@ impl TableNovaMcp {
     ) -> Result<CallToolResult, McpError> {
         audited(
             "tablenova_preview_table",
-            Some(&a.connection_id),
+            a.connection_id.as_deref(),
             Some(&a.table_name),
-            data::preview_table(&a.connection_id, &a.table_name, a.limit),
+            data::preview_table(a.connection_id.as_deref(), &a.table_name, a.limit),
         )
         .await
     }
@@ -198,9 +203,9 @@ impl TableNovaMcp {
     ) -> Result<CallToolResult, McpError> {
         audited(
             "tablenova_query",
-            Some(&a.connection_id),
+            a.connection_id.as_deref(),
             Some(&a.sql),
-            data::query(&a.connection_id, &a.sql, a.limit),
+            data::query(a.connection_id.as_deref(), &a.sql, a.limit),
         )
         .await
     }
@@ -223,10 +228,24 @@ impl ServerHandler for TableNovaMcp {
             // it expands in, which is `rmcp` - so the server introduced itself to every client as
             // "rmcp 3.1.4" instead of TableNova. Spelled out here, it reads this crate's own.
             .with_server_info(tablenova_identity())
+            // Read ONCE per session, so this is the cheapest place to prevent a long detour. The
+            // first version only said what the server was; a model asked "list the tables of db
+            // test" would still go looking around before deciding these tools were the answer. It
+            // now says outright that a question about the user's databases IS answered here, that
+            // one call is usually enough, and where NOT to look - a connection string is not
+            // something to hunt for on disk.
             .with_instructions(
-                "TableNova exposes the databases its user already has open, read-only. Start with \
-                 tablenova_list_connections. Writes are refused by design; ask the user to make \
-                 changes in TableNova itself."
+                "These tools read the databases the TableNova user already has open, live and \
+                 read-only. Any question about their tables, schema or rows is answered here - do \
+                 not look for credentials, config files or connection strings anywhere else, and do \
+                 not ask the user for them.\n\
+                 One call is usually enough: connection_id is OPTIONAL and can be omitted whenever \
+                 the user has shared exactly one connection, so \"list the tables of the database\" \
+                 is a single tablenova_list_tables with no arguments. Call \
+                 tablenova_list_connections only when a tool tells you several are shared, or when \
+                 the user asks which are available.\n\
+                 Writes and DDL are refused by design; ask the user to make changes in TableNova \
+                 itself."
                     .to_string(),
             )
     }

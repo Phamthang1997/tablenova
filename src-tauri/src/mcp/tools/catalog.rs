@@ -24,33 +24,33 @@ pub async fn list_connections() -> Result<CallToolResult, Refusal> {
     json_result(&serde_json::json!({ "connections": connections }))
 }
 
-pub async fn list_databases(connection_id: &str) -> Result<CallToolResult, Refusal> {
+pub async fn list_databases(connection_id: Option<&str>) -> Result<CallToolResult, Refusal> {
     let state = app_state()?;
-    policy::resolve(&state, connection_id)?;
-    let out = crate::database::introspect::list_databases_inner(&state, connection_id.to_string())
+    let (_, conn_id) = policy::resolve(&state, connection_id)?;
+    let out = crate::database::introspect::list_databases_inner(&state, conn_id.clone())
         .await
         .map_err(passthrough)?;
     json_result(&out)
 }
 
-pub async fn list_tables(connection_id: &str) -> Result<CallToolResult, Refusal> {
+pub async fn list_tables(connection_id: Option<&str>) -> Result<CallToolResult, Refusal> {
     let state = app_state()?;
-    policy::resolve(&state, connection_id)?;
-    let out = crate::database::introspect::get_tables_inner(&state, connection_id.to_string())
+    let (_, conn_id) = policy::resolve(&state, connection_id)?;
+    let out = crate::database::introspect::get_tables_inner(&state, conn_id.clone())
         .await
         .map_err(passthrough)?;
     json_result(&out)
 }
 
 pub async fn describe_table(
-    connection_id: &str,
+    connection_id: Option<&str>,
     table_name: &str,
 ) -> Result<CallToolResult, Refusal> {
     let state = app_state()?;
-    policy::resolve(&state, connection_id)?;
+    let (_, conn_id) = policy::resolve(&state, connection_id)?;
     let out = crate::database::introspect::get_table_schema_inner(
         &state,
-        connection_id.to_string(),
+        conn_id.clone(),
         table_name.to_string(),
     )
     .await

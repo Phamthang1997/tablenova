@@ -70,17 +70,68 @@ pub struct Target {
 /// An id that is not exposed gets the SAME error as an id that does not exist. That is deliberate:
 /// distinguishing them would confirm to a caller that a connection it may not see is nonetheless
 /// open, which is a name, a database and a dialect it was never meant to learn.
-pub fn resolve(state: &AppState, connection_id: &str) -> Result<Target, Refusal> {
-    if !state.connections.is_mcp_exposed(connection_id) {
+/// Also returns the id it settled on, because the introspection bodies are keyed by it.
+pub fn resolve(state: &AppState, given: Option<&str>) -> Result<(Target, String), Refusal> {
+    let connection_id = pick_connection(state, given)?;
+    if !state.connections.is_mcp_exposed(&connection_id) {
         return Err(unknown_connection());
     }
-    let ctx = state.connections.acquire(connection_id).map_err(|_| unknown_connection())?;
-    reject_if_manual(connection_id)?;
-    Ok(Target {
+    let ctx = state.connections.acquire(&connection_id).map_err(|_| unknown_connection())?;
+    reject_if_manual(&connection_id)?;
+    let target = Target {
         conn: ctx.conn().clone(),
         schema: ctx.raw_schema().map(str::to_owned),
         timeout: mcp_timeout(crate::database::stmt_timeout(&ctx.server().config())),
-    })
+    };
+    Ok((target, connection_id))
+}
+
+/// The connection a call means: the one it named, or - when it named none - the only shared one.
+///
+/// **`connection_id` is optional, and that is an ergonomic decision with a safety argument.** Asking
+/// "what tables does this database have" used to cost two round trips minimum, because the id had to
+/// be discovered before anything could use it; a model that only wants one answer spends a call
+/// learning a UUID. When exactly ONE connection is shared, that call carries no information: the
+/// choice is already fully determined by the single tick the user made.
+///
+/// It stays explicit whenever it is genuinely ambiguous. Two or more shared connections refuse and
+/// **name them**, so the caller's next attempt is right rather than a guess - guessing here would
+/// read the wrong database, and this is the one place where "answers no by default" has to bend far
+/// enough to be useful without bending into a guess.
+fn pick_connection(state: &AppState, given: Option<&str>) -> Result<String, Refusal> {
+    match given {
+        Some(id) => Ok(id.to_string()),
+        None => choose_only(state.connections.mcp_exposed_ids()),
+    }
+}
+
+/// The three-way decision behind an omitted `connection_id`, kept **pure** so it has a test.
+///
+/// Zero shared answers with the same message as an id that does not exist (§3.3: never confirm that
+/// something exists which the caller may not see). Two or more names them, because the alternative -
+/// picking one - is reading a database the user did not mean.
+fn choose_only(mut shared: Vec<String>) -> Result<String, Refusal> {
+    match shared.len() {
+        1 => Ok(shared.remove(0)),
+        0 => Err(unknown_connection()),
+        _ => {
+            // Sorted so the message is stable: the registry is a HashMap, and an error that lists
+            // the same two connections in a different order every call reads as flapping.
+            shared.sort();
+            Err(Refusal::new(
+                Denial::NotShared,
+                McpError::invalid_params(
+                    format!(
+                        "the user has shared {} connections, so connection_id is required. Call \
+                         tablenova_list_connections and pass one of: {}",
+                        shared.len(),
+                        shared.join(", ")
+                    ),
+                    None,
+                ),
+            ))
+        }
+    }
 }
 
 /// Refuse while the user has a manual transaction going on this connection.
@@ -226,6 +277,22 @@ mod tests {
         assert!(ensure_single_read("SELECT 1;").is_ok(), "one statement with a trailing ;");
         // The splitter's whole job: this is ONE statement, not two.
         assert!(ensure_single_read("SELECT 'a;b' FROM t").is_ok());
+    }
+
+    /// Omitting `connection_id` saves a round trip only while it cannot pick the wrong database.
+    #[test]
+    fn an_omitted_connection_id_resolves_only_when_there_is_no_choice() {
+        let one = choose_only(vec!["c1".to_string()]);
+        assert_eq!(one.ok().map(|s| s), Some("c1".to_string()));
+
+        // Nothing shared reads exactly like an id that does not exist - §3.3.
+        assert!(choose_only(vec![]).is_err());
+
+        // Two shared must REFUSE and name them, never guess.
+        let many = choose_only(vec!["zeta".to_string(), "alpha".to_string()]).err().expect("refuse");
+        let msg = many.error.message.to_string();
+        assert!(msg.contains("connection_id is required"), "{msg}");
+        assert!(msg.contains("alpha, zeta"), "must name them, sorted: {msg}");
     }
 
     #[test]
