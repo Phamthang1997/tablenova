@@ -11,6 +11,9 @@ node_modules/
 .cursor/
 .windsurf/
 .copilot/
+# Claude Code writes this one at the repo root for --scope project, and it carries the bearer
+# token of any MCP server registered that way.
+.mcp.json
 
 # Production build outputs
 dist/

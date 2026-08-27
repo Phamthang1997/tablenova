@@ -71,6 +71,15 @@ pub struct ConnEntry {
     /// `read_only`, which is inherited when a sibling database is opened on the same server, this is
     /// NOT inherited: opening a second database is a new place, and "I shared dev" must not quietly
     /// become "I shared prod on the same server". See `docs/mcp-server-plan.md` §3.3.
+    ///
+    /// **And it is never persisted.** The plan first called for a durable policy in `localStorage`
+    /// keyed by `connKey`, pushed down at connect. That cannot hold together with the paragraph
+    /// above: `connKey` deliberately does not carry the database name, so dev and prod on one MySQL
+    /// server share a key, and restoring the flag from it *is* the "I shared prod" case. So the flag
+    /// lives only here, for as long as the entry does — re-ticking after a restart is deliberate
+    /// friction at the one layer that decides what an AI may read. What IS persisted is the harmless
+    /// half: whether to start the listener at all (`utils/mcpPrefs.ts`), since a running server with
+    /// nothing ticked exposes nothing.
     pub mcp_exposed: bool,
     pub server: Arc<ServerHandle>,
     /// Database name; the file path for SQLite; `db0`…`db15` for Redis.

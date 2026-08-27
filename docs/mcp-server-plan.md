@@ -289,11 +289,19 @@ So sánh token bằng vòng lặp **constant-time** (hoặc so sánh digest SHA-
 Đây là lớp bản đầu ghi đúng nhưng để lẫn trong mục UI. Nó là một lớp bảo mật, và nó có **khuôn sẵn
 trong repo**: `set_connection_read_only`.
 
-- Cờ nằm cạnh `read_only` trong `ConnEntry`, đặt qua `mcp_set_connection_exposed(conn_id, bool)`.
-- Chính sách bền được frontend giữ trong `localStorage` khóa theo **`connKey`** (server), y hệt
-  `tf_safe_mode`, rồi đẩy xuống Rust lúc connect. Lý do khóa theo server chứ không theo `conn_id`:
-  `conn_id` được mint mới mỗi lần connect, một lựa chọn khóa theo nó sẽ bốc hơi sau mỗi lần
-  reconnect.
+- Cờ nằm cạnh `read_only` trong `ConnEntry`, đặt qua `set_connection_mcp_exposed(conn_id, bool)`.
+- **KHÔNG lưu bền, và đó là bản đã sửa của mục này.** Bản đầu viết: giữ trong `localStorage` khóa
+  theo `connKey`, đẩy xuống Rust lúc connect — lý do là `conn_id` được mint mới mỗi lần connect nên
+  khóa theo nó sẽ bốc hơi. Lý do đó đúng, nhưng kết luận thì sai, vì **`connKey` cố ý không chứa tên
+  database**: dev và prod trên cùng một MySQL server có cùng một `connKey`. Phục hồi cờ theo
+  `connKey` nghĩa là session sau, connect vào prod trên server đó, cờ sống lại — tức tạo ra đúng cái
+  hại mà doc comment của `ConnEntry::mcp_exposed` cấm bằng chữ ("*'I shared dev' must not quietly
+  become 'I shared prod on the same server'*"). Hai câu không thể cùng đúng.
+  Bản đang chạy vì thế **chỉ sống trong RAM**: `mcp_exposed: false` ở mọi chỗ mint `ConnEntry`,
+  không một dòng `localStorage` nào. Tick lại mỗi lần mở app là **friction cố ý**, ở đúng lớp quyết
+  định AI đọc được database nào — và nó xoá luôn rủi ro "hai nơi giữ một sự thật" mà §8 từng ghi.
+  Cái được lưu bền là **công tắc server** (`tf_mcp_autostart`/`tf_mcp_port`, xem `utils/mcpPrefs.ts`),
+  vì một listener chạy mà chưa tick gì thì không lộ gì cả.
 - **Mặc định `false`.** Một kết nối production mở sẵn không được lộ cho AI chỉ vì người dùng chưa
   vào Settings bao giờ.
 - `tablenova_list_connections` chỉ liệt kê kết nối đã phơi; mọi tool khác từ chối `conn_id` chưa
@@ -400,6 +408,18 @@ Dùng lại `stmt_timeout(&ctx.server().config())` + `with_timeout(...)` y như
 server đó áp cho cả AI, không có đường vòng. Không cần cơ chế hủy riêng ở V1: không có UI nào để bấm
 Stop cho một truy vấn của AI, và timeout đã là cái hãm.
 
+**Đoạn trên đúng một nửa, và nửa sai đã được sửa.** `stmt_timeout()` đọc `statementTimeoutSecs` rồi
+`unwrap_or(0)`, và `0` nghĩa là **không có timeout** — mà đó là mặc định. Nên "timeout đã là cái hãm"
+mô tả một cái hãm không tồn tại trên kết nối thông thường; ghép với §4.3 (cố ý decode hết rồi mới
+cắt) thì một `SELECT * FROM bảng_10M` của AI không có gì chặn.
+
+Đường MCP vì thế có trần **riêng**: `policy::mcp_timeout()` trả về **min(giới hạn của người dùng,
+`MAX_TIMEOUT` = 30s)**, và `Target::timeout` không còn là `Option` — một lượt đọc MCP **luôn** có hạn.
+Đặt thấp hơn là người dùng muốn ngặt hơn, và điều đó áp cho AI y như áp cho họ; đặt cao hơn (hoặc
+không đặt) thì vẫn về trần. Cơ sở của việc tách trần này nằm ngay trong chính đoạn trên: người dùng
+**thấy** truy vấn của mình và bấm Stop được, truy vấn của AI thì không — chỗ nào timeout là cái hãm
+duy nhất thì nó không được phép là tuỳ chọn.
+
 ---
 
 ## 5. Cấu hình & UI
@@ -493,7 +513,41 @@ DLL giao diện. Đây cũng là điều kiện cần cho cầu stdio ở V2.
       component thường trực chỉ để cảnh báo về một thứ vô hại. Quay lại khi V2 có ghi.
 - [x] Khoá i18n cho toàn bộ chuỗi UI mới (en/vi/ja).
 - [x] Phân loại `mcp_*` trong `safeMode.ts` — món nợ từ Bước 2, đã trả.
-- [ ] Thử thật với ít nhất hai client khác nhau; ghi lại client nào cần đường tương thích nào.
+- [x] Thử thật với ít nhất hai client khác nhau; ghi lại client nào cần đường tương thích nào.
+
+**Bước 3 xong, và ô cuối là ô đắt nhất.** Thử với client thật lộ ra rằng **một snippet không phục vụ
+được client nào**: cùng một endpoint streamable HTTP, ba client gọi tên field URL ba kiểu và **bỏ qua
+kiểu của nhau mà không báo lỗi**.
+
+| Client | Field | Nếu sai |
+|:--|:--|:--|
+| Claude Code | `"type": "http"` + `url`, hoặc `--transport http` | thiếu `type` → mặc định **stdio**, đi tìm `command` không có |
+| Antigravity | `serverUrl` (`~/.gemini/config/mcp_config.json`) | docs nói rõ `url`/`httpUrl` không hỗ trợ |
+| Cursor & phần còn lại | `url` trơn | — |
+
+Hai cái bẫy nữa, cả hai đều **im lặng**: Claude Code **không** đọc MCP server từ `settings.json`
+(schema đó `additionalProperties: true`, nên khối dán vào đấy được editor nhận và client bỏ qua), và
+`claude mcp add` **không merge** vào tên đã tồn tại, nên sau mỗi lần Regenerate việc phải làm là
+*thay*, không phải *thêm*.
+
+Kết quả: Settings phát **hướng dẫn theo client** (`utils/mcpClients.ts`, ba dáng, khoá bằng
+`__tests__/mcpClients.test.ts`) chứ không phát một khối JSON dùng chung; với Claude Code nó phát hai
+dòng CLI (`remove` rồi `add`) vì dòng lệnh tự chọn file và tự set transport, tức đóng cả hai bẫy cùng
+lúc và chạy lại được. `.mcp.json` cũng đã vào `.gitignore` — nó là lỗ duy nhất còn lại trong khối
+"AI Agents", và scope `project` ghi token vào đó.
+
+**Và một món phát sinh, đã làm luôn vì nó là nguyên nhân của ba lượt thử thất bại:** hai cửa HTTP
+(layer 1 `Origin`/`Host`, layer 2 token) trước đây **không ghi audit dòng nào** — `deny()` chỉ trả
+response, và `Denial` không có biến thể nào cho hai layer đó. Người dùng nhìn bảng Requests thấy "no
+request yet" trong khi client bị 401 ở mỗi lần retry, tức hai layer **duy nhất** nổ trong lúc cài đặt
+lại là hai layer vô hình — ngược hẳn ý định ghi ở đầu `audit.rs`. Nay `Denial::BadOrigin`/`BadToken`
+tồn tại, hai middleware ghi qua `audit::record()` (một người ghi duy nhất, dùng chung với
+`tools/mod.rs`), và entry lấy `POST /mcp` làm tên vì chưa có tool nào được parse.
+
+- [x] Server tự bật lại khi mở app (`tf_mcp_autostart`/`tf_mcp_port`, `utils/mcpPrefs.ts`, gọi từ
+      `App.tsx`). Không có nó thì tính năng chết sau **mỗi** lần restart app cho tới khi có người vào
+      dialog bấm tay — đo bằng chính ba lượt ở trên. Cố ý chỉ lưu bền **công tắc server**, không lưu
+      `mcp_exposed`: xem §3.3.
 
 ### V2 — ghi có phê duyệt (~2–3 tuần, đánh giá lại sau V1)
 
@@ -533,10 +587,32 @@ DLL giao diện. Đây cũng là điều kiện cần cho cầu stdio ở V2.
   không hãm được số lượng lời gọi. Nếu thành vấn đề: rate limit trong `policy.rs`, đo trước rồi làm.
 - **Token nằm trong file cấu hình của AI client** (`.cursor/mcp.json` và tương đương) — thường là
   plaintext, và có khi bị commit vào repo. Settings nên nói thẳng điều này cạnh nút Copy.
-- **`exposed` là per-`conn_id` trong Rust nhưng bền theo `connKey` ở frontend.** Đó là hai nơi giữ
-  một sự thật — đúng khuôn `read_only`/Safe Mode đang dùng, nhưng vẫn là chỗ dễ lệch. Đường ghi phải
-  đúng một chiều: frontend là nguồn bền, Rust là bản đang hiệu lực, và connect là lúc duy nhất đồng
-  bộ.
+- ~~**`exposed` là per-`conn_id` trong Rust nhưng bền theo `connKey` ở frontend.**~~ — **đã đóng**
+  bằng cách không lưu bền nó: xem §3.3. Không còn nơi thứ hai thì không còn chỗ lệch.
+
+- **Phơi một kết nối là phơi tầm-với mức SERVER, không phải mức database.** `tablenova_query` phân
+  loại **chỉ theo đầu câu lệnh** (`ensure_single_read`), không giới hạn bảng hay database, nên trên
+  một kết nối đã phơi thì `SELECT … FROM information_schema.tables` và `SHOW DATABASES` liệt kê cả
+  server, còn `SELECT * FROM db_khac.bang` (MySQL) / `schema_khac.t` (Postgres) **đọc được dữ liệu
+  thật** từ database chưa bao giờ được tick. `tablenova_list_databases` vốn đã trả về mọi database
+  của server, nên độ hạt thật của việc phơi luôn là server — §3.3 chỉ bảo vệ *danh tính kết nối*,
+  không bảo vệ *tầm với dữ liệu*.
+  Cách vá hiển nhiên — chặn chuỗi `information_schema`/`pg_catalog`/tên database — là **đúng cơ chế
+  §0.3 đã bác**: nó vừa lọt (`INFORMATION_SCHEMA`, alias trong subquery, cross-schema) vừa tạo cảm
+  giác an toàn sai. Biên giới hữu hiệu duy nhất là **grant**: một DB user chỉ đọc, chỉ có quyền trên
+  database được phơi. Settings nay nói thẳng điều này cạnh danh sách tick, thay cho câu cũ ("*sharing
+  is per connection, not per server*") vốn phát biểu ngược lại sự thật. Cưỡng chế ở mức database
+  trong app là việc của V2, nếu có nhu cầu thật.
+
+- ~~**`statement_timeout` là opt-in, nên "timeout đã là cái hãm" (§4.4) không phải bảo đảm.**~~ —
+  **đã đóng** bằng `policy::mcp_timeout()`: min(giới hạn người dùng, 30s), và `Target::timeout` không
+  còn là `Option`. Xem §4.4.
+
+- **Introspection không đi qua trần đó.** Bốn tool ở `catalog.rs` gọi `policy::resolve()` rồi **bỏ**
+  giá trị trả về, nên `list_tables`/`describe_table` chạy không hạn giờ. Chấp nhận ở V1: đó là truy
+  vấn catalog, bị chặn bởi bản chất chứ không bởi dữ liệu — không có `SELECT *` nào ở đó. Nếu một
+  server có hàng nghìn bảng làm nó thành vấn đề thì đường ra đã có sẵn: chúng đã cầm `Target`, chỉ
+  cần bọc `with_timeout` như `data.rs` đang làm.
 - **`describe_table` phơi tên cột của schema production cho một dịch vụ bên ngoài.** Đó là bản chất
   của tính năng, không phải lỗi — nhưng nó là lý do §3.3 mặc định TẮT và không có nút "phơi tất cả".
 - **`rmcp` đang ở nhịp phát hành dày** (5 bản trong ~3 tuần lúc khảo sát, major 3.x). Pin `3.1` hãm
