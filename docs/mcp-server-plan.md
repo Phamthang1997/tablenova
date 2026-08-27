@@ -537,12 +537,22 @@ Ba cái bẫy nữa, cả ba đều **im lặng**:
 2. `claude mcp add` **không merge** vào tên đã tồn tại, nên sau mỗi lần Regenerate việc phải làm là
    *thay*, không phải *thêm*.
 3. Trên Windows, `~/.claude.json` khoá project theo đường dẫn tuyệt đối, và **hai** entry cho cùng
-   một thư mục có thể cùng tồn tại, khác nhau đúng ở chữ hoa của ổ đĩa — `c:/workspace/table` và
-   `C:/workspace/table` — mà chỉ một trong hai mang block `mcpServers`. Shell nào normalize ra dạng
-   còn lại thì `claude mcp list` báo không có server nào, tức tính năng trông như hỏng trong khi
-   config vẫn đúng. Đo thật: từ Git Bash (`/c/workspace/table` → `c:/…`, entry rỗng) không thấy gì;
-   từ PowerShell (`C:\workspace\table` → `C:/…`) thấy đủ. **Triệu chứng "tool biến mất" thì kiểm chỗ
-   này trước.**
+   một thư mục cùng tồn tại, khác nhau đúng ở chữ hoa của ổ đĩa: `c:/workspace/table` và
+   `C:/workspace/table`. (`ConvertFrom-Json` còn từ chối parse cả tệp vì coi đó là khoá trùng.)
+
+   Cơ chế, đã xác lập bằng đo chứ không phải suy luận: **CLI và session runtime resolve khác nhau.**
+   `claude mcp add`/`list` canonicalize theo casing thật trên đĩa (`C:/…`) bất kể shell nào gọi —
+   nên CLI luôn báo *✔ Connected*. Còn **session** dùng đường dẫn như shell của nó viết ra, và một
+   session mở từ Git Bash hay từ IDE ra `c:/…`, trúng entry có `"mcpServers": {}`, nên nạp **0**
+   server. Hai triệu chứng của một nguyên nhân, và cái thứ hai là cái tệ: **CLI nói Connected trong
+   khi session không có tool nào** — không có đường nào để người dùng tự tìm ra.
+
+   **Cách chữa: `--scope user`.** Nó ghi vào `mcpServers` ở top-level `~/.claude.json`, tức **không
+   qua project key nào**, nên cả hai đường resolve đều thấy. Đăng ký `--scope local` hay `project`
+   trên máy Windows đều phơi ra bug này. Kiểm bằng `claude mcp remove tablenova -s local` rồi
+   `claude mcp add … --scope user`; sau đó cả hai entry project phải còn **0** server và top-level
+   phải có nó. Đánh đổi: server (và token) được chào ở mọi project — với một tool dev chạy loopback
+   thì đó là giá đúng để trả cho việc tính năng chạy được.
 
 Kết quả: Settings phát **hướng dẫn theo client** (`utils/mcpClients.ts`, ba dáng, khoá bằng
 `__tests__/mcpClients.test.ts`) chứ không phát một khối JSON dùng chung; với Claude Code nó phát hai
