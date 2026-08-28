@@ -652,7 +652,7 @@ tồn tại, hai middleware ghi qua `audit::record()` (một người ghi duy nh
 - ~~**`exposed` là per-`conn_id` trong Rust nhưng bền theo `connKey` ở frontend.**~~ — **đã đóng**
   bằng cách không lưu bền nó: xem §3.3. Không còn nơi thứ hai thì không còn chỗ lệch.
 
-- **Phơi một kết nối là phơi tầm-với mức SERVER, không phải mức database.** `tablenova_query` phân
+- **Phơi một kết nối là phơi tầm-với mức SERVER, không phải mức database.** (Dialog nay **đo và kể tên** những database mà mỗi tick với tới được — `listDatabases(connId)`, cùng truy vấn mà AI chạy được — thay cho một câu cảnh báo trừu tượng. Đó là cách duy nhất app có thể nói đúng về chuyện này: không suy từ grant, mà báo cái đang thật.) `tablenova_query` phân
   loại **chỉ theo đầu câu lệnh** (`ensure_single_read`), không giới hạn bảng hay database, nên trên
   một kết nối đã phơi thì `SELECT … FROM information_schema.tables` và `SHOW DATABASES` liệt kê cả
   server, còn `SELECT * FROM db_khac.bang` (MySQL) / `schema_khac.t` (Postgres) **đọc được dữ liệu

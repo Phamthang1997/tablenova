@@ -60,6 +60,8 @@ export function McpServerSettingsModal({ onClose }: Props) {
   const [copied, setCopied] = useState<'token' | 'config' | null>(null);
   const [clientId, setClientId] = useState<McpClientId>(readClient);
   const [autoStart, setAutoStart] = useState(() => readMcpPrefs().autoStart);
+  /** Databases each ticked connection can actually reach, keyed by `connId`. See `reachLine`. */
+  const [reach, setReach] = useState<Record<string, string[]>>({});
 
   const refresh = useCallback(async () => {
     try {
@@ -82,6 +84,24 @@ export function McpServerSettingsModal({ onClose }: Props) {
     void dbHelper.mcpGetToken().then(setToken).catch(() => {});
     void dbHelper.mcpAuditLog().then(setLog).catch(() => {});
   }, [refresh]);
+
+  // Probe what each ticked connection reaches. One query per newly ticked connection, never for an
+  // unticked one, and never twice for the same `connId` - `reach` is the memo. A failure stays absent
+  // rather than showing a wrong number.
+  useEffect(() => {
+    for (const c of connections) {
+      if (!c.mcpExposed || reach[c.connId]) continue;
+      void dbHelper
+        .listDatabases(c.connId)
+        .then((res) => {
+          if (res.success) setReach((prev) => ({ ...prev, [c.connId]: res.databases }));
+        })
+        .catch(() => {});
+    }
+    // `reach` is deliberately not a dependency: it is written by this effect, and listing it would
+    // re-run on every write. The `reach[c.connId]` guard above is what stops the repeat.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connections]);
 
   // The log is born in Rust and arrives by event. Polling would show a request seconds after it
   // ran, which on a security screen is the wrong side of "did something just happen".
@@ -147,6 +167,31 @@ export function McpServerSettingsModal({ onClose }: Props) {
   };
 
   const activeClient = mcpClient(clientId);
+
+  /**
+   * What a ticked connection can actually reach, named.
+   *
+   * The warning above states the mechanism; this states the **fact** for this server. "Ticking gives
+   * the AI the whole server" is true but abstract - the user cannot tell whether their "whole server"
+   * is one throwaway database or the company's. Naming them turns a disclaimer into something they
+   * can act on, at the moment they are clicking the tick.
+   *
+   * Deliberately a MEASUREMENT, not a grant analysis: `SHOW GRANTS` / `has_database_privilege` differ
+   * per dialect and would have us *infer* reach. `list_databases` reports what is actually visible
+   * through this very connection - the same query an AI client can run - so it cannot be wrong about
+   * it. Only ticked connections are probed: an extra query against a server the user did not share is
+   * work nobody asked for.
+   */
+  const reachLine = (c: OpenConnection) => {
+    const dbs = reach[c.connId];
+    // Absent while in flight or after a failure, and SQLite returns [] because one file is one
+    // database - there is no cross-database reach to warn about. Say nothing in all three cases.
+    if (!dbs || dbs.length === 0) return null;
+    if (dbs.length === 1) return <p className="mcp-reach ok">{t('mcp.reachOne')}</p>;
+    return (
+      <p className="mcp-reach">{t('mcp.reachMany', { n: dbs.length, list: dbs.join(', ') })}</p>
+    );
+  };
 
   // Built from the port the server is ACTUALLY bound to, never from the default constant: a
   // generated snippet naming a port nothing listens on is worse than no snippet at all.
@@ -285,6 +330,7 @@ export function McpServerSettingsModal({ onClose }: Props) {
                     <span className="mcp-conn-db">{c.db}</span>
                     <span className="mcp-conn-meta">{c.dialect}</span>
                   </label>
+                  {c.mcpExposed && reachLine(c)}
                 </li>
               ))}
             </ul>

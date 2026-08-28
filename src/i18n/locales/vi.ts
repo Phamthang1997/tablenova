@@ -2759,6 +2759,8 @@ const vi: typeof en = {
     sharedHint: 'Không có gì được chia sẻ cho tới khi bạn tự tích.',
     sharedReach:
       'Tích một kết nối là cho AI đọc được cả server chứa nó — information_schema, SHOW DATABASES và truy vấn sang database khác đều là câu lệnh đọc. Muốn giới hạn thật thì kết nối bằng một DB user chỉ được cấp quyền trên đúng database đó.',
+    reachOne: 'Chỉ với tới database này — không database nào khác trên server hiện ra với AI.',
+    reachMany: 'Với tới {{n}} database trên server này: {{list}}',
     sharedNone: 'Chưa chia sẻ gì — AI client sẽ thấy danh sách rỗng.',
     rowLimit: 'Số dòng trả về mỗi lượt',
     timeLimit: 'Hạn giờ mỗi lượt: {{n}}s',

@@ -15441,6 +15441,17 @@ input.rename-input {
   font-size: 10.5px;
   color: var(--win-text-secondary);
 }
+/* The measured reach of a ticked connection. Warning-coloured by default because "this tick reaches
+   N databases" is the thing the user needs to weigh; `.ok` for the one-database case, which is the
+   reassuring answer and must not read as an alarm. */
+.mcp-reach {
+  margin: 0 0 2px 22px;
+  font-size: 10.5px;
+  color: var(--win-warning, #f59e0b);
+}
+.mcp-reach.ok {
+  color: var(--win-text-secondary);
+}
 .mcp-check {
   display: flex;
   align-items: center;

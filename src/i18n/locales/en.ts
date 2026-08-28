@@ -2786,6 +2786,8 @@ const en = {
     sharedHint: 'Nothing is shared until you tick it here.',
     sharedReach:
       'Ticking one connection gives the AI read access to the whole server it sits on — information_schema, SHOW DATABASES and cross-database reads are all read statements. To limit it for real, connect with a database user granted on that one database only.',
+    reachOne: 'Reaches only this database — no other database on this server is visible to the AI.',
+    reachMany: 'Reaches {{n}} databases on this server: {{list}}',
     sharedNone: 'Nothing shared yet — AI clients will see an empty list.',
     rowLimit: 'Rows returned per request',
     timeLimit: 'Time limit per request: {{n}}s',
