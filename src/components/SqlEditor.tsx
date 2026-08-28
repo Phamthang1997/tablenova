@@ -2026,7 +2026,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
         return `"${String(val).replace(/"/g, '""')}"`;
       }).join(',')
     ).join('\n');
-    const csvContent = '\uFEFF' + `${headers}\n${rows}`;
+    // The BOM belongs in the template, not concatenated onto it \u2014 Excel needs it to read UTF-8.
+    const csvContent = `\uFEFF${headers}\n${rows}`;
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');

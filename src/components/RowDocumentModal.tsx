@@ -9,6 +9,9 @@ import { Modal, ModalBody, ModalFooter } from './Modal';
 import type { ColumnInfo } from '../utils/dbHelper';
 import { MediaCellPreview } from './media';
 
+/** Stable empty default for the `foreignKeys` prop: a fresh `[]` each render breaks memoisation downstream. */
+const NO_FKS: { column: string; refTable: string; refColumn: string }[] = [];
+
 export interface RowDocumentModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -102,7 +105,7 @@ export const RowDocumentModal: React.FC<RowDocumentModalProps> = ({
   rowIndex,
   rows,
   columns,
-  foreignKeys = [],
+  foreignKeys = NO_FKS,
   onNavigateRow,
 }) => {
   const { t } = useTranslation();

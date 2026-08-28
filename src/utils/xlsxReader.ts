@@ -71,7 +71,10 @@ function parseXmlPart(text: string): XmlElement {
   try {
     return parseXml(text);
   } catch (e) {
-    if (e instanceof XmlParseError) throw new Error(i18n.t('errors.xlsxXmlParse', { message: e.message }));
+    if (e instanceof XmlParseError)
+      //  keeps the parser's own error reachable: the translated message says WHAT failed, the
+      // cause says where in the XML.
+      throw new Error(i18n.t('errors.xlsxXmlParse', { message: e.message }), { cause: e });
     throw e;
   }
 }

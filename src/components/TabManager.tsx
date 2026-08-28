@@ -4,6 +4,9 @@ import { useTranslation } from 'react-i18next';
 import { Table, Terminal, TerminalSquare, X, Plus, Trash2, XCircle, ArrowRight, ChevronDown, Cog, Braces, Layers, Pencil, Key, Activity, Timer, Radio, BarChart3 } from 'lucide-react';
 import { TAB_GROUP_COLORS, type TabGroup } from '../utils/tabGroups';
 
+/** Stable empty default for the `groups` prop: a fresh `[]` each render breaks memoisation downstream. */
+const NO_GROUPS: TabGroup[] = [];
+
 export interface TabInfo {
   id: string;
   /**
@@ -114,7 +117,7 @@ export const TabManager: React.FC<TabManagerProps> = ({
   onCloseAll,
   onReorderTabs,
   onNewQueryTab,
-  groups = [],
+  groups = NO_GROUPS,
   onCreateGroup,
   onAssignGroup,
   onRemoveFromGroup,

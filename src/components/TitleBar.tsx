@@ -21,6 +21,9 @@ import type { ConnEnv } from '../utils/connEnv';
 import { Modal, ModalBody, ModalFooter } from './Modal';
 import { ConfirmDialog } from './ConfirmDialog';
 
+/** Stable empty default for the `openConns` prop: a fresh `[]` each render breaks memoisation downstream. */
+const NO_CONNS: SwitcherConn[] = [];
+
 interface TitleBarProps {
   hasConnection: boolean;
   /** The connection on screen — `TxControl` filters `tx-state-changed` events on this id. */
@@ -104,7 +107,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
   aiOpen = false,
   onToggleAiAssistant,
   onDatabaseOpened,
-  openConns = [],
+  openConns = NO_CONNS,
   onSelectConnection,
   onConnectSavedProfile,
   onOpenAllDbStats,

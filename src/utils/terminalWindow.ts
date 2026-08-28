@@ -7,6 +7,10 @@ import type { DbConnectionConfig } from './dbHelper';
 export function openTerminalWindow(config: DbConnectionConfig, profileName?: string) {
   const payload = encodeURIComponent(JSON.stringify({ config, profileName }));
   const label = `terminal_${crypto.randomUUID()}`;
+  // no-new: constructing a `WebviewWindow` IS how Tauri opens one - there is no `.open()` to call and
+  // nothing to keep, since the window owns itself from here on. Assigning it to a throwaway variable
+  // to satisfy the rule would say less, not more.
+  // eslint-disable-next-line no-new
   new WebviewWindow(label, {
     url: `index.html?term=${payload}`,
     title: profileName ? `Terminal — ${profileName}` : 'Terminal',
