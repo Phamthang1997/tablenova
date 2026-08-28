@@ -42,6 +42,22 @@ const CLIENT_KEY = 'tf_mcp_client';
 /** Which transport the user last picked. Global for the same reason `tf_mcp_client` is. */
 const TRANSPORT_KEY = 'tf_mcp_transport';
 
+/**
+ * System databases, so the reach line can put the user's own first.
+ *
+ * **Hand-synced with `src-tauri/src/stats/system_dbs.rs`**, which owns the same two lists for the
+ * dashboard - it is `pub(super)`, so there is no way to read it from here without widening it or
+ * changing a command's shape for a display detail. Both lists have been stable for a decade, and the
+ * cost of drift is a miscounted line rather than a wrong query.
+ *
+ * They are counted but NOT hidden: `mysql` holds the user table, so "the AI can read it" is exactly
+ * the kind of thing this line exists to say out loud.
+ */
+const SYSTEM_DBS: Record<string, string[]> = {
+  mysql: ['information_schema', 'mysql', 'performance_schema', 'sys'],
+  postgres: ['postgres', 'template0', 'template1'],
+};
+
 function readClient(): McpClientId {
   try {
     const saved = localStorage.getItem(CLIENT_KEY);
@@ -229,9 +245,30 @@ export function McpServerSettingsModal({ onClose }: Props) {
     // Absent while in flight or after a failure, and SQLite returns [] because one file is one
     // database - there is no cross-database reach to warn about. Say nothing in all three cases.
     if (!dbs || dbs.length === 0) return null;
-    if (dbs.length === 1) return <p className="mcp-reach ok">{t('mcp.reachOne')}</p>;
+
+    // The user's own databases decide whether this tick is a problem; the server's system schemas are
+    // the same four names everywhere and would otherwise both inflate the count and push the names
+    // that matter off the end of the line. Counted, not hidden - see SYSTEM_DBS.
+    const sys = new Set(SYSTEM_DBS[c.dialect] ?? []);
+    const own = dbs.filter((d) => !sys.has(d.toLowerCase()));
+    const sysCount = dbs.length - own.length;
+    const sysNote = sysCount > 0 ? ` ${t('mcp.reachSystem', { n: sysCount })}` : '';
+
+    // One of the user's own databases is the reassuring answer, so it reads as an aside rather than a
+    // warning - even when the server also carries system schemas.
+    if (own.length <= 1) {
+      return (
+        <p className="mcp-reach ok">
+          {t('mcp.reachOne')}
+          {sysNote}
+        </p>
+      );
+    }
     return (
-      <p className="mcp-reach">{t('mcp.reachMany', { n: dbs.length, list: dbs.join(', ') })}</p>
+      <p className="mcp-reach">
+        {t('mcp.reachMany', { n: own.length, list: own.join(', ') })}
+        {sysNote}
+      </p>
     );
   };
 
@@ -297,6 +334,9 @@ export function McpServerSettingsModal({ onClose }: Props) {
             onChange={(e) => setPort(e.target.value.replace(/[^0-9]/g, '').slice(0, 5))}
             disabled={running || busy}
             aria-label={t('mcp.port')}
+            // A sentence-long hint for a field this small belongs ON the field, not as one more line
+            // of prose in a dialog that already had ten of them.
+            title={t('mcp.portHint')}
             className="mcp-port"
           />
           <button
@@ -316,7 +356,6 @@ export function McpServerSettingsModal({ onClose }: Props) {
           />
           {t('mcp.autoStart')}
         </label>
-        <p className="mcp-hint">{t('mcp.portHint')}</p>
         {error && <p className="mcp-error">{error}</p>}
 
         <section className="mcp-section">
@@ -353,7 +392,7 @@ export function McpServerSettingsModal({ onClose }: Props) {
               `SHOW DATABASES` and a qualified `other_db.tbl` are all read statements, so `policy.rs`
               passes them. Saying "per connection, not per server" here - which this used to - is the
               one wrong sentence a security screen cannot afford. */}
-          <p className="mcp-warn">{t('mcp.sharedReach')}</p>
+          <p className="mcp-hint">{t('mcp.sharedReach')}</p>
           {connections.length === 0 ? (
             <p className="mcp-empty">{t('mcp.sharedEmpty')}</p>
           ) : (
@@ -380,17 +419,26 @@ export function McpServerSettingsModal({ onClose }: Props) {
           {connections.length > 0 && sharedCount === 0 && (
             <p className="mcp-empty">{t('mcp.sharedNone')}</p>
           )}
-          <p className="mcp-hint">{t('mcp.readOnlyNote')}</p>
-          <p className="mcp-hint">
-            {t('mcp.rowLimit')}: {ROW_LIMIT_DEFAULT} (max {ROW_LIMIT_MAX}) &middot;{' '}
-            {t('mcp.timeLimit', { n: TIMEOUT_CEILING_SECS })}
+          {/* Three separate lines of prose for three facts read as noise in the middle of the flow.
+              One strip of short items reads as what it is: the limits currently in force. */}
+          <p className="mcp-facts">
+            <span>{t('mcp.readOnlyShort')}</span>
+            <span>
+              {t('mcp.rowLimit')}: {ROW_LIMIT_DEFAULT} ({ROW_LIMIT_MAX} max)
+            </span>
+            <span>{t('mcp.timeLimit', { n: TIMEOUT_CEILING_SECS })}</span>
           </p>
         </section>
 
         <section className="mcp-section">
           <h4 className="mcp-section-title">{t('mcp.config')}</h4>
           <p className="mcp-hint">{t('mcp.configHint')}</p>
-          <div className="mcp-client-tabs">
+          {/* Two labelled rows rather than two bare button strips. Unlabelled, the second row read as
+              a continuation of the first - two identical-looking groups with nothing saying which
+              axis each one is. The label is what makes "client" and "transport" independent choices
+              instead of five buttons in a pile. */}
+          <div className="mcp-pick-row">
+            <span className="mcp-pick-label">{t('mcp.pickClient')}</span>
             {MCP_CLIENTS.map((c) => (
               <button
                 key={c.id}
@@ -403,10 +451,11 @@ export function McpServerSettingsModal({ onClose }: Props) {
               </button>
             ))}
           </div>
-          {/* Transport, not a client. Separate control because the axes are independent: every
-              client here speaks both, and which one is *reliable* differs per client while which one
-              is *safer* does not - stdio never writes the token to disk. */}
-          <div className="mcp-client-tabs">
+          {/* Transport, not a client. A separate axis because every client here speaks both, and
+              which one is *reliable* differs per client while which one is *safer* does not - stdio
+              never writes the token to disk. */}
+          <div className="mcp-pick-row">
+            <span className="mcp-pick-label">{t('mcp.pickTransport')}</span>
             {(['http', 'stdio'] as const).map((tr) => (
               <button
                 key={tr}

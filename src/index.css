@@ -15351,18 +15351,43 @@ input.rename-input {
 .mcp-spacer {
   flex: 1;
 }
+/* More air ABOVE a section than between its own rows: that ratio is what makes the eye read four
+   groups rather than one column of twelve lines. The divider alone was not doing it at gap 5 /
+   padding 8, where the space above a heading equalled the space between two hints. */
 .mcp-section {
   display: flex;
   flex-direction: column;
   gap: 5px;
-  padding-top: 8px;
+  margin-top: 6px;
+  padding-top: 11px;
   border-top: 1px solid var(--win-border);
 }
+/* The headings have to win against ~8 lines of 11px body text under them. At 11.5px/600 they did
+   not: everything was the same size and the eye had nothing to anchor on. Uppercase + tracking is
+   what separates a heading from a sentence at this scale, without making the dialog taller. */
 .mcp-section-title {
-  margin: 0;
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--win-text-primary);
+  margin: 0 0 2px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--win-text-secondary);
+}
+
+/* The limits in force, as one strip of short items instead of three sentences. The separator is a
+   pseudo-element so the items stay plain text - no `&middot;` threaded through the JSX. */
+.mcp-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 10px;
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: var(--win-text-secondary);
+}
+.mcp-facts span + span::before {
+  content: '·';
+  margin-right: 10px;
+  opacity: 0.5;
 }
 .mcp-hint {
   margin: 0;
@@ -15459,6 +15484,21 @@ input.rename-input {
   font-size: 11px;
   color: var(--win-text-secondary);
   cursor: pointer;
+}
+/* One choice per row, with the axis named on the left. Two unlabelled button strips read as one
+   pile; the label is what tells the user that client and transport are separate questions. The label
+   has a fixed width so the two button groups line up under each other. */
+.mcp-pick-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.mcp-pick-label {
+  width: 68px;
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--win-text-secondary);
 }
 .mcp-client-tabs {
   display: flex;
