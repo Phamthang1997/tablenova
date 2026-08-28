@@ -14,7 +14,7 @@ use crate::database::{self, DbConnection, DbKind};
 use super::effect::{begin_statements, dialect_of, is_write_stmt, tx_effect, TxEffect};
 use super::session::{
     apply_effect, check_not_aborted, emit_state, get_session, is_open, release_if_closed,
-    session_for, session_key, sessions, Pinned,
+    session_for, session_id, sessions, Pinned,
 };
 
 // `reject_if_pending` was deleted along with `switch_database` — it existed only to guard swapping the pool
@@ -29,14 +29,14 @@ use super::session::{
 /// locks. The statement that opens a transaction has to create the session it belongs to.
 pub fn should_route(conn: &DbConnection, sql: &str) -> bool {
     // A pool this process opened for itself is never the user's session — `ConnId::Adhoc` has no
-    // session key at all. See §0 of docs/multi-connection-plan.md for what that used to cost.
-    let Some(key) = session_key(conn) else {
+    // session id at all. See §0 of docs/multi-connection-plan.md for what that used to cost.
+    let Some(id) = session_id(conn) else {
         return false;
     };
     // `get_session`, not `session_for`: this runs on EVERY statement, including each of the 50k in a
     // restore, and the check path must not write to the map. No session yet == auto-commit, which is
     // the right answer for a connection never switched to manual mode.
-    if let Some(s) = get_session(key) {
+    if let Some(s) = get_session(id) {
         let m = match s.meta.lock() {
             Ok(m) => m,
             Err(e) => e.into_inner(),
@@ -63,8 +63,8 @@ pub(super) async fn lock_pinned(
     // English, and deliberately not in `backendErrors.ts`: unreachable in practice, because every
     // caller got here through `should_route`, which returns false for `ConnId::Adhoc`. A developer
     // diagnostic, not a user condition — same call as the one made for `sole()` in Phase 1b.
-    let key = session_key(conn).ok_or("internal: ad-hoc connection has no transaction session")?;
-    let pinned = session_for(key).pinned.clone();
+    let id = session_id(conn).ok_or("internal: ad-hoc connection has no transaction session")?;
+    let pinned = session_for(id).pinned.clone();
     let mut guard = pinned.lock_owned().await;
     if guard.is_none() {
         *guard = Some(match &conn.kind {
@@ -107,7 +107,7 @@ async fn ensure_begin(
 ) -> Result<(), String> {
     // Same invariant as `lock_pinned`, which every caller went through first.
     let session = session_for(
-        session_key(conn).ok_or("internal: ad-hoc connection has no transaction session")?,
+        session_id(conn).ok_or("internal: ad-hoc connection has no transaction session")?,
     );
     let (already_open, isolation, read_only) = {
         let m = session.meta.lock().map_err(|e| e.to_string())?;
@@ -133,8 +133,8 @@ pub(crate) async fn run_raw(conn: &DbConnection, sql: String) -> Result<Vec<Valu
     let stripped = database::strip_leading_comments(&sql);
     let effect = tx_effect(dialect_of(conn), stripped);
     let is_write = is_write_stmt(stripped);
-    let key = session_key(conn).ok_or("internal: ad-hoc connection has no transaction session")?;
-    check_not_aborted(key, &effect)?;
+    let id = session_id(conn).ok_or("internal: ad-hoc connection has no transaction session")?;
+    check_not_aborted(id, &effect)?;
 
     let mut guard = lock_pinned(conn).await?;
     let pinned = guard.as_mut().ok_or("Phiên transaction không sẵn sàng")?;
@@ -144,12 +144,12 @@ pub(crate) async fn run_raw(conn: &DbConnection, sql: String) -> Result<Vec<Valu
     drop(guard);
 
     match &out {
-        Ok(_) => apply_effect(key, &effect, is_write, &sql, None),
-        Err(e) => apply_effect(key, &effect, is_write, &sql, Some(e)),
+        Ok(_) => apply_effect(id, &effect, is_write, &sql, None),
+        Err(e) => apply_effect(id, &effect, is_write, &sql, Some(e)),
     }
     // A COMMIT/ROLLBACK frees the connection back to the pool; holding it after the transaction
     // ended would starve the pool for no reason.
-    release_if_closed(key).await;
+    release_if_closed(id).await;
     out
 }
 
@@ -162,8 +162,8 @@ pub(crate) async fn run_bound(
     let stripped = database::strip_leading_comments(&sql);
     let effect = tx_effect(dialect_of(conn), stripped);
     let is_write = is_write_stmt(stripped);
-    let key = session_key(conn).ok_or("internal: ad-hoc connection has no transaction session")?;
-    check_not_aborted(key, &effect)?;
+    let id = session_id(conn).ok_or("internal: ad-hoc connection has no transaction session")?;
+    check_not_aborted(id, &effect)?;
 
     let mut guard = lock_pinned(conn).await?;
     let pinned = guard.as_mut().ok_or("Phiên transaction không sẵn sàng")?;
@@ -180,10 +180,10 @@ pub(crate) async fn run_bound(
     drop(guard);
 
     match &out {
-        Ok(_) => apply_effect(key, &effect, is_write, &sql, None),
-        Err(e) => apply_effect(key, &effect, is_write, &sql, Some(e)),
+        Ok(_) => apply_effect(id, &effect, is_write, &sql, None),
+        Err(e) => apply_effect(id, &effect, is_write, &sql, Some(e)),
     }
-    release_if_closed(key).await;
+    release_if_closed(id).await;
     out
 }
 
@@ -200,8 +200,8 @@ pub(crate) async fn run_stream(
     let stripped = database::strip_leading_comments(sql);
     let effect = tx_effect(dialect_of(conn), stripped);
     let is_write = is_write_stmt(stripped);
-    let key = session_key(conn).ok_or("internal: ad-hoc connection has no transaction session")?;
-    check_not_aborted(key, &effect)?;
+    let id = session_id(conn).ok_or("internal: ad-hoc connection has no transaction session")?;
+    check_not_aborted(id, &effect)?;
 
     let mut guard = lock_pinned(conn).await?;
     let pinned = guard.as_mut().ok_or("Phiên transaction không sẵn sàng")?;
@@ -227,10 +227,10 @@ pub(crate) async fn run_stream(
     drop(guard);
 
     match &out {
-        Ok(_) => apply_effect(key, &effect, is_write, sql, None),
-        Err(e) => apply_effect(key, &effect, is_write, sql, Some(e)),
+        Ok(_) => apply_effect(id, &effect, is_write, sql, None),
+        Err(e) => apply_effect(id, &effect, is_write, sql, Some(e)),
     }
-    release_if_closed(key).await;
+    release_if_closed(id).await;
     out
 }
 
@@ -242,13 +242,13 @@ pub(crate) async fn run_stream(
 /// disappear (disconnect, connect elsewhere, IAM pool swap): the transaction would die anyway, and
 /// dying silently is what makes users lose work without knowing it.
 pub async fn abandon(conn: Option<&DbConnection>) {
-    let Some(key) = conn.and_then(session_key).map(str::to_string) else {
+    let Some(id) = conn.and_then(session_id).map(str::to_string) else {
         return;
     };
-    let Some(session) = get_session(&key) else {
+    let Some(session) = get_session(&id) else {
         return;
     };
-    let was_open = is_open(&key);
+    let was_open = is_open(&id);
     let pinned = session.pinned.clone();
     let mut guard = pinned.lock_owned().await;
     if was_open {
@@ -266,14 +266,14 @@ pub async fn abandon(conn: Option<&DbConnection>) {
         m.close();
         m.last_implicit_commit = false;
     }
-    emit_state(&key);
+    emit_state(&id);
 }
 
 /// Full reset on a new connection: auto-commit preference included, because isolation levels are
 /// dialect-specific and carrying "REPEATABLE READ" over to SQLite would be meaningless.
 pub async fn reset(conn: Option<&DbConnection>) {
     abandon(conn).await;
-    let Some(key) = conn.and_then(session_key).map(str::to_string) else {
+    let Some(id) = conn.and_then(session_id).map(str::to_string) else {
         return;
     };
     // **Remove the entry, do not just reset its fields.** Leaving it behind leaks one entry per
@@ -286,7 +286,7 @@ pub async fn reset(conn: Option<&DbConnection>) {
             Ok(m) => m,
             Err(e) => e.into_inner(),
         };
-        map.remove(key.as_str());
+        map.remove(id.as_str());
     }
-    emit_state(&key);
+    emit_state(&id);
 }

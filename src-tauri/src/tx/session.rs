@@ -173,7 +173,14 @@ pub(super) fn session_for(id: &str) -> Arc<Session> {
 
 /// The session a live connection belongs to. `ConnId::Adhoc` has none and never gets one — see
 /// `should_route`.
-pub(super) fn session_key(conn: &DbConnection) -> Option<&str> {
+///
+/// Named `session_id`, not `session_key`: what comes back is the `conn_id`, a per-connect UUID used
+/// to index `SESSIONS`. It is not a credential and never reaches SQL — `route.rs` passes it
+/// *alongside* the statement, never into it. The old name cost real confusion twice over: this repo
+/// has actual keys (SSH private keys, the MCP bearer, keyring entries), and CodeQL's naming heuristic
+/// read it as one, reporting every execution funnel it flows near as cleartext storage of a secret
+/// (alerts 34/35).
+pub(super) fn session_id(conn: &DbConnection) -> Option<&str> {
     match &conn.id {
         crate::state::ConnId::Session(s) => Some(s),
         crate::state::ConnId::Adhoc => None,
@@ -286,7 +293,7 @@ pub fn manual_mode(conn_id: &str) -> bool {
 /// handle carry its own identity is what keeps a caller from pairing connection A with id B (§4.4a).
 /// An ad-hoc pool has no session and never joins one.
 pub fn use_session(conn: &DbConnection) -> bool {
-    match session_key(conn) {
+    match session_id(conn) {
         Some(k) => manual_mode(k) || is_open(k),
         None => false,
     }
