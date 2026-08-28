@@ -101,6 +101,8 @@ export const Console: React.FC<ConsoleProps> = ({ storageScope, theme, onError, 
 
   const persist = useCallback(() => {
     try { localStorage.setItem(bufKey, bufferText()); } catch { /* quota */ }
+    // Same as `runAll` below: `bufferText` is deliberately not a dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bufKey]);
 
   /**
@@ -139,6 +141,13 @@ export const Console: React.FC<ConsoleProps> = ({ storageScope, theme, onError, 
     } finally {
       setRunning(false);
     }
+    // memo-dependencies calls `onError`, `onSelectedDb` and `t` unnecessary here. **It is wrong**:
+    // the body calls all three (`onError(res.error)`, `onSelectedDb(...)`, `t(redis.cliStoppedAtSelect)`).
+    // The one thing that sets this callback apart from the two below is that it is `async`, which the
+    // rule appears not to traverse. Do NOT trim these: dropping `t` is the stale-translation bug the
+    // i18n notes in CLAUDE.md warn about, and dropping the two props is a stale closure over an old
+    // handler.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running, onError, onSelectedDb, t]);
 
   /** Ctrl+Enter: command under cursor. */
@@ -156,6 +165,10 @@ export const Console: React.FC<ConsoleProps> = ({ storageScope, theme, onError, 
     const cmds = splitRedisCommands(bufferText()).map((c) => c.text);
     if (cmds.length === 0) { onError(t('redis.cliNothingToRun')); return; }
     void runCommands(cmds);
+    // memo-dependencies wants `bufferText` here. Leaving it out is deliberate: it is recreated
+    // every render and only reads a ref, so listing it would make this callback change identity on
+    // every render - defeating the very memo it is inside.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runCommands, onError, t]);
 
   // Handlers invoked by Monaco keybindings retain initial closure — accessed via refs
