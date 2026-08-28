@@ -2769,11 +2769,16 @@ const vi: typeof en = {
     configHint: 'Chọn client bạn dùng. Nó dùng đúng cổng server đang bind.',
     clientClaudeCode: 'Claude Code',
     clientAntigravity: 'Antigravity',
+    transportHttp: 'HTTP',
+    transportStdio: 'stdio (không token)',
     clientGeneric: 'Khác (Cursor…)',
     targetClaudeCode:
       'Chạy trong terminal — hai dòng đầu chỉ cần khi đăng ký lại. Scope là user, không phải project: một entry theo project có thể CLI thấy mà session lại không. Đừng dán vào settings.json: Claude Code không đọc MCP server ở đó và cũng không báo lỗi.',
     targetAntigravity:
       'Lưu vào ~/.gemini/config/mcp_config.json, hoặc dùng Manage MCP Servers → View raw config. Bản này gọi TableNova qua stdio thay vì dùng URL, vì HTTP client của Antigravity có thể lỗi trước khi tới server — và nó không cần token trong tệp.',
+    targetClaudeCodeStdio: 'Chạy trong terminal. Scope là user, không phải project — entry theo project có thể CLI thấy mà session lại không. Bản này gọi TableNova qua stdio, nên không có token nào được lưu ở đâu cả.',
+    targetAntigravityHttp: 'Lưu vào ~/.gemini/config/mcp_config.json. Antigravity đòi serverUrl — url và httpUrl bị bỏ qua. Nếu nó hiện 0 tools kèm lỗi subscriptions/listen thì HTTP client của bản cài đó hỏng: chuyển sang stdio.',
+    targetGenericStdio: 'Lưu vào tệp cấu hình MCP của client. Dáng này chạy được ở mọi client nói stdio, và không lưu token nào.',
     targetGeneric: 'Lưu vào tệp cấu hình MCP của client — với Cursor là .cursor/mcp.json.',
     configMismatch:
       'Mỗi client gọi tên field URL một kiểu và bỏ qua kiểu của client khác, nên cấu hình dành cho client khác sẽ lỗi mà không báo gì.',

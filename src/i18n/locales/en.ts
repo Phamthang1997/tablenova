@@ -2796,11 +2796,17 @@ const en = {
     configHint: 'Pick your client. It uses the port the server is actually bound to.',
     clientClaudeCode: 'Claude Code',
     clientAntigravity: 'Antigravity',
+    transportHttp: 'HTTP',
+    transportStdio: 'stdio (no token)',
     clientGeneric: 'Other (Cursor…)',
     targetClaudeCode:
       'Run these in a terminal — the first two only matter when re-registering. Scope is user, not project: a project-scoped entry can be visible to the CLI and still invisible to the session. Do not paste into settings.json: Claude Code ignores MCP servers there and will not warn you.',
     targetAntigravity:
       'Save into ~/.gemini/config/mcp_config.json, or use Manage MCP Servers → View raw config. This one spawns TableNova over stdio instead of using the URL, because Antigravity’s HTTP client can fail before reaching the server — and it needs no token in the file.',
+    targetClaudeCodeStdio: 'Run these in a terminal. Scope is user, not project — a project-scoped entry can be visible to the CLI and still invisible to the session. This one spawns TableNova over stdio, so no token is stored anywhere.',
+    targetAntigravityHttp: 'Save into ~/.gemini/config/mcp_config.json. Antigravity requires serverUrl — url and httpUrl are ignored. If it shows 0 tools with a subscriptions/listen error, its HTTP client is broken in that install: switch to stdio.',
+    targetGenericStdio:
+      "Save into your client's MCP config file. This shape works in every client that speaks stdio, and stores no token.",
     targetGeneric: "Save into your client's MCP config file — for Cursor that is .cursor/mcp.json.",
     configMismatch:
       'Each client names the URL field differently and ignores the others, so a config meant for another client fails silently.',

@@ -6,7 +6,13 @@ import { Check, Copy, Plug, RefreshCw, Trash2 } from 'lucide-react';
 import { Modal, ModalBody } from './Modal';
 import { dbHelper } from '../utils/dbHelper';
 import type { McpAuditEntry, McpStatus, OpenConnection } from '../utils/dbHelper';
-import { MCP_CLIENTS, mcpClient, type McpClientId } from '../utils/mcpClients';
+import {
+  MCP_CLIENTS,
+  mcpClient,
+  mcpVariant,
+  type McpClientId,
+  type McpTransport,
+} from '../utils/mcpClients';
 import { readMcpPrefs, setMcpAutoStart, setMcpPort } from '../utils/mcpPrefs';
 
 /** Mirrors `policy::DEFAULT_ROW_LIMIT` / `MAX_ROW_LIMIT`. Shown, not configurable in this build. */
@@ -33,6 +39,9 @@ const LOG_VIEW_CAP = 200;
  */
 const CLIENT_KEY = 'tf_mcp_client';
 
+/** Which transport the user last picked. Global for the same reason `tf_mcp_client` is. */
+const TRANSPORT_KEY = 'tf_mcp_transport';
+
 function readClient(): McpClientId {
   try {
     const saved = localStorage.getItem(CLIENT_KEY);
@@ -41,6 +50,22 @@ function readClient(): McpClientId {
     // A blocked localStorage must not cost the user the whole dialog.
   }
   return MCP_CLIENTS[0].id;
+}
+
+/**
+ * The stored transport, or `null` to mean "use whatever this client's default is".
+ *
+ * `null` rather than a hardcoded fallback: the two transports are not equally reliable per client, so
+ * the answer lives in `defaultTransport` and not here.
+ */
+function readTransport(): McpTransport | null {
+  try {
+    const saved = localStorage.getItem(TRANSPORT_KEY); // 'tf_mcp_transport'
+    if (saved === 'http' || saved === 'stdio') return saved;
+  } catch {
+    // As above.
+  }
+  return null;
 }
 
 interface Props {
@@ -59,6 +84,9 @@ export function McpServerSettingsModal({ onClose }: Props) {
   const [error, setError] = useState('');
   const [copied, setCopied] = useState<'token' | 'config' | null>(null);
   const [clientId, setClientId] = useState<McpClientId>(readClient);
+  const [transport, setTransport] = useState<McpTransport>(
+    () => readTransport() ?? mcpClient(readClient()).defaultTransport,
+  );
   const [autoStart, setAutoStart] = useState(() => readMcpPrefs().autoStart);
   /** Databases each ticked connection can actually reach, keyed by `connId`. See `reachLine`. */
   const [reach, setReach] = useState<Record<string, string[]>>({});
@@ -159,14 +187,28 @@ export function McpServerSettingsModal({ onClose }: Props) {
 
   const pickClient = (id: McpClientId) => {
     setClientId(id);
+    // Re-arm the new client's proven default rather than carrying the previous choice across: the two
+    // transports are not equally reliable per client, which is what `defaultTransport` encodes.
+    setTransport(mcpClient(id).defaultTransport);
     try {
       localStorage.setItem(CLIENT_KEY, id); // 'tf_mcp_client' - global, see the constant above.
+      localStorage.removeItem(TRANSPORT_KEY);
     } catch {
       // Losing the preference is not worth failing the click over.
     }
   };
 
+  const pickTransport = (next: McpTransport) => {
+    setTransport(next);
+    try {
+      localStorage.setItem(TRANSPORT_KEY, next); // 'tf_mcp_transport'
+    } catch {
+      // As above.
+    }
+  };
+
   const activeClient = mcpClient(clientId);
+  const activeVariant = mcpVariant(clientId, transport);
 
   /**
    * What a ticked connection can actually reach, named.
@@ -196,7 +238,7 @@ export function McpServerSettingsModal({ onClose }: Props) {
   // Built from the port the server is ACTUALLY bound to, never from the default constant: a
   // generated snippet naming a port nothing listens on is worse than no snippet at all.
   const endpoint = status?.url || `http://127.0.0.1:${port}/mcp`;
-  const configSnippet = activeClient.build({
+  const configSnippet = activeVariant.build({
     url: endpoint,
     token,
     exePath: status?.exePath ?? '',
@@ -361,13 +403,29 @@ export function McpServerSettingsModal({ onClose }: Props) {
               </button>
             ))}
           </div>
-          <p className="mcp-hint">{t(activeClient.targetKey)}</p>
+          {/* Transport, not a client. Separate control because the axes are independent: every
+              client here speaks both, and which one is *reliable* differs per client while which one
+              is *safer* does not - stdio never writes the token to disk. */}
+          <div className="mcp-client-tabs">
+            {(['http', 'stdio'] as const).map((tr) => (
+              <button
+                key={tr}
+                type="button"
+                aria-pressed={tr === transport}
+                className={tr === transport ? 'mcp-client-tab active' : 'mcp-client-tab'}
+                onClick={() => pickTransport(tr)}
+              >
+                {tr === 'http' ? t('mcp.transportHttp') : t('mcp.transportStdio')}
+              </button>
+            ))}
+          </div>
+          <p className="mcp-hint">{t(activeVariant.targetKey)}</p>
           <pre className="mcp-config">{configSnippet}</pre>
           <button className="btn btn-secondary" onClick={() => copy('config', configSnippet)}>
             {copied === 'config' ? <Check size={11} /> : <Copy size={11} />}
             {copied === 'config'
               ? t('mcp.tokenCopied')
-              : activeClient.isCommand
+              : activeVariant.isCommand
                 ? t('mcp.copyCommand')
                 : t('mcp.copyConfig')}
           </button>
