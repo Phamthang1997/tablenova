@@ -35,6 +35,10 @@ export function exportToMermaid(tables: ERTable[], relationships: ERRelationship
   return lines.join('\n');
 }
 
+function escapeSingleQuote(str: string): string {
+  return str.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
 /**
  * Generates DBML (Database Markup Language) format for dbdiagram.io / dbdocs.io.
  */
@@ -48,7 +52,7 @@ export function exportToDbml(tables: ERTable[], relationships: ERRelationship[])
       const settings: string[] = [];
       if (col.isPrimaryKey) settings.push('pk');
       if (col.nullable === false) settings.push('not null');
-      if (col.comment) settings.push(`note: '${col.comment.replace(/'/g, "\\'")}'`);
+      if (col.comment) settings.push(`note: '${escapeSingleQuote(col.comment)}'`);
 
       const settingStr = settings.length > 0 ? ` [${settings.join(', ')}]` : '';
       lines.push(`  ${col.name} ${col.type}${settingStr}`);
@@ -80,7 +84,7 @@ export function exportToSql(tables: ERTable[], relationships: ERRelationship[]):
     table.columns.forEach((col) => {
       let def = `  \`${col.name}\` ${col.type}`;
       if (col.nullable === false) def += ' NOT NULL';
-      if (col.comment) def += ` COMMENT '${col.comment.replace(/'/g, "\\'")}'`;
+      if (col.comment) def += ` COMMENT '${escapeSingleQuote(col.comment)}'`;
       colDefs.push(def);
     });
 

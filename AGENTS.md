@@ -17,3 +17,8 @@
 - **Đăng ký `#[tauri::command]`**: Mọi command mới bắt buộc phải được thêm vào danh sách `tauri::generate_handler![...]` trong `src-tauri/src/app/handlers.rs`.
 - **Quản lý State**: Trạng thái dùng chung phải được gắn vào `AppState` trong `src-tauri/src/state/`.
 
+## Quy tắc Git Commit, PR & Chú thích Mã nguồn (English Only)
+- **Git Commit Messages**: Toàn bộ commit message bắt buộc phải viết bằng **tiếng Anh (English)** theo định dạng Conventional Commits (ví dụ: `feat(scope): ...`, `fix(scope): ...`, `refactor(scope): ...`, `docs(scope): ...`).
+- **Pull Requests**: Tiêu đề (PR Title) và nội dung mô tả (PR Description) bắt buộc phải viết bằng **tiếng Anh (English)**. Không thêm footer/trailer `Co-Authored-By`.
+- **Code Comments**: Toàn bộ ghi chú, giải thích, docstring trong mã nguồn TypeScript & Rust bắt buộc phải viết bằng **tiếng Anh (English)**.
+
