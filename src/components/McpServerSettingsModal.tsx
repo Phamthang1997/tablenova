@@ -74,6 +74,10 @@ export function McpServerSettingsModal({ onClose }: Props) {
   }, []);
 
   useEffect(() => {
+    // set-state-in-effect: the rule's alternatives - derive during render, initialise state directly -
+    // cannot reach the backend. Status, token and log all come from `invoke()`, so the first paint has
+    // nothing to show and an effect is the only place the call can live.
+    // eslint-disable-next-line react/set-state-in-effect
     void refresh();
     void dbHelper.mcpGetToken().then(setToken).catch(() => {});
     void dbHelper.mcpAuditLog().then(setLog).catch(() => {});

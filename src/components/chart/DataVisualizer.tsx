@@ -66,6 +66,11 @@ export const DataVisualizer: React.FC<DataVisualizerProps> = ({
   // Reset or adjust configuration if columns change
   useEffect(() => {
     if (columns.length > 0) {
+      // set-state-in-effect: this reconciles state against new input rather than deriving it. The
+      // functional update is the point - it keeps the user's own column picks when they are still
+      // valid and only falls back to the default when one of them no longer exists. Deriving the
+      // config from `columns` during render would silently discard every choice they made.
+      // eslint-disable-next-line react/set-state-in-effect
       setConfig((prev) => {
         const xExists = columns.some((c) => c.name === prev.xColumn);
         const yExists = prev.yColumns.some((y) => columns.some((c) => c.name === y));

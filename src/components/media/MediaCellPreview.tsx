@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useMemo, useCallback } from 'react';
 import ReactDOM from 'react-dom';
 import { Image as ImageIcon, Eye } from 'lucide-react';
 import { detectMedia, type MediaInfo } from '../../utils/mediaDetector';
@@ -22,19 +22,26 @@ export const MediaCellPreview: React.FC<MediaCellPreviewProps> = ({
   tableName,
   fallbackText,
 }) => {
-  const [mediaInfo, setMediaInfo] = useState<MediaInfo | null>(() => detectMedia(value, columnName));
+  // Derived, not state: `detectMedia` is a pure function of the two props, so a state + effect pair
+  // only bought an extra render on every cell whose value changed - and a grid changes a lot of them
+  // at once.
+  const mediaInfo: MediaInfo | null = useMemo(
+    () => detectMedia(value, columnName),
+    [value, columnName],
+  );
+
   const [isHovered, setIsHovered] = useState<boolean>(false);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
-  const [thumbError, setThumbError] = useState<boolean>(false);
+  // Which URL failed to load, rather than a bare "it failed" flag.
+  //
+  // The flag needed an effect to clear it when the cell's value changed; remembering WHAT failed
+  // makes that automatic - a new `displayUrl` simply is not the failed one. Two values that resolve
+  // to the same URL keep the error, which is right: same URL, same failure.
+  const [erroredUrl, setErroredUrl] = useState<string | null>(null);
+  const thumbError = erroredUrl !== null && erroredUrl === mediaInfo?.displayUrl;
   const hoverTimeoutRef = useRef<any>(null);
   const previewBtnRef = useRef<HTMLButtonElement>(null);
-
-  // Update detected media when cell value or column name changes
-  useEffect(() => {
-    setThumbError(false);
-    setMediaInfo(detectMedia(value, columnName));
-  }, [value, columnName]);
 
   const handleMouseEnter = useCallback(() => {
     if (!mediaInfo) return;
@@ -90,7 +97,7 @@ export const MediaCellPreview: React.FC<MediaCellPreviewProps> = ({
               className="media-cell-thumb-img"
               loading="lazy"
               referrerPolicy="no-referrer"
-              onError={() => setThumbError(true)}
+              onError={() => setErroredUrl(mediaInfo.displayUrl)}
             />
           )}
           <div className="media-cell-hover-overlay">

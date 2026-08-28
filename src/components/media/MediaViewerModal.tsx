@@ -39,6 +39,11 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
   // Reset viewport state when opening a new media item
   useEffect(() => {
     if (isOpen) {
+      // set-state-in-effect: opening the viewer resets the viewport and then loads the image, which is
+      // synchronisation with an external system rather than derivable state. The alternative the rule
+      // suggests - a `key` on the component so React remounts it - would throw away the loaded image
+      // on every open of the same media.
+      // eslint-disable-next-line react/set-state-in-effect
       setZoom(1);
       setRotation(0);
       setPanOffset({ x: 0, y: 0 });

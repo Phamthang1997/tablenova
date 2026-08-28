@@ -22,6 +22,10 @@ export const MediaHoverPopover: React.FC<MediaHoverPopoverProps> = ({
 
   // Load natural dimensions when the image source changes
   useEffect(() => {
+    // set-state-in-effect: this IS what an effect is for - loading an image is synchronising with an
+    // external system, and the two resets below clear the previous image's result before the new load
+    // starts. Deriving them during render is impossible: the dimensions only exist after `onload`.
+    // eslint-disable-next-line react/set-state-in-effect
     setHasError(false);
     setDimensions(null);
 
