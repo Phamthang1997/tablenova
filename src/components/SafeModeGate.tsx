@@ -252,8 +252,8 @@ export const SafeModeGate: React.FC = () => {
           >
             <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: '2px' }} />
             <div>
-              {Array.from(new Set(req.sql.unsafe.map((u) => u.kind))).map((kind) => (
-                <div key={kind}>{unsafeLabel(kind)}</div>
+              {Array.from(new Set(req.sql.unsafe.map((u) => u.kind))).map((unsafeKind) => (
+                <div key={unsafeKind}>{unsafeLabel(unsafeKind)}</div>
               ))}
             </div>
           </div>

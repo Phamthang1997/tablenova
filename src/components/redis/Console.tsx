@@ -239,10 +239,10 @@ export const Console: React.FC<ConsoleProps> = ({ storageScope, theme, onError, 
     const decorations = ed.createDecorationsCollection([]);
     const refresh = () => {
       const model = ed.getModel();
-      const pos = ed.getPosition();
-      if (!model || !pos) return;
+      const caret = ed.getPosition();
+      if (!model || !caret) return;
       const text = model.getValue();
-      const cmd = commandAtLine(text, pos.lineNumber);
+      const cmd = commandAtLine(text, caret.lineNumber);
       if (!cmd) { decorations.set([]); return; }
       const items: monaco.editor.IModelDeltaDecoration[] = [{
         range: new monaco.Range(cmd.line, 1, cmd.line, 1),

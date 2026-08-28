@@ -216,8 +216,8 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
   // Automatically fetch referenced table columns whenever fkModalData refTable changes or modal opens
   useEffect(() => {
     if (fkModalData?.refTable) {
-      void getColumnsOfRef.current?.(fkModalData.refTable).then(cols => {
-        setRefColumns(cols);
+      void getColumnsOfRef.current?.(fkModalData.refTable).then(refCols => {
+        setRefColumns(refCols);
       });
     } else {
       setRefColumns([]);

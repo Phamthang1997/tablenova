@@ -3421,9 +3421,9 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
           closeDisabled={editCommitting}
         >
           <ModalBody style={{ padding: '16px', gap: 0, background: 'var(--win-bg-window)', fontFamily: 'var(--win-font-mono)', fontSize: '12px', color: 'var(--win-text-primary)', flex: 1 }}>
-            {editCommit.sqls.map((sql, idx) => (
+            {editCommit.sqls.map((stmt, idx) => (
               <pre key={idx} style={{ margin: '0 0 10px 0', whiteSpace: 'pre-wrap', wordBreak: 'break-all', paddingBottom: '8px', borderBottom: idx < editCommit.sqls.length - 1 ? '1px dashed var(--win-border)' : 'none' }}>
-                {sql};
+                {stmt};
               </pre>
             ))}
           </ModalBody>

@@ -16,20 +16,20 @@ const tab = (id: string, groupId?: string): TabInfo => ({
   ...(groupId ? { groupId } : {}),
 });
 
-const ids = (list: TabInfo[]) => list.map((it) => it.id);
-const groupOf = (list: TabInfo[], id: string) => list.find((it) => it.id === id)?.groupId;
+const ids = (list: TabInfo[]) => list.map((entry) => entry.id);
+const groupOf = (list: TabInfo[], id: string) => list.find((entry) => entry.id === id)?.groupId;
 
 /** Every group appears as exactly one contiguous run. */
 function groupsAreContiguous(list: TabInfo[]): boolean {
   const seen = new Set<string>();
   let previous: string | undefined;
-  for (const it of list) {
-    if (it.groupId !== previous) {
-      if (it.groupId) {
-        if (seen.has(it.groupId)) return false;
-        seen.add(it.groupId);
+  for (const entry of list) {
+    if (entry.groupId !== previous) {
+      if (entry.groupId) {
+        if (seen.has(entry.groupId)) return false;
+        seen.add(entry.groupId);
       }
-      previous = it.groupId;
+      previous = entry.groupId;
     }
   }
   return true;
@@ -117,7 +117,7 @@ describe('reorderTabs', () => {
     const list = [tab('a', 'g1'), tab('b', 'g1'), tab('c', 'g1')];
     const next = reorderTabs(list, 0, 2, 'g1');
     expect(ids(next)).toEqual(['b', 'c', 'a']);
-    expect(next.every((it) => it.groupId === 'g1')).toBe(true);
+    expect(next.every((entry) => entry.groupId === 'g1')).toBe(true);
     expect(groupsAreContiguous(next)).toBe(true);
   });
 

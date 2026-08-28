@@ -418,10 +418,10 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
     if (file.name.toLowerCase().endsWith('.xlsx')) {
       try {
         const buf = await file.arrayBuffer();
-        const rows = await parseXlsx(buf);
-        if (rows.length === 0) throw new Error(t('dataGrid.errXlsxEmpty'));
-        setImportFileType('json'); // object-shaped rows, sharing the DB-write branch with CSV/JSON
-        setImportPendingRows(rows);
+        const sheetRows = await parseXlsx(buf);
+        if (sheetRows.length === 0) throw new Error(t('dataGrid.errXlsxEmpty'));
+        setImportFileType('json'); // object-shaped sheetRows, sharing the DB-write branch with CSV/JSON
+        setImportPendingRows(sheetRows);
         setShowImportModal(true);
       } catch (err: any) {
         setErrorMsg(t('dataGrid.errReadFile', { message: err.message }));

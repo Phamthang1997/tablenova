@@ -720,8 +720,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
     if (willExpand && !columnsMapRef.current[tableName] && !loadingColumnsRef.current[tableName]) {
       setLoadingColumns(prev => ({ ...prev, [tableName]: true }));
       try {
-        const schema = await dbHelper.getTableSchema(connId, tableName);
-        setTableSchemaMap(prev => ({ ...prev, [tableName]: schema }));
+        const tableSchema = await dbHelper.getTableSchema(connId, tableName);
+        setTableSchemaMap(prev => ({ ...prev, [tableName]: tableSchema }));
       } catch (err) {
         console.error(`Failed to fetch schema for ${tableName}:`, err);
       } finally {
