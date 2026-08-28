@@ -106,6 +106,8 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
   };
 
   useEffect(() => {
+      // All three deps are triggers. Adding `scrollToBottom` instead would fire this on every render.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     scrollToBottom();
   }, [activeSession.messages, streamingText, loading]);
 

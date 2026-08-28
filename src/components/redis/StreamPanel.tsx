@@ -256,7 +256,7 @@ const ConsumerGroups: React.FC<GroupsProps> = ({ keyName, readOnly, onError, onO
     if (p.success) setPending(p.pending); else onError(p.error || t('redis.errStreamGroups'));
   }, [keyName, onError, t]);
 
-  useEffect(() => { loadGroups(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [keyName]);
+    useEffect(() => { loadGroups(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [keyName]);
   useEffect(() => { loadGroupDetail(group); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [group]);
 
   const ack = async (id: string) => {

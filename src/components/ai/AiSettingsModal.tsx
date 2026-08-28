@@ -109,6 +109,8 @@ export const AiSettingsModal: React.FC<AiSettingsModalProps> = ({ open, onClose 
         handleFetchLiveModels(currentProfile);
       }
     });
+    // `selectedProfileId` is the trigger for a profile switch; the body reads the derived profile.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, selectedProfileId, currentProfile, handleFetchLiveModels]);
 
   const handleUpdateProfile = (updates: Partial<AiAssistantProfile>) => {

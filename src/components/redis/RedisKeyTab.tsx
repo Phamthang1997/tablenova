@@ -78,6 +78,8 @@ export const RedisKeyTab: React.FC<RedisKeyTabProps> = ({
       setState('ready');
     })();
     return () => { cancelled = true; };
+    // `connId` is a trigger, not a read: the same key name on another connection is different data.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [keyName, connId]);
 
   const doRename = async (next: string) => {

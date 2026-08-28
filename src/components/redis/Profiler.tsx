@@ -35,6 +35,8 @@ export const Profiler: React.FC<ProfilerProps> = ({ onError }) => {
 
   useEffect(() => {
     if (followRef.current && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+    // `lines` is a trigger, not a read - the body only touches refs. Dropping it kills auto-scroll.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lines]);
 
   // Never leave MONITOR running on the server because the user switched tabs.

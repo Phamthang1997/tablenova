@@ -195,6 +195,8 @@ export const TabManager: React.FC<TabManagerProps> = ({
       `[data-tab-id="${CSS.escape(activeTabId)}"]`,
     );
     node?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    // `tabs` is a trigger: the strip re-renders, so the active node has to be scrolled back into view.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTabId, tabs]);
 
   /**

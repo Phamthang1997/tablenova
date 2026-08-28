@@ -867,6 +867,8 @@ export const App: React.FC = () => {
     };
     window.addEventListener('table-renamed', handleGlobalRename);
     return () => window.removeEventListener('table-renamed', handleGlobalRename);
+    // Deliberately empty: the listener is registered once, and `activeConnIdRef` exists so the handler never needs re-subscribing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   React.useEffect(() => {

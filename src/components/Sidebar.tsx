@@ -920,6 +920,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return () => {
       alive = false;
     };
+    // `dbName` is a trigger: switching database has to re-probe its schemas.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connId, dbType, dbName]);
 
   // MySQL and MariaDB reach us as the same `dbType`, so the only way to know which server this
@@ -988,6 +990,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     });
     // `connId` is in the deps: two connections can point at the SAME database name (`sakila` on two
     // servers), where `dbName` does not change and the sidebar would show the old connection's tables.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connId, dbName, schema]);
 
   useEffect(() => {
@@ -1319,6 +1322,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   useEffect(() => {
     queueMicrotask(() => setHighlight(-1));
+    // `searchTerm` is a trigger: reset the highlighted row whenever the text changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchTerm]);
 
   useEffect(() => {

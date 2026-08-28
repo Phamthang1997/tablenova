@@ -92,6 +92,8 @@ export const Console: React.FC<ConsoleProps> = ({ storageScope, theme, onError, 
   useEffect(() => { registerRedisLanguage(); defineSqlThemes(); }, []);
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+    // `log` is a trigger, not a read - the body only touches refs. Dropping it kills auto-scroll.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [log]);
 
   /** Reads directly from Monaco without React state — mirrors SqlEditor `getPaneSql()`. */

@@ -89,6 +89,8 @@ export const DbRail: React.FC<DbRailProps> = ({
       cancelled = true;
       window.removeEventListener('database-restored', onRestored);
     };
+    // Both deps are triggers: the body calls listConnections() and reads neither.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reloadKey, activeConnId]);
 
   // Hidden with one connection ONLY when that connection carries no warning.
