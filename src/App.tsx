@@ -1009,7 +1009,19 @@ export const App: React.FC = () => {
       // tabs are not mounted), and the previous selection already wrote them.
       //
       // Terminal tabs are not saved: a PTY session does not survive a reload.
-      const persistTabs = tabs.filter(tb => tb.type !== 'terminal' && tb.connId === activeConnIdState);
+      // `config` is dropped AT THE SINK, not only by the type filter below.
+      //
+      // A no-op today: the only tab kind that carries one is `terminal`, and those are already
+      // filtered out. It is here because the guarantee "no credential ever reaches localStorage"
+      // otherwise rests on a filter that exists for an unrelated reason (a PTY does not survive a
+      // reload) - change that filter for its own reason and secrets start being written, silently.
+      // A `DbConnectionConfig` holds SSH passwords and private keys, so the sink is where this
+      // belongs. CodeQL flags these two writes (alerts 30/31) for a different, spurious path: the
+      // config also reaches `tabsStorageKey`, which projects it to `type:host:port` and cannot carry
+      // a secret - see `connKey`.
+      const persistTabs = tabs
+        .filter(tb => tb.type !== 'terminal' && tb.connId === activeConnIdState)
+        .map(({ config: _config, ...tb }) => tb as TabInfo);
       const persistActive = persistTabs.some(tab => tab.id === activeTabId) ? activeTabId : (persistTabs[0]?.id ?? null);
       const payload = { tabs: persistTabs, activeTabId: persistActive, queryCount, groups: tabGroups };
       try {

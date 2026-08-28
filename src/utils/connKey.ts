@@ -93,7 +93,15 @@ export function scopeKeyCandidates(
   return scoped === unscoped ? [scoped] : [scoped, unscoped];
 }
 
-/** Key holding the open tabs (and the SQL auto-saved inside them) for one database. */
+/**
+ * Key holding the open tabs (and the SQL auto-saved inside them) for one database.
+ *
+ * Takes the whole config but **returns a projection of it**: `connKey` keeps only `type:host:port`
+ * (or the SQLite path), so nothing secret can reach the returned string or the `localStorage` key it
+ * becomes. Worth saying here rather than only on `connKey`, because a scanner following the config
+ * into this call reports the write as clear-text storage of a credential (CodeQL alerts 30/31 on
+ * `App.tsx`), and the next reviewer should be able to see why that is wrong without tracing it.
+ */
 export function tabsStorageKey(
   config: DbConnectionConfig | null | undefined,
   dbType: string,
