@@ -141,7 +141,7 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
   };
 
   const handleRemoveTableFromContext = (tbl: string) => {
-    const updated = activeSession.attachedTables.filter((t) => t !== tbl);
+    const updated = activeSession.attachedTables.filter((name) => name !== tbl);
     updateSessionTables(activeSession.id, updated);
     setSessions(getAiSessions());
   };

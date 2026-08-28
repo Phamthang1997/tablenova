@@ -25,7 +25,7 @@ export const AiContextPicker: React.FC<AiContextPickerProps> = ({
     let active = true;
     catalog.getTables(editorConnId()).then((tables) => {
       if (active) {
-        setAvailableTables(tables.map((t) => t.name));
+        setAvailableTables(tables.map((tbl) => tbl.name));
       }
     }).catch(() => {});
     return () => {

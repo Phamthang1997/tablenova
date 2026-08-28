@@ -300,8 +300,8 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
 
       // Select all non-identical tables by default
       const checked = new Set<string>();
-      res.tables.forEach((t) => {
-        if (t.status !== 'identical') checked.add(t.name);
+      res.tables.forEach((tbl) => {
+        if (tbl.status !== 'identical') checked.add(tbl.name);
       });
       setCheckedTables(checked);
       setBottomTab('ddl');
@@ -344,7 +344,7 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
   const toggleAllDataTablesChecked = (e?: React.MouseEvent) => {
     e?.stopPropagation();
     if (!overview) return;
-    const allNames = overview.tables.map((t) => t.name);
+    const allNames = overview.tables.map((tbl) => tbl.name);
     const allChecked = allNames.every((n) => checkedDataTables.has(n));
     if (allChecked) {
       setCheckedDataTables(new Set());
@@ -446,12 +446,12 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
 
   const toggleAllCheckedInGroup = (grpTables: TableDiff[], e: React.MouseEvent) => {
     e.stopPropagation();
-    const allChecked = grpTables.every((t) => checkedTables.has(t.name));
+    const allChecked = grpTables.every((tbl) => checkedTables.has(tbl.name));
     setCheckedTables((prev) => {
       const next = new Set(prev);
-      grpTables.forEach((t) => {
-        if (allChecked) next.delete(t.name);
-        else next.add(t.name);
+      grpTables.forEach((tbl) => {
+        if (allChecked) next.delete(tbl.name);
+        else next.add(tbl.name);
       });
       return next;
     });
@@ -623,8 +623,8 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
   ) => {
     if (grpTables.length === 0) return null;
     const isExpanded = expandedGroups[grpKey] ?? true;
-    const allChecked = grpTables.every((t) => checkedTables.has(t.name));
-    const someChecked = grpTables.some((t) => checkedTables.has(t.name));
+    const allChecked = grpTables.every((tbl) => checkedTables.has(tbl.name));
+    const someChecked = grpTables.some((tbl) => checkedTables.has(tbl.name));
 
     return (
       <div key={grpKey} style={{ display: 'flex', flexDirection: 'column' }}>
@@ -655,7 +655,7 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
             {grpIcon}
             <span>{grpTitle}</span>
             <span style={{ fontSize: '10.5px', color: 'var(--win-text-disabled)', fontWeight: 400 }}>
-              ({grpTables.filter((t) => checkedTables.has(t.name)).length} of {grpTables.length} selected)
+              ({grpTables.filter((tbl) => checkedTables.has(tbl.name)).length} of {grpTables.length} selected)
             </span>
           </span>
         </div>
@@ -858,7 +858,7 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
                 Tất cả ({schemaResult.tables.length})
               </button>
               {(['different', 'onlySource', 'onlyTarget', 'identical'] as DiffStatus[]).map((s) => {
-                const count = schemaResult.tables.filter((t) => t.status === s).length;
+                const count = schemaResult.tables.filter((tbl) => tbl.status === s).length;
                 if (count === 0 && !statusFilter.has(s)) return null;
                 return (
                   <button
@@ -965,9 +965,9 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
             <div style={{ display: 'grid', gridTemplateColumns: '24px 24px 28px 1fr 50px 1fr 100px', gap: '6px', padding: '6px 12px', borderBottom: '1px solid var(--win-border)', background: 'var(--win-bg-popover)', ...label, position: 'sticky', top: 0, zIndex: 10, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
               <span />
               <span onClick={toggleAllDataTablesChecked} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
-                {overview.tables.length > 0 && overview.tables.every((t) => checkedDataTables.has(t.name)) ? (
+                {overview.tables.length > 0 && overview.tables.every((tbl) => checkedDataTables.has(tbl.name)) ? (
                   <CheckSquare size={13} style={{ color: 'var(--win-accent)' }} />
-                ) : overview.tables.some((t) => checkedDataTables.has(t.name)) ? (
+                ) : overview.tables.some((tbl) => checkedDataTables.has(tbl.name)) ? (
                   <MinusSquare size={13} style={{ color: 'var(--win-accent)' }} />
                 ) : (
                   <Square size={13} style={{ color: 'var(--win-text-disabled)' }} />

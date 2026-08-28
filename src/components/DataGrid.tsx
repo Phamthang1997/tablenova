@@ -549,15 +549,15 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
   // and Import call onSuccess from their dialogs, which used to leave the green bar hanging forever.
   useEffect(() => {
     if (!successMsg) return;
-    const t = setTimeout(() => setSuccessMsg(null), 4000);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setSuccessMsg(null), 4000);
+    return () => clearTimeout(timer);
   }, [successMsg]);
 
   // Error messages dismiss themselves after 6 seconds
   useEffect(() => {
     if (!errorMsg) return;
-    const t = setTimeout(() => setErrorMsg(null), 6000);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setErrorMsg(null), 6000);
+    return () => clearTimeout(timer);
   }, [errorMsg]);
 
   // Fetch Table Schema (Metadata)

@@ -259,7 +259,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                             onChange={(e) => handleColChange(idx, 'type', e.target.value)}
                             style={{ fontSize: '11px', background: 'var(--win-bg-input)', border: '1px solid var(--win-border)', color: 'var(--win-text-primary)', padding: '2px', borderRadius: '3px', cursor: 'pointer' }}
                           >
-                            {dbTypes.map(t => <option key={t} value={t} style={{ background: 'var(--win-bg-card)', color: 'var(--win-text-primary)' }}>{t}</option>)}
+                            {dbTypes.map(typeOpt => <option key={typeOpt} value={typeOpt} style={{ background: 'var(--win-bg-card)', color: 'var(--win-text-primary)' }}>{typeOpt}</option>)}
                           </select>
                         </td>
                         <td style={{ padding: '4px', textAlign: 'center' }}>

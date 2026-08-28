@@ -238,8 +238,8 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
   // Error messages dismiss themselves after 6 seconds
   useEffect(() => {
     if (!errorMsg) return;
-    const t = setTimeout(() => setErrorMsg(null), 6000);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setErrorMsg(null), 6000);
+    return () => clearTimeout(timer);
   }, [errorMsg]);
 
   // Load all tables for foreign key referenced table dropdown selection
@@ -247,7 +247,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
     const fetchAllTables = async () => {
       try {
         const list = await dbHelper.getTables(connId);
-        setAllTables(list.map(t => t.name));
+        setAllTables(list.map(tbl => tbl.name));
       } catch (err) {
         console.error("Lỗi lấy danh sách bảng:", err);
       }
@@ -1038,7 +1038,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
   const handleAddTrigger = () => {
     let baseName = `trg_${tableName}`;
     let counter = 1;
-    while (triggers.some(t => t.name === `${baseName}_${counter}`)) {
+    while (triggers.some(tbl => tbl.name === `${baseName}_${counter}`)) {
       counter++;
     }
     setTriggerModalData({

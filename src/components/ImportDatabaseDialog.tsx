@@ -351,23 +351,23 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
   };
 
   const shown = search.trim()
-    ? tables.filter((t) => removeAccents(t).includes(removeAccents(search.trim())))
+    ? tables.filter((tbl) => removeAccents(tbl).includes(removeAccents(search.trim())))
     : tables;
-  const allShownSelected = shown.length > 0 && shown.every((t) => selected.includes(t));
+  const allShownSelected = shown.length > 0 && shown.every((tbl) => selected.includes(tbl));
 
   const previewClipped =
     (tab === 'structure' ? structureShown.length : dataShown.length) > PREVIEW_LIMIT;
 
   // The visual pane filters on its own multi-select (previewTables), not on the import ticks.
   const keepTable = (name: string) => tables.length === 0 || previewTables.includes(name);
-  const visualTables = parsed.createdTables.filter((t) => keepTable(t.name));
+  const visualTables = parsed.createdTables.filter((tbl) => keepTable(tbl.name));
   const visualRows = parsed.insertedRows.filter((r) => keepTable(r.table));
   const togglePreviewTable = (name: string) => {
-    setPreviewTables((prev) => (prev.includes(name) ? prev.filter((t) => t !== name) : [...prev, name]));
+    setPreviewTables((prev) => (prev.includes(name) ? prev.filter((tbl) => tbl !== name) : [...prev, name]));
   };
 
   const toggleAllShown = () => {
-    if (allShownSelected) setSelected(selected.filter((t) => !shown.includes(t)));
+    if (allShownSelected) setSelected(selected.filter((tbl) => !shown.includes(tbl)));
     else setSelected([...new Set([...selected, ...shown])]);
   };
 
@@ -627,23 +627,23 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
                   { id: 'tables', label: t('importDialog.tabTables', { selected: selected.length, total: tables.length }) },
                   { id: 'structure', label: t('importDialog.tabStructure', { n: structureShown.length }) },
                   { id: 'data', label: t('importDialog.tabData', { n: dataShown.length }) },
-                ] as const).map((t) => (
+                ] as const).map((tabDef) => (
                   <button
-                    key={t.id}
-                    onClick={() => setTab(t.id)}
+                    key={tabDef.id}
+                    onClick={() => setTab(tabDef.id)}
                     style={{
                       padding: '4px 10px',
                       fontSize: '11px',
                       borderRadius: '4px',
                       border: '1px solid var(--win-border)',
                       cursor: 'pointer',
-                      background: tab === t.id ? 'var(--win-accent)' : 'transparent',
-                      color: tab === t.id ? '#fff' : 'var(--win-text-secondary)',
+                      background: tab === tabDef.id ? 'var(--win-accent)' : 'transparent',
+                      color: tab === tabDef.id ? '#fff' : 'var(--win-text-secondary)',
                       fontWeight: 600,
                       whiteSpace: 'nowrap'
                     }}
                   >
-                    {t.label}
+                    {tabDef.label}
                   </button>
                 ))}
               </div>
@@ -709,7 +709,7 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
                         <input
                           type="checkbox"
                           checked={selected.includes(name)}
-                          onChange={() => setSelected((prev) => prev.includes(name) ? prev.filter((t) => t !== name) : [...prev, name])}
+                          onChange={() => setSelected((prev) => prev.includes(name) ? prev.filter((tbl) => tbl !== name) : [...prev, name])}
                         />
                         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
                       </label>

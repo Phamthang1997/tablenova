@@ -161,8 +161,8 @@ export const QueryParamsModal: React.FC<QueryParamsModalProps> = ({
                     cursor: 'pointer'
                   }}
                 >
-                  {PARAM_TYPES.map(t => (
-                    <option key={t.value} value={t.value}>{t.label}</option>
+                  {PARAM_TYPES.map(pt => (
+                    <option key={pt.value} value={pt.value}>{pt.label}</option>
                   ))}
                 </select>
               </div>
