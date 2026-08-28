@@ -175,6 +175,7 @@ const ja: typeof en = {
     databaseInfo: 'データベース情報',
     schemaMigration: 'スキーマ差分 & マイグレーション',
     compareDatabases: '2つのデータベースを比較',
+    erDiagram: 'ER図 (ER Diagram)',
     generateData: 'テストデータを生成',
     exportDatabase: 'データベースのエクスポート',
     importDatabase: 'データベースのインポート',
@@ -2796,6 +2797,14 @@ const ja: typeof en = {
     denialNotReadOnly: '読み取り文ではありません',
     denialManualTransaction: 'TableNova でトランザクションが開いています',
     denialFailed: 'クエリが失敗しました',
+  },
+
+  er: {
+    loadingSchema: 'スキーマとリレーションを読み込み中...',
+    loadError: 'ER図の読み込みに失敗しました',
+    emptyTitle: 'テーブルが見つかりません',
+    emptyDesc: '新しいテーブルを作成するか、既存のデータベースに接続してER図を生成してください。',
+    tabTitle: 'ER図',
   },
 };
 

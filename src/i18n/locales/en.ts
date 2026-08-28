@@ -183,6 +183,7 @@ const en = {
     databaseInfo: 'Database info',
     schemaMigration: 'Schema diff & migration',
     compareDatabases: 'Compare 2 databases',
+    erDiagram: 'ER Diagram',
     generateData: 'Generate test data',
     exportDatabase: 'Export database',
     importDatabase: 'Import database',
@@ -2829,6 +2830,14 @@ const en = {
     denialNotReadOnly: 'Not a read statement',
     denialManualTransaction: 'Transaction open in TableNova',
     denialFailed: 'Query failed',
+  },
+
+  er: {
+    loadingSchema: 'Loading database schema & relationships...',
+    loadError: 'Failed to load ER Diagram',
+    emptyTitle: 'No tables found in this database',
+    emptyDesc: 'Create tables or connect to an existing database to generate the ER diagram.',
+    tabTitle: 'ER Diagram',
   },
 };
 

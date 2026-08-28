@@ -176,6 +176,7 @@ const vi: typeof en = {
     databaseInfo: 'Thông tin Database',
     schemaMigration: 'Diff Schema & Migration',
     compareDatabases: 'So sánh 2 database',
+    erDiagram: 'Sơ đồ quan hệ (ER Diagram)',
     generateData: 'Sinh dữ liệu test',
     exportDatabase: 'Xuất Database (Export)',
     importDatabase: 'Nhập Database (Import)',
@@ -2801,6 +2802,14 @@ const vi: typeof en = {
     denialNotReadOnly: 'Không phải câu lệnh đọc',
     denialManualTransaction: 'TableNova đang mở transaction',
     denialFailed: 'Truy vấn lỗi',
+  },
+
+  er: {
+    loadingSchema: 'Đang tải cấu trúc lược đồ & quan hệ...',
+    loadError: 'Không thể tải sơ đồ ER Diagram',
+    emptyTitle: 'Chưa có bảng nào trong cơ sở dữ liệu này',
+    emptyDesc: 'Tạo bảng mới hoặc kết nối đến database có sẵn để tự động vẽ sơ đồ quan hệ.',
+    tabTitle: 'Sơ đồ ER',
   },
 };
 

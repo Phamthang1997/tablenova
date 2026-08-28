@@ -4,7 +4,7 @@ import { clampMenu, type MenuRect } from '../utils/menuPosition';
 import { dbHelper } from '../utils/dbHelper';
 import { isMariaDbVersion } from '../utils/serverFlavor';
 import type { TableItem, SchemaInfo, TriggerInfo, CheckConstraintInfo } from '../utils/dbHelper';
-import { Search, Table, TerminalSquare, RefreshCw, Layers, Plus, ChevronDown, ChevronRight, Braces, Cog, Key, Sliders, FileCode, Trash2, CheckCircle2, Copy, AlertTriangle, History, Bookmark, Columns3, ArrowDownAZ, Link2, Zap, Code2, Database, Sparkles, GitCompare, ArrowLeftRight, HardDriveDownload, HardDriveUpload, Plug } from 'lucide-react';
+import { Search, Table, TerminalSquare, RefreshCw, Layers, Plus, ChevronDown, ChevronRight, Braces, Cog, Key, Sliders, FileCode, Trash2, CheckCircle2, Copy, AlertTriangle, History, Bookmark, Columns3, ArrowDownAZ, Link2, Zap, Code2, Database, Sparkles, GitCompare, ArrowLeftRight, HardDriveDownload, HardDriveUpload, Plug, Network } from 'lucide-react';
 import { CreateTableModal } from './CreateTableModal';
 import { Modal, ModalBody, ModalFooter } from './Modal';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -525,7 +525,7 @@ const ObjectItem = memo(function ObjectItem({
         {isView ? (
           <Layers size={14} className="icon-view" />
         ) : (
-          <Table size={14} className="icon-table" />
+          <Columns3 size={14} className="icon-table" />
         )}
 
         <span style={isActive ? NAME_STYLE_ACTIVE : NAME_STYLE}>
@@ -571,6 +571,7 @@ interface SidebarProps {
   onOpenAllDbStats?: () => void;
   onSchemaMigration?: () => void;
   onCompareDatabases?: () => void;
+  onOpenErDiagram?: () => void;
   onMcpSettings?: () => void;
   /** Opens the Data Generator. With a table name it opens preselected on that table (from its context menu). */
   onGenerateData?: (tableName?: string) => void;
@@ -615,6 +616,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenAllDbStats: _onOpenAllDbStats,
   onSchemaMigration,
   onCompareDatabases,
+  onOpenErDiagram,
   onMcpSettings,
   onGenerateData,
   onTableRenamed,
@@ -1435,6 +1437,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
           visible: !!onCompareDatabases,
         },
         {
+          id: 'erDiagram',
+          label: t('sidebar.erDiagram', 'ER Diagram'),
+          icon: Network,
+          colorClass: 'blue',
+          onClick: onOpenErDiagram,
+          visible: !!onOpenErDiagram,
+        },
+        {
           id: 'mcpSettings',
           label: t('mcp.title'),
           icon: Plug,
@@ -1477,7 +1487,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         },
       ],
     },
-  ], [t, onNewQuery, onOpenTerminal, onOpenDbInfo, onSchemaMigration, onCompareDatabases, onMcpSettings, onGenerateData, onExportDatabase, onImportDatabase, blockedByReadOnly]);
+  ], [t, onNewQuery, onOpenTerminal, onOpenDbInfo, onSchemaMigration, onCompareDatabases, onOpenErDiagram, onMcpSettings, onGenerateData, onExportDatabase, onImportDatabase, blockedByReadOnly]);
 
   return (
     <div className="sidebar-navigation" ref={rootRef} style={{ width: `${width}px` }}>

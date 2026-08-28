@@ -36,6 +36,7 @@ export interface TabInfo {
     | 'terminal'
     | 'routine'
     | 'view'
+    | 'er'
     | 'redis-key'
     | 'redis-console'
     | 'redis-dashboard'

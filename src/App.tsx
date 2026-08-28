@@ -19,6 +19,8 @@ import { DataGrid } from './components/DataGrid';
 // Monaco is back in the entry chunk and neither one buys anything.
 const SqlEditor = React.lazy(() =>
   import('./components/SqlEditor').then((m) => ({ default: m.SqlEditor })));
+const ERDiagramTab = React.lazy(() =>
+  import('./components/er').then((m) => ({ default: m.ERDiagramTab })));
 import { LazyEditorFallback } from './components/LazyEditorFallback';
 import { AiAssistant } from './components/AiAssistant';
 import { TerminalPanel } from './components/TerminalPanel';
@@ -1844,6 +1846,25 @@ export const App: React.FC = () => {
     setActiveTabId(tabId);
   };
 
+  const handleOpenErDiagram = () => {
+    const tabId = `er_${activeConnIdState}_${connection?.dbName || 'default'}`;
+    const existing = visibleTabs.find((tb) => tb.id === tabId);
+    if (existing) {
+      setActiveTabId(tabId);
+      return;
+    }
+    const label = `ER: ${connection?.dbName || 'Database'}`;
+    const newTab: TabInfo = {
+      id: tabId,
+      connId: activeConnIdState,
+      type: 'er',
+      name: label,
+      label,
+    };
+    setTabs((prev) => [...prev, newTab]);
+    setActiveTabId(tabId);
+  };
+
   /**
    * The tab whose panel is on screen — looked up in `visibleTabs`, not `tabs`.
    *
@@ -2057,6 +2078,7 @@ export const App: React.FC = () => {
                 onOpenAllDbStats={() => { setDbInfoTab('all'); setShowDbInfoModal(true); }}
                 onSchemaMigration={() => setShowSchemaMigration(true)}
                 onCompareDatabases={() => setShowDbCompare(true)}
+                onOpenErDiagram={handleOpenErDiagram}
                 onMcpSettings={() => setShowMcpSettings(true)}
                 onGenerateData={(tableName) => {
                   setDataGenTable(tableName ?? null);
@@ -2174,6 +2196,16 @@ export const App: React.FC = () => {
                         )))}
                         onClose={() => handleCloseTab(activeTab.id)}
                       />
+                    ) : activeTab.type === 'er' ? (
+                      <React.Suspense fallback={<LazyEditorFallback />}>
+                        <ERDiagramTab
+                          key={activeConnIdState + '|' + activeTab.id}
+                          connId={activeTab.connId || activeConnIdState}
+                          dbName={connection?.dbName}
+                          schema={connection?.schema ?? undefined}
+                          onOpenTable={(tableName) => handleSelectTable(tableName, 'data')}
+                        />
+                      </React.Suspense>
                     ) : null}
                   </div>
                 )}
