@@ -14,7 +14,15 @@ use rmcp::model::CallToolResult;
 
 
 use super::{app_state, json_result, passthrough};
+use crate::database::with_timeout;
 use crate::mcp::policy;
+
+// Every body below runs under `target.timeout`, i.e. `policy::mcp_timeout()` - the same ceiling
+// `data.rs` applies. These three used to call `policy::resolve()` and throw the `Target` away, so
+// introspection was the one MCP path with no time limit at all. That was accepted at V1 on the
+// grounds that a catalog query is bounded by its nature rather than by the data, which is true right
+// up until a server with thousands of tables makes it false - and an AI client has no Stop button
+// either way. Closing it costs one wrapper per body, so the argument for leaving it open was thin.
 
 /// Every connection the user shared, and nothing else - the filtering happens in the registry so no
 /// tool can forget it.
@@ -26,19 +34,25 @@ pub async fn list_connections() -> Result<CallToolResult, Refusal> {
 
 pub async fn list_databases(connection_id: Option<&str>) -> Result<CallToolResult, Refusal> {
     let state = app_state()?;
-    let (_, conn_id) = policy::resolve(&state, connection_id)?;
-    let out = crate::database::introspect::list_databases_inner(&state, conn_id.clone())
-        .await
-        .map_err(passthrough)?;
+    let (target, conn_id) = policy::resolve(&state, connection_id)?;
+    let out = with_timeout(
+        Some(target.timeout),
+        crate::database::introspect::list_databases_inner(&state, conn_id.clone()),
+    )
+    .await
+    .map_err(passthrough)?;
     json_result(&out)
 }
 
 pub async fn list_tables(connection_id: Option<&str>) -> Result<CallToolResult, Refusal> {
     let state = app_state()?;
-    let (_, conn_id) = policy::resolve(&state, connection_id)?;
-    let out = crate::database::introspect::get_tables_inner(&state, conn_id.clone())
-        .await
-        .map_err(passthrough)?;
+    let (target, conn_id) = policy::resolve(&state, connection_id)?;
+    let out = with_timeout(
+        Some(target.timeout),
+        crate::database::introspect::get_tables_inner(&state, conn_id.clone()),
+    )
+    .await
+    .map_err(passthrough)?;
     json_result(&out)
 }
 
@@ -47,11 +61,14 @@ pub async fn describe_table(
     table_name: &str,
 ) -> Result<CallToolResult, Refusal> {
     let state = app_state()?;
-    let (_, conn_id) = policy::resolve(&state, connection_id)?;
-    let out = crate::database::introspect::get_table_schema_inner(
-        &state,
-        conn_id.clone(),
-        table_name.to_string(),
+    let (target, conn_id) = policy::resolve(&state, connection_id)?;
+    let out = with_timeout(
+        Some(target.timeout),
+        crate::database::introspect::get_table_schema_inner(
+            &state,
+            conn_id.clone(),
+            table_name.to_string(),
+        ),
     )
     .await
     .map_err(passthrough)?;

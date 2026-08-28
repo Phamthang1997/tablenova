@@ -670,11 +670,10 @@ tồn tại, hai middleware ghi qua `audit::record()` (một người ghi duy nh
   **đã đóng** bằng `policy::mcp_timeout()`: min(giới hạn người dùng, 30s), và `Target::timeout` không
   còn là `Option`. Xem §4.4.
 
-- **Introspection không đi qua trần đó.** Bốn tool ở `catalog.rs` gọi `policy::resolve()` rồi **bỏ**
-  giá trị trả về, nên `list_tables`/`describe_table` chạy không hạn giờ. Chấp nhận ở V1: đó là truy
-  vấn catalog, bị chặn bởi bản chất chứ không bởi dữ liệu — không có `SELECT *` nào ở đó. Nếu một
-  server có hàng nghìn bảng làm nó thành vấn đề thì đường ra đã có sẵn: chúng đã cầm `Target`, chỉ
-  cần bọc `with_timeout` như `data.rs` đang làm.
+- ~~**Introspection không đi qua trần đó.**~~ — **đã đóng.** Ba tool ở `catalog.rs` giờ bọc
+  `with_timeout(Some(target.timeout), …)` như `data.rs`, nên MCP không còn đường nào chạy không hạn
+  giờ. Lý lẽ để mở ("truy vấn catalog bị chặn bởi bản chất chứ không bởi dữ liệu") đúng cho tới khi
+  một server có hàng nghìn bảng làm nó sai, mà giá để đóng chỉ là một wrapper mỗi thân hàm.
 - **`describe_table` phơi tên cột của schema production cho một dịch vụ bên ngoài.** Đó là bản chất
   của tính năng, không phải lỗi — nhưng nó là lý do §3.3 mặc định TẮT và không có nút "phơi tất cả".
 - **`rmcp` đang ở nhịp phát hành dày** (5 bản trong ~3 tuần lúc khảo sát, major 3.x). Pin `3.1` hãm
