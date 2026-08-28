@@ -90,101 +90,96 @@ export const ERToolbar: React.FC<ERToolbarProps> = ({
 
   return (
     <div className="er-toolbar-container">
-      {/* Left: Summary Stats & Search Input */}
-      <div className="er-toolbar-left">
-        <div className="er-toolbar-stats">
-          <span className="er-stat-pill">
-            <b>{tableCount}</b> tables
-          </span>
-          <span className="er-stat-pill">
-            <b>{relationCount}</b> relations
-          </span>
-        </div>
+      {/* Summary Stats */}
+      <span className="er-stat-pill">
+        <b>{tableCount}</b> tables
+      </span>
+      <span className="er-stat-pill">
+        <b>{relationCount}</b> relations
+      </span>
 
-        <div className="er-search-box">
-          <Search size={13} className="er-search-icon" />
-          <input
-            type="text"
-            className="er-search-input"
-            placeholder="Search table / column..."
-            value={searchQuery}
-            onChange={(e) => onSearchChange(e.target.value)}
-          />
-        </div>
+      {/* Search Input */}
+      <div className="er-search-box">
+        <Search size={12} className="er-search-icon" />
+        <input
+          type="text"
+          className="er-search-input"
+          placeholder="Search table..."
+          value={searchQuery}
+          onChange={(e) => onSearchChange(e.target.value)}
+        />
       </div>
 
-      {/* Right: Layout, Zoom, Filter & Export */}
-      <div className="er-toolbar-right">
-        {/* Detail Level Selector */}
-        <div className="er-segmented-group">
-          <button
-            type="button"
-            className={`er-seg-btn ${detailLevel === 'full' ? 'active' : ''}`}
-            onClick={() => onDetailLevelChange('full')}
-            title="Full: Show all columns and data types"
-          >
-            Full
-          </button>
-          <button
-            type="button"
-            className={`er-seg-btn ${detailLevel === 'keys_only' ? 'active' : ''}`}
-            onClick={() => onDetailLevelChange('keys_only')}
-            title="Keys Only: Show PK and FK columns only"
-          >
-            Keys Only
-          </button>
-          <button
-            type="button"
-            className={`er-seg-btn ${detailLevel === 'compact' ? 'active' : ''}`}
-            onClick={() => onDetailLevelChange('compact')}
-            title="Compact: Show top columns only"
-          >
-            Compact
-          </button>
-        </div>
+      <div className="er-toolbar-divider" />
 
-        <div className="er-toolbar-divider" />
+      {/* Detail Level Selector (Individual buttons) */}
+      <button
+        type="button"
+        className={`er-toolbar-btn ${detailLevel === 'full' ? 'active' : ''}`}
+        onClick={() => onDetailLevelChange('full')}
+        title="Full: Show all columns and data types"
+      >
+        Full
+      </button>
+      <button
+        type="button"
+        className={`er-toolbar-btn ${detailLevel === 'keys_only' ? 'active' : ''}`}
+        onClick={() => onDetailLevelChange('keys_only')}
+        title="Keys Only: Show PK and FK columns only"
+      >
+        Keys Only
+      </button>
+      <button
+        type="button"
+        className={`er-toolbar-btn ${detailLevel === 'compact' ? 'active' : ''}`}
+        onClick={() => onDetailLevelChange('compact')}
+        title="Compact: Show top columns only"
+      >
+        Compact
+      </button>
 
-        {/* Auto Layout Button */}
+      <div className="er-toolbar-divider" />
+
+      {/* Auto Layout Button */}
+      <button
+        type="button"
+        className="er-toolbar-btn"
+        onClick={onAutoLayout}
+        title="Auto-Layout: Re-organize tables hierarchically"
+      >
+        <Wand2 size={12} />
+        <span>Auto Layout</span>
+      </button>
+
+      {/* Zoom Controls */}
+      <div className="er-btn-group">
+        <button type="button" className="er-toolbar-icon-btn" onClick={onZoomOut} title="Zoom Out (-)">
+          <ZoomOut size={12} />
+        </button>
+        <span className="er-zoom-label" onClick={onResetView} title="Reset Zoom (100%)">
+          {Math.round(zoom * 100)}%
+        </span>
+        <button type="button" className="er-toolbar-icon-btn" onClick={onZoomIn} title="Zoom In (+)">
+          <ZoomIn size={12} />
+        </button>
+        <button type="button" className="er-toolbar-icon-btn" onClick={onFitView} title="Fit to View">
+          <Maximize2 size={12} />
+        </button>
+      </div>
+
+      <div className="er-toolbar-divider" />
+
+      {/* Filters Dropdown */}
+      <div className="er-popover-wrap" ref={filterMenuRef}>
         <button
           type="button"
-          className="er-toolbar-btn"
-          onClick={onAutoLayout}
-          title="Auto-Layout: Re-organize tables hierarchically"
+          className={`er-toolbar-btn ${showFilterMenu ? 'active' : ''}`}
+          onClick={() => setShowFilterMenu(!showFilterMenu)}
+          title="Diagram Display Filters"
         >
-          <Wand2 size={13} />
-          <span>Auto Layout</span>
+          <Filter size={12} />
+          <span>Filters</span>
         </button>
-
-        {/* Zoom Controls */}
-        <div className="er-btn-group">
-          <button type="button" className="er-toolbar-icon-btn" onClick={onZoomOut} title="Zoom Out (-)">
-            <ZoomOut size={13} />
-          </button>
-          <span className="er-zoom-label" onClick={onResetView} title="Reset Zoom (100%)">
-            {Math.round(zoom * 100)}%
-          </span>
-          <button type="button" className="er-toolbar-icon-btn" onClick={onZoomIn} title="Zoom In (+)">
-            <ZoomIn size={13} />
-          </button>
-          <button type="button" className="er-toolbar-icon-btn" onClick={onFitView} title="Fit to View">
-            <Maximize2 size={13} />
-          </button>
-        </div>
-
-        <div className="er-toolbar-divider" />
-
-        {/* Filters Dropdown */}
-        <div className="er-popover-wrap" ref={filterMenuRef}>
-          <button
-            type="button"
-            className={`er-toolbar-btn ${showFilterMenu ? 'active' : ''}`}
-            onClick={() => setShowFilterMenu(!showFilterMenu)}
-            title="Diagram Display Filters"
-          >
-            <Filter size={13} />
-            <span>Filters</span>
-          </button>
 
           {showFilterMenu && (
             <div className="er-popover-menu">
@@ -276,6 +271,5 @@ export const ERToolbar: React.FC<ERToolbarProps> = ({
           )}
         </div>
       </div>
-    </div>
-  );
+    );
 };

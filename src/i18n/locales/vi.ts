@@ -2741,6 +2741,10 @@ const vi: typeof en = {
   mcp: {
     title: 'MCP Server',
     subtitle: 'Cho AI client truy vấn các database bạn đang mở sẵn.',
+    tabServer: 'Máy chủ & AI Clients',
+    tabDatabases: 'Database chia sẻ',
+    tabLogs: 'Nhật ký truy vấn',
+    securityPolicies: 'Chính sách bảo mật',
     statusRunning: 'Đang chạy tại {{url}}',
     statusStopped: 'Đã dừng',
     start: 'Bật',

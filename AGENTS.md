@@ -5,6 +5,10 @@
 - Tất cả giao diện UI phải sử dụng **CSS Classes** định nghĩa trong `src/index.css` (hoặc tệp `.css` tương ứng).
 - **Ngoại lệ duy nhất**: Chỉ dùng inline style khi giá trị thuộc tính là dữ liệu động tính toán runtime (như tọa độ chuột, thanh phần trăm progress, màu động từ user picker).
 
+## Quy tắc Thiết kế Giao diện & Nút bấm (UI & Buttons)
+- **Luôn làm nút giống thiết kế hiện tại của TableNova**: Mỗi lựa chọn hoặc hành động phải là một nút độc lập với viền riêng (`1px solid var(--win-border)`), `border-radius: 6px`, màu nền trong suốt, hiệu ứng hover/active đổi viền và màu theo `var(--win-accent)`.
+- **Cấm gom nút vào khung viên thuốc dính liền (iOS-style segmented container)**: Không bọc các nút lựa chọn vào một khung viền chung dạng capsule.
+
 ## Quy tắc Cấu trúc Module & Tính năng Rust (`src-tauri`)
 - **Tổ chức theo đúng thư mục domain**:
   - Tính năng thuộc domain có sẵn (`database`, `redis_db`, `compare`, `credentials`, `datagen`, `ssh`, `terminal`, `stats`, `tx`, `state`, `app`) phải đặt vào thư mục tương ứng trong `src-tauri/src/<domain>/`.

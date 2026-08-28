@@ -2735,6 +2735,10 @@ const ja: typeof en = {
   mcp: {
     title: 'MCP サーバー',
     subtitle: '開いているデータベースを AI クライアントから照会できるようにします。',
+    tabServer: 'サーバー & AI クライアント',
+    tabDatabases: '共有データベース',
+    tabLogs: '監査ログ',
+    securityPolicies: 'セキュリティポリシー',
     statusRunning: '{{url}} で実行中',
     statusStopped: '停止中',
     start: '開始',

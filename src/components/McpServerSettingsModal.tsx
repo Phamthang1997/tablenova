@@ -1,7 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { useTranslation } from 'react-i18next';
-import { Check, Copy, Plug, RefreshCw, Trash2 } from 'lucide-react';
+import {
+  Check,
+  Copy,
+  Plug,
+  RefreshCw,
+  Trash2,
+  Server,
+  Database,
+  Activity,
+  Eye,
+  EyeOff,
+  ShieldCheck,
+  Zap,
+  Terminal,
+} from 'lucide-react';
 
 import { Modal, ModalBody } from './Modal';
 import { dbHelper } from '../utils/dbHelper';
@@ -90,6 +104,7 @@ interface Props {
 
 export function McpServerSettingsModal({ onClose }: Props) {
   const { t, i18n } = useTranslation();
+  const [activeTab, setActiveTab] = useState<'server' | 'databases' | 'logs'>('server');
   const [status, setStatus] = useState<McpStatus | null>(null);
   const [port, setPort] = useState('');
   const [token, setToken] = useState('');
@@ -228,34 +243,16 @@ export function McpServerSettingsModal({ onClose }: Props) {
 
   /**
    * What a ticked connection can actually reach, named.
-   *
-   * The warning above states the mechanism; this states the **fact** for this server. "Ticking gives
-   * the AI the whole server" is true but abstract - the user cannot tell whether their "whole server"
-   * is one throwaway database or the company's. Naming them turns a disclaimer into something they
-   * can act on, at the moment they are clicking the tick.
-   *
-   * Deliberately a MEASUREMENT, not a grant analysis: `SHOW GRANTS` / `has_database_privilege` differ
-   * per dialect and would have us *infer* reach. `list_databases` reports what is actually visible
-   * through this very connection - the same query an AI client can run - so it cannot be wrong about
-   * it. Only ticked connections are probed: an extra query against a server the user did not share is
-   * work nobody asked for.
    */
   const reachLine = (c: OpenConnection) => {
     const dbs = reach[c.connId];
-    // Absent while in flight or after a failure, and SQLite returns [] because one file is one
-    // database - there is no cross-database reach to warn about. Say nothing in all three cases.
     if (!dbs || dbs.length === 0) return null;
 
-    // The user's own databases decide whether this tick is a problem; the server's system schemas are
-    // the same four names everywhere and would otherwise both inflate the count and push the names
-    // that matter off the end of the line. Counted, not hidden - see SYSTEM_DBS.
     const sys = new Set(SYSTEM_DBS[c.dialect] ?? []);
     const own = dbs.filter((d) => !sys.has(d.toLowerCase()));
     const sysCount = dbs.length - own.length;
     const sysNote = sysCount > 0 ? ` ${t('mcp.reachSystem', { n: sysCount })}` : '';
 
-    // One of the user's own databases is the reassuring answer, so it reads as an aside rather than a
-    // warning - even when the server also carries system schemas.
     if (own.length <= 1) {
       return (
         <p className="mcp-reach ok">
@@ -284,10 +281,6 @@ export function McpServerSettingsModal({ onClose }: Props) {
 
   /**
    * What one log row says on its right-hand side.
-   *
-   * Lives inside the component so `t` keeps its real type: the key tree is type-checked, and a
-   * dynamic key (`t(`mcp.denial${x}`)`) would defeat that silently the first time a variant is
-   * renamed. A `switch` returning literals is what the i18n notes in CLAUDE.md ask for.
    */
   const outcomeLabel = (e: McpAuditEntry): string => {
     if (e.ok) return `${e.ms} ms`;
@@ -312,211 +305,354 @@ export function McpServerSettingsModal({ onClose }: Props) {
   return (
     <Modal
       title={t('mcp.title')}
-      icon={<Plug size={13} />}
+      icon={<Plug size={14} />}
       onClose={onClose}
-      // Wider than the other dialogs on purpose: the two cautions and the per-client target line are
-      // full sentences, and at 720px each one wrapped to two lines - which is what pushed the
-      // Requests section below the fold and made the whole body scroll.
-      width="880px"
-      maxHeight="90vh"
+      width="820px"
+      maxHeight="92vh"
       zIndex={10000}
     >
       <ModalBody>
-        <div className="mcp-row">
-          <span className={running ? 'mcp-dot on' : 'mcp-dot'} />
-          <span className="mcp-status-text">
-            {running ? t('mcp.statusRunning', { url: status?.url }) : t('mcp.statusStopped')}
-          </span>
-          <div className="mcp-spacer" />
-          <input
-            type="text"
-            value={port}
-            onChange={(e) => setPort(e.target.value.replace(/[^0-9]/g, '').slice(0, 5))}
-            disabled={running || busy}
-            aria-label={t('mcp.port')}
-            // A sentence-long hint for a field this small belongs ON the field, not as one more line
-            // of prose in a dialog that already had ten of them.
-            title={t('mcp.portHint')}
-            className="mcp-port"
-          />
-          <button
-            className={running ? 'btn btn-secondary' : 'btn btn-primary'}
-            onClick={toggleServer}
-            disabled={busy}
-          >
-            {running ? t('mcp.stop') : t('mcp.start')}
-          </button>
-        </div>
-        <label className="mcp-check">
-          <input
-            type="checkbox"
-            checked={autoStart}
-            disabled={busy}
-            onChange={(e) => toggleAutoStart(e.target.checked)}
-          />
-          {t('mcp.autoStart')}
-        </label>
-        {error && <p className="mcp-error">{error}</p>}
-
-        <section className="mcp-section">
-          <h4 className="mcp-section-title">{t('mcp.token')}</h4>
-          <div className="mcp-row">
-            <input
-              type="text"
-              readOnly
-              className="mcp-token"
-              value={revealed ? token : '\u2022'.repeat(Math.min(token.length, 32))}
-              onFocus={() => setRevealed(true)}
-              onBlur={() => setRevealed(false)}
-            />
-            <button className="btn btn-secondary" onClick={() => copy('token', token)}>
-              {copied === 'token' ? <Check size={11} /> : <Copy size={11} />}
-              {copied === 'token' ? t('mcp.tokenCopied') : t('mcp.copyToken')}
+        <div className="mcp-container">
+          {/* Top 3-Tab Navigator */}
+          <div className="mcp-tabs-header">
+            <button
+              type="button"
+              className={`mcp-tab-btn ${activeTab === 'server' ? 'active' : ''}`}
+              onClick={() => setActiveTab('server')}
+            >
+              <Server size={13} />
+              <span>{t('mcp.tabServer')}</span>
             </button>
             <button
-              className="btn btn-secondary"
-              disabled={busy}
-              title={t('mcp.regenerateWarning')}
-              onClick={() => run(async () => setToken(await dbHelper.mcpRegenerateToken()))}
+              type="button"
+              className={`mcp-tab-btn ${activeTab === 'databases' ? 'active' : ''}`}
+              onClick={() => setActiveTab('databases')}
             >
-              <RefreshCw size={11} /> {t('mcp.regenerate')}
+              <Database size={13} />
+              <span>{t('mcp.tabDatabases')}</span>
+              {sharedCount > 0 && <span className="mcp-tab-badge">{sharedCount}</span>}
             </button>
-          </div>
-          <p className="mcp-hint">{t('mcp.tokenInConfigWarning')}</p>
-        </section>
-
-        <section className="mcp-section">
-          <h4 className="mcp-section-title">{t('mcp.shared')}</h4>
-          <p className="mcp-hint">{t('mcp.sharedHint')}</p>
-          {/* The tick is per connection, but the REACH is the whole server: `information_schema`,
-              `SHOW DATABASES` and a qualified `other_db.tbl` are all read statements, so `policy.rs`
-              passes them. Saying "per connection, not per server" here - which this used to - is the
-              one wrong sentence a security screen cannot afford. */}
-          <p className="mcp-hint">{t('mcp.sharedReach')}</p>
-          {connections.length === 0 ? (
-            <p className="mcp-empty">{t('mcp.sharedEmpty')}</p>
-          ) : (
-            <ul className="mcp-conn-list">
-              {connections.map((c) => (
-                <li key={c.connId}>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={c.mcpExposed}
-                      disabled={busy}
-                      onChange={(e) =>
-                        run(() => dbHelper.setConnectionMcpExposed(c.connId, e.target.checked))
-                      }
-                    />
-                    <span className="mcp-conn-db">{c.db}</span>
-                    <span className="mcp-conn-meta">{c.dialect}</span>
-                  </label>
-                  {c.mcpExposed && reachLine(c)}
-                </li>
-              ))}
-            </ul>
-          )}
-          {connections.length > 0 && sharedCount === 0 && (
-            <p className="mcp-empty">{t('mcp.sharedNone')}</p>
-          )}
-          {/* Three separate lines of prose for three facts read as noise in the middle of the flow.
-              One strip of short items reads as what it is: the limits currently in force. */}
-          <p className="mcp-facts">
-            <span>{t('mcp.readOnlyShort')}</span>
-            <span>
-              {t('mcp.rowLimit')}: {ROW_LIMIT_DEFAULT} ({ROW_LIMIT_MAX} max)
-            </span>
-            <span>{t('mcp.timeLimit', { n: TIMEOUT_CEILING_SECS })}</span>
-          </p>
-        </section>
-
-        <section className="mcp-section">
-          <h4 className="mcp-section-title">{t('mcp.config')}</h4>
-          <p className="mcp-hint">{t('mcp.configHint')}</p>
-          {/* Two labelled rows rather than two bare button strips. Unlabelled, the second row read as
-              a continuation of the first - two identical-looking groups with nothing saying which
-              axis each one is. The label is what makes "client" and "transport" independent choices
-              instead of five buttons in a pile. */}
-          <div className="mcp-pick-row">
-            <span className="mcp-pick-label">{t('mcp.pickClient')}</span>
-            {MCP_CLIENTS.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                aria-pressed={c.id === activeClient.id}
-                className={c.id === activeClient.id ? 'mcp-client-tab active' : 'mcp-client-tab'}
-                onClick={() => pickClient(c.id)}
-              >
-                {t(c.labelKey)}
-              </button>
-            ))}
-          </div>
-          {/* Transport, not a client. A separate axis because every client here speaks both, and
-              which one is *reliable* differs per client while which one is *safer* does not - stdio
-              never writes the token to disk. */}
-          <div className="mcp-pick-row">
-            <span className="mcp-pick-label">{t('mcp.pickTransport')}</span>
-            {(['http', 'stdio'] as const).map((tr) => (
-              <button
-                key={tr}
-                type="button"
-                aria-pressed={tr === transport}
-                className={tr === transport ? 'mcp-client-tab active' : 'mcp-client-tab'}
-                onClick={() => pickTransport(tr)}
-              >
-                {tr === 'http' ? t('mcp.transportHttp') : t('mcp.transportStdio')}
-              </button>
-            ))}
-          </div>
-          <p className="mcp-hint">{t(activeVariant.targetKey)}</p>
-          <pre className="mcp-config">{configSnippet}</pre>
-          <button className="btn btn-secondary" onClick={() => copy('config', configSnippet)}>
-            {copied === 'config' ? <Check size={11} /> : <Copy size={11} />}
-            {copied === 'config'
-              ? t('mcp.tokenCopied')
-              : activeVariant.isCommand
-                ? t('mcp.copyCommand')
-                : t('mcp.copyConfig')}
-          </button>
-          <p className="mcp-warn">{t('mcp.configMismatch')}</p>
-        </section>
-
-        <section className="mcp-section">
-          <div className="mcp-row">
-            <h4 className="mcp-section-title">{t('mcp.log')}</h4>
-            <div className="mcp-spacer" />
             <button
-              className="redis-ghost-btn"
-              disabled={log.length === 0}
-              onClick={() =>
-                run(async () => {
-                  await dbHelper.mcpAuditClear();
-                  setLog([]);
-                })
-              }
+              type="button"
+              className={`mcp-tab-btn ${activeTab === 'logs' ? 'active' : ''}`}
+              onClick={() => setActiveTab('logs')}
             >
-              <Trash2 size={11} /> {t('mcp.logClear')}
+              <Activity size={13} />
+              <span>{t('mcp.tabLogs')}</span>
+              {log.length > 0 && <span className="mcp-tab-badge">{log.length}</span>}
             </button>
           </div>
-          <p className="mcp-hint">{t('mcp.logMemoryOnly')}</p>
-          {log.length === 0 ? (
-            <p className="mcp-empty">{t('mcp.logEmpty')}</p>
-          ) : (
-            <ul className="mcp-log">
-              {log.map((e) => (
-                <li key={e.id} className={e.ok ? undefined : 'denied'}>
-                  <span className="mcp-log-time">
-                    {new Date(e.at).toLocaleTimeString(i18n.language)}
+
+          {error && <p className="mcp-error">{error}</p>}
+
+          {/* TAB 1: Server & AI Clients */}
+          {activeTab === 'server' && (
+            <div className="mcp-tab-content">
+              {/* Server Control Card */}
+              <div className="mcp-card">
+                <div className="mcp-card-header">
+                  <span className="mcp-card-title">
+                    <Zap size={13} />
+                    <span>Trạng thái Máy chủ</span>
                   </span>
-                  <span className="mcp-log-tool">{e.tool}</span>
-                  {e.sql && <span className="mcp-log-sql">{e.sql}</span>}
-                  <span className="mcp-log-outcome">{outcomeLabel(e)}</span>
-                </li>
-              ))}
-            </ul>
+                </div>
+                <div className="mcp-row">
+                  <span className={running ? 'mcp-dot on' : 'mcp-dot'} />
+                  <span className="mcp-status-badge">
+                    {running ? (
+                      <>
+                        <span>Đang chạy tại</span>
+                        <code>{status?.url || endpoint}</code>
+                      </>
+                    ) : (
+                      <span>{t('mcp.statusStopped')}</span>
+                    )}
+                  </span>
+                  <div className="mcp-spacer" />
+                  <div className="mcp-port-box">
+                    <span>{t('mcp.port')}:</span>
+                    <input
+                      type="text"
+                      value={port}
+                      onChange={(e) => setPort(e.target.value.replace(/[^0-9]/g, '').slice(0, 5))}
+                      disabled={running || busy}
+                      aria-label={t('mcp.port')}
+                      title={t('mcp.portHint')}
+                      className="form-input mcp-port"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    className={running ? 'btn btn-secondary' : 'btn btn-primary'}
+                    onClick={toggleServer}
+                    disabled={busy}
+                  >
+                    {running ? t('mcp.stop') : t('mcp.start')}
+                  </button>
+                </div>
+                <label className="mcp-check">
+                  <input
+                    type="checkbox"
+                    checked={autoStart}
+                    disabled={busy}
+                    onChange={(e) => toggleAutoStart(e.target.checked)}
+                  />
+                  <span>{t('mcp.autoStart')}</span>
+                </label>
+              </div>
+
+              {/* Security Access Token Card */}
+              <div className="mcp-card">
+                <div className="mcp-card-header">
+                  <span className="mcp-card-title">
+                    <ShieldCheck size={13} />
+                    <span>{t('mcp.token')}</span>
+                  </span>
+                </div>
+                <div className="mcp-token-row">
+                  <input
+                    type={revealed ? 'text' : 'password'}
+                    readOnly
+                    className="form-input mcp-token-input"
+                    value={token}
+                    onFocus={() => setRevealed(true)}
+                    onBlur={() => setRevealed(false)}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => setRevealed(!revealed)}
+                    title={revealed ? 'Ẩn mã token' : 'Hiển thị mã token'}
+                  >
+                    {revealed ? <EyeOff size={13} /> : <Eye size={13} />}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => copy('token', token)}
+                  >
+                    {copied === 'token' ? <Check size={13} /> : <Copy size={13} />}
+                    <span>{copied === 'token' ? t('mcp.tokenCopied') : t('mcp.copyToken')}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    disabled={busy}
+                    title={t('mcp.regenerateWarning')}
+                    onClick={() => run(async () => setToken(await dbHelper.mcpRegenerateToken()))}
+                  >
+                    <RefreshCw size={13} />
+                    <span>{t('mcp.regenerate')}</span>
+                  </button>
+                </div>
+                <p className="mcp-hint">{t('mcp.tokenInConfigWarning')}</p>
+              </div>
+
+              {/* AI Client Configuration Card */}
+              <div className="mcp-card">
+                <div className="mcp-card-header">
+                  <span className="mcp-card-title">
+                    <Terminal size={13} />
+                    <span>{t('mcp.config')}</span>
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => copy('config', configSnippet)}
+                  >
+                    {copied === 'config' ? <Check size={12} /> : <Copy size={12} />}
+                    <span>
+                      {copied === 'config'
+                        ? t('mcp.tokenCopied')
+                        : activeVariant.isCommand
+                          ? t('mcp.copyCommand')
+                          : t('mcp.copyConfig')}
+                    </span>
+                  </button>
+                </div>
+
+                <div className="mcp-pick-row">
+                  <span className="mcp-pick-label">{t('mcp.pickClient')}:</span>
+                  <div className="mcp-client-tabs">
+                    {MCP_CLIENTS.map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        className={`mcp-client-tab ${c.id === activeClient.id ? 'active' : ''}`}
+                        onClick={() => pickClient(c.id)}
+                      >
+                        {t(c.labelKey)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="mcp-pick-row">
+                  <span className="mcp-pick-label">{t('mcp.pickTransport')}:</span>
+                  <div className="mcp-client-tabs">
+                    {(['http', 'stdio'] as const).map((tr) => (
+                      <button
+                        key={tr}
+                        type="button"
+                        className={`mcp-client-tab ${tr === transport ? 'active' : ''}`}
+                        onClick={() => pickTransport(tr)}
+                      >
+                        {tr === 'http' ? t('mcp.transportHttp') : t('mcp.transportStdio')}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <p className="mcp-hint">{t(activeVariant.targetKey)}</p>
+
+                <div className="mcp-config-box">
+                  <pre className="mcp-config">{configSnippet}</pre>
+                </div>
+
+                <p className="mcp-warn">{t('mcp.configMismatch')}</p>
+              </div>
+            </div>
           )}
-        </section>
+
+          {/* TAB 2: Shared Databases & Security Policies */}
+          {activeTab === 'databases' && (
+            <div className="mcp-tab-content">
+              {/* Connections Card */}
+              <div className="mcp-card">
+                <div className="mcp-card-header">
+                  <span className="mcp-card-title">
+                    <Database size={13} />
+                    <span>{t('mcp.shared')}</span>
+                  </span>
+                  {connections.length > 0 && (
+                    <span className="mcp-hint">
+                      {sharedCount}/{connections.length} kết nối đang mở
+                    </span>
+                  )}
+                </div>
+                <p className="mcp-hint">{t('mcp.sharedHint')} {t('mcp.sharedReach')}</p>
+
+                {connections.length === 0 ? (
+                  <p className="mcp-empty">{t('mcp.sharedEmpty')}</p>
+                ) : (
+                  <ul className="mcp-conn-list">
+                    {connections.map((c) => (
+                      <li
+                        key={c.connId}
+                        className={`mcp-conn-item ${c.mcpExposed ? 'selected' : ''}`}
+                      >
+                        <label className="mcp-conn-label">
+                          <input
+                            type="checkbox"
+                            checked={c.mcpExposed}
+                            disabled={busy}
+                            onChange={(e) =>
+                              run(() => dbHelper.setConnectionMcpExposed(c.connId, e.target.checked))
+                            }
+                          />
+                          <span className="mcp-conn-db">{c.db}</span>
+                          <span className="mcp-dialect-badge">{c.dialect}</span>
+                        </label>
+                        {c.mcpExposed && reachLine(c)}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                {connections.length > 0 && sharedCount === 0 && (
+                  <p className="mcp-empty">{t('mcp.sharedNone')}</p>
+                )}
+              </div>
+
+              {/* Security Policy Card */}
+              <div className="mcp-card">
+                <div className="mcp-card-header">
+                  <span className="mcp-card-title">
+                    <ShieldCheck size={13} />
+                    <span>{t('mcp.securityPolicies')}</span>
+                  </span>
+                </div>
+                <div className="mcp-policy-grid">
+                  <div className="mcp-policy-item">
+                    <span className="mcp-policy-item-title">{t('mcp.readOnlyShort')}</span>
+                    <span className="mcp-policy-item-value">{t('mcp.readOnlyNote')}</span>
+                  </div>
+                  <div className="mcp-policy-item">
+                    <span className="mcp-policy-item-title">{t('mcp.rowLimit')}</span>
+                    <span className="mcp-policy-item-value">
+                      {ROW_LIMIT_DEFAULT} rows ({ROW_LIMIT_MAX} max)
+                    </span>
+                  </div>
+                  <div className="mcp-policy-item">
+                    <span className="mcp-policy-item-title">Query Timeout</span>
+                    <span className="mcp-policy-item-value">
+                      {TIMEOUT_CEILING_SECS}s ceiling per request
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 3: Audit Logs */}
+          {activeTab === 'logs' && (
+            <div className="mcp-tab-content">
+              <div className="mcp-card">
+                <div className="mcp-card-header">
+                  <span className="mcp-card-title">
+                    <Activity size={13} />
+                    <span>{t('mcp.log')} ({log.length})</span>
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    disabled={log.length === 0}
+                    onClick={() =>
+                      run(async () => {
+                        await dbHelper.mcpAuditClear();
+                        setLog([]);
+                      })
+                    }
+                  >
+                    <Trash2 size={12} />
+                    <span>{t('mcp.logClear')}</span>
+                  </button>
+                </div>
+                <p className="mcp-hint">{t('mcp.logMemoryOnly')}</p>
+
+                <div className="mcp-log-container">
+                  {log.length === 0 ? (
+                    <p className="mcp-empty">{t('mcp.logEmpty')}</p>
+                  ) : (
+                    <ul className="mcp-log">
+                      {log.map((e) => (
+                        <li
+                          key={e.id}
+                          className={`mcp-log-item ${e.ok ? 'ok' : 'denied'}`}
+                        >
+                          <span className="mcp-log-time">
+                            {new Date(e.at).toLocaleTimeString(i18n.language)}
+                          </span>
+                          <span className="mcp-log-tool">{e.tool}</span>
+                          {e.sql && (
+                            <span className="mcp-log-sql" title={e.sql}>
+                              {e.sql}
+                            </span>
+                          )}
+                          <span className={`mcp-log-outcome ${e.ok ? 'ok' : 'denied'}`}>
+                            {outcomeLabel(e)}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       </ModalBody>
     </Modal>
   );
 }
+

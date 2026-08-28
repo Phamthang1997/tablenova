@@ -2768,6 +2768,10 @@ const en = {
   mcp: {
     title: 'MCP Server',
     subtitle: 'Let AI clients query the databases you already have open.',
+    tabServer: 'Server & Setup',
+    tabDatabases: 'Shared Databases',
+    tabLogs: 'Audit Logs',
+    securityPolicies: 'Security Policy',
     statusRunning: 'Running on {{url}}',
     statusStopped: 'Stopped',
     start: 'Start',
