@@ -398,6 +398,42 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     }
   };
 
+  const sortedResults1 = React.useMemo(() => {
+    if (!sortCol1 || !sortDir1) return results;
+    const list = [...results];
+    list.sort((a, b) => {
+      const valA = a[sortCol1];
+      const valB = b[sortCol1];
+      if (valA === valB) return 0;
+      if (valA === null || valA === undefined) return 1;
+      if (valB === null || valB === undefined) return -1;
+      if (typeof valA === 'number' && typeof valB === 'number') {
+        return sortDir1 === 'asc' ? valA - valB : valB - valA;
+      }
+      const comp = String(valA).localeCompare(String(valB), undefined, { numeric: true, sensitivity: 'base' });
+      return sortDir1 === 'asc' ? comp : -comp;
+    });
+    return list;
+  }, [results, sortCol1, sortDir1]);
+
+  const sortedResults2 = React.useMemo(() => {
+    if (!sortCol2 || !sortDir2) return results2;
+    const list = [...results2];
+    list.sort((a, b) => {
+      const valA = a[sortCol2];
+      const valB = b[sortCol2];
+      if (valA === valB) return 0;
+      if (valA === null || valA === undefined) return 1;
+      if (valB === null || valB === undefined) return -1;
+      if (typeof valA === 'number' && typeof valB === 'number') {
+        return sortDir2 === 'asc' ? valA - valB : valB - valA;
+      }
+      const comp = String(valA).localeCompare(String(valB), undefined, { numeric: true, sensitivity: 'base' });
+      return sortDir2 === 'asc' ? comp : -comp;
+    });
+    return list;
+  }, [results2, sortCol2, sortDir2]);
+
   const toggleDropdown = (menuKey: string, paneId: 1 | 2, e: React.MouseEvent<HTMLElement>, setMenuPane: React.Dispatch<React.SetStateAction<1 | 2 | null>>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const spaceBelow = window.innerHeight - rect.bottom;
@@ -416,25 +452,50 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     const currentHeight = editorEl ? editorEl.clientHeight : 220;
     const startHeight = (paneId === 1 ? userEditorHeight : userEditorHeight2) ?? currentHeight;
 
+    let currentH = startHeight;
+    let rafId: number | null = null;
+
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'row-resize';
+
     const onMouseMove = (moveEvent: MouseEvent) => {
       const deltaY = moveEvent.clientY - startY;
       const maxH = paneEl ? paneEl.clientHeight - 100 : window.innerHeight - 180;
       const newHeight = Math.max(60, Math.min(maxH, startHeight + deltaY));
+      currentH = newHeight;
 
-      if (paneId === 1) {
-        setUserEditorHeight(newHeight);
-        onEditorHeightChange?.(newHeight);
-      } else {
-        setUserEditorHeight2(newHeight);
+      if (editorEl) {
+        editorEl.style.flex = `0 0 ${newHeight}px`;
+      }
+
+      if (rafId === null) {
+        rafId = requestAnimationFrame(() => {
+          rafId = null;
+          const ed = paneId === 1 ? editorRef.current : editorRef2.current;
+          if (ed) ed.layout();
+        });
       }
     };
 
     const onMouseUp = () => {
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
       setIsDraggingResizer(false);
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
-      if (editorRef.current) editorRef.current.layout();
-      if (editorRef2.current) editorRef2.current.layout();
+
+      if (paneId === 1) {
+        setUserEditorHeight(currentH);
+        onEditorHeightChange?.(currentH);
+        if (editorRef.current) editorRef.current.layout();
+      } else {
+        setUserEditorHeight2(currentH);
+        if (editorRef2.current) editorRef2.current.layout();
+      }
     };
 
     window.addEventListener('mousemove', onMouseMove);
@@ -513,7 +574,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       if (editorRef2.current) editorRef2.current.layout();
     }, 50);
     return () => clearTimeout(timer);
-  }, [showHistory, splitMode, userEditorHeight, userEditorHeight2, hasResult1, hasResult2]);
+  }, [showHistory, splitMode, splitRatio, userEditorHeight, userEditorHeight2, hasResult1, hasResult2]);
 
   /** Returns the history row's id so `runRawSql` can write the outcome onto it when the run finishes. */
   const addToHistory = (queryText: string): string => {
@@ -729,15 +790,6 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
   };
-
-  useEffect(() => {
-    if (editorRef.current) {
-      setTimeout(() => editorRef.current?.layout(), 50);
-    }
-    if (editorRef2.current) {
-      setTimeout(() => editorRef2.current?.layout(), 50);
-    }
-  }, [splitMode, splitRatio, userEditorHeight, userEditorHeight2, hasResult1, hasResult2]);
 
   const handleEditorDidMount = (editor: any, editorId: 1 | 2) => {
     if (editorId === 1) {
@@ -2298,28 +2350,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
 
     const activeResult = pAllResults[pActiveTabIndex] || { data: [], columns: [], affectedRows: 0, query: '' };
     const totalPagesNum = Math.ceil(pResults.length / pPageSize) || 1;
-
-    const pSortCol = paneId === 1 ? sortCol1 : sortCol2;
-    const pSortDir = paneId === 1 ? sortDir1 : sortDir2;
-
-    let sortedResults = [...pResults];
-    if (pSortCol && pSortDir) {
-      sortedResults.sort((a, b) => {
-        const valA = a[pSortCol];
-        const valB = b[pSortCol];
-        if (valA === valB) return 0;
-        if (valA === null || valA === undefined) return 1;
-        if (valB === null || valB === undefined) return -1;
-
-        let comp = 0;
-        if (typeof valA === 'number' && typeof valB === 'number') {
-          comp = valA - valB;
-        } else {
-          comp = String(valA).localeCompare(String(valB), undefined, { numeric: true, sensitivity: 'base' });
-        }
-        return pSortDir === 'asc' ? comp : -comp;
-      });
-    }
+    const sortedResults = paneId === 1 ? sortedResults1 : sortedResults2;
 
     const pEditability = editabilityInMode(activeResult.query || '', pColumns);
     const pTarget = pEditability.editable ? pEditability : null;
