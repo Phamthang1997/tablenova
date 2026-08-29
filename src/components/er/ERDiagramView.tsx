@@ -15,8 +15,8 @@ import {
   exportToSql,
   generateFullDiagramSvg,
   exportDiagramToPng,
-  downloadFile,
 } from './erExportHelper';
+import { pickSaveFilePath, saveExportFileAtPath } from '../../utils/fileSave';
 import { ERTableNode } from './ERTableNode';
 import { ERRelationshipLine } from './ERRelationshipLine';
 import { ERToolbar } from './ERToolbar';
@@ -328,35 +328,52 @@ export const ERDiagramView: React.FC<ERDiagramViewProps> = ({
         break;
       }
       case 'dbml': {
+        const targetPath = await pickSaveFilePath(baseName, 'dbml', 'DBML File (*.dbml)');
+        if (!targetPath) return;
         const dbml = exportToDbml(visibleTables, relationships);
-        downloadFile(dbml, `${baseName}.dbml`, 'text/plain');
+        await saveExportFileAtPath(targetPath, dbml, 'text/plain');
         break;
       }
       case 'sql': {
+        const targetPath = await pickSaveFilePath(baseName, 'sql', 'SQL Script (*.sql)');
+        if (!targetPath) return;
         const sql = exportToSql(visibleTables, relationships);
-        downloadFile(sql, `${baseName}.sql`, 'text/plain');
+        await saveExportFileAtPath(targetPath, sql, 'application/sql');
         break;
       }
       case 'svg': {
+        const targetPath = await pickSaveFilePath(baseName, 'svg', 'SVG Image (*.svg)');
+        if (!targetPath) return;
         const theme = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
         const { svgString } = generateFullDiagramSvg(visibleTables, relationships, positions, detailLevel, theme);
-        downloadFile(svgString, `${baseName}.svg`, 'image/svg+xml');
+        await saveExportFileAtPath(targetPath, svgString, 'image/svg+xml');
         break;
       }
-      case 'png':
+      case 'png': {
+        try {
+          const targetPath = await pickSaveFilePath(baseName, 'png', 'PNG Image (*.png)');
+          if (!targetPath) return;
+          const theme = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+          const bg = theme === 'light' ? '#f8fafc' : '#0f172a';
+          const { svgString, width, height } = generateFullDiagramSvg(visibleTables, relationships, positions, detailLevel, theme);
+          const { blob } = await exportDiagramToPng(svgString, width, height, 2.0, bg);
+          const buffer = await blob.arrayBuffer();
+          const bytes = new Uint8Array(buffer);
+          await saveExportFileAtPath(targetPath, bytes, 'image/png');
+        } catch (err) {
+          console.error('Export PNG failed:', err);
+        }
+        break;
+      }
       case 'clipboard': {
         try {
           const theme = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
           const bg = theme === 'light' ? '#f8fafc' : '#0f172a';
           const { svgString, width, height } = generateFullDiagramSvg(visibleTables, relationships, positions, detailLevel, theme);
           const { blob } = await exportDiagramToPng(svgString, width, height, 2.0, bg);
-          if (format === 'clipboard') {
-            await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-          } else {
-            downloadFile(blob, `${baseName}.png`, 'image/png');
-          }
+          await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
         } catch (err) {
-          console.error('Export PNG failed:', err);
+          console.error('Copy to clipboard failed:', err);
         }
         break;
       }
