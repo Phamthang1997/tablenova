@@ -41,6 +41,7 @@ interface DataGeneratorDialogProps {
   /** Preselect one table (opened from the table context menu). */
   initialTable?: string | null;
   onClose: () => void;
+  asTab?: boolean;
 }
 
 /** Seed used on open. Random only in the sense of "pick one" — generation itself stays exact. */
@@ -67,7 +68,13 @@ const Field: React.FC<{ text: string; children: React.ReactNode }> = ({ text, ch
   </div>
 );
 
-export const DataGeneratorDialog: React.FC<DataGeneratorDialogProps> = ({ connId, dbName, initialTable, onClose }) => {
+export const DataGeneratorDialog: React.FC<DataGeneratorDialogProps> = ({
+  connId,
+  dbName,
+  initialTable,
+  onClose,
+  asTab = false,
+}) => {
   const { t, i18n } = useTranslation();
 
   const [targets, setTargets] = useState<GenTargets | null>(null);
@@ -385,20 +392,10 @@ export const DataGeneratorDialog: React.FC<DataGeneratorDialogProps> = ({ connId
     }
   };
 
-  return (
-    <Modal
-      title={dbName ? t('dataGen.titleWithDb', { db: dbName }) : t('dataGen.title')}
-      icon={<Wand2 size={14} className="title-bar-logo" />}
-      onClose={onClose}
-      closeDisabled={running}
-      width="1180px"
-      height="86vh"
-      zIndex={10000}
-    >
-      <ModalBody style={{ overflowY: 'hidden', gap: 0, flex: 1 }}>
-        <div className="dgen">
-          {/* ---- shared controls ---- */}
-          <div className="dgen-bar">
+  const dgenContent = (
+    <div className="dgen" style={asTab ? { padding: '14px 18px', flex: 1, overflowY: 'auto' } : undefined}>
+      {/* ---- shared controls ---- */}
+      <div className="dgen-bar">
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span className="dgen-label">{t('dataGen.rowsPerTable')}</span>
               <input
@@ -858,56 +855,100 @@ export const DataGeneratorDialog: React.FC<DataGeneratorDialogProps> = ({ connId
             </div>
           )}
         </div>
+  );
+
+  const footerActions = (
+    <>
+      <div className="dgen-foot-db">
+        <Database size={12} /> {dbName ?? ''}
+      </div>
+      {running ? (
+        <button
+          className="btn btn-secondary"
+          onClick={() => { if (jobIdRef.current) cancelJob(jobIdRef.current); }}
+        >
+          {t('dataGen.cancelRun')}
+        </button>
+      ) : (
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button className="btn btn-secondary" onClick={onClose}>
+            {t('common.close')}
+          </button>
+          <button className="btn btn-primary" disabled={!selectedCount || blocked} onClick={() => setConfirming(true)}>
+            <Wand2 size={13} /> {t('dataGen.generate')}
+          </button>
+        </div>
+      )}
+    </>
+  );
+
+  const confirmDialog = (
+    <ConfirmDialog
+      open={confirming}
+      title={t('dataGen.confirmTitle')}
+      message={
+        truncating
+          ? t('dataGen.confirmBodyTruncate', {
+              rows: formatCount(totalRows, i18n.language),
+              tables: selectedCount,
+              db: dbName ?? '',
+            })
+          : t('dataGen.confirmBody', {
+              rows: formatCount(totalRows, i18n.language),
+              tables: selectedCount,
+              db: dbName ?? '',
+            })
+      }
+      note={truncating ? t('dataGen.confirmNoteTruncate') : undefined}
+      confirmLabel={t('dataGen.generate')}
+      danger={truncating}
+      onConfirm={() => {
+        setConfirming(false);
+        void run();
+      }}
+      onCancel={() => setConfirming(false)}
+    />
+  );
+
+  if (asTab) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, height: '100%', width: '100%', overflow: 'hidden', background: 'var(--win-bg-window)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 18px', borderBottom: '1px solid var(--win-border)', background: 'var(--win-bg-card)', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Wand2 size={15} style={{ color: 'var(--win-accent)' }} />
+            <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--win-text-primary)' }}>
+              {dbName ? t('dataGen.titleWithDb', { db: dbName }) : t('dataGen.title')}
+            </span>
+          </div>
+        </div>
+        {dgenContent}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 18px', borderTop: '1px solid var(--win-border)', background: 'var(--win-bg-card)', flexShrink: 0 }}>
+          {footerActions}
+        </div>
+        {confirmDialog}
+      </div>
+    );
+  }
+
+  return (
+    <Modal
+      title={dbName ? t('dataGen.titleWithDb', { db: dbName }) : t('dataGen.title')}
+      icon={<Wand2 size={14} className="title-bar-logo" />}
+      onClose={onClose}
+      closeDisabled={running}
+      width="1180px"
+      height="86vh"
+      zIndex={10000}
+    >
+      <ModalBody style={{ overflowY: 'hidden', gap: 0, flex: 1 }}>
+        {dgenContent}
       </ModalBody>
 
       <ModalFooter>
-        <div className="dgen-foot-db">
-          <Database size={12} /> {dbName ?? ''}
-        </div>
-        {running ? (
-          <button
-            className="btn btn-secondary"
-            onClick={() => { if (jobIdRef.current) cancelJob(jobIdRef.current); }}
-          >
-            {t('dataGen.cancelRun')}
-          </button>
-        ) : (
-          <>
-            <button className="btn btn-secondary" onClick={onClose}>
-              {t('common.close')}
-            </button>
-            <button className="btn btn-primary" disabled={!selectedCount || blocked} onClick={() => setConfirming(true)}>
-              <Wand2 size={13} /> {t('dataGen.generate')}
-            </button>
-          </>
-        )}
+        {footerActions}
       </ModalFooter>
 
-      <ConfirmDialog
-        open={confirming}
-        title={t('dataGen.confirmTitle')}
-        message={
-          truncating
-            ? t('dataGen.confirmBodyTruncate', {
-                rows: formatCount(totalRows, i18n.language),
-                tables: selectedCount,
-                db: dbName ?? '',
-              })
-            : t('dataGen.confirmBody', {
-                rows: formatCount(totalRows, i18n.language),
-                tables: selectedCount,
-                db: dbName ?? '',
-              })
-        }
-        note={truncating ? t('dataGen.confirmNoteTruncate') : undefined}
-        confirmLabel={t('dataGen.generate')}
-        danger={truncating}
-        onConfirm={() => {
-          setConfirming(false);
-          void run();
-        }}
-        onCancel={() => setConfirming(false)}
-      />
+      {confirmDialog}
     </Modal>
   );
 };

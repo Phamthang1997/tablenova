@@ -73,7 +73,7 @@ const mergeSizes = (base: AllDatabasesStats, items: AllDatabasesSizeItem[]): All
 interface DatabaseInfoModalProps {
   /** The connection this component acts on. Passed explicitly, never read from the ambient id (§4.1). */
   connId: string;
-  isOpen: boolean;
+  isOpen?: boolean;
   onClose: () => void;
   onSelectTable: (tableName: string) => void;
   /** Which tab opens with the modal ('all' when entered from the "Statistics for all databases" menu). */
@@ -81,15 +81,17 @@ interface DatabaseInfoModalProps {
   /** Called after a successful database switch, so App reloads the table tree and the tabs. */
   /** See the note of the same name in `Sidebar.tsx`: it opens another connection rather than swapping the pool in place. */
   onDatabaseOpened?: (connId: string, name: string, schema?: string | null) => void;
+  asTab?: boolean;
 }
 
 export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
   connId,
-  isOpen,
+  isOpen = true,
   onClose,
   onSelectTable,
   initialTab = 'current',
   onDatabaseOpened,
+  asTab = false,
 }) => {
   const { t } = useTranslation();
   const [tab, setTab] = useState<InfoTab>(initialTab);
@@ -396,7 +398,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
   const metricCell = (v: number | null, render: (n: number) => string) =>
     v === null ? (metricsLoading ? '…' : '-') : render(v);
 
-  if (!isOpen) return null;
+  if (!isOpen && !asTab) return null;
 
   const headerTitle = tab === 'all' ? (
     <Trans
@@ -412,31 +414,12 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
     />
   );
 
-  return (
-    <Modal
-      title={headerTitle}
-      icon={tab === 'all'
-        ? <Server size={14} style={{ color: 'var(--win-accent)', flexShrink: 0 }} />
-        : <HardDrive size={14} style={{ color: 'var(--win-accent)', flexShrink: 0 }} />}
-      onClose={onClose}
-      width="1100px"
-      maxWidth="95%"
-      height="85vh"
-      zIndex={9999}
-      cardStyle={{ color: 'var(--win-text-primary)', fontFamily: 'var(--win-font-sans, system-ui, sans-serif)' }}
-      headerExtra={
-        <span
-          title={t('dbInfo.dbTypeLabel')}
-          style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', color: 'var(--win-accent)', background: 'var(--win-accent-glow)', border: '1px solid var(--win-border)', padding: '1px 8px', borderRadius: '4px', letterSpacing: '0.05em' }}
-        >
-          {(tab === 'all' ? allStats?.db_type : stats?.db_type) || '-'}
-        </span>
-      }
-    >
-        {/* Segmented tabs: the current database ↔ every database on the server.
-            The Refresh button sits on this row rather than in the title bar, so the header is exactly
-            as tall as every other dialog's (see `Modal.tsx`). */}
-        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '4px', padding: '10px 24px 0', borderBottom: '1px solid var(--win-border)', background: 'var(--win-bg-tab-bar)' }}>
+  const modalBodyContent = (
+    <>
+      {/* Segmented tabs: the current database ↔ every database on the server.
+          The Refresh button sits on this row rather than in the title bar, so the header is exactly
+          as tall as every other dialog's (see `Modal.tsx`). */}
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: '4px', padding: '10px 24px 0', borderBottom: '1px solid var(--win-border)', background: 'var(--win-bg-tab-bar)' }}>
           {([
             {
               key: 'current' as const,
@@ -1157,17 +1140,83 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
           </div>
           </>)}
         </div>
+    </>
+  );
 
-        {/* Modal Footer */}
-        <ModalFooter style={{ justifyContent: 'space-between', fontSize: '12px', color: 'var(--win-text-secondary)' }}>
+  const footerContent = (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 18px', borderTop: '1px solid var(--win-border)', background: 'var(--win-bg-card)', flexShrink: 0, fontSize: '12px', color: 'var(--win-text-secondary)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: 'var(--win-status-added-border, #10b981)' }} />
+        <span>{t('dbInfo.catalogNote')}</span>
+      </div>
+      {onClose && (
+        <button className="btn btn-secondary" onClick={onClose} style={{ padding: '0 20px' }}>
+          {t('common.close')}
+        </button>
+      )}
+    </div>
+  );
+
+  if (asTab) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, height: '100%', width: '100%', overflow: 'hidden', background: 'var(--win-bg-window)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 18px', borderBottom: '1px solid var(--win-border)', background: 'var(--win-bg-card)', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: 'var(--win-status-added-border, #10b981)' }} />
-            <span>{t('dbInfo.catalogNote')}</span>
+            {tab === 'all'
+              ? <Server size={15} style={{ color: 'var(--win-accent)' }} />
+              : <HardDrive size={15} style={{ color: 'var(--win-accent)' }} />}
+            <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--win-text-primary)' }}>
+              {headerTitle}
+            </span>
+            <span
+              title={t('dbInfo.dbTypeLabel')}
+              style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', color: 'var(--win-accent)', background: 'var(--win-accent-glow)', border: '1px solid var(--win-border)', padding: '1px 8px', borderRadius: '4px', letterSpacing: '0.05em' }}
+            >
+              {(tab === 'all' ? allStats?.db_type : stats?.db_type) || '-'}
+            </span>
           </div>
-          <button className="btn btn-secondary" onClick={onClose} style={{ padding: '0 20px' }}>
-            {t('common.close')}
-          </button>
-        </ModalFooter>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+          {modalBodyContent}
+        </div>
+        {footerContent}
+      </div>
+    );
+  }
+
+  return (
+    <Modal
+      title={headerTitle}
+      icon={tab === 'all'
+        ? <Server size={14} style={{ color: 'var(--win-accent)', flexShrink: 0 }} />
+        : <HardDrive size={14} style={{ color: 'var(--win-accent)', flexShrink: 0 }} />}
+      onClose={onClose}
+      width="1100px"
+      maxWidth="95%"
+      height="85vh"
+      zIndex={9999}
+      cardStyle={{ color: 'var(--win-text-primary)', fontFamily: 'var(--win-font-sans, system-ui, sans-serif)' }}
+      headerExtra={
+        <span
+          title={t('dbInfo.dbTypeLabel')}
+          style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', color: 'var(--win-accent)', background: 'var(--win-accent-glow)', border: '1px solid var(--win-border)', padding: '1px 8px', borderRadius: '4px', letterSpacing: '0.05em' }}
+        >
+          {(tab === 'all' ? allStats?.db_type : stats?.db_type) || '-'}
+        </span>
+      }
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        {modalBodyContent}
+      </div>
+      <ModalFooter style={{ justifyContent: 'space-between', fontSize: '12px', color: 'var(--win-text-secondary)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: 'var(--win-status-added-border, #10b981)' }} />
+          <span>{t('dbInfo.catalogNote')}</span>
+        </div>
+        <button className="btn btn-secondary" onClick={onClose} style={{ padding: '0 20px' }}>
+          {t('common.close')}
+        </button>
+      </ModalFooter>
     </Modal>
   );
 };

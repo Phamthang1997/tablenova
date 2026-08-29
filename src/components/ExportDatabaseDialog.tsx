@@ -45,6 +45,7 @@ interface ExportDatabaseDialogProps {
   onSubmit: (options: DatabaseExportOptions) => Promise<boolean>;
   /** The open database — used to suggest a file name when exporting several objects. */
   dbName?: string;
+  asTab?: boolean;
 }
 
 const FORMAT_LABEL: Record<DatabaseExportFormat, string> = {
@@ -120,7 +121,7 @@ const removeAccents = (s: string) =>
  * The "Export Database" dialog — a two-column layout: settings on the left (file name, format, SQL
  * options) and the table list on the right, filling the height so the dialog itself never scrolls.
  */
-export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ connId, open, onClose, onSubmit, dbName }) => {
+export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ connId, open = true, onClose, onSubmit, dbName, asTab = false }) => {
   const { t } = useTranslation();
   // The file name is suggested from the selection, but typing stops the suggestions
   // (`filenameTouched`) — otherwise every extra table ticked would erase the name they just chose.
@@ -319,17 +320,10 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ conn
     if (picked) setDir(picked);
   };
 
-  return (
-    <Modal
-      title={t('exportDialog.dbTitle')}
-      onClose={onClose}
-      closeDisabled={submitting}
-      width="820px"
-      height="540px"
-      zIndex={9999}
-    >
-      {/* The body: two columns — settings | the table list */}
-      <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+  if (!open && !asTab) return null;
+
+  const bodyContent = (
+    <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
         <div style={{
           width: '340px',
           flexShrink: 0,
@@ -586,22 +580,62 @@ export const ExportDatabaseDialog: React.FC<ExportDatabaseDialogProps> = ({ conn
           </div>
         </div>
       </div>
+  );
 
+  const footerContent = (
+    <>
+      {error ? (
+        <span style={{ marginRight: 'auto', fontSize: '11px', color: 'var(--win-error, #ff6b6b)' }}>
+          {error}
+        </span>
+      ) : null}
+      <button className="btn btn-secondary" onClick={onClose} disabled={submitting} style={{ flexShrink: 0 }}>{t('common.cancel')}</button>
+      <button
+        className="btn btn-primary"
+        onClick={submit}
+        disabled={submitting || tablesLoading || selected.length === 0}
+        style={{ background: 'var(--win-accent)', color: '#fff', border: 'none', flexShrink: 0 }}
+      >
+        {submitting ? t('exportDialog.exporting') : t('exportDialog.startExport')}
+      </button>
+    </>
+  );
+
+  if (asTab) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, height: '100%', width: '100%', overflow: 'hidden', background: 'var(--win-bg-window)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 18px', borderBottom: '1px solid var(--win-border)', background: 'var(--win-bg-card)', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--win-text-primary)' }}>
+              {t('exportDialog.dbTitle')}
+            </span>
+            {dbName && (
+              <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '4px', background: 'var(--win-bg-hover)', border: '1px solid var(--win-border)', color: 'var(--win-text-secondary)' }}>
+                {dbName}
+              </span>
+            )}
+          </div>
+        </div>
+        {bodyContent}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '10px 18px', borderTop: '1px solid var(--win-border)', background: 'var(--win-bg-card)', flexShrink: 0, gap: '8px' }}>
+          {footerContent}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <Modal
+      title={t('exportDialog.dbTitle')}
+      onClose={onClose}
+      closeDisabled={submitting}
+      width="820px"
+      height="540px"
+      zIndex={9999}
+    >
+      {bodyContent}
       <ModalFooter>
-        {error ? (
-          <span style={{ marginRight: 'auto', fontSize: '11px', color: 'var(--win-error, #ff6b6b)' }}>
-            {error}
-          </span>
-        ) : null}
-        <button className="btn btn-secondary" onClick={onClose} disabled={submitting} style={{ flexShrink: 0 }}>{t('common.cancel')}</button>
-        <button
-          className="btn btn-primary"
-          onClick={submit}
-          disabled={submitting || tablesLoading || selected.length === 0}
-          style={{ background: 'var(--win-accent)', color: '#fff', border: 'none', flexShrink: 0 }}
-        >
-          {submitting ? t('exportDialog.exporting') : t('exportDialog.startExport')}
-        </button>
+        {footerContent}
       </ModalFooter>
     </Modal>
   );
