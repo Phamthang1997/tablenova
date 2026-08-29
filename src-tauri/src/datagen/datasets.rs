@@ -1,0 +1,183 @@
+// Embedded word lists used by the "meaningful" generators of `datagen.rs`.
+//
+// Bundled as `const` slices rather than fetched or read from disk, for the same reason the
+// fonts in `public/fonts/` are bundled: the app must work offline. Each list is small on
+// purpose (tens to low hundreds of entries) — a generator picks uniformly from it, so more
+// entries only matter when a column needs many distinct values.
+//
+// LOCALE: the `_VI` lists are not translations of the `_EN` ones, they are the data a
+// Vietnamese database would really hold. The locale is chosen per column in the generator
+// options (`options.locale`), NOT from the UI language — a Vietnamese UI may well be
+// filling an English database.
+
+pub const FIRST_NAMES_EN: &[&str] = &[
+    "James", "Mary", "Robert", "Patricia", "John", "Jennifer", "Michael", "Linda", "David",
+    "Elizabeth", "William", "Barbara", "Richard", "Susan", "Joseph", "Jessica", "Thomas",
+    "Sarah", "Charles", "Karen", "Christopher", "Nancy", "Daniel", "Lisa", "Matthew", "Betty",
+    "Anthony", "Margaret", "Mark", "Sandra", "Donald", "Ashley", "Steven", "Kimberly", "Paul",
+    "Emily", "Andrew", "Donna", "Joshua", "Michelle", "Kenneth", "Carol", "Kevin", "Amanda",
+    "Brian", "Dorothy", "George", "Melissa", "Timothy", "Deborah", "Ronald", "Stephanie",
+    "Edward", "Rebecca", "Jason", "Sharon", "Jeffrey", "Laura", "Ryan", "Cynthia", "Jacob",
+    "Kathleen", "Gary", "Amy", "Nicholas", "Angela", "Eric", "Shirley", "Jonathan", "Anna",
+];
+
+pub const LAST_NAMES_EN: &[&str] = &[
+    "Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis", "Rodriguez",
+    "Martinez", "Hernandez", "Lopez", "Gonzalez", "Wilson", "Anderson", "Thomas", "Taylor",
+    "Moore", "Jackson", "Martin", "Lee", "Perez", "Thompson", "White", "Harris", "Sanchez",
+    "Clark", "Ramirez", "Lewis", "Robinson", "Walker", "Young", "Allen", "King", "Wright",
+    "Scott", "Torres", "Nguyen", "Hill", "Flores", "Green", "Adams", "Nelson", "Baker",
+    "Hall", "Rivera", "Campbell", "Mitchell", "Carter", "Roberts",
+];
+
+pub const FIRST_NAMES_VI: &[&str] = &[
+    "An", "Anh", "Bảo", "Bích", "Bình", "Chi", "Chinh", "Cường", "Dũng", "Duy", "Dương", "Đạt",
+    "Đức", "Giang", "Hà", "Hải", "Hạnh", "Hào", "Hiếu", "Hoa", "Hoàng", "Hồng", "Huệ", "Hùng",
+    "Huy", "Hương", "Khánh", "Khoa", "Kiên", "Lan", "Linh", "Long", "Mai", "Minh", "My", "Nam",
+    "Nga", "Ngân", "Ngọc", "Nguyên", "Nhung", "Oanh", "Phong", "Phúc", "Phương", "Quân", "Quang",
+    "Quỳnh", "Sơn", "Tâm", "Tân", "Thanh", "Thảo", "Thắng", "Thu", "Thủy", "Tiến", "Trang",
+    "Trung", "Tú", "Tuấn", "Tuyết", "Uyên", "Vân", "Việt", "Vinh", "Vũ", "Yến",
+];
+
+pub const LAST_NAMES_VI: &[&str] = &[
+    "Nguyễn", "Trần", "Lê", "Phạm", "Hoàng", "Huỳnh", "Phan", "Vũ", "Võ", "Đặng", "Bùi", "Đỗ",
+    "Hồ", "Ngô", "Dương", "Lý", "Đinh", "Trịnh", "Đoàn", "Lâm", "Mai", "Cao", "Tạ", "Thái",
+];
+
+/// Middle names used to build a realistic Vietnamese full name (surname + middle name + given name).
+pub const MIDDLE_NAMES_VI: &[&str] = &["Văn", "Thị", "Hữu", "Minh", "Đức", "Ngọc", "Thanh", "Quang", "Thu", "Gia"];
+
+pub const CITIES_EN: &[&str] = &[
+    "Austin", "Boston", "Chicago", "Denver", "Detroit", "Houston", "Portland", "Seattle",
+    "Phoenix", "Dallas", "Atlanta", "Miami", "Nashville", "Orlando", "Baltimore", "Charlotte",
+    "Columbus", "Fresno", "Memphis", "Milwaukee", "Oakland", "Omaha", "Raleigh", "Sacramento",
+    "London", "Manchester", "Bristol", "Dublin", "Berlin", "Hamburg", "Munich", "Paris",
+    "Lyon", "Madrid", "Barcelona", "Lisbon", "Rome", "Milan", "Vienna", "Prague", "Warsaw",
+    "Amsterdam", "Brussels", "Copenhagen", "Oslo", "Stockholm", "Helsinki", "Zurich",
+    "Toronto", "Vancouver", "Montreal", "Sydney", "Melbourne", "Auckland", "Singapore",
+    "Tokyo", "Osaka", "Seoul", "Taipei", "Bangkok", "Jakarta", "Manila", "Mumbai",
+];
+
+pub const CITIES_VI: &[&str] = &[
+    "Hà Nội", "Hồ Chí Minh", "Đà Nẵng", "Hải Phòng", "Cần Thơ", "Biên Hòa", "Nha Trang",
+    "Huế", "Vinh", "Quy Nhơn", "Buôn Ma Thuột", "Thủ Đức", "Vũng Tàu", "Đà Lạt", "Hạ Long",
+    "Thanh Hóa", "Nam Định", "Thái Nguyên", "Việt Trì", "Bắc Ninh", "Rạch Giá", "Long Xuyên",
+    "Mỹ Tho", "Phan Thiết", "Cà Mau", "Tuy Hòa", "Bảo Lộc", "Sóc Trăng", "Tam Kỳ", "Hội An",
+];
+
+pub const COUNTRIES: &[&str] = &[
+    "Argentina", "Australia", "Austria", "Belgium", "Brazil", "Canada", "Chile", "China",
+    "Colombia", "Czechia", "Denmark", "Egypt", "Finland", "France", "Germany", "Greece",
+    "Hungary", "India", "Indonesia", "Ireland", "Israel", "Italy", "Japan", "Kenya",
+    "Malaysia", "Mexico", "Morocco", "Netherlands", "New Zealand", "Nigeria", "Norway",
+    "Pakistan", "Peru", "Philippines", "Poland", "Portugal", "Romania", "Saudi Arabia",
+    "Singapore", "South Africa", "South Korea", "Spain", "Sweden", "Switzerland", "Taiwan",
+    "Thailand", "Turkey", "Ukraine", "United Kingdom", "United States", "Vietnam",
+];
+
+/// ISO 3166-1 alpha-2, aligned with `COUNTRIES` order so a row can stay consistent.
+pub const COUNTRY_CODES: &[&str] = &[
+    "AR", "AU", "AT", "BE", "BR", "CA", "CL", "CN", "CO", "CZ", "DK", "EG", "FI", "FR", "DE",
+    "GR", "HU", "IN", "ID", "IE", "IL", "IT", "JP", "KE", "MY", "MX", "MA", "NL", "NZ", "NG",
+    "NO", "PK", "PE", "PH", "PL", "PT", "RO", "SA", "SG", "ZA", "KR", "ES", "SE", "CH", "TW",
+    "TH", "TR", "UA", "GB", "US", "VN",
+];
+
+pub const STREETS_EN: &[&str] = &[
+    "Main St", "Oak Ave", "Maple Dr", "Cedar Ln", "Pine St", "Elm St", "Washington Ave",
+    "Lake View Rd", "Sunset Blvd", "Highland Ave", "Park Ave", "River Rd", "Church St",
+    "Market St", "Broad St", "Union Ave", "Spring St", "Franklin St", "Jefferson Ave",
+    "Madison St", "Lincoln Ave", "Hillcrest Dr", "Meadow Ln", "Willow Way", "Birch Rd",
+];
+
+pub const STREETS_VI: &[&str] = &[
+    "Lê Lợi", "Nguyễn Huệ", "Trần Hưng Đạo", "Hai Bà Trưng", "Lý Thường Kiệt", "Điện Biên Phủ",
+    "Nguyễn Trãi", "Cách Mạng Tháng Tám", "Võ Văn Tần", "Pasteur", "Nam Kỳ Khởi Nghĩa",
+    "Hoàng Văn Thụ", "Phan Đình Phùng", "Nguyễn Thị Minh Khai", "Bà Triệu", "Tôn Đức Thắng",
+    "Kim Mã", "Giải Phóng", "Xuân Thủy", "Trường Chinh", "Lạc Long Quân", "Âu Cơ",
+];
+
+pub const COMPANY_WORDS: &[&str] = &[
+    "Acme", "Apex", "Aurora", "Beacon", "Blue Ridge", "Bright", "Cobalt", "Crestline", "Delta",
+    "Eastview", "Everline", "Falcon", "Granite", "Harbor", "Ironwood", "Keystone", "Lakeside",
+    "Lumen", "Meridian", "Northwind", "Orbit", "Pinnacle", "Quantum", "Redwood", "Sentinel",
+    "Silverpine", "Summit", "Tidewater", "Vertex", "Westgate", "Zenith",
+];
+
+pub const COMPANY_SUFFIX: &[&str] = &[
+    "Inc", "LLC", "Ltd", "Group", "Holdings", "Partners", "Systems", "Technologies",
+    "Solutions", "Industries", "Labs", "Works",
+];
+
+pub const DEPARTMENTS: &[&str] = &[
+    "Accounting", "Business Development", "Customer Support", "Engineering", "Finance",
+    "Human Resources", "Legal", "Logistics", "Marketing", "Operations", "Procurement",
+    "Product", "Quality Assurance", "Research", "Sales", "Security",
+];
+
+pub const JOB_TITLES: &[&str] = &[
+    "Accountant", "Account Manager", "Analyst", "Architect", "Backend Developer",
+    "Business Analyst", "Consultant", "Data Engineer", "Designer", "DevOps Engineer",
+    "Director", "Engineering Manager", "Frontend Developer", "HR Specialist", "Intern",
+    "Product Manager", "Project Manager", "QA Engineer", "Recruiter", "Sales Representative",
+    "Scrum Master", "Software Engineer", "Support Specialist", "Team Lead", "Technical Writer",
+];
+
+pub const PRODUCT_ADJECTIVES: &[&str] = &[
+    "Compact", "Deluxe", "Digital", "Eco", "Ergonomic", "Heavy-duty", "Lightweight", "Modular",
+    "Portable", "Premium", "Professional", "Rugged", "Smart", "Ultra", "Wireless",
+];
+
+pub const PRODUCT_NOUNS: &[&str] = &[
+    "Adapter", "Backpack", "Battery", "Blender", "Camera", "Chair", "Charger", "Desk", "Drill",
+    "Headset", "Keyboard", "Lamp", "Laptop", "Microphone", "Monitor", "Mouse", "Printer",
+    "Router", "Scanner", "Speaker", "Stand", "Tablet", "Thermostat", "Tripod", "Watch",
+];
+
+pub const EMAIL_DOMAINS: &[&str] = &[
+    "gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "icloud.com", "proton.me",
+    "example.com", "example.org", "corp.local", "mail.com",
+];
+
+pub const URL_HOSTS: &[&str] = &[
+    "example.com", "example.org", "example.net", "acme-labs.io", "northwind.dev",
+    "bright-solutions.co", "meridian.app", "zenith-works.com",
+];
+
+pub const URL_PATHS: &[&str] = &[
+    "", "about", "products", "blog/post", "docs/getting-started", "pricing", "support/faq",
+    "users/profile", "orders/history", "search",
+];
+
+pub const LOREM: &[&str] = &[
+    "lorem", "ipsum", "dolor", "sit", "amet", "consectetur", "adipiscing", "elit", "sed", "do",
+    "eiusmod", "tempor", "incididunt", "ut", "labore", "et", "dolore", "magna", "aliqua",
+    "enim", "ad", "minim", "veniam", "quis", "nostrud", "exercitation", "ullamco", "laboris",
+    "nisi", "aliquip", "ex", "ea", "commodo", "consequat", "duis", "aute", "irure", "in",
+    "reprehenderit", "voluptate", "velit", "esse", "cillum", "eu", "fugiat", "nulla",
+    "pariatur", "excepteur", "sint", "occaecat", "cupidatat", "non", "proident", "sunt",
+    "culpa", "qui", "officia", "deserunt", "mollit", "anim", "id", "est", "laborum",
+];
+
+pub const CURRENCY_CODES: &[&str] = &[
+    "USD", "EUR", "GBP", "JPY", "CNY", "VND", "KRW", "SGD", "AUD", "CAD", "CHF", "INR", "THB",
+];
+
+pub const ORDER_STATUSES: &[&str] = &[
+    "pending", "confirmed", "processing", "shipped", "delivered", "cancelled", "refunded",
+];
+
+pub const MIME_TYPES: &[&str] = &[
+    "text/plain", "text/csv", "text/html", "application/json", "application/pdf",
+    "application/zip", "image/png", "image/jpeg", "image/svg+xml", "video/mp4", "audio/mpeg",
+];
+
+pub const FILE_EXTENSIONS: &[&str] = &[
+    "txt", "csv", "json", "pdf", "zip", "png", "jpg", "svg", "mp4", "mp3", "xlsx", "docx", "log",
+];
+
+pub const TIMEZONES: &[&str] = &[
+    "UTC", "Asia/Ho_Chi_Minh", "Asia/Tokyo", "Asia/Seoul", "Asia/Singapore", "Asia/Kolkata",
+    "Europe/London", "Europe/Paris", "Europe/Berlin", "Europe/Moscow", "America/New_York",
+    "America/Chicago", "America/Denver", "America/Los_Angeles", "Australia/Sydney",
+];

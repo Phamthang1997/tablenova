@@ -25,12 +25,14 @@ export const AiContextPicker: React.FC<AiContextPickerProps> = ({
     let active = true;
     catalog.getTables(editorConnId()).then((tables) => {
       if (active) {
-        setAvailableTables(tables.map((t) => t.name));
+        setAvailableTables(tables.map((tbl) => tbl.name));
       }
     }).catch(() => {});
     return () => {
       active = false;
     };
+    // `open` is a trigger: re-read the table list each time the picker opens, not when it changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   useEffect(() => {

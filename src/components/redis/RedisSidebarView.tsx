@@ -1,12 +1,12 @@
-// Sidebar của một kết nối Redis: danh sách key + các hành động mở tab công cụ.
+// Sidebar for a Redis connection: key list + tool tab launch actions.
 //
-// Vì sao là một component riêng chứ không phải một chế độ bên trong `Sidebar.tsx`: file đó đã 2762
-// dòng và mọi thứ trong nó nói về bảng/view/routine của SQL. Cái dùng chung ở đây là *khung* —
-// cùng lớp CSS `.sidebar`, cùng kiểu footer, cùng menu chuột phải — chứ không phải cùng thân
+// Why a separate component rather than a mode in `Sidebar.tsx`: that file is already large and
+// specialized for SQL tables/views/routines. Shared elements are container styles (.sidebar,
+// footer layout, context menus) rather than DOM structure.
 // (`docs/redis-ui-unification-plan.md` §3).
 //
-// `KeyList` bên dưới giữ nguyên: phần quét theo lô, cap và windowing của nó là thứ đắt nhất trong
-// cả thư mục Redis và không có lý do gì để viết lại (§2.4).
+// Underlying `KeyList` remains untouched: its batch scanning and virtual windowing represent
+// critical performance logic (§2.4).
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -48,19 +48,19 @@ const TOOL_ICONS: Record<Exclude<RedisTabType, 'redis-key'>, LucideIcon> = {
 
 interface RedisSidebarViewProps {
   connId: string;
-  /** `db0`… — tên hiển thị của kết nối. */
+  /** `db0`... — display name of connection. */
   dbName: string;
   dbIndex: number;
-  /** localStorage scope cho tuỳ chọn hiển thị — định danh SERVER, không phải `dbName`. */
+  /** localStorage scope for display options — SERVER identifier, not `dbName`. */
   storageScope: string;
   readOnly: boolean;
-  /** Key đang mở ở tab hoạt động, để tô sáng trong danh sách. */
+  /** Currently active key tab, highlighted in the list. */
   activeKey: string | null;
-  /** Mở (hoặc focus) tab xem key. */
+  /** Open (or focus) key viewer tab. */
   onOpenKey: (key: string) => void;
-  /** Mở (hoặc focus) một tab công cụ. */
+  /** Open (or focus) a tool tab. */
   onOpenTool: (type: RedisTabType) => void;
-  /** Đổi db index — mở/chuyển sang kết nối của db đó (§2.1). */
+  /** Switch db index — opens/switches to connection for that db (§2.1). */
   onSelectDb: (index: number) => void;
 }
 
@@ -85,11 +85,11 @@ export const RedisSidebarView: React.FC<RedisSidebarViewProps> = ({
   const [transfer, setTransfer] = useState<{ prefix: string; typeFilter: string } | null>(null);
 
   /**
-   * Một tab vừa ghi/xoá key. Lọc theo `connId` vì hai kết nối Redis có thể cùng mở và danh sách
-   * này chỉ nói về một cái.
+   * Fired when a tab writes/deletes a key. Filtered by `connId` since multiple connections can be open
+   and this list is specific to one.
    *
-   * Xoá một key thì gỡ đúng dòng đó thay vì quét lại — quét lại là một vòng SCAN qua cả keyspace
-   * cho một thay đổi đã biết chính xác.
+   * Deleting a key removes that specific row instead of re-scanning — re-scanning runs a full keyspace SCAN
+   for an already known modification.
    */
   useEffect(() => {
     const onChanged = (e: Event) => {
@@ -123,11 +123,11 @@ export const RedisSidebarView: React.FC<RedisSidebarViewProps> = ({
   }, [blocked, onError, onOk, t]);
 
   /**
-   * Các nút mở tab công cụ, đưa vào thanh chân của `KeyList` (xem `footerActions`) thay cho một
-   * thanh riêng. Chỉ còn icon: sáu nhãn chữ bọc thành hai hàng, cộng dòng đếm key, ăn ~103px chiều
-   * cao cố định ở đáy sidebar và làm thanh chân này lệch hẳn so với ba thanh chân 34px còn lại.
-   * Nhãn vẫn tới được người dùng qua `title`, và `aria-label` để nút không phải là một icon vô danh
-   * với screen reader.
+   * The buttons that open the tool tabs, put into `KeyList`'s footer (see `footerActions`) instead
+   * of a bar of their own. Icons only: six text labels wrapped onto two rows, plus the key count
+   * line, took ~103px of fixed height at the bottom of the sidebar and left this footer badly out of
+   * line with the other three 34px ones. The labels still reach the user through `title`, and
+   * `aria-label` keeps each button from being an anonymous icon to a screen reader.
    */
   const toolButtons = (
     <div className="redis-sidebar-actions">
@@ -163,8 +163,7 @@ export const RedisSidebarView: React.FC<RedisSidebarViewProps> = ({
         onNewKey={() => { if (!blocked()) setCreating(true); }}
         onFlush={() => { if (!blocked()) setConfirmFlush(true); }}
         onBulkDelete={(pattern, typeFilter) => { if (!blocked()) setBulk({ pattern, typeFilter }); }}
-        // Không qua `blocked()`: dialog này xuất được ở chế độ chỉ đọc, chỉ tab Nhập bị chặn (và
-        // chốt thật nằm ở `ensure_writable` trong Rust).
+        // Bypasses `blocked()`: this dialog allows export in read-only mode, only Import tab is blocked (enforced by backend).
         onTransfer={(prefix, typeFilter) => setTransfer({ prefix, typeFilter })}
         onError={onError}
         footerActions={toolButtons}

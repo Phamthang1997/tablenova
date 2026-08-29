@@ -3,8 +3,8 @@ import { buildDump, type DumpReader, type DumpSpec } from '../dumpBuilder';
 import { parseDumpObjects, parseDumpTableNames } from '../dumpPreview';
 import { splitStatements } from '../../sql/statements';
 
-// Reader giả: đủ để dựng dump mà không cần backend. Đây chính là lý do buildDump nhận reader
-// qua tham số thay vì import dbHelper — thứ tự câu lệnh mới kiểm chứng được bằng test.
+// A fake reader: enough to build a dump without a backend. This is exactly why buildDump takes its
+// reader as a parameter instead of importing dbHelper — it is what makes the statement order testable.
 function fakeReader(over: Partial<DumpReader> = {}): DumpReader {
   return {
     getTableDefinition: async (name) => ({ success: true, sql: `CREATE TABLE \`${name}\` (id int)` }),
@@ -45,13 +45,13 @@ const spec = (over: Partial<DumpSpec> = {}): DumpSpec => ({
   ...over,
 });
 
-/** Vị trí xuất hiện đầu tiên của một chuỗi trong dump (-1 nếu không có). */
+/** Where a string first appears in the dump (-1 when it does not). */
 const at = (dump: string, needle: string) => dump.indexOf(needle);
 
 describe('buildDump — thứ tự câu lệnh', () => {
   it('bảng -> view -> routine -> trigger, dù danh sách vào theo alphabet', async () => {
-    // `actor_info` là view và đứng TRƯỚC bảng `film` mà nó đọc — đúng tình huống làm hỏng
-    // lần nhập lại của sakila (MySQL 1146).
+    // `actor_info` is a view and comes BEFORE the `film` table it reads — exactly the situation that
+    // broke re-importing sakila (MySQL 1146).
     const dump = await buildDump(spec(), fakeReader());
 
     expect(at(dump, 'CREATE TABLE `film`')).toBeGreaterThan(-1);
@@ -78,8 +78,8 @@ describe('buildDump — thứ tự câu lệnh', () => {
   });
 });
 
-// Header/footer không phải để phục vụ nút Nhập của app (restore_backup tự lo mã hoá và khoá
-// ngoại) mà để tệp chạy được bằng `mysql <` / `psql -f` / `sqlite3 <` ở ngoài.
+// The header and footer are not for the app's Import button (restore_backup handles encoding and
+// foreign keys itself) but so the file runs under `mysql <` / `psql -f` / `sqlite3 <` outside it.
 describe('buildDump — header/footer cấp phiên', () => {
   const bare = (dbType: string) =>
     spec({ dbType, tables: ['film'], views: [], routines: [], triggers: [] });
@@ -89,7 +89,7 @@ describe('buildDump — header/footer cấp phiên', () => {
     expect(dump).toContain('SET NAMES utf8mb4;');
     expect(dump).toContain('SET FOREIGN_KEY_CHECKS = 0;');
     expect(dump).toContain("SET SQL_MODE = 'NO_AUTO_VALUE_ON_ZERO';");
-    // Bật lại phải là dòng CUỐI, sau toàn bộ dữ liệu.
+    // Re-enabling has to be the LAST line, after all the data.
     expect(dump.trimEnd().endsWith('SET FOREIGN_KEY_CHECKS = 1;')).toBe(true);
     expect(at(dump, 'SET FOREIGN_KEY_CHECKS = 0;')).toBeLessThan(at(dump, 'CREATE TABLE'));
   });
@@ -98,7 +98,7 @@ describe('buildDump — header/footer cấp phiên', () => {
     const dump = await buildDump(bare('postgres'), fakeReader());
     expect(dump).toContain("SET client_encoding = 'UTF8';");
     expect(dump).toContain('SET standard_conforming_strings = on;');
-    // Postgres không cần tắt khoá ngoại: FK đã được dời xuống cuối bằng ADD CONSTRAINT.
+    // Postgres needs no FK disabling: the FKs were moved to the end as ADD CONSTRAINT.
     expect(dump).not.toContain('FOREIGN_KEY_CHECKS');
   });
 
@@ -112,9 +112,9 @@ describe('buildDump — header/footer cấp phiên', () => {
     const dump = await buildDump({ ...bare('postgres'), schema: 'sales' }, fakeReader());
     expect(dump).toContain('CREATE SCHEMA IF NOT EXISTS "sales";');
     expect(dump).toContain('SET search_path TO "sales";');
-    // Phải đứng trước mọi DDL, nếu không thì bảng đầu tiên đã rơi vào schema khác rồi.
+    // It has to precede every DDL, or the first table has already landed in another schema.
     expect(at(dump, 'SET search_path TO "sales";')).toBeLessThan(at(dump, 'CREATE TABLE'));
-    // Và CREATE SCHEMA phải trước SET, vì đặt search_path tới schema chưa có là vô nghĩa.
+    // And CREATE SCHEMA has to precede the SET, because pointing search_path at a schema that does not exist is meaningless.
     expect(at(dump, 'CREATE SCHEMA IF NOT EXISTS "sales";'))
       .toBeLessThan(at(dump, 'SET search_path TO "sales";'));
   });
@@ -146,9 +146,10 @@ describe('buildDump — header/footer cấp phiên', () => {
     const stmts = splitStatements(dump).map((s) => s.text);
     expect(stmts).toContain('CREATE SCHEMA IF NOT EXISTS "sales"');
     expect(stmts).toContain('SET search_path TO "sales"');
-    // Twin của `is_session_level_stmt` (database.rs): lệnh nào mở đầu bằng SET / CREATE SCHEMA
-    // đều được cho chạy dù người dùng chỉ chọn vài bảng. Hai dòng này không nhắc tên bảng nào,
-    // nên nếu viết khác đi là chúng bị bộ lọc theo bảng loại bỏ và dump nhập vào nhầm schema.
+    // The twin of `is_session_level_stmt` (database.rs): anything beginning with SET / CREATE SCHEMA
+    // is allowed to run even when the user selected only a few tables. These two lines name no table,
+    // so writing them differently would get them dropped by the per-table filter and the dump would
+    // import into the wrong schema.
     for (const s of ['CREATE SCHEMA IF NOT EXISTS "sales"', 'SET search_path TO "sales"']) {
       expect(/^(SET |CREATE SCHEMA)/.test(s.toUpperCase())).toBe(true);
     }
@@ -157,8 +158,8 @@ describe('buildDump — header/footer cấp phiên', () => {
   it('header là câu lệnh hợp lệ, không lẫn vào câu lệnh đầu tiên', async () => {
     const dump = await buildDump(bare('mysql'), fakeReader());
     const stmts = splitStatements(dump).map((s) => s.text);
-    // Câu đầu còn dính hai dòng comment mở đầu tệp — đúng như bộ tách vẫn làm (bên Rust có
-    // `strip_leading_comments`), miễn là mỗi lệnh SET vẫn là một câu riêng.
+    // The first statement still carries the file's two opening comment lines — exactly what the
+    // splitter does (Rust has `strip_leading_comments`), as long as each SET remains its own statement.
     expect(stmts[0].endsWith('SET NAMES utf8mb4')).toBe(true);
     expect(stmts[1]).toBe('SET FOREIGN_KEY_CHECKS = 0');
     expect(stmts[2]).toBe("SET SQL_MODE = 'NO_AUTO_VALUE_ON_ZERO'");
@@ -171,7 +172,7 @@ describe('buildDump — theo dialect', () => {
     expect(dump).toContain('DELIMITER $$');
     expect(dump).toContain('DELIMITER ;');
     expect(dump).not.toContain('DEFINER=');
-    // Bộ tách đọc lại phải ra ĐÚNG một câu cho procedure (thân có dấu ';' riêng).
+    // Re-splitting has to yield EXACTLY one statement for the procedure (its body has ';' of its own).
     const stmts = splitStatements(dump).map((s) => s.text);
     const proc = stmts.filter((s) => s.includes('PROCEDURE `film_in_stock`'));
     expect(proc).toHaveLength(1);
@@ -200,7 +201,7 @@ describe('buildDump — theo dialect', () => {
     expect(dump).not.toContain('DELIMITER');
     expect(dump).not.toContain('DROP FUNCTION');
     expect(dump).toContain('DROP TRIGGER IF EXISTS "trg" ON "film";');
-    expect(dump).not.toContain('DROP VIEW'); // không chọn view nào -> không được có DROP VIEW
+    expect(dump).not.toContain('DROP VIEW'); // no view was selected -> there must be no DROP VIEW
   });
 
   it('SQLite: trigger BEGIN...END vẫn đọc lại được thành một câu', async () => {
@@ -223,8 +224,8 @@ describe('buildDump — theo dialect', () => {
   });
 });
 
-// Những thứ đi kèm bảng nhưng không nằm trong CREATE TABLE của dialect (index của SQLite,
-// index/FK/comment/sequence của Postgres). Vị trí đặt chúng mới là phần dễ sai.
+// The things that belong to a table but are not in that dialect's CREATE TABLE (SQLite's indexes;
+// Postgres' indexes, FKs, comments and sequences). Where they are placed is the part easily got wrong.
 describe('buildDump — phần đi kèm bảng', () => {
   const extrasReader = (over: Record<string, string[]> = {}) =>
     fakeReader({
@@ -246,10 +247,10 @@ describe('buildDump — phần đi kèm bảng', () => {
     expect(at(dump, 'CREATE SEQUENCE IF NOT EXISTS a_tbl_id_seq;')).toBeLessThan(at(dump, 'CREATE TABLE `a_tbl`'));
     expect(at(dump, 'CREATE TABLE `a_tbl`')).toBeLessThan(at(dump, 'CREATE INDEX idx_a_tbl_a'));
     expect(at(dump, 'CREATE INDEX idx_a_tbl_a')).toBeLessThan(at(dump, 'COMMENT ON TABLE a_tbl'));
-    // FK của bảng ĐẦU phải nằm sau CREATE TABLE của bảng CUỐI, nếu không thì bảng được tham
-    // chiếu chưa tồn tại lúc gắn khoá ngoại.
+    // The FIRST table's FK has to come after the LAST table's CREATE TABLE, or the referenced table
+    // does not exist when the foreign key is attached.
     expect(at(dump, 'CREATE TABLE `z_tbl`')).toBeLessThan(at(dump, 'ADD CONSTRAINT fk_a_tbl'));
-    // setval đọc MAX() nên phải sau INSERT.
+    // setval reads MAX(), so it has to come after the INSERTs.
     expect(at(dump, 'INSERT INTO `z_tbl`')).toBeLessThan(at(dump, "setval('a_tbl_id_seq'"));
   });
 
@@ -291,7 +292,7 @@ describe('buildDump — dữ liệu trung thực', () => {
           columns: [
             { name: 'id' },
             { name: 'title' },
-            // MySQL 3105 nếu ghi vào cột này.
+            // MySQL 3105 if this column is written to.
             { name: 'title_upper', generated: true },
           ] as any,
           indexes: [],
@@ -305,7 +306,7 @@ describe('buildDump — dữ liệu trung thực', () => {
   });
 
   it('cột identity vẫn nằm trong INSERT, kèm OVERRIDING SYSTEM VALUE', async () => {
-    // Bỏ cột identity đi thì Postgres tự đánh số lại -> mọi khoá ngoại trỏ tới bảng này lệch.
+    // Leaving the identity column out makes Postgres renumber -> every foreign key pointing at this table is wrong.
     const dump = await buildDump(
       spec({ dbType: 'postgres', tables: ['film'], views: [], routines: [], triggers: [] }),
       fakeReader({
@@ -355,7 +356,7 @@ describe('buildDump — event và materialized view', () => {
     expect(dump).toContain('DROP EVENT IF EXISTS `nightly_purge`;');
     expect(dump).toContain('DELIMITER $$');
     expect(dump).not.toContain('DEFINER=');
-    // Thân event có ';' riêng -> bộ tách phải đọc lại ra đúng MỘT câu.
+    // An event body has ';' of its own -> re-splitting must yield exactly ONE statement.
     const evt = splitStatements(dump).map((s) => s.text).filter((s) => s.includes('EVENT `nightly_purge`'));
     expect(evt).toHaveLength(1);
     expect(evt[0]).toContain('DELETE FROM log;');
@@ -373,7 +374,7 @@ describe('buildDump — event và materialized view', () => {
     );
     expect(dump).toContain('DROP MATERIALIZED VIEW IF EXISTS "mv_stats" CASCADE;');
     expect(dump).not.toContain('DROP VIEW IF EXISTS');
-    // Matview đứng sau bảng nên CREATE ... WITH DATA (mặc định) đã có sẵn dữ liệu để đọc.
+    // A matview comes after the tables, so CREATE … WITH DATA (the default) already has data to read.
     expect(dump).toContain('CREATE MATERIALIZED VIEW "mv_stats"');
   });
 });
@@ -382,8 +383,8 @@ describe('buildDump — đọc lại được bằng chính bộ dò của popup
   it('parseDumpObjects nhận ra đủ bảng/view/routine/trigger', async () => {
     const dump = await buildDump(spec(), fakeReader());
     const objs = parseDumpObjects(dump);
-    // Reader giả trả `CREATE TABLE` cho cả view, nên ở đây view nằm trong `tables` — điều được
-    // kiểm chứng là mọi đối tượng đều dò lại được, không phải cách phân loại của reader.
+    // The fake reader returns `CREATE TABLE` for views too, so a view sits in `tables` here — what is
+    // being checked is that every object can be detected again, not how the reader classifies them.
     expect(objs.tables).toEqual(['film', 'actor_info']);
     expect(objs.views).toEqual([]);
     expect(objs.functions).toEqual(['get_balance']);
@@ -392,9 +393,9 @@ describe('buildDump — đọc lại được bằng chính bộ dò của popup
   });
 
   it('header schema không bị nhận nhầm thành một bảng để chọn', async () => {
-    // `parseDumpTableNames` vừa dựng danh sách cho người dùng tick, vừa là bộ lọc gửi xuống
-    // `restore_backup`. Một mục "sales" ma trong đó vừa khó hiểu, vừa làm câu lệnh của bảng
-    // thật bị bỏ khi người dùng chỉ chọn nó.
+    // `parseDumpTableNames` both builds the list the user ticks and is the filter sent down to
+    // `restore_backup`. A ghost "sales" entry in it is both confusing and causes the real table's
+    // statements to be dropped when only it is selected.
     const dump = await buildDump(
       { ...spec({ dbType: 'postgres', tables: ['film'], views: [], routines: [], triggers: [] }), schema: 'sales' },
       fakeReader()

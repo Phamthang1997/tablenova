@@ -1,10 +1,10 @@
-// Giải mã value chuỗi của Redis để hiển thị đẹp:
-//   1) Nếu gzip (magic 1f 8b) hoặc zlib (PHP gzcompress) -> giải nén bằng DecompressionStream native.
-//   2) Nếu là PHP serialize (Laravel cache/model, Neos Flow VariableFrontend) -> unserialize -> JSON.
-//   3) Nếu là igbinary (magic 00 00 00 02) -> unserialize -> JSON.
-//   4) Nếu là JSON -> format.
-//   5) Còn lại -> text thô.
-// Không phụ thuộc thư viện ngoài.
+// Decoding a Redis string value for readable display:
+//   1) gzip (magic 1f 8b) or zlib (PHP gzcompress) -> decompressed with the native DecompressionStream.
+//   2) PHP serialize (Laravel cache/model, Neos Flow VariableFrontend) -> unserialized -> JSON.
+//   3) igbinary (magic 00 00 00 02) -> unserialized -> JSON.
+//   4) JSON -> formatted.
+//   5) Anything else -> raw text.
+// No external library involved.
 
 import i18n from '../i18n';
 
@@ -40,8 +40,8 @@ async function decompressIfNeeded(
   }
 }
 
-// Tách tên prop PHP: protected/private có dạng <NUL>*<NUL>name hoặc <NUL>Class<NUL>name.
-// Dùng fromCharCode(0) để không đưa ký tự null vào mã nguồn.
+// Splitting a PHP property name: protected/private ones look like <NUL>*<NUL>name or
+// <NUL>Class<NUL>name. fromCharCode(0) is used so no null character goes into the source.
 function cleanPropName(k: string): string {
   const parts = k.split(String.fromCharCode(0));
   return parts.length > 1 ? parts[parts.length - 1] : k;
@@ -60,7 +60,7 @@ function arrayFromEntries(entries: [unknown, unknown][]): any {
   return obj;
 }
 
-// Parser PHP serialize -> giá trị JS. Hoạt động trên byte (đúng với s:LEN là độ dài BYTE, hỗ trợ UTF-8).
+// A PHP serialize parser -> JS values. It works on bytes (matching s:LEN, which is a BYTE length, and so handles UTF-8).
 export function phpUnserialize(bytes: Uint8Array): any {
   const td = new TextDecoder();
   let i = 0;
@@ -69,31 +69,31 @@ export function phpUnserialize(bytes: Uint8Array): any {
     const s = i;
     while (i < bytes.length && bytes[i] !== stop) i++;
     const n = parseInt(td.decode(bytes.subarray(s, i)), 10);
-    i++; // bỏ ký tự stop
+    i++; // skip the stop character
     return n;
   };
   const readNumSemicolon = (): number => {
     const s = i;
     while (i < bytes.length && bytes[i] !== 0x3b /* ; */) i++;
     const n = Number(td.decode(bytes.subarray(s, i)));
-    i++; // bỏ ';'
+    i++; // skip the ';'
     return n;
   };
-  // Đọc phần LEN:"...." — với s: kết thúc bằng '";', với O: kết thúc bằng '":' (đều 2 byte -> bỏ 2 byte).
+  // Reads the LEN:"…" part — for s: it ends with '";', for O: with '":' (both 2 bytes -> skip 2).
   const readLenString = (): string => {
     const len = readIntUntil(0x3a /* : */);
-    i++; // bỏ '"'
+    i++; // skip the '"'
     const start = i;
-    i += len; // LEN là số byte
+    i += len; // LEN counts bytes
     const str = td.decode(bytes.subarray(start, i));
-    i += 2; // bỏ 2 byte kết thúc
+    i += 2; // skip the 2 terminating bytes
     return str;
   };
 
   function parse(): any {
     const t = bytes[i];
     if (t === 0x4e /* N */) { i += 2; return null; } // N;
-    i += 2; // bỏ type + ':'
+    i += 2; // skip the type and the ':'
     switch (t) {
       case 0x62: { const v = bytes[i] === 0x31; i += 2; return v; } // b:V;
       case 0x69: return readNumSemicolon(); // i:V;
@@ -559,7 +559,7 @@ export async function decodeRedisValue(
         text: stringifyDecoded(igbinaryUnserialize(bytes)),
       };
     } catch {
-      /* rơi xuống raw */
+      /* falls through to raw */
     }
   }
   if (/^(N;|[abisdO]:)/.test(trimmed)) {
@@ -567,7 +567,7 @@ export async function decodeRedisValue(
       const val = phpUnserialize(bytes);
       return { ok: true, format: prefix + 'php-serialize', text: JSON.stringify(val, null, 2) };
     } catch {
-      /* rơi xuống raw */
+      /* falls through to raw */
     }
   }
   if (/^[[{]/.test(trimmed)) {
@@ -575,7 +575,7 @@ export async function decodeRedisValue(
       const val = JSON.parse(text);
       return { ok: true, format: prefix + 'json', text: JSON.stringify(val, null, 2) };
     } catch {
-      /* rơi xuống raw */
+      /* falls through to raw */
     }
   }
   return { ok: true, format: plainFormat, text };

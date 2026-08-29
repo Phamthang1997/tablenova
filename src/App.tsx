@@ -19,6 +19,8 @@ import { DataGrid } from './components/DataGrid';
 // Monaco is back in the entry chunk and neither one buys anything.
 const SqlEditor = React.lazy(() =>
   import('./components/SqlEditor').then((m) => ({ default: m.SqlEditor })));
+const ERDiagramTab = React.lazy(() =>
+  import('./components/er').then((m) => ({ default: m.ERDiagramTab })));
 import { LazyEditorFallback } from './components/LazyEditorFallback';
 import { AiAssistant } from './components/AiAssistant';
 import { TerminalPanel } from './components/TerminalPanel';
@@ -26,6 +28,7 @@ import { RoutineEditorModal } from './components/RoutineEditorModal';
 import { ViewEditorModal } from './components/ViewEditorModal';
 import { SchemaMigration } from './components/SchemaMigration';
 import { DbCompareDialog } from './components/DbCompareDialog';
+import { McpServerSettingsModal } from './components/McpServerSettingsModal';
 import { DataGeneratorDialog } from './components/DataGeneratorDialog';
 import { RedisSidebarView } from './components/redis/RedisSidebarView';
 import { RedisKeyTab } from './components/redis/RedisKeyTab';
@@ -38,7 +41,7 @@ import {
   type RedisTabType,
 } from './components/redis/redisTabs';
 
-/** Sáu loại tab công cụ Redis, để tra nhanh trong nhánh render. */
+/** Six Redis tool tab types for quick lookup in render branch. */
 const REDIS_TOOL_TAB_TYPES = new Set<string>(REDIS_TOOL_TABS);
 import { ImportFilePicker } from './components/ImportFilePicker';
 import { ExportTableDialog } from './components/ExportTableDialog';
@@ -60,6 +63,7 @@ import { invalidateCatalog } from './sql/catalog';
 import { splitStatements } from './sql/statements';
 import { connKey, scopeKey, tabsStorageKey, tabsStorageKeyCandidates } from './utils/connKey';
 import { connectSavedProfile } from './utils/connectProfile';
+import { readMcpPrefs } from './utils/mcpPrefs';
 import type { SavedProfile } from './components/ConnectionManager';
 import { updateProfileDisplay } from './utils/connectionProfiles';
 import { applyProgressStyle, getProgressStyle } from './utils/progressStyle';
@@ -90,11 +94,11 @@ interface QueryTabPanelProps {
   active: boolean;
   dbType?: string;
   connKey: string;
-  /** Kết nối mà tab này chạy trên. Xem §4.1 — không đọc id ambient. */
+  /** The connection this tab runs on. See §4.1 — never read the ambient id. */
   connId: string;
-  /** Kết nối gắn nhãn production. */
+  /** The connection is labelled production. */
   isProdConn?: boolean;
-  /** Kết nối này đang chỉ đọc (cờ backend), khác `readOnly` là công tắc toàn cục. */
+  /** This connection is read-only (the backend flag), unlike `readOnly`, which is the global switch. */
   connReadOnly?: boolean;
   dbName: string;
   theme: 'dark' | 'light';
@@ -105,11 +109,11 @@ interface QueryTabPanelProps {
 const QueryTabPanel = React.memo(function QueryTabPanel(props: QueryTabPanelProps) {
   const { tab, active, onPatch } = props;
   return (
-    // Ẩn bằng visibility + position:absolute chứ không phải display:none như TerminalPanel:
-    // display:none huỷ hộp bố cục, nên trình duyệt đặt lại scrollTop của lưới kết quả về 0 và
-    // Monaco đo được 0x0 rồi phải bố trí lại lúc hiện ra. Cách này giữ nguyên kích thước và vị
-    // trí cuộn; absolute để tab ẩn không chiếm chỗ trong flex của .active-panel-container
-    // (đã là position:relative).
+    // Hidden with visibility + position:absolute rather than display:none as TerminalPanel does:
+    // display:none destroys the layout box, which resets the result grid's scrollTop to 0 and makes
+    // Monaco measure 0x0 and re-lay out when it reappears. This way size and scroll position
+    // survive, and absolute keeps hidden tabs from taking flex space in .active-panel-container
+    // (which is already position:relative).
     <div
       style={
         active
@@ -148,8 +152,16 @@ const QueryTabPanel = React.memo(function QueryTabPanel(props: QueryTabPanelProp
   );
 });
 
-/** Số dòng mỗi lô khi nhập dữ liệu vào bảng có sẵn (để báo được tiến độ). */
+/** Rows per batch when importing into an existing table, so progress can be reported. */
 const IMPORT_BATCH_SIZE = 500;
+
+/**
+ * Has the MCP autostart attempt already been made this run?
+ *
+ * Module-level rather than a ref because it must survive a remount: StrictMode mounts `App` twice in
+ * dev, and a second `mcp_start` answers "already running" — an error object for a non-event.
+ */
+let mcpAutoStarted = false;
 
 function parseCSV(text: string): string[][] {
   const result: string[][] = [];
@@ -226,15 +238,16 @@ export const App: React.FC = () => {
     // the localStorage scope, so a value the backend disagrees with would key tabs wrongly.
     schema?: string | null;
   } | null>(null);
-  // Cấu hình kết nối đang dùng (gồm cả SSH) để Terminal kế thừa -> mở shell vào đúng máy chủ/VM
+  // The active connection config (SSH included) for the Terminal to inherit -> a shell on the right host/VM
   const [activeConnConfig, setActiveConnConfig] = useState<DbConnectionConfig | null>(null);
-  /** `conn_id` của kết nối đang hiển thị. Backend sinh, `dbHelper` bắt được từ `connect()`. */
+  /** The `conn_id` of the connection on screen. Minted by the backend, caught by `dbHelper` from `connect()`. */
   const [activeConnIdState, setActiveConnIdState] = useState('');
   /**
-   * Đang mở Connection Manager để **thêm** một kết nối nữa (nút `+` của rail).
+   * The Connection Manager is open in order to **add** another connection (the rail's `+` button).
    *
-   * Khác với đường cũ: "kết nối mới" trước đây là `handleDisconnect` — ngắt cái đang có rồi hiện
-   * lại màn hình quản lý. Giờ backend giữ được nhiều kết nối nên thêm là thêm, không phải thay.
+   * Different from the old path: "new connection" used to mean `handleDisconnect` — drop the current
+   * one and show the manager again. The backend holds several connections now, so adding adds
+   * rather than replaces.
    */
   const [addingConn, setAddingConn] = useState(false);
   // Bumped whenever the rail must refetch `list_connections`. A counter, not `openConns.length`:
@@ -243,14 +256,16 @@ export const App: React.FC = () => {
   // Read by the window-level listeners below, which register once: putting the id in their deps
   // would tear them down and re-register on every connection switch.
   const activeConnIdRef = React.useRef(activeConnIdState);
-  activeConnIdRef.current = activeConnIdState;
+  React.useEffect(() => {
+    activeConnIdRef.current = activeConnIdState;
+  }, [activeConnIdState]);
   /**
-   * Mọi kết nối đang mở, kèm config đã dùng để mở nó.
+   * Every open connection, with the config it was opened from.
    *
-   * Backend cố ý không trả config về (nó mang credential), nhưng chuyển giữa các kết nối cần config
-   * để key tab của kết nối đó (`tabsStorageKey`) và để hiện tên/màu profile. Đây là bản đồ
-   * `conn_id -> những gì chỉ frontend biết`; phần "kết nối nào đang mở" vẫn là backend nói
-   * (`list_connections`).
+   * The backend deliberately never hands the config back (it carries credentials), but switching
+   * between connections needs it to key that connection's tabs (`tabsStorageKey`) and to show the
+   * profile name and colour. This is the map of `conn_id -> what only the frontend knows`; which
+   * connections are open is still the backend's word (`list_connections`).
    */
   const [openConns, setOpenConns] = useState<
     {
@@ -258,9 +273,9 @@ export const App: React.FC = () => {
       config: DbConnectionConfig | null;
       dbType: 'sqlite' | 'postgres' | 'mysql' | 'redis';
       profileName: string;
-      /** Nhãn màu, thuần trang trí. */
+      /** The colour label, purely decorative. */
       color: string;
-      /** Môi trường, trường riêng của profile — không suy từ `color` (xem `utils/connEnv.ts`). */
+      /** The environment, a field of the profile's own — never inferred from `color` (see `utils/connEnv.ts`). */
       env: ConnEnv;
       readOnly?: boolean;
     }[]
@@ -290,25 +305,26 @@ export const App: React.FC = () => {
 
   const [queryCount, setQueryCount] = useState(1);
   const [showAi, setShowAi] = useState(false);
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
-  // Chế độ chỉ đọc: chặn mọi thao tác ghi. Nhớ qua các lần mở app (quy ước tf_*) — một công tắc
-  // an toàn mà reset về "cho phép ghi" mỗi lần khởi động thì gần như vô dụng.
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => (typeof localStorage !== 'undefined' && localStorage.getItem('tf_theme') as 'dark' | 'light') || 'dark');
+  // Read-only mode: refuses every write. Remembered across launches (the tf_* convention) — a safety
+  // switch that reset to "writes allowed" on every start would be close to useless.
   const [readOnly, setReadOnly] = useState(() => localStorage.getItem('tf_readonly') === '1');
-  // Tab bảng còn sửa đổi chưa commit (do DataGrid báo lên). Xem guardDirty bên dưới.
+  // Table tabs with uncommitted edits (reported up by DataGrid). See guardDirty below.
   const [dirtyTabId, setDirtyTabId] = useState<string | null>(null);
   /** Action waiting for the user to agree to discard unsaved edits — see guardDirty. */
   const [discardPrompt, setDiscardPrompt] = useState<(() => void) | null>(null);
-  // Tab truy vấn đã từng được mở -> mount thường trực để giữ kết quả. Mount lười chứ không
-  // mount hết `tabs`: khôi phục 10 tab từ localStorage mà dựng luôn 10 Monaco thì phí.
+  // Query tabs that have been opened -> mounted permanently so their results survive. Mounted
+  // lazily rather than mounting all of `tabs`: restoring 10 tabs from localStorage and building 10
+  // Monaco instances with them would be wasteful.
   const [mountedQueryTabs, setMountedQueryTabs] = useState<Set<string>>(() => new Set());
-  // Nhóm tab (kiểu Chrome). Lưu cùng chỗ với danh sách tab, xem restoreTabs.
+  // Tab groups (Chrome-style). Stored alongside the tab list; see restoreTabs.
   const [tabGroups, setTabGroups] = useState<TabGroup[]>([]);
   const [dbReloadKey, setDbReloadKey] = useState(0);
 
-  // Xuất/Nhập cả database (popup riêng, mở từ mục Công cụ ở Sidebar hoặc menu tiêu đề)
+  // Export/Import a whole database (its own dialog, from the Sidebar's Tools or the title menu)
   const [showExportDbDialog, setShowExportDbDialog] = useState(false);
   const [showImportDbDialog, setShowImportDbDialog] = useState(false);
-  // Xuất một bảng (mở từ menu chuột phải ở Sidebar) — cùng popup với nút Export dưới grid
+  // Exporting one table (from the Sidebar's context menu) — the same dialog as the Export button under the grid
   const [exportTableTarget, setExportTableTarget] = useState<string | null>(null);
 
   const [globalImportSqlMode, setGlobalImportSqlMode] = useState<'both' | 'structure' | 'data'>('both');
@@ -323,30 +339,49 @@ export const App: React.FC = () => {
   const [globalImportTargetTable, setGlobalImportTargetTable] = useState<string | null>(null);
   const [globalImportTab, setGlobalImportTab] = useState<'structure' | 'data'>('structure');
   const [globalImportProgress, setGlobalImportProgress] = useState<ProgressState | null>(null);
-  // Cột có trong tệp (gộp key của mọi dòng vì CSV/JSON có thể thiếu cột ở một số dòng)
+  // The columns present in the file (the union of every row's keys, since CSV/JSON rows may omit some)
   const globalImportCols = React.useMemo(() => collectColumns(globalImportPendingRows), [globalImportPendingRows]);
   const [showDbInfoModal, setShowDbInfoModal] = useState(false);
-  // Tab mở sẵn của DatabaseInfoModal: 'current' khi vào từ "Thông tin Database",
-  // 'all' khi vào từ "Thống kê tất cả database" trong menu Databases.
+  // Which DatabaseInfoModal tab opens: 'current' when entered from "Database info",
+  // 'all' when entered from "Statistics for all databases" in the Databases menu.
   const [dbInfoTab, setDbInfoTab] = useState<'current' | 'all'>('current');
   const [showSchemaMigration, setShowSchemaMigration] = useState(false);
   const [showDbCompare, setShowDbCompare] = useState(false);
-  // Data Generator: bảng mở sẵn khi vào từ menu ngữ cảnh của một bảng.
+  const [showMcpSettings, setShowMcpSettings] = useState(false);
+  // Data Generator: the table preselected when entered from a table's context menu.
   const [showDataGen, setShowDataGen] = useState(false);
   const [dataGenTable, setDataGenTable] = useState<string | null>(null);
   const [showSidebar, setShowSidebar] = useState(true);
   const [showAbout, setShowAbout] = useState(false);
-  // Lấy version thật từ tauri.conf.json thay vì hardcode trong JSX (dễ lệch khi
-  // bump phiên bản). Chạy bằng vite-dev thuần thì không có backend -> giữ mặc định.
+  // Reads the real version from tauri.conf.json rather than hardcoding it in JSX, which drifts the
+  // first time someone bumps the version. Under plain vite-dev there is no backend -> keep the default.
   const [appVersion, setAppVersion] = useState('0.1.0');
   React.useEffect(() => {
     getVersion().then(setAppVersion).catch(() => { });
   }, []);
 
-  // MỘT listener `onCloseRequested` cho cả app; ai muốn chặn thì đăng ký blocker (transaction chưa
-  // commit, việc chạy nền). Hai listener độc lập thì cái nào resolve trước sẽ `destroy()` và giết
-  // luôn hộp thoại của cái kia — xem utils/closeGuard.ts.
+  // ONE `onCloseRequested` listener for the whole app; anything that wants to block registers a
+  // blocker (uncommitted transaction, running job). With two independent listeners, whichever
+  // resolves first calls `destroy()` and kills the other's dialog too — see utils/closeGuard.ts.
   React.useEffect(() => installCloseGuard(), []);
+
+  // Bring the MCP server back up if the user asked for that. Lives here rather than in
+  // `McpServerSettingsModal` because the modal is unmounted almost all of the time, and rather than
+  // in Rust's `app/setup.rs` because the durable answer is in `localStorage` (see utils/mcpPrefs.ts).
+  // Starting the listener shares nothing by itself: `mcp_exposed` is per-run, so an AI client
+  // connecting to a freshly autostarted server sees an empty connection list until the user ticks one.
+  React.useEffect(() => {
+    if (mcpAutoStarted) return;
+    // Module-level, not a ref: StrictMode mounts this twice in dev and the second `mcp_start` would
+    // come back "already running" — a real error object for a non-event.
+    mcpAutoStarted = true;
+    const { autoStart, port } = readMcpPrefs();
+    if (!autoStart) return;
+    void dbHelper.mcpStart(port).catch(() => {
+      // A taken port or a backend that is not there (plain `vite-dev`) must not break app boot. The
+      // Settings screen reports the real status and its Start button says why.
+    });
+  }, []);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showDocModal, setShowDocModal] = useState(false);
   const [docQuery] = useState('');
@@ -367,9 +402,10 @@ export const App: React.FC = () => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
-  // Profile đang kết nối: id để ghi ngược tên/màu xuống tf_connection_profiles,
-  // tên + màu để popover chi tiết kết nối hiển thị và sửa tại chỗ. Kết nối không
-  // đi qua profile nào (chưa lưu) thì id rỗng -> popover vẫn xem được, chỉ không lưu.
+  // The profile behind the connection: the id so its name and colour can be written back into
+  // tf_connection_profiles, and the name + colour so the connection popover can show and edit them
+  // in place. A connection opened without a profile (never saved) has an empty id -> the popover
+  // still displays, it just cannot save.
   const [activeProfile, setActiveProfile] = useState<{ id: string; name: string; color: string }>({
     id: '',
     name: '',
@@ -383,12 +419,12 @@ export const App: React.FC = () => {
     setShowGlobalImportPicker(true);
   };
 
-  // Chuột phải > Xuất dữ liệu: mở đúng popup xuất-một-bảng như nút Export dưới grid.
+  // Right-click > Export data: opens the same single-table dialog as the Export button under the grid.
   const handleExportTableTrigger = (tableName: string) => {
     setExportTableTarget(tableName);
   };
 
-  // Nhận tệp từ ImportFilePicker (đã kiểm tra phần mở rộng ở đó) rồi parse để xem trước.
+  // Takes the file from ImportFilePicker (which already checked the extension) and parses it for the preview.
   const handleGlobalFileImport = async (file: File) => {
     setShowGlobalImportPicker(false);
     setGlobalImportTab('structure');
@@ -396,13 +432,13 @@ export const App: React.FC = () => {
     const guessedTableName = file.name.split('.')[0].replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
     setGlobalImportTableName(guessedTableName);
 
-    // XLSX là nhị phân -> đọc ArrayBuffer + parse riêng, không đi qua FileReader.readAsText.
+    // XLSX is binary -> read an ArrayBuffer and parse it separately, never through FileReader.readAsText.
     if (file.name.toLowerCase().endsWith('.xlsx')) {
       try {
         const buf = await file.arrayBuffer();
         const rows = await parseXlsx(buf);
         if (rows.length === 0) throw new Error(t('dataGrid.errXlsxEmpty'));
-        setGlobalImportFileType('json'); // dòng dạng object, đi chung nhánh ghi DB với CSV/JSON
+        setGlobalImportFileType('json'); // object-shaped rows, sharing the DB-write branch with CSV/JSON
         setGlobalImportPendingRows(rows);
         setShowGlobalImportModal(true);
       } catch (err: any) {
@@ -462,16 +498,19 @@ export const App: React.FC = () => {
   };
 
   /**
-   * Xuất cả database. Chạy **nền**: hàm này chỉ xếp một job rồi trả `true` để dialog đóng ngay,
-   * còn tiến độ / kết quả / lỗi nằm ở `JobsTray`. Trước đây tiến độ là state của dialog, nên
-   * đóng dialog là mất tiến độ và app đứng chờ suốt lần xuất — xem docs/background-jobs-plan.md.
+   * Exports a whole database. Runs in the **background**: this function only queues a job and
+   * returns `true` so the dialog closes at once, while progress, result and errors live in
+   * `JobsTray`. Progress used to be dialog state, so closing the dialog lost it and the app sat
+   * waiting for the whole export — see docs/background-jobs-plan.md.
    *
-   * Kết quả đi qua `JobResult` chứ không bật thêm một hộp thoại: một modal tự nhảy ra sau mười phút,
-   * lúc người dùng đang gõ query khác, đúng là thứ chế độ nền này sinh ra để bỏ.
+   * The result arrives as a `JobResult` rather than another dialog: a modal appearing on its own ten
+   * minutes later, while the user is typing a different query, is exactly what background mode
+   * exists to get rid of.
    */
   const handleExportDatabase = async (opts: DatabaseExportOptions): Promise<boolean> => {
-    // Chốt ngay lúc submit: người dùng đổi kết nối trong lúc job chạy thì job vẫn đọc đúng chỗ nó
-    // được giao. `connId` đã là (server, database) nên nó cũng là khoá độc quyền — xem jobs.ts.
+    // Fixed at submit time: if the user switches connection while the job runs, the job still reads
+    // the place it was given. `connId` is already a (server, database) pair, so it doubles as the
+    // exclusivity key — see jobs.ts.
     const jobConnId = activeConnIdState;
     const dbType = connection?.dbType || 'sqlite';
     const schema = connection?.schema;
@@ -486,7 +525,7 @@ export const App: React.FC = () => {
         const report = (p: ProgressState | null) => ctx.report(p);
         const totalTables = opts.tables.length;
 
-        // Dữ liệu (XLSX/JSON/CSV): dựng file client-side.
+        // Data (XLSX/JSON/CSV): the file is built client-side.
         if (opts.format !== 'sql') {
           const sheets: XlsxSheet[] = [];
           for (let i = 0; i < opts.tables.length; i++) {
@@ -510,8 +549,8 @@ export const App: React.FC = () => {
           };
         }
 
-        // SQL: dump được dựng ở dumpBuilder.ts — dùng chung với nút Backup của Connection
-        // Manager, để mọi thay đổi về thứ tự câu lệnh chỉ phải sửa ở MỘT chỗ.
+        // SQL: the dump is built in dumpBuilder.ts — shared with Connection Manager's Backup button,
+        // so any change to statement order has to be made in exactly ONE place.
         const sqlText = await buildDump({
           dbType,
           tables: opts.tables,
@@ -519,8 +558,8 @@ export const App: React.FC = () => {
           routines: opts.routines,
           triggers: opts.triggers,
           sqlOptions: opts.sqlOptions,
-          // Dump được đọc ra từ schema đang chọn, nên header phải nói ra schema đó — nếu không,
-          // nhập lại ở máy khác thì mọi thứ chui vào schema đầu search_path của máy đó.
+          // The dump was read from the selected schema, so the header has to name it — without that,
+          // re-importing elsewhere puts everything into whatever schema leads that host's search_path.
           schema,
           onProgress: report,
         }, dumpReaderFor(dbHelper, jobConnId));
@@ -563,9 +602,9 @@ export const App: React.FC = () => {
 
   const filterSqlQueries = (sqlText: string, mode: 'both' | 'structure' | 'data'): string => {
     if (mode === 'both') return sqlText;
-    // splitStatements: cùng bộ tách với SQL editor và với split_sql_statements bên Rust
-    // (biết chuỗi, comment, khối $$...$$). Trước đây đây là một bộ tách tự chế thứ ba,
-    // chỉ đếm dấu nháy nên comment chứa ';' là cắt sai.
+    // splitStatements: the same splitter the SQL editor and Rust's split_sql_statements use (it
+    // knows strings, comments and dollar-quoted blocks). This used to be a third home-made splitter
+    // that only counted quotes, so a comment containing ';' was cut in the wrong place.
     const queries = splitStatements(sqlText).map((s) => s.text);
     const filtered = queries.filter(q => {
       const trimmed = q.trim().toUpperCase();
@@ -620,10 +659,10 @@ export const App: React.FC = () => {
           }
         }
 
-        // executeQueryMulti, KHÔNG phải executeQuery: execute_query gửi nguyên chuỗi xuống
-        // driver như MỘT câu lệnh. Một tệp .sql nhiều câu lệnh sẽ lỗi cú pháp ngay ở câu thứ
-        // hai trên MySQL/Postgres, còn SQLite chỉ chạy câu đầu rồi báo thành công (mất dữ liệu
-        // im lặng). executeQueryMulti tách câu lệnh bằng split_sql_statements rồi chạy lần lượt.
+        // executeQueryMulti, NOT executeQuery: execute_query sends the whole string to the driver as
+        // ONE statement. A multi-statement .sql file fails with a syntax error at the second
+        // statement on MySQL/Postgres, while SQLite runs only the first and reports success (silent
+        // data loss). executeQueryMulti splits with split_sql_statements and runs them in turn.
         const res = await dbHelper.executeQueryMulti(activeConnIdState, filteredSql);
         if (res.success) {
           alert(t('app.importSqlSuccess'));
@@ -632,7 +671,7 @@ export const App: React.FC = () => {
           alert(t('app.errImportSql', { message: res.error }));
         }
       } else if (globalImportTargetTable) {
-        // Bảng có sẵn: ghi theo lô để báo được tiến độ thật.
+        // An existing table: written in batches so real progress can be reported.
         const table = globalImportTargetTable;
         const total = globalImportPendingRows.length;
         let done = 0;
@@ -661,7 +700,7 @@ export const App: React.FC = () => {
         }
         window.dispatchEvent(new CustomEvent('database-restored', { detail: { connId: activeConnIdState } }));
       } else {
-        // Bảng mới: backend tạo bảng + chèn trong một lần gọi -> tiến độ vô định.
+        // A new table: the backend creates it and inserts in one call -> indeterminate progress.
         const resData = await dbHelper.importNewTable(globalImportTableName, globalImportPendingRows);
         if (resData.success) {
           alert(t('app.createdAndImported', { table: globalImportTableName }));
@@ -678,8 +717,8 @@ export const App: React.FC = () => {
     }
   };
 
-  // Trả về true nếu nhập xong -> ImportDatabaseDialog tự đóng.
-  // targetDb: database đích lấy từ tệp hoặc do người dùng nhập; chưa tồn tại thì tạo mới.
+  // Returns true when the import finished -> ImportDatabaseDialog closes itself.
+  // targetDb: the destination database, taken from the file or typed by the user; created if absent.
   const handleImportDatabase = async (
     sqlText: string,
     tables: string[],
@@ -725,9 +764,10 @@ export const App: React.FC = () => {
         invalidateCatalog();
       }
 
-      // Phần chuẩn bị ở trên (tạo/mở database đích) chạy **trong** dialog: nó cần trả lời được
-      // "không tạo được database" ngay lúc người dùng còn đứng đó. Chỉ bản thân lần restore mới
-      // chạy nền — nó là phần dài, và là phần không cần ai ngồi nhìn.
+      // The preparation above (creating/opening the target database) runs **inside** the dialog: it
+      // has to be able to say "the database could not be created" while the user is still standing
+      // there. Only the restore itself goes to the background — it is the long part, and the part
+      // nobody needs to watch.
       const restoreConnId = targetConnId;
       startJob({
         kind: 'restore',
@@ -746,10 +786,10 @@ export const App: React.FC = () => {
           );
           if (!resData.success) throw new Error(addExistsHint(resData.error || '', false));
 
-          // `USE <db>` trong tệp dump đổi database của kết nối này, nên nhãn trên thanh tiêu đề
-          // phải đổi theo — nhưng CHỈ khi người dùng vẫn đang xem đúng kết nối đó. Job chạy nền,
-          // nên lúc nó xong người dùng có thể đã sang kết nối khác, và ghi đè nhãn của kết nối ấy
-          // là hiện tên một database nó không hề mở.
+          // A `USE <db>` inside the dump changes this connection's database, so the title-bar label
+          // has to follow — but ONLY while the user is still looking at that connection. The job runs
+          // in the background, so by the time it finishes they may have moved to another one, and
+          // overwriting that connection's label would show the name of a database it never opened.
           if (resData.activeDatabase && activeConnIdRef.current === restoreConnId) {
             const activeDb = resData.activeDatabase;
             setConnection(prev => prev ? { ...prev, dbName: activeDb } : null);
@@ -757,8 +797,8 @@ export const App: React.FC = () => {
           invalidateCatalog();
           window.dispatchEvent(new CustomEvent('database-restored', { detail: { connId: restoreConnId } }));
 
-          // Có câu lệnh bị bỏ qua thì PHẢI nói ra: báo "thành công" trơn trong khi thiếu vài chục
-          // câu là để người dùng tin nhầm rằng database đã đầy đủ.
+          // Skipped statements MUST be reported: a plain "success" while dozens are missing leaves
+          // the user believing the database is complete.
           if (resData.failedCount) {
             return {
               message: t('app.importDbPartial', {
@@ -829,6 +869,8 @@ export const App: React.FC = () => {
     };
     window.addEventListener('table-renamed', handleGlobalRename);
     return () => window.removeEventListener('table-renamed', handleGlobalRename);
+    // Deliberately empty: the listener is registered once, and `activeConnIdRef` exists so the handler never needs re-subscribing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   React.useEffect(() => {
@@ -845,20 +887,17 @@ export const App: React.FC = () => {
   }, []);
 
   React.useEffect(() => {
-    const savedTheme = localStorage.getItem('tf_theme') as 'dark' | 'light';
-    if (savedTheme) {
-      setTheme(savedTheme);
-      document.documentElement.setAttribute('data-theme', savedTheme);
-    } else {
-      document.documentElement.setAttribute('data-theme', 'dark');
-    }
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
 
-    // Kiểu thanh tiến độ cũng đặt trên <html> như theme, xem utils/progressStyle.ts
+  React.useEffect(() => {
+
+    // The progress-bar style sits on <html> like the theme does; see utils/progressStyle.ts
     applyProgressStyle(getProgressStyle());
 
-    // macOS không tự bo góc cửa sổ khi decorations = false, nên phải tự bo bằng
-    // CSS cho khớp radius của lớp vibrancy (windowEffects.radius trong
-    // tauri.conf.json). Windows 11 tự bo nên không cần.
+    // macOS does not round the window corners itself when decorations = false, so CSS has to match
+    // the radius of the vibrancy layer (windowEffects.radius in tauri.conf.json). Windows 11 rounds
+    // them on its own and needs none of this.
     const isMac = /Mac|iPod|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
     document.documentElement.setAttribute('data-os', isMac ? 'macos' : 'other');
   }, []);
@@ -871,8 +910,9 @@ export const App: React.FC = () => {
 
   const toggleTheme = () => applyTheme(theme === 'dark' ? 'light' : 'dark');
 
-  // Đổi tên/màu/môi trường kết nối từ popover chi tiết. Phần hiển thị luôn đổi ngay; việc
-  // ghi xuống profile chỉ xảy ra khi kết nối này thực sự đến từ một profile đã lưu.
+  // Renaming / recolouring / re-labelling a connection from the details popover. What is displayed
+  // always changes at once; writing back to the profile happens only when this connection really
+  // came from a saved one.
   const handleProfileChange = (patch: { name?: string; color?: string; env?: ConnEnv }) => {
     setActiveProfile((prev) => ({
       ...prev,
@@ -889,8 +929,8 @@ export const App: React.FC = () => {
           : c,
       ),
     );
-    // Đánh dấu production *bây giờ* thì phải có hiệu lực *bây giờ*. Nếu chờ tới lần kết nối sau,
-    // lớp bảo vệ đã bật nhưng không bảo vệ gì trong suốt phiên đang mở.
+    // Marking something production *now* has to take effect *now*. Waiting until the next connect
+    // would leave the guard switched on but guarding nothing for the whole open session.
     if (isProduction(patch.env)) {
       void dbHelper.setConnectionReadOnly(activeConnIdState, true);
       setOpenConns((prev) =>
@@ -900,9 +940,9 @@ export const App: React.FC = () => {
     setRailReloadKey((k) => k + 1);
   };
 
-  // Mở lại phiên bằng đúng cấu hình đang dùng: hữu ích khi server đóng kết nối
-  // nhàn rỗi. Giữ nguyên tab đang mở — chỉ phiên phía Rust được dựng lại — nhưng
-  // xoá cache catalog vì server có thể đã đổi schema trong lúc mất kết nối.
+  // Reopens the session with the very config in use, which helps when the server drops idle
+  // connections. Open tabs are kept — only the Rust-side session is rebuilt — but the catalog cache
+  // is cleared, because the server's schema may have changed while the connection was gone.
   const handleReconnect = async (): Promise<{ success: boolean; message?: string }> => {
     if (!activeConnConfig) return { success: false };
     const oldId = activeConnIdState;
@@ -936,15 +976,15 @@ export const App: React.FC = () => {
   };
 
   /**
-   * Đẩy công tắc chỉ-đọc toàn cục xuống backend cho kết nối Redis.
+   * Pushes the global read-only switch down to the backend for a Redis connection.
    *
-   * Chốt thật phải ở Rust: CLI Console gửi lệnh dạng văn bản tự do, nên vô hiệu hoá nút bấm ở
-   * WebView không chặn được một `FLUSHALL` gõ tay. `RedisBrowser` từng giữ effect này; nó bị xoá
-   * khi Redis chuyển sang dùng tab, nên effect về đây.
+   * The real lock has to be in Rust: the CLI Console sends free-form command text, so disabling
+   * buttons in the WebView does not stop a hand-typed `FLUSHALL`. `RedisBrowser` used to hold this
+   * effect; it was deleted when Redis moved to tabs, so the effect landed here.
    *
-   * Ghi HOẶC của hai nguồn, không phải riêng công tắc: từ Giai đoạn 0 cờ ở backend là cờ CỦA KẾT
-   * NỐI — cũng là cờ mà nhãn production ghi — nên tắt công tắc mà ghi thẳng `false` sẽ mở khoá ghi
-   * cho một kết nối production.
+   * It writes the OR of two sources, not the switch alone: since Phase 0 the backend flag is the
+   * CONNECTION's flag — the same one the production label writes — so turning the switch off and
+   * writing a plain `false` would unlock writes on a production connection.
    */
   React.useEffect(() => {
     if (connection?.dbType !== 'redis' || !activeConnIdState) return;
@@ -962,21 +1002,34 @@ export const App: React.FC = () => {
         connection.dbName,
         connection.schema,
       );
-      // Chỉ ghi tab của kết nối đang chọn, dưới đúng khoá scope của nó. `tabs` giờ chứa tab của
-      // MỌI kết nối đang mở, nên ghi cả mảng vào một khoá là nhét tab của kết nối này sang chỗ của
-      // kết nối khác. Không cần ghi hộ các kết nối kia: nội dung tab chỉ đổi khi kết nối của nó
-      // đang được chọn (tab của kết nối khác không mount), và lần chọn trước đã ghi rồi.
+      // Only the selected connection's tabs are written, under its own scope key. `tabs` now holds
+      // the tabs of EVERY open connection, so writing the whole array to one key would file this
+      // connection's tabs under another connection's name. The others need no writing on their
+      // behalf: a tab's contents only change while its connection is selected (other connections'
+      // tabs are not mounted), and the previous selection already wrote them.
       //
-      // Không lưu tab terminal: phiên PTY không tồn tại sau khi reload
-      const persistTabs = tabs.filter(tb => tb.type !== 'terminal' && tb.connId === activeConnIdState);
-      const persistActive = persistTabs.some(t => t.id === activeTabId) ? activeTabId : (persistTabs[0]?.id ?? null);
+      // Terminal tabs are not saved: a PTY session does not survive a reload.
+      // `config` is dropped AT THE SINK, not only by the type filter below.
+      //
+      // A no-op today: the only tab kind that carries one is `terminal`, and those are already
+      // filtered out. It is here because the guarantee "no credential ever reaches localStorage"
+      // otherwise rests on a filter that exists for an unrelated reason (a PTY does not survive a
+      // reload) - change that filter for its own reason and secrets start being written, silently.
+      // A `DbConnectionConfig` holds SSH passwords and private keys, so the sink is where this
+      // belongs. CodeQL flags these two writes (alerts 30/31) for a different, spurious path: the
+      // config also reaches `tabsStorageKey`, which projects it to `type:host:port` and cannot carry
+      // a secret - see `connKey`.
+      const persistTabs = tabs
+        .filter(tb => tb.type !== 'terminal' && tb.connId === activeConnIdState)
+        .map(({ config: _config, ...tb }) => tb as TabInfo);
+      const persistActive = persistTabs.some(tab => tab.id === activeTabId) ? activeTabId : (persistTabs[0]?.id ?? null);
       const payload = { tabs: persistTabs, activeTabId: persistActive, queryCount, groups: tabGroups };
       try {
         localStorage.setItem(storageKey, JSON.stringify(payload));
       } catch {
-        // Hết quota (SQL nháp dài x nhiều tab x nhiều DB dùng chung ~5MB với lịch sử,
-        // profile, snapshot). Bỏ nội dung nháp của các tab không hoạt động để vẫn giữ
-        // được danh sách tab và nháp của tab đang mở, thay vì mất sạch lần lưu này.
+        // Out of quota (long draft SQL x many tabs x many DBs sharing ~5MB with history, profiles
+        // and snapshots). Drop the inactive tabs' drafts so the tab list and the active tab's draft
+        // still survive, rather than losing this whole save.
         const trimmed = persistTabs.map(tab =>
           tab.id === persistActive ? tab : ({ ...tab, sql: undefined, sql2: undefined } as TabInfo)
         );
@@ -993,10 +1046,10 @@ export const App: React.FC = () => {
     const applyWindowSize = async () => {
       try {
         if (connection) {
-          // Đã kết nối CSDL: Bừng rộng cửa sổ ra 1280 x 800px
+          // Connected to a database: widen the window to 1280 x 800px
           await invoke('set_app_window_size', { width: 1280, height: 800 });
         } else {
-          // Trang Quản lý kết nối: Thu gọn về 1060 x 680px
+          // The Connection Manager screen: shrink back to 1060 x 680px
           await invoke('set_app_window_size', { width: 1060, height: 680 });
         }
       } catch (e) {
@@ -1007,9 +1060,9 @@ export const App: React.FC = () => {
     applyWindowSize();
   }, [connection]);
 
-  // Khôi phục tab (kèm SQL nháp trong tab) của một database. Khoá mới gồm cả
-  // host:port nên không lẫn giữa hai máy chủ có database cùng tên; khoá cũ chỉ
-  // được ĐỌC, một lần, khi khoá mới còn trống — để không ai mất tab đang mở.
+  // Restores a database's tabs (with the draft SQL inside them). The new key includes host:port so
+  // two servers with a same-named database cannot collide; the old key is only ever READ, once, and
+  // only while the new one is empty — so nobody loses the tabs they had open.
   /**
    * A connection with nothing saved gets one empty SQL tab.
    *
@@ -1019,14 +1072,14 @@ export const App: React.FC = () => {
    * scope in — see the note there.
    */
   /**
-   * Tab đầu tiên của một kết nối chưa có bộ tab đã lưu.
+   * The first tab of a connection that has no saved tab set.
    *
-   * `dbType` là tham số tường minh chứ không đọc từ `connection`: mọi chỗ gọi đều đang ở giữa lúc
-   * đổi kết nối, và `connection` khi đó có thể còn là kết nối cũ.
+   * `dbType` is an explicit parameter rather than read from `connection`: every call site is in the
+   * middle of switching connections, and `connection` may still be the old one at that moment.
    */
   const openInitialTab = (connId: string, dbType?: string) => {
-    // Redis không có "SQL Query" để mở. CLI Console là tab công cụ duy nhất dùng được ngay khi
-    // chưa chọn key nào, và một workspace trống thì không nói cho người dùng biết làm gì tiếp.
+    // Redis has no "SQL Query" to open. The CLI Console is the one tool tab usable before any key is
+    // selected, and an empty workspace tells the user nothing about what to do next.
     if (dbType === 'redis') {
       const tabId = redisToolTabId(connId, 'redis-console');
       const label = redisToolTabLabel('redis-console', t);
@@ -1074,7 +1127,7 @@ export const App: React.FC = () => {
         // is instant and their unsaved SQL survives — that is the whole point of §4.5. Any tabs
         // already held for *this* connection are dropped first, so a re-restore cannot duplicate.
         setTabs((prev) => [...prev.filter((tb) => tb.connId !== connId), ...owned]);
-        // Bản lưu trước khi có nhóm không có trường này -> mọi tab thành tab rời.
+        // Saves from before groups existed have no such field -> every tab becomes a loose one.
         setTabGroups(Array.isArray(savedGroups) ? savedGroups : []);
         setActiveTabId(savedActiveId || owned[0].id);
         setQueryCount(savedQueryCount || (savedTabs.length + 1));
@@ -1117,7 +1170,7 @@ export const App: React.FC = () => {
       ]);
     }
 
-    // Đổi kết nối -> xoá cache bảng/cột để autocomplete & hover không còn dữ liệu của DB cũ
+    // Switching connection -> clear the table/column cache so completion and hover hold no data from the old DB
     invalidateCatalog();
 
     // Try to restore tabs from localStorage
@@ -1128,12 +1181,12 @@ export const App: React.FC = () => {
   };
 
   /**
-   * Mở một kết nối từ profile đã lưu, chọn trong Quick Switcher.
+   * Opens a connection from a saved profile, picked in the Quick Switcher.
    *
-   * Đi qua `connectSavedProfile` (dùng chung với Connection Manager) rồi `handleConnect` — **cùng một
-   * đường** với màn hình kết nối, không phải một bản sao. Bản sao thứ hai của đường kết nối sẽ mang
-   * theo SSH, SSL, IAM và merge bí mật; hai bản sẽ lệch, và lệch ở đây thì biểu hiện là "profile này
-   * kết nối được ở màn kia mà không được ở đây".
+   * It goes through `connectSavedProfile` (shared with Connection Manager) and then `handleConnect`
+   * — the **same path** the connection screen takes, not a copy. A second copy of the connect path
+   * would have to carry SSH, SSL, IAM and secret merging along with it; the two would drift, and
+   * drift here shows up as "this profile connects on that screen but not on this one".
    */
   const handleConnectSavedProfile = async (profile: SavedProfile) => {
     const res = await connectSavedProfile(profile);
@@ -1146,20 +1199,19 @@ export const App: React.FC = () => {
       profile.type,
       profile.color,
       res.config,
-      // `env` đi kèm ở đây cũng vì lý do đó: thiếu nó thì mở prod từ switcher sẽ không bật chỉ đọc,
-      // trong khi mở đúng profile ấy từ Connection Manager thì có.
+      // `env` rides along for the same reason: without it, opening prod from the switcher would not
+      // turn read-only on, while opening the very same profile from Connection Manager would.
       { id: profile.id, name: profile.name, env: normalizeEnv(profile.env) },
       res.schema,
     );
   };
 
-  // Hỏi xác nhận nếu bảng đang mở còn thay đổi chưa lưu.
+  // Asks for confirmation when the open table still has unsaved edits.
   //
-  // Trước đây cờ này là biến toàn cục `window.__gridDirty` do DataGrid đặt. Đổi
-  // sang state vì thanh tab cần chấm dấu "chưa lưu", mà ghi biến toàn cục thì
-  // không kéo theo render nào. Chỉ có một tab *bảng* được mount tại một thời điểm
-  // (xem active-panel-container bên dưới — tab truy vấn và terminal thì mount thường
-  // trực) nên nhiều nhất một tab bẩn cùng lúc.
+  // This flag used to be a global, `window.__gridDirty`, set by DataGrid. It became state because
+  // the tab strip needs an "unsaved" dot, and writing a global triggers no render. Only one *table*
+  // tab is mounted at a time (see active-panel-container below — query and terminal tabs are
+  // mounted permanently), so there is at most one dirty tab.
   // This question cannot use window.confirm: inside the Tauri webview it calls
   // `plugin:dialog|confirm`, a command the dialog plugin does not ship, so the call throws
   // and returns undefined — meaning every attempt to leave a half-edited tab was silently
@@ -1174,8 +1226,8 @@ export const App: React.FC = () => {
     setDiscardPrompt(() => action);
   };
 
-  // Cả hai hàm dời tab đều nằm ở utils/tabGroups.ts: chúng thuần và là nơi giữ
-  // bất biến "tab cùng nhóm nằm liền nhau", nên ở đó mới test được.
+  // Both tab-moving functions live in utils/tabGroups.ts: they are pure and they are where the
+  // "one group stays adjacent" invariant is kept, which is what makes them testable there.
   const handleReorderTabs = (from: number, to: number, groupId: string | undefined) =>
     setTabs((prev) => reorderTabs(prev, from, to, groupId));
 
@@ -1198,10 +1250,10 @@ export const App: React.FC = () => {
   const handleSetTabGroupColor = (groupId: string, color: string) =>
     setTabGroups((prev) => prev.map((g) => (g.id === groupId ? { ...g, color } : g)));
 
-  // Thu gọn một nhóm ĐANG CHỨA tab được xem thì phải chuyển sang xem tab khác
-  // trước, đúng như Chrome. Nếu không, phần render sẽ tự mở nhóm ra (nó không
-  // bao giờ giấu tab đang hiển thị nội dung) và bấm vào tên nhóm trông như
-  // không có tác dụng gì — đây chính là lý do nút thu gọn "không ăn".
+  // Collapsing a group that CONTAINS the viewed tab has to switch to another tab first, exactly as
+  // Chrome does. Otherwise the render expands the group again (it never hides the tab whose content
+  // is on screen) and clicking the group name looks like it does nothing — which is precisely why
+  // the collapse button appeared "dead".
   const handleToggleTabGroup = (groupId: string) => {
     const group = tabGroups.find((g) => g.id === groupId);
     if (!group) return;
@@ -1212,12 +1264,12 @@ export const App: React.FC = () => {
 
     if (collapsing && tabs.some((tab) => tab.id === activeTabId && tab.groupId === groupId)) {
       const outside = tabs.filter((tab) => tab.groupId !== groupId);
-      // Cả cửa sổ chỉ có mỗi nhóm này: thu gọn thì không còn gì để hiển thị.
+      // This group is all the window has: collapsing it would leave nothing to display.
       if (outside.length === 0) return;
       guardDirty(() => {
         const at = tabs.findIndex((tab) => tab.id === activeTabId);
         const after = tabs.slice(at + 1).find((tab) => tab.groupId !== groupId);
-        const before = [...tabs.slice(0, at)].reverse().find((tab) => tab.groupId !== groupId);
+        const before = tabs.slice(0, at).reverse().find((tab) => tab.groupId !== groupId);
         setActiveTabId((after ?? before ?? outside[0]).id);
         applyCollapse();
       });
@@ -1240,14 +1292,16 @@ export const App: React.FC = () => {
     });
   };
 
-  // Nhóm rỗng thì bỏ đi. Chạy tập trung ở đây thay vì rải vào từng chỗ đóng tab:
-  // tab bị đóng ở rất nhiều đường (nút X, chuột giữa, đóng tab khác, đóng bên
-  // phải, đóng tất cả), sót một đường là còn lại một nhóm ma trong bản lưu.
+  // Empty groups are dropped. Done centrally here rather than at each tab-closing site: tabs close
+  // through a great many paths (the X, middle click, close others, close to the right, close all),
+  // and missing one leaves a ghost group behind in the saved state.
   React.useEffect(() => {
-    setTabGroups((prev) => {
-      const used = new Set(tabs.map((tab) => tab.groupId).filter(Boolean));
-      const next = prev.filter((g) => used.has(g.id));
-      return next.length === prev.length ? prev : next;
+    queueMicrotask(() => {
+      setTabGroups((prev) => {
+        const used = new Set(tabs.map((tab) => tab.groupId).filter(Boolean));
+        const next = prev.filter((g) => used.has(g.id));
+        return next.length === prev.length ? prev : next;
+      });
     });
   }, [tabs]);
 
@@ -1434,11 +1488,13 @@ export const App: React.FC = () => {
     })();
   };
 
-  // Sau khi đổi schema (chỉ Postgres): backend đã nhận schema mới rồi mới gọi vào đây.
+  // After a schema change (Postgres only): the backend has already accepted the new schema by the
+  // time this is called.
   //
-  // Đổi schema là đổi hẳn tập bảng, nên phải làm đúng những việc của đổi database: xoá cache
-  // catalog (completion/hover còn giữ bảng của schema cũ), bắt Sidebar/DataGrid nạp lại, và đổi
-  // khoá localStorage của tab — tab đang mở trỏ vào bảng của schema cũ.
+  // Changing schema changes the whole set of tables, so it has to do everything a database change
+  // does: clear the catalog cache (completion and hover still hold the old schema's tables), make
+  // Sidebar/DataGrid reload, and change the tabs' localStorage key — the open tabs point at tables
+  // of the old schema.
   const handleSchemaChanged = (newSchema: string) => {
     const nextConn = connection ? { ...connection, schema: newSchema } : null;
     setConnection(nextConn);
@@ -1449,11 +1505,6 @@ export const App: React.FC = () => {
 
     openInitialTab(activeConnIdState, nextConn?.dbType);
   };
-
-  // `handleDatabaseChanged` từng ở đây: nó là bên nhận của `switch_database`, tức của mô hình "thay
-  // pool tại chỗ, giữ nguyên conn_id". Không còn đường nào đổi database kiểu đó nữa — cả ba (bộ
-  // chọn trên thanh tiêu đề, Sidebar, popup thống kê) đều mở thêm kết nối — nên nó cùng biến mất
-  // với `switch_database`. `handleDatabaseOpened` là bên nhận duy nhất.
 
   // Open a specific table in a new or existing tab
   const handleSelectTable = (
@@ -1488,10 +1539,12 @@ export const App: React.FC = () => {
     else guardDirty(open);
   };
 
-  // Ctrl+Click / F12 trên tên bảng hoặc click FK link -> mở tab bảng kèm bộ lọc.
-  // Dùng ref để listener (đăng ký 1 lần) luôn gọi bản handleSelectTable mới nhất.
+  // Ctrl+Click / F12 on a table name, or clicking an FK link -> open the table tab with a filter.
+  // A ref is used so the listener (registered once) always calls the latest handleSelectTable.
   const selectTableRef = React.useRef(handleSelectTable);
-  selectTableRef.current = handleSelectTable;
+  React.useEffect(() => {
+    selectTableRef.current = handleSelectTable;
+  });
   React.useEffect(() => {
     const handleOpenTableTab = (e: any) => {
       const table = e.detail?.table;
@@ -1501,13 +1554,14 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('open-table-tab', handleOpenTableTab);
   }, []);
 
-  // ---- Tab Redis ----
+  // ---- Redis tabs ----
   //
-  // Ba handler dưới đây làm đúng việc mà `handleSelectTable` làm cho bảng: mở tab nếu chưa có, focus
-  // nếu đã có. Tách riêng chứ không nhồi vào `handleSelectTable` vì loại tab, nhãn và điều kiện
-  // "đã mở" đều khác, và gộp lại sẽ thành một hàm nhận cờ để chọn nhánh.
+  // The three handlers below do for Redis what `handleSelectTable` does for a table: open the tab if
+  // it is not there, focus it if it is. Kept separate rather than folded into `handleSelectTable`
+  // because the tab kind, the label and the "already open" test all differ, and merging them would
+  // produce one function taking a flag to pick a branch.
 
-  /** Db index của kết nối Redis đang xem. Nguồn là tên database (`db3`), không phải state riêng. */
+  /** The db index of the Redis connection being viewed. Taken from the database name (`db3`), not from state of its own. */
   const redisDbIndex = React.useMemo(() => {
     if (connection?.dbType !== 'redis') return 0;
     const n = parseInt((connection.dbName || '').replace(/^db/, ''), 10);
@@ -1532,7 +1586,7 @@ export const App: React.FC = () => {
     setActiveTabId(tabId);
   };
 
-  const handleOpenRedisTool = (type: RedisTabType) => {
+  const handleOpenRedisTool = React.useCallback((type: RedisTabType) => {
     if (type === 'redis-key') return;
     const tabId = redisToolTabId(activeConnIdState, type);
     if (!visibleTabs.some((tab) => tab.id === tabId)) {
@@ -1543,15 +1597,15 @@ export const App: React.FC = () => {
       ]);
     }
     setActiveTabId(tabId);
-  };
+  }, [activeConnIdState, visibleTabs, t, tabs]);
 
   /**
-   * Đổi db index của một kết nối Redis.
+   * Changes a Redis connection's db index.
    *
-   * Đây **không** phải đổi state của kết nối hiện tại — backend mint/tìm một `conn_id` khác cho
-   * `(server, dbN)` (§2.1) — nên việc ở đây giống hệt bấm sang một kết nối khác trên `DbRail`: trỏ
-   * `connId` sang id mới rồi để `selectConnection` khôi phục bộ tab của nó. Tab của db cũ ở nguyên
-   * trong state, đúng như tab của một kết nối khác.
+   * This is **not** mutating the current connection's state — the backend mints or finds a different
+   * `conn_id` for `(server, dbN)` (§2.1) — so what happens here is identical to clicking another
+   * connection on `DbRail`: point `connId` at the new id and let `selectConnection` restore that
+   * connection's tab set. The old db's tabs stay in state, exactly like another connection's do.
    */
   const handleRedisSelectDb = async (index: number, knownConnId?: string) => {
     let target = knownConnId;
@@ -1582,8 +1636,8 @@ export const App: React.FC = () => {
     setActiveConnIdState(target);
     setConnection({ connId: target, dbName, dbType: 'redis', schema: null });
     if (!restoreTabs(target, cfg, 'redis', dbName, null)) {
-      // Không có tab đã lưu: mở CLI Console làm tab đầu. Redis không có "SQL Query" để mở như
-      // `openInitialTab` làm, và một workspace trống không nói cho người dùng biết làm gì tiếp.
+      // No saved tabs: open the CLI Console as the first one. Redis has no "SQL Query" to open the
+      // way `openInitialTab` does, and an empty workspace tells the user nothing about what to do next.
       const tabId = redisToolTabId(target, 'redis-console');
       const label = redisToolTabLabel('redis-console', t);
       setTabs((prev) => [
@@ -1595,9 +1649,7 @@ export const App: React.FC = () => {
   };
 
   // Create a new SQL Query tab
-  const handleNewQueryTab = () => {
-    // Nút `+` của thanh tab trên một kết nối Redis: mở CLI Console, không phải tab SQL. Đây là thứ
-    // gần nhất với "một chỗ trống để gõ lệnh" mà Redis có.
+  const handleNewQueryTab = React.useCallback(() => {
     if (connection?.dbType === 'redis') {
       handleOpenRedisTool('redis-console');
       return;
@@ -1612,12 +1664,10 @@ export const App: React.FC = () => {
     setTabs([...tabs, { ...newTab, connId: activeConnIdState }]);
     setActiveTabId(tabId);
     setQueryCount(queryCount + 1);
-  };
+  }, [connection?.dbType, handleOpenRedisTool, t, queryCount, tabs, activeConnIdState]);
 
-  // Mở tab SQL với nội dung có sẵn (script đồng bộ từ hộp thoại So sánh 2 database).
-  // Không gộp vào handleNewQueryTab vì hàm đó được truyền thẳng làm onClick -> tham số
-  // đầu tiên sẽ là MouseEvent.
-  const openQueryTabWithSql = (sql: string) => {
+  // Open SQL tab with existing content (e.g. sync script from DB compare dialog)
+  const openQueryTabWithSql = React.useCallback((sql: string) => {
     const tabId = `query_${Date.now()}`;
     const newTab = {
       id: tabId,
@@ -1629,7 +1679,7 @@ export const App: React.FC = () => {
     setTabs([...tabs, { ...newTab, connId: activeConnIdState }]);
     setActiveTabId(tabId);
     setQueryCount(queryCount + 1);
-  };
+  }, [t, queryCount, tabs, activeConnIdState]);
 
   // Close tab
   const handleCloseTab = (id: string, e?: React.MouseEvent) => {
@@ -1652,24 +1702,24 @@ export const App: React.FC = () => {
       }
     };
 
-    // Đóng tab bảng đang sửa dở -> hỏi xác nhận
+    // Closing a table tab with edits in progress -> ask for confirmation
     if (id === activeTabId) guardDirty(close);
     else close();
   };
 
   const handleCloseOthers = (id: string) => {
-    const newTabs = tabs.filter((t) => t.id === id);
+    const newTabs = tabs.filter((tab) => tab.id === id);
     setTabs(newTabs);
     setActiveTabId(id);
   };
 
   const handleCloseTabsToRight = (id: string) => {
-    const tabIndex = tabs.findIndex((t) => t.id === id);
+    const tabIndex = tabs.findIndex((tab) => tab.id === id);
     if (tabIndex !== -1) {
       const newTabs = tabs.slice(0, tabIndex + 1);
       setTabs(newTabs);
 
-      const activeIndex = tabs.findIndex((t) => t.id === activeTabId);
+      const activeIndex = tabs.findIndex((tab) => tab.id === activeTabId);
       if (activeIndex > tabIndex) {
         setActiveTabId(id);
       }
@@ -1686,16 +1736,16 @@ export const App: React.FC = () => {
 
   // Insert SQL generated by AI into current query editor
   const handleInsertSql = (sql: string) => {
-    const activeTab = tabs.find((t) => t.id === activeTabId);
+    const activeTab = tabs.find((tab) => tab.id === activeTabId);
 
     if (activeTab && activeTab.type === 'query') {
       // Update existing SQL tab
       setTabs((prev) =>
-        prev.map((t) => {
-          if (t.id === activeTabId) {
-            return { ...t, sql }; // Update initialSql prop
+        prev.map((tab) => {
+          if (tab.id === activeTabId) {
+            return { ...tab, sql }; // Update initialSql prop
           }
-          return t;
+          return tab;
         })
       );
 
@@ -1726,8 +1776,8 @@ export const App: React.FC = () => {
     }, 150);
   };
 
-  // Config cho Terminal: nếu kết nối hiện tại dùng SSH -> kế thừa để mở shell VÀO MÁY CHỦ/VM đó;
-  // ngược lại mở shell máy cục bộ.
+  // The Terminal's config: when the current connection uses SSH, inherit it so the shell opens ON
+  // THAT host/VM; otherwise open a local shell.
   const terminalConfig = (): DbConnectionConfig => {
     const c = activeConnConfig;
     if (c?.sshEnabled && c.sshHost) {
@@ -1808,6 +1858,25 @@ export const App: React.FC = () => {
     setActiveTabId(tabId);
   };
 
+  const handleOpenErDiagram = () => {
+    const tabId = `er_${activeConnIdState}_${connection?.dbName || 'default'}`;
+    const existing = visibleTabs.find((tb) => tb.id === tabId);
+    if (existing) {
+      setActiveTabId(tabId);
+      return;
+    }
+    const label = `ER: ${connection?.dbName || 'Database'}`;
+    const newTab: TabInfo = {
+      id: tabId,
+      connId: activeConnIdState,
+      type: 'er',
+      name: label,
+      label,
+    };
+    setTabs((prev) => [...prev, newTab]);
+    setActiveTabId(tabId);
+  };
+
   /**
    * The tab whose panel is on screen — looked up in `visibleTabs`, not `tabs`.
    *
@@ -1821,49 +1890,49 @@ export const App: React.FC = () => {
 
   const activeTab = getActiveTab();
 
-  /** Key của tab đang xem — sidebar tô sáng dòng tương ứng. */
+  /** The key of the tab being viewed — the sidebar highlights the matching row. */
   const activeRedisKey =
     activeTab?.type === 'redis-key' ? activeTab.redisKeyInfo?.keyName ?? null : null;
   const activeTable = activeTab?.type === 'table' ? activeTab.name : null;
 
-  /** Cập nhật một tab. Phải ổn định: QueryTabPanel memo hoá theo props (xem đó). */
+  /** Updates one tab. Must be stable: QueryTabPanel memoises on its props (see there). */
   const patchTab = React.useCallback((id: string, patch: Partial<TabInfo>) => {
     setTabs(prev => prev.map(tb => (tb.id === id ? { ...tb, ...patch } : tb)));
   }, []);
 
-  // Ghi nhận tab truy vấn vừa được mở, đồng thời bỏ những tab đã đóng. Chạy sau mỗi lần
-  // `tabs` đổi (tức mỗi lần gõ phím đã debounce) nhưng trả về đúng Set cũ khi không có gì
-  // thay đổi, nên không kéo theo render thừa.
+  // Records a query tab that has just been opened and drops the ones that were closed. It runs on
+  // every `tabs` change (that is, on every debounced keystroke) but returns the very same Set when
+  // nothing changed, so it causes no extra renders.
   React.useEffect(() => {
-    setMountedQueryTabs(prev => {
-      const live = new Set(tabs.filter(tb => tb.type === 'query').map(tb => tb.id));
-      const next = new Set<string>();
-      for (const id of prev) if (live.has(id)) next.add(id);
-      if (activeTabId && live.has(activeTabId)) next.add(activeTabId);
-      // Không so mỗi size: đóng một tab và mở một tab khác trong cùng một render cho ra
-      // hai tập khác nhau mà cùng số phần tử.
-      if (next.size === prev.size && [...next].every(id => prev.has(id))) return prev;
-      return next;
+    queueMicrotask(() => {
+      setMountedQueryTabs(prev => {
+        const live = new Set(tabs.filter(tb => tb.type === 'query').map(tb => tb.id));
+        const next = new Set<string>();
+        for (const id of prev) if (live.has(id)) next.add(id);
+        if (activeTabId && live.has(activeTabId)) next.add(activeTabId);
+        if (next.size === prev.size && [...next].every(id => prev.has(id))) return prev;
+        return next;
+      });
     });
   }, [tabs, activeTabId]);
 
-  // Scope của danh sách tab hiện tại, dùng làm tiền tố cho key của QueryTabPanel.
+  // The current tab list's scope, used as the prefix of QueryTabPanel's key.
   const tabScope = scopeKey(activeConnConfig, connection?.dbName, connection?.schema);
 
-  // Dựng sẵn thành biến vì thanh tiêu đề nằm ở hai vị trí khác nhau trong cây:
-  // ở màn kết nối nó nằm *trong* .cm-screen để cùng chịu lớp aurora của màn đó,
-  // còn ở workspace nó là con trực tiếp của #root như cũ.
+  // Built into a variable because the title bar sits at two different places in the tree: on the
+  // connection screen it goes *inside* .cm-screen so it takes that screen's aurora layer, while in
+  // the workspace it stays a direct child of #root as before.
   const titleBar = (
     <TitleBar
-      // Safe Mode lưu theo server, và chỉ frontend có config để suy ra khoá đó (backend cố ý không
-      // trả config về vì nó mang credential).
+      // Safe Mode is stored per server, and only the frontend has the config to derive that key (the
+      // backend deliberately never hands the config back, because it carries credentials).
       connKey={connKey(activeConnConfig)}
       hasConnection={!!connection}
       connId={activeConnIdState}
       readOnly={readOnly}
       onToggleReadOnly={toggleReadOnly}
-      // version/tls không còn ở đây: TitleBar đọc số thật từ get_connection_status,
-      // các trường này chỉ là giá trị lùi cho nhịp trước khi lần ping đầu về.
+      // version/tls are no longer here: TitleBar reads the real values from get_connection_status,
+      // and these fields are only a fallback for the moment before the first ping returns.
       activeConnectionInfo={{
         host: activeConnConfig?.host || 'LOCAL',
         dbType: connection?.dbType?.toUpperCase() || 'MYSQL',
@@ -1875,9 +1944,10 @@ export const App: React.FC = () => {
       // the SQL editor's confirmation and the read-only default all read it from there, and a fourth
       // copy is a fourth thing that can disagree.
       activeProfileEnv={openConns.find((c) => c.connId === activeConnIdState)?.env ?? 'none'}
-      // `db` không nằm trong `openConns` (ở đó database là một phần của `config`), nên suy ra ở đây.
-      // Kết nối đang xem ưu tiên `connection.dbName`: sau một `USE` trong restore, backend là bên
-      // biết database thật, còn `config` chỉ là thứ đã dùng để mở.
+      // `db` is not in `openConns` (there the database is part of `config`), so it is derived here.
+      // The viewed connection prefers `connection.dbName`: after a `USE` inside a restore, the
+      // backend is the side that knows the real database, while `config` is only what it was opened
+      // with.
       openConns={openConns.map((c) => ({
         ...c,
         env: c.env ?? 'none',
@@ -1916,14 +1986,14 @@ export const App: React.FC = () => {
 
   return (
     <>
-      {/* Safe Mode hỏi qua component này. Mount một lần ở gốc: `utils/safeMode.ts` không có React
-          nên nó giữ một confirmer được đăng ký, và dialog phải sống ngoài mọi tab để câu hỏi vẫn
-          hiện dù lệnh phát ra từ đâu. */}
+      {/* Safe Mode asks through this component. Mounted once at the root: `utils/safeMode.ts` has no
+          React, so it holds a registered confirmer, and the dialog has to live outside every tab so
+          the question still appears wherever the command came from. */}
       <SafeModeGate />
 
-      {/* Thêm một kết nối nữa trong khi vẫn đang kết nối (nút `+` của rail). Dùng lại nguyên
-          `ConnectionManager` chứ không viết màn hình thứ hai; `handleConnect` đã làm đúng việc
-          (đẩy vào `openConns` rồi chuyển workspace sang kết nối mới). */}
+      {/* Adding another connection while one is already open (the rail's `+` button). It reuses
+          `ConnectionManager` whole rather than writing a second screen; `handleConnect` already does
+          the right thing (push into `openConns`, then move the workspace to the new connection). */}
       {addingConn && connection && (
         <Modal
           title={t('titlebar.newConnection')}
@@ -1931,12 +2001,13 @@ export const App: React.FC = () => {
           zIndex={10000}
           width="min(1100px, 94vw)"
         >
-          {/* `ModalBody` mặc định là padding 16 + gap 14 + tự cuộn: đúng cho một form, sai cho một
-              màn hình hai panel. Với mặc định đó container cao theo nội dung, nên hàng nút
-              Lưu/Kiểm tra/Kết nối bị đẩy xuống dưới đáy và phải cuộn mới thấy, còn hai panel thì
-              không cuộn riêng như ở màn chính. Ghim chiều cao và giao việc cuộn lại cho chúng.
-              Dùng prop `style` chứ không class: đó là API của ModalBody và style inline của nó thắng
-              mọi rule trong CSS — xem hộp phím tắt bên dưới, cùng cách. */}
+          {/* `ModalBody` defaults to padding 16 + gap 14 + its own scrolling: right for a form, wrong
+              for a two-panel screen. With those defaults the container grows with its content, so the
+              Save/Test/Connect button row is pushed below the fold and has to be scrolled to, while
+              the two panels do not scroll independently as they do on the main screen. Pin the height
+              and hand scrolling back to them.
+              The `style` prop rather than a class: that is ModalBody's API, and its inline style beats
+              every CSS rule — see the shortcuts box below, done the same way. */}
           <ModalBody style={{ padding: 0, gap: 0, overflow: 'hidden', height: 'min(74vh, 660px)' }}>
             <ConnectionManager
               connId={activeConnIdState}
@@ -1951,9 +2022,9 @@ export const App: React.FC = () => {
       )}
 
       {!connection ? (
-        // Thanh tiêu đề nằm trong .cm-screen chứ không đứng trên nó: lớp aurora
-        // là ::before của shell nên chỉ phủ được những gì shell chứa. Đứng
-        // ngoài thì mép dưới thanh tiêu đề luôn là một đường ranh màu.
+        // The title bar sits inside .cm-screen rather than above it: the aurora layer is that
+        // shell's ::before, so it can only cover what the shell contains. Outside it, the title
+        // bar's bottom edge is always a visible colour seam.
         <div className="cm-screen">
           {titleBar}
           <ConnectionManager connId={activeConnIdState} onConnect={handleConnect} />
@@ -1980,9 +2051,9 @@ export const App: React.FC = () => {
               />
             )}
 
-            {/* Redis dùng chung khung sidebar nhưng thân khác hẳn: danh sách key thay cho cây
-                bảng/view/routine. Là một component anh em chứ không phải một chế độ bên trong
-                `Sidebar.tsx` — file đó đã 2762 dòng và không có dòng nào nói về Redis
+            {/* Redis shares the sidebar frame but its body is quite different: a key list instead of
+                a tree of tables/views/routines. A sibling component rather than a mode inside
+                `Sidebar.tsx` — that file is already 2762 lines and not one of them mentions Redis
                 (docs/redis-ui-unification-plan.md §3). */}
             {showSidebar && connection.dbType === 'redis' && (
               <RedisSidebarView
@@ -2019,6 +2090,8 @@ export const App: React.FC = () => {
                 onOpenAllDbStats={() => { setDbInfoTab('all'); setShowDbInfoModal(true); }}
                 onSchemaMigration={() => setShowSchemaMigration(true)}
                 onCompareDatabases={() => setShowDbCompare(true)}
+                onOpenErDiagram={handleOpenErDiagram}
+                onMcpSettings={() => setShowMcpSettings(true)}
                 onGenerateData={(tableName) => {
                   setDataGenTable(tableName ?? null);
                   setShowDataGen(true);
@@ -2035,8 +2108,8 @@ export const App: React.FC = () => {
             )}
 
             <div className="main-workspace-area">
-              {/* Nút bật/tắt AI Copilot đã chuyển lên thanh tiêu đề (TitleBar) —
-                  thanh tab giờ chỉ còn tab và cụm nút của chính nó. */}
+              {/* The AI Copilot toggle moved up to the title bar (TitleBar) — the tab strip now holds
+                  only tabs and its own button cluster. */}
               <div style={{ display: 'flex', alignItems: 'center', background: 'var(--win-bg-tab-bar)', borderBottom: '1px solid var(--win-border)', position: 'relative', zIndex: 100 }}>
                 <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
                   <TabManager
@@ -2075,18 +2148,18 @@ export const App: React.FC = () => {
                     </div>
                   ) : null
                 ) : activeTab.type === 'query' || REDIS_TOOL_TAB_TYPES.has(activeTab.type) ? (
-                  // Tab truy vấn và sáu tab công cụ Redis đều mount thường trực bên dưới (giống
-                  // terminal) nên ở đây không render gì — nếu render, tab sẽ bị dựng lại và mất kết
-                  // quả mỗi lần chuyển.
+                  // Query tabs and the six Redis tool tabs are all mounted permanently below (like
+                  // the terminal), so nothing is rendered here — rendering would rebuild the tab and
+                  // lose its results on every switch.
                   //
-                  // Thiếu vế Redis ở đây là một hộp `flex: 1` RỖNG được dựng cạnh tab thật, và vì cả
-                  // hai cùng `flex: 1` nên chúng chia đôi chiều ngang — nửa trái trắng trơn.
+                  // Leaving the Redis case out here produces an EMPTY `flex: 1` box next to the real
+                  // tab, and since both are `flex: 1` they split the width in half — a blank left side.
                   null
                 ) : (
                   <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-                    {/* `&& !== 'redis'`: một kết nối Redis không có tab `table` nào, và nói
-                        điều đó ra ở đây là cách để `dbType` thu hẹp về ba dialect SQL mà DataGrid
-                        nhận. Trước đây nhánh Redis return sớm nên kiểu tự hẹp. */}
+                    {/* `&& !== 'redis'`: a Redis connection has no `table` tab at all, and saying so
+                        here is what narrows `dbType` to the three SQL dialects DataGrid accepts. The
+                        Redis branch used to return early, which narrowed the type by itself. */}
                     {activeTab.type === 'table' && connection.dbType !== 'redis' ? (
                       <DataGrid
               connId={activeConnIdState}
@@ -2096,8 +2169,8 @@ export const App: React.FC = () => {
                         initialViewMode={(activeTab as any).initialViewMode || 'data'}
                         initialFilter={(activeTab as any).initialFilter}
                         readOnly={readOnly}
-                        // Chỉ gắn cờ cho tab đang mount; hàm dọn dẹp của DataGrid
-                        // luôn báo false nên xoá cờ chứ không để lại dấu sai tab.
+                        // The flag is only set for the mounted tab; DataGrid's cleanup always reports
+                        // false, which clears the flag rather than leaving a mark on the wrong tab.
                         onDirtyChange={(dirty) => setDirtyTabId(dirty ? activeTab.id : null)}
                       />
                     ) : activeTab.type === 'routine' ? (
@@ -2121,8 +2194,8 @@ export const App: React.FC = () => {
                       />
                     ) : activeTab.type === 'redis-key' ? (
                       <RedisKeyTab
-                        // Cả connId trong key: cùng một tên key trên db0 và db3 là hai key khác
-                        // nhau, và React sẽ dùng lại instance nếu key trùng.
+                        // connId goes into the key too: the same key name on db0 and on db3 are two
+                        // different keys, and React would reuse the instance if the keys matched.
                         key={activeConnIdState + '|' + activeTab.id}
                         connId={activeConnIdState}
                         keyName={activeTab.redisKeyInfo?.keyName || activeTab.name}
@@ -2135,16 +2208,28 @@ export const App: React.FC = () => {
                         )))}
                         onClose={() => handleCloseTab(activeTab.id)}
                       />
+                    ) : activeTab.type === 'er' ? (
+                      <React.Suspense fallback={<LazyEditorFallback />}>
+                        <ERDiagramTab
+                          key={activeConnIdState + '|' + activeTab.id}
+                          connId={activeTab.connId || activeConnIdState}
+                          dbName={connection?.dbName}
+                          schema={connection?.schema ?? undefined}
+                          onOpenTable={(tableName) => handleSelectTable(tableName, 'data')}
+                        />
+                      </React.Suspense>
                     ) : null}
                   </div>
                 )}
 
-                {/* Tab truy vấn: mount thường trực (ẩn/hiện bằng CSS) để kết quả sống khi chuyển tab.
-                    Chỉ mount tab đã từng được mở — xem mountedQueryTabs. */}
+                {/* Query tabs: mounted permanently (shown/hidden with CSS) so their results survive a
+                    tab switch. Only tabs that have actually been opened are mounted — see
+                    mountedQueryTabs. */}
                 {visibleTabs.filter(qt => qt.type === 'query' && mountedQueryTabs.has(qt.id)).map(qt => (
                   <QueryTabPanel
-                    // Gắn cả scope vào key: id tab là `query_<timestamp>` nên hai database khác
-                    // nhau vẫn có thể trùng id, và khi đó React sẽ dùng lại instance cũ.
+                    // The scope goes into the key too: a tab id is `query_<timestamp>`, so two
+                    // different databases can still collide, and React would then reuse the old
+                    // instance.
                     key={tabScope + '|' + qt.id}
                     tab={qt}
                     active={activeTabId === qt.id}
@@ -2160,12 +2245,13 @@ export const App: React.FC = () => {
                   />
                 ))}
 
-                {/* Tab công cụ Redis: mount thường trực, cùng lý do với tab truy vấn và terminal.
-                    Console giữ log lệnh đã chạy, Pub/Sub và Profiler đang giữ một socket riêng đọc
-                    liên tục, Dashboard giữ chuỗi số liệu theo thời gian — tháo ra khi chuyển tab là
-                    mất hết, và với Pub/Sub thì còn là bỏ lỡ message trong lúc tab bị ẩn.
-                    Ẩn bằng visibility như QueryTabPanel chứ không display:none, để lưới và biểu đồ
-                    giữ nguyên vị trí cuộn. */}
+                {/* Redis tool tabs: mounted permanently, for the same reason as query and terminal
+                    tabs. The Console keeps the log of commands run, Pub/Sub and the Profiler each hold
+                    a dedicated socket reading continuously, and the Dashboard keeps a series of
+                    measurements over time — unmounting on a tab switch loses all of it, and for
+                    Pub/Sub it also means missing messages while the tab is hidden.
+                    Hidden with visibility like QueryTabPanel rather than display:none, so grids and
+                    charts keep their scroll position. */}
                 {visibleTabs
                   .filter((tb) => tb.type.startsWith('redis-') && tb.type !== 'redis-key')
                   .map((tb) => (
@@ -2195,7 +2281,7 @@ export const App: React.FC = () => {
                     </div>
                   ))}
 
-                {/* Terminal: mount thường trực (ẩn/hiện bằng CSS) để phiên PTY sống khi chuyển tab */}
+                {/* Terminal: mounted permanently (shown/hidden with CSS) so the PTY session survives a tab switch */}
                 {visibleTabs.filter(tb => tb.type === 'terminal').map(tb => (
                   <TerminalPanel
                     connId={tb.connId || activeConnIdState}
@@ -2206,7 +2292,7 @@ export const App: React.FC = () => {
                     active={activeTabId === tb.id}
                     onToggleFloat={() => setTabs(prev => prev.map(x => x.id === tb.id ? ({ ...x, floating: !(x as any).floating } as any) : x))}
                     onClose={() => handleCloseTab(tb.id)}
-                    // Terminal ở đây là một tab -> đã có X trên tab, bỏ nút X trùng ở header
+                    // The terminal is a tab here -> the tab already has an X, so drop the duplicate one in the header
                     closable={false}
                   />
                 ))}
@@ -2240,7 +2326,7 @@ export const App: React.FC = () => {
         onCancel={() => setDiscardPrompt(null)}
       />
 
-      {/* Popup chọn tệp: báo định dạng cho phép trước khi mở hộp thoại của hệ điều hành */}
+      {/* File picker: states the allowed formats before opening the OS dialog */}
       <ImportFilePicker
         open={showGlobalImportPicker}
         targetTable={globalImportTargetTable}
@@ -2248,7 +2334,7 @@ export const App: React.FC = () => {
         onConfirm={handleGlobalFileImport}
       />
 
-      {/* Tiến độ nhập dữ liệu vào bảng (modal xem trước đã đóng) */}
+      {/* Progress of importing data into a table (the preview modal has closed) */}
       {globalImportProgress && (
         <div style={{
           position: 'fixed',
@@ -2269,7 +2355,7 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {/* Xuất cả database (Export Database) */}
+      {/* Export a whole database (Export Database) */}
       <ExportDatabaseDialog
               connId={activeConnIdState}
         open={showExportDbDialog}
@@ -2278,7 +2364,7 @@ export const App: React.FC = () => {
         dbName={connection?.dbName || ''}
       />
 
-      {/* Nhập cả database từ tệp dump (Import Database) */}
+      {/* Import a whole database from a dump file (Import Database) */}
       <ImportDatabaseDialog
         open={showImportDbDialog}
         onClose={() => setShowImportDbDialog(false)}
@@ -2288,7 +2374,7 @@ export const App: React.FC = () => {
         onSubmit={handleImportDatabase}
       />
 
-      {/* Xuất một bảng — mở từ menu chuột phải ở Sidebar, cùng popup với nút Export dưới grid */}
+      {/* Export one table — from the Sidebar's context menu, the same dialog as the Export button under the grid */}
       {exportTableTarget && connection && (
         <ExportTableDialog
               connId={activeConnIdState}
@@ -2384,28 +2470,28 @@ export const App: React.FC = () => {
               </span>
             </div>
 
-            {/* Tab xem trước: cấu trúc (cột + kiểu suy ra) | dữ liệu (10 dòng đầu) */}
+            {/* Preview tabs: structure (columns + inferred types) | data (the first 10 rows) */}
             {globalImportFileType !== 'sql' && (
               <div style={{ display: 'flex', gap: '4px' }}>
                 {([
                   { id: 'structure', label: t('app.importTabStructure', { n: globalImportCols.length }) },
                   { id: 'data', label: t('app.importTabData', { n: globalImportPendingRows.length }) },
-                ] as const).map(t => (
+                ] as const).map(tabDef => (
                   <button
-                    key={t.id}
-                    onClick={() => setGlobalImportTab(t.id)}
+                    key={tabDef.id}
+                    onClick={() => setGlobalImportTab(tabDef.id)}
                     style={{
                       padding: '4px 12px',
                       fontSize: '11px',
                       borderRadius: '4px',
                       border: '1px solid var(--win-border)',
                       cursor: 'pointer',
-                      background: globalImportTab === t.id ? 'var(--win-accent)' : 'transparent',
-                      color: globalImportTab === t.id ? '#fff' : 'var(--win-text-secondary)',
+                      background: globalImportTab === tabDef.id ? 'var(--win-accent)' : 'transparent',
+                      color: globalImportTab === tabDef.id ? '#fff' : 'var(--win-text-secondary)',
                       fontWeight: 600
                     }}
                   >
-                    {t.label}
+                    {tabDef.label}
                   </button>
                 ))}
               </div>
@@ -2528,7 +2614,11 @@ export const App: React.FC = () => {
         />
       )}
 
-      {/* So sánh 2 database (cấu trúc + dữ liệu) */}
+      {/* Comparing two databases (structure + data) */}
+      {/* Not gated on `connection`: the server, its token and the request log are app-wide, and the
+          screen has to be reachable to turn the thing OFF even with nothing open. */}
+      {showMcpSettings && <McpServerSettingsModal onClose={() => setShowMcpSettings(false)} />}
+
       {showDbCompare && connection && (
         <DbCompareDialog
           connId={activeConnIdState}
@@ -2539,7 +2629,7 @@ export const App: React.FC = () => {
         />
       )}
 
-      {/* Sinh dữ liệu test hàng loạt */}
+      {/* Bulk test-data generation */}
       {showDataGen && connection && (
         <DataGeneratorDialog
           connId={activeConnIdState}
@@ -2548,8 +2638,8 @@ export const App: React.FC = () => {
           onClose={() => {
             setShowDataGen(false);
             setDataGenTable(null);
-            // Số dòng của các bảng đã đổi -> Sidebar/DataGrid nạp lại. Dùng lại event sẵn có
-            // thay vì thêm event mới (schema không đổi nên KHÔNG cần invalidateCatalog).
+            // Row counts changed -> Sidebar/DataGrid reload. This reuses the existing event rather
+            // than adding a new one (the schema did not change, so invalidateCatalog is NOT needed).
             window.dispatchEvent(new CustomEvent('database-restored', { detail: { connId: activeConnIdState } }));
           }}
         />
@@ -2557,7 +2647,7 @@ export const App: React.FC = () => {
 
       {/* About Modal */}
       {showAbout && (
-        /* Bấm ra ngoài để đóng — trước đây chỉ đóng được bằng nút. */
+        /* Click outside to close — it used to be closable only by the button. */
         <div className="cm-modal-backdrop" onClick={() => setShowAbout(false)}>
           <div className="about-dialog" onClick={(e) => e.stopPropagation()}>
             <button className="about-close" onClick={() => setShowAbout(false)} title={t('common.close')} aria-label={t('common.close')}>

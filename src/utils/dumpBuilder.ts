@@ -1,22 +1,22 @@
-// Dựng nội dung tệp .sql (dump) cho cả hai đường xuất của app.
+// Builds the contents of a .sql dump for both of the app's export paths.
 //
-// Trước đây có HAI bản: khối này nằm trong `App.tsx` (popup "Xuất Cơ sở dữ liệu") và một bản
-// Rust `export_multi_tables` (Connection Manager -> Backup). Bản Rust không phân biệt view với
-// bảng nên sinh `DROP TABLE`/`INSERT INTO` cho view, ghi một `INSERT` cho MỖI dòng, không báo
-// được tiến độ, và tất nhiên không có routine/trigger. Mọi thứ sửa cho popup đều không tới
-// được nút Backup — nên bản Rust đã bị xoá và cả hai nơi cùng gọi `buildDump()` ở đây.
+// There used to be TWO versions: this code inside `App.tsx` (the "Export Database" dialog) and a
+// Rust `export_multi_tables` (Connection Manager -> Backup). The Rust one did not tell views from
+// tables, so it emitted `DROP TABLE`/`INSERT INTO` for a view, wrote one `INSERT` per row, could
+// not report progress, and of course had no routines or triggers. Every fix made for the dialog
+// missed the Backup button — so the Rust one was deleted and both places now call `buildDump()`.
 //
-// Truy cập database đi qua tham số `reader` chứ không import `dbHelper` trực tiếp: giữ cho
-// module này không phụ thuộc `@tauri-apps/api`, nhờ vậy thứ tự các câu lệnh trong dump —
-// phần dễ hỏng nhất và cũng quan trọng nhất — kiểm chứng được bằng unit test.
+// Database access comes in through the `reader` parameter rather than importing `dbHelper`: that
+// keeps this module free of `@tauri-apps/api`, which is what makes the statement order in a dump —
+// the most fragile and most important part of it — checkable by unit test.
 import i18n from '../i18n';
 import type { SchemaInfo } from './dbHelper';
 import { buildSql, isBinaryType, orderViewsByDependency, stripDefiner, wrapMysqlDelimiter } from './exportHelper';
 
-/** Số dòng đọc mỗi lần gọi khi rút dữ liệu bảng. */
+/** Rows read per call while pulling a table's data. */
 export const EXPORT_PAGE_SIZE = 2000;
 
-/** Phần dbHelper mà việc dựng dump cần tới. `dbHelper` khớp sẵn hình dạng này. */
+/** The part of dbHelper building a dump needs. `dbHelper` already matches this shape. */
 export interface DumpReader {
   getTableDefinition(name: string): Promise<{ success: boolean; sql?: string; error?: string }>;
   getTableSchema(tableName: string): Promise<SchemaInfo>;
@@ -79,17 +79,18 @@ export interface DumpProgress {
 
 export interface DumpSpec {
   dbType: string;
-  /** Bảng VÀ view (giống `DatabaseExportOptions.tables`). */
+  /** Tables AND views (same as `DatabaseExportOptions.tables`). */
   tables: string[];
-  /** Tên nào trong `tables` là view. */
+  /** Which names in `tables` are views. */
   views: string[];
   routines: { name: string; kind: 'function' | 'procedure' }[];
   triggers: string[];
-  /** MySQL scheduled event — ghi cùng khối DELIMITER với routine. */
+  /** MySQL scheduled events — written in the same DELIMITER block as the routines. */
   events?: string[];
   /**
-   * Schema Postgres mà dump này được đọc ra từ đó. Chỉ dùng để viết header (xem `dumpHeader`);
-   * mọi DDL bên trong vẫn để tên trần, nên tệp còn nhập lại được vào schema tên khác.
+   * The Postgres schema this dump was read from. Used only to write the header (see `dumpHeader`);
+   * every DDL inside still carries a bare name, so the file can be imported into a differently named
+   * schema.
    */
   schema?: string | null;
   sqlOptions: { dropTable: boolean; includeStructure: boolean; includeContent: boolean };
@@ -98,39 +99,41 @@ export interface DumpSpec {
 
 const fmtNum = (n: number) => n.toLocaleString(i18n.language);
 
-/** Định danh Postgres trong câu lệnh sinh ra: luôn bọc nháy kép, nhân đôi nháy kép bên trong. */
+/** A Postgres identifier in generated SQL: always double-quoted, with inner double quotes doubled. */
 function quotePgIdent(name: string): string {
   return `"${name.replace(/"/g, '""')}"`;
 }
 
 /**
- * Lệnh cấp phiên mở đầu tệp dump.
+ * The session-level statements that open a dump file.
  *
- * `restore_backup` bên trong app vốn đã tự lo mã hoá và khoá ngoại, nên những dòng này KHÔNG
- * phải để phục vụ nút Nhập — chúng để tệp còn chạy được bằng `mysql < dump.sql`, `psql -f`
- * hay `sqlite3 <` ở ngoài. Ở đó không có ai tắt kiểm tra khoá ngoại hộ, mà bảng thì xuất theo
- * thứ tự alphabet, nên `city` tham chiếu `country` là vỡ ngay.
+ * The app's own `restore_backup` already handles encoding and foreign keys, so these lines are NOT
+ * there for the Import button — they are there so the file still runs under `mysql < dump.sql`,
+ * `psql -f` or `sqlite3 <` outside the app. Out there nobody turns FK checks off for you, and
+ * tables are exported alphabetically, so `city` referencing `country` breaks immediately.
  *
- * Bộ lọc theo bảng của `restore_backup` cho `SET …` và `PRAGMA …` luôn chạy và coi lỗi của
- * chúng là không nghiêm trọng (`is_session_level_stmt`), nên dump của dialect khác cũng không
- * chết vì mấy dòng này.
+ * `restore_backup`'s per-table filter lets `SET …` and `PRAGMA …` through unconditionally and
+ * treats their failures as non-fatal (`is_session_level_stmt`), so a dump from another dialect does
+ * not die on these lines either.
  *
- * `schema` (chỉ Postgres, chỉ khi khác `public`): tệp xuất từ schema `sales` mà nhập lại không
- * có hai dòng này thì mọi đối tượng chui vào schema đầu `search_path` của máy đích — thường là
- * `public` — tức là **nhập nhầm chỗ mà không báo lỗi gì**. Ghi ở header thay vì qualify từng
- * câu DDL là cố ý: tên trần cộng `search_path` thì người dùng đổi được schema đích chỉ bằng cách
- * sửa một dòng, còn tên đã qualify thì phải sửa cả tệp. `CREATE SCHEMA IF NOT EXISTS` đi kèm vì
- * `SET search_path` tới một schema chưa có là hợp lệ nhưng vô nghĩa — `CREATE TABLE` ngay sau đó
- * sẽ lỗi. Cả hai đều nằm trong danh sách "lệnh cấp phiên" của `restore_backup`
- * (`is_session_level_stmt`) nên luôn chạy dù người dùng chỉ chọn vài bảng.
+ * `schema` (Postgres only, and only when it is not `public`): a file exported from schema `sales`
+ * and re-imported without these two lines puts every object into whatever schema comes first in the
+ * target's `search_path` — usually `public` — that is, **imported into the wrong place with no
+ * error at all**. Writing it in the header rather than qualifying each DDL is deliberate: with bare
+ * names plus `search_path`, the user retargets the whole dump by editing one line, while qualified
+ * names would mean editing the entire file. `CREATE SCHEMA IF NOT EXISTS` comes along because
+ * `SET search_path` to a schema that does not exist is valid but useless — the `CREATE TABLE` right
+ * after it fails. Both are in `restore_backup`'s "session level" list (`is_session_level_stmt`) and
+ * so always run, even when the user selected only a few tables.
  */
 function dumpHeader(dbType: string, schema?: string | null): string[] {
   if (dbType === 'mysql') {
     return [
       'SET NAMES utf8mb4;',
       'SET FOREIGN_KEY_CHECKS = 0;',
-      // Không có dòng này thì giá trị 0 trong cột AUTO_INCREMENT bị coi là "tự sinh đi" và
-      // database nhập lại đánh số khác hẳn bản gốc. mysqldump cũng đặt đúng cờ này.
+      // Without this line, a 0 in an AUTO_INCREMENT column is read as "generate one for me" and the
+      // re-imported database numbers things quite differently from the original. mysqldump sets the
+      // same flag.
       "SET SQL_MODE = 'NO_AUTO_VALUE_ON_ZERO';",
       '',
     ];
@@ -139,11 +142,12 @@ function dumpHeader(dbType: string, schema?: string | null): string[] {
     const sch = (schema || '').trim();
     return [
       "SET client_encoding = 'UTF8';",
-      // Literal nhị phân được ghi dạng '\xAB12'::bytea — tắt cờ này thì dấu \ thành ký tự
-      // escape và mọi BLOB nhập lại sai nội dung.
+      // Binary literals are written as '\xAB12'::bytea — with this flag off, \ becomes an escape
+      // character and every BLOB comes back with the wrong contents.
       'SET standard_conforming_strings = on;',
-      // `public` không ghi ra: đó đã là mặc định của mọi search_path, và bỏ qua giữ cho tệp
-      // xuất từ database thường không khác gì bản trước khi có tính năng schema.
+      // `public` is not written out: it is already the default of every search_path, and leaving it
+      // out keeps a dump from an ordinary database byte-identical to what it was before schema
+      // support existed.
       ...(sch && sch !== 'public'
         ? [
             `CREATE SCHEMA IF NOT EXISTS ${quotePgIdent(sch)};`,
@@ -153,12 +157,12 @@ function dumpHeader(dbType: string, schema?: string | null): string[] {
       '',
     ];
   }
-  // SQLite: bên trong một transaction thì PRAGMA này là no-op (SQLite quy định vậy), nên nó
-  // chỉ có tác dụng khi chạy tệp bằng sqlite3 CLI — đúng chỗ cần.
+  // SQLite: inside a transaction this PRAGMA is a no-op (SQLite says so), so it only does anything
+  // when the file is run through the sqlite3 CLI — which is exactly where it is needed.
   return ['PRAGMA foreign_keys = OFF;', ''];
 }
 
-/** Trả lại trạng thái phiên sau khi nạp xong. */
+/** Puts the session state back once loading is done. */
 function dumpFooter(dbType: string): string[] {
   if (dbType === 'mysql') return ['SET FOREIGN_KEY_CHECKS = 1;'];
   if (dbType === 'postgres') return [];
@@ -166,11 +170,11 @@ function dumpFooter(dbType: string): string[] {
 }
 
 /**
- * Đọc hết dòng của một bảng theo trang.
+ * Reads all of a table's rows, page by page.
  *
- * Tiến độ: mức ngoài là số bảng đã xong (cộng phần trăm của bảng đang chạy), dòng phụ là %
- * dòng trong bảng đó. Đọc theo trang chứ không một phát: trước đây giới hạn 100.000 dòng nên
- * bảng lớn bị xuất thiếu mà không báo gì.
+ * Progress: the outer level is tables finished (plus the running table's percentage), and the
+ * sub-line is the percentage of rows within that table. Paged rather than fetched in one go: the
+ * old limit of 100,000 rows meant a large table was exported incomplete with nothing said.
  */
 export async function readTableRows(
   reader: Pick<DumpReader, 'getTableData'>,
@@ -208,16 +212,18 @@ export async function readTableRows(
 }
 
 /**
- * Toàn bộ nội dung tệp .sql.
+ * The whole contents of the .sql file.
  *
- * Thứ tự các câu lệnh là thứ có ý nghĩa nhất ở đây — **bảng -> view -> routine -> trigger**:
- *   - `CREATE VIEW` được kiểm tra ngay lúc chạy, nên view đứng trước bảng mà nó SELECT là lỗi
- *     luôn (MySQL 1146). Danh sách đối tượng theo alphabet nên view `actor_info` của sakila
- *     từng đứng thứ hai, trước cả bảng `film`.
- *   - Giữa các view lại xếp theo phụ thuộc (`orderViewsByDependency`) vì view đọc được view khác.
- *   - Routine và trigger đứng cuối: thân chúng đọc bảng, và trigger còn có thể gọi hàm.
- * View KHÔNG xuất dữ liệu: `INSERT INTO <view>` lỗi khi view không updatable, và những dòng đó
- * vốn đã nằm trong các bảng gốc rồi.
+ * The statement order is the most meaningful thing here — **tables -> views -> routines ->
+ * triggers**:
+ *   - `CREATE VIEW` is validated as it runs, so a view placed before the table it SELECTs from
+ *     fails outright (MySQL 1146). The object list is alphabetical, which once put sakila's
+ *     `actor_info` view second, long before the `film` table.
+ *   - Among the views the order comes from their dependencies (`orderViewsByDependency`), because a
+ *     view can read another view.
+ *   - Routines and triggers come last: their bodies read tables, and a trigger may call a function.
+ * Views carry NO data: `INSERT INTO <view>` fails on a non-updatable view, and those rows are
+ * already in the base tables anyway.
  */
 export async function buildDump(spec: DumpSpec, reader: DumpReader): Promise<string> {
   const { onProgress, sqlOptions } = spec;
@@ -225,8 +231,9 @@ export async function buildDump(spec: DumpSpec, reader: DumpReader): Promise<str
   const isPostgres = spec.dbType === 'postgres';
   const q = isMysql ? '`' : '"';
 
-  // Routine/trigger không có dữ liệu, chỉ có định nghĩa -> tắt "kèm cấu trúc" là chúng không
-  // còn gì để xuất. Cộng vào tổng để thanh tiến độ không dừng ở 100% rồi vẫn chạy tiếp.
+  // Routines and triggers have no data, only a definition -> with "include structure" off there is
+  // nothing left of them to export. Counted into the total so the progress bar does not sit at 100%
+  // while work continues.
   const routineList = sqlOptions.includeStructure ? spec.routines : [];
   const triggerList = sqlOptions.includeStructure ? spec.triggers : [];
   const eventList = sqlOptions.includeStructure ? spec.events || [] : [];
@@ -243,9 +250,9 @@ export async function buildDump(spec: DumpSpec, reader: DumpReader): Promise<str
   const baseTables = spec.tables.filter((name) => !viewSet.has(name.toLowerCase()));
   const viewList = spec.tables.filter((name) => viewSet.has(name.toLowerCase()));
 
-  // ALTER TABLE ... ADD CONSTRAINT gom lại, ghi sau khi mọi bảng đã tồn tại (xem chỗ push).
+  // ALTER TABLE ... ADD CONSTRAINT is collected here and written once every table exists (see the push).
   const deferredConstraints: string[] = [];
-  // setval() của sequence: phải chạy sau khi dữ liệu đã vào, vì nó đọc MAX() của bảng.
+  // A sequence's setval(): has to run after the data is in, because it reads the table's MAX().
   const deferredSequenceValues: string[] = [];
 
   const schemaFailed = (name: string, message?: string) =>
@@ -263,13 +270,13 @@ export async function buildDump(spec: DumpSpec, reader: DumpReader): Promise<str
       detail: i18n.t('app.exportReadingSchema'),
     });
 
-    // Những thứ đi kèm bảng mà CREATE TABLE của dialect không chứa (index, FK, comment,
-    // sequence). MySQL trả về rỗng vì SHOW CREATE TABLE đã gói sẵn tất cả.
+    // The things that belong to a table but are not in that dialect's CREATE TABLE (indexes, FKs,
+    // comments, sequences). MySQL returns nothing, because SHOW CREATE TABLE already carries it all.
     const extras = sqlOptions.includeStructure
       ? await reader.getTableDdlExtras(table)
       : { sequences: [], indexes: [], constraints: [], comments: [], sequenceValues: [] };
-    // Khoá ngoại phải đợi TẤT CẢ bảng được tạo xong mới thêm được — bảng xuất theo thứ tự
-    // alphabet, nên `city` tham chiếu `country` sẽ lỗi nếu gắn FK ngay tại chỗ.
+    // Foreign keys can only be added once EVERY table exists — tables are exported alphabetically,
+    // so `city` referencing `country` would fail if the FK were attached in place.
     deferredConstraints.push(...extras.constraints);
 
     if (sqlOptions.dropTable) {
@@ -279,8 +286,8 @@ export async function buildDump(spec: DumpSpec, reader: DumpReader): Promise<str
       const def = await reader.getTableDefinition(table);
       if (def.success && def.sql) {
         parts.push(`-- Structure for table ${q}${table}${q}`);
-        // Sequence đứng TRƯỚC bảng: cột serial có DEFAULT nextval('...') và Postgres kiểm tra
-        // ngay lúc CREATE TABLE, thiếu sequence là restore chết ở bảng đầu tiên.
+        // Sequences come BEFORE the table: a serial column has DEFAULT nextval('...') and Postgres
+        // checks it right at CREATE TABLE, so a missing sequence kills the restore at the first table.
         parts.push(...extras.sequences);
         const sql = def.sql.trim();
         parts.push(sql.endsWith(';') ? sql : sql + ';');
@@ -296,17 +303,18 @@ export async function buildDump(spec: DumpSpec, reader: DumpReader): Promise<str
       if (rows.length > 0) {
         const schema = await reader.getTableSchema(table);
         const schemaCols = schema.columns || [];
-        // Cột GENERATED/IDENTITY bị loại khỏi INSERT: database tự tính chúng, ghi vào là lỗi
-        // (MySQL 3105, Postgres đòi OVERRIDING SYSTEM VALUE) và cả lần nhập bị rollback.
+        // GENERATED/IDENTITY columns are dropped from the INSERT: the database computes them, and
+        // writing to one is an error (MySQL 3105; Postgres demands OVERRIDING SYSTEM VALUE) that
+        // rolls back the entire import.
         const colNames = schemaCols.filter((c) => !c.generated).map((c) => c.name);
         const cols = colNames.length ? colNames : Object.keys(rows[0]);
-        // Ô nhị phân về đây là mảng byte; không đánh dấu thì nó bị JSON.stringify thành
-        // '[137,80,78,71,...]' và tệp gốc coi như mất.
+        // A binary cell arrives as a byte array; unmarked, JSON.stringify turns it into
+        // '[137,80,78,71,...]' and the original file is effectively lost.
         const binaryCols = new Set(
           schemaCols.filter((c) => isBinaryType(c.type, spec.dbType)).map((c) => c.name)
         );
-        // Cột identity thì NGƯỢC LẠI với generated: giữ trong INSERT để không mất id gốc,
-        // nhưng câu lệnh phải xin phép ghi đè.
+        // An identity column is the OPPOSITE of a generated one: kept in the INSERT so the original
+        // ids survive, but the statement has to ask permission to override.
         const needsOverriding = schemaCols.some((c) => c.identityAlways);
         parts.push(i18n.t('app.exportDataComment', { table: `${q}${table}${q}`, rows: rows.length }));
         parts.push(buildSql(table, cols, rows, spec.dbType, binaryCols, needsOverriding));
@@ -322,22 +330,22 @@ export async function buildDump(spec: DumpSpec, reader: DumpReader): Promise<str
     });
   }
 
-  // Khoá ngoại và các ràng buộc mức bảng khác: chỉ gắn được khi MỌI bảng đã tồn tại.
+  // Foreign keys and the other table-level constraints: attachable only once EVERY table exists.
   if (deferredConstraints.length > 0) {
     parts.push('-- Constraints');
     parts.push(...deferredConstraints);
     parts.push('');
   }
-  // setval() đọc MAX() của dữ liệu vừa nạp -> phải sau toàn bộ INSERT. Thiếu nó thì sequence
-  // quay về 1 và dòng chèn tiếp theo đụng khoá chính.
+  // setval() reads the MAX() of the data just loaded -> it must come after every INSERT. Without it
+  // the sequence falls back to 1 and the next inserted row collides with the primary key.
   if (deferredSequenceValues.length > 0) {
     parts.push('-- Sequence values');
     parts.push(...deferredSequenceValues);
     parts.push('');
   }
 
-  // View: chỉ định nghĩa. Tắt "kèm cấu trúc" thì view không còn gì để xuất, và lệnh DROP của
-  // nó cũng phải im theo — DROP VIEW mà không có CREATE VIEW là xoá trắng.
+  // Views: definitions only. With "include structure" off a view has nothing left to export, and its
+  // DROP has to fall silent with it — a DROP VIEW with no CREATE VIEW simply deletes it.
   if (sqlOptions.includeStructure && viewList.length > 0) {
     const viewDefs: { name: string; sql: string }[] = [];
     for (let i = 0; i < viewList.length; i++) {
@@ -367,8 +375,8 @@ export async function buildDump(spec: DumpSpec, reader: DumpReader): Promise<str
     const cascade = isPostgres ? ' CASCADE' : '';
     for (const view of orderViewsByDependency(viewDefs)) {
       if (sqlOptions.dropTable) {
-        // Materialized view cần đúng chữ MATERIALIZED trong lệnh DROP; nhận biết từ chính DDL
-        // vừa lấy về, khỏi phải kéo thêm một trường "loại" xuyên qua cả chuỗi gọi.
+        // A materialized view needs the word MATERIALIZED in its DROP; detected from the DDL just
+        // fetched, which saves threading a "kind" field through the whole call chain.
         const isMatView = /^\s*CREATE\s+MATERIALIZED\s+VIEW\b/i.test(view.sql);
         const kw = isMatView ? 'MATERIALIZED VIEW' : 'VIEW';
         parts.push(`DROP ${kw} IF EXISTS ${q}${view.name}${q}${cascade};`);
@@ -397,14 +405,14 @@ export async function buildDump(spec: DumpSpec, reader: DumpReader): Promise<str
       reportStep(routine.name, false);
       const def = await reader.getObjectDefinition(routine.name, routine.kind);
       if (def.success && def.sql) {
-        // Postgres không cần DROP: pg_get_functiondef() trả về CREATE OR REPLACE FUNCTION, và
-        // DROP FUNCTION ở đây thì phải kèm chữ ký tham số mới xoá đúng bản nạp chồng.
+        // Postgres needs no DROP: pg_get_functiondef() returns CREATE OR REPLACE FUNCTION, and a
+        // DROP FUNCTION here would need the parameter signature to remove the right overload.
         if (sqlOptions.dropTable && isMysql) {
           const kw = routine.kind === 'function' ? 'FUNCTION' : 'PROCEDURE';
           drops.push(`DROP ${kw} IF EXISTS ${q}${routine.name}${q};`);
         }
-        // pg_get_functiondef() trả về định nghĩa KHÔNG có dấu ';' ở cuối, khác SHOW CREATE của
-        // MySQL — thiếu thì câu sau bị dính vào làm một. Bọc DELIMITER sẽ tự bỏ dấu này.
+        // pg_get_functiondef() returns a definition with NO trailing ';', unlike MySQL's SHOW
+        // CREATE — without one the next statement runs into it. The DELIMITER wrapper strips it again.
         const sql = stripDefiner(def.sql.trim());
         creates.push(sql.endsWith(';') ? sql : sql + ';');
       } else {
@@ -414,8 +422,8 @@ export async function buildDump(spec: DumpSpec, reader: DumpReader): Promise<str
       step++;
     }
 
-    // Event chỉ có ở MySQL, và thân nó (`DO BEGIN ... END`) cũng chứa dấu ';' như routine nên
-    // đi chung khối DELIMITER phía dưới.
+    // Events exist only on MySQL, and a body (`DO BEGIN ... END`) carries its own ';' just as a
+    // routine does, so they share the DELIMITER block below.
     for (const name of eventList) {
       reportStep(name, false);
       const def = await reader.getObjectDefinition(name, 'event');
@@ -432,8 +440,8 @@ export async function buildDump(spec: DumpSpec, reader: DumpReader): Promise<str
       step++;
     }
 
-    // Câu CREATE TRIGGER lấy một lần cho cả database (get_all_triggers); Postgres còn cần tên
-    // bảng chủ vì DROP TRIGGER của nó bắt buộc có `ON <table>`.
+    // The CREATE TRIGGER statements are fetched once for the whole database (get_all_triggers);
+    // Postgres also needs the owning table name, because its DROP TRIGGER requires `ON <table>`.
     const allTriggers = triggerList.length > 0 ? await reader.getAllTriggers() : [];
     const triggerByName = new Map(allTriggers.map((tr) => [tr.name, tr]));
     for (const name of triggerList) {
@@ -459,9 +467,9 @@ export async function buildDump(spec: DumpSpec, reader: DumpReader): Promise<str
     if (creates.length > 0) {
       parts.push('-- Routines and triggers');
       parts.push(...drops);
-      // MySQL: thân routine/trigger có dấu ';' riêng nên phải đổi delimiter, nếu không bộ tách
-      // cắt ngay giữa thân. Postgres dùng $$ (cả hai bộ tách đều hiểu), SQLite thì khối
-      // BEGIN...END được chính bộ tách nhận diện.
+      // MySQL: a routine or trigger body has ';' of its own, so the delimiter has to change or the
+      // splitter cuts straight through the body. Postgres uses dollar-quotes (both splitters
+      // understand them), and on SQLite the BEGIN...END block is recognised by the splitter itself.
       parts.push(...(isMysql ? wrapMysqlDelimiter(creates) : creates));
       parts.push('');
     }

@@ -1,11 +1,11 @@
 /**
- * Helper cho phần "xem trước" của các luồng Import (DataGrid và Sidebar > Nhập dữ liệu).
- * Chỉ phục vụ hiển thị — không dùng để sinh DDL hay câu lệnh chạy thật.
+ * The helpers behind the "preview" part of the import flows (DataGrid and Sidebar > Import data).
+ * For display only — never used to generate DDL or the statements that actually run.
  */
 
 import i18n from '../i18n';
 
-/** Gộp tên cột của mọi dòng (CSV/JSON có thể thiếu cột ở một số dòng). */
+/** The union of every row's column names (a CSV/JSON row may be missing some). */
 export function collectColumns(rows: any[], sample = 200): string[] {
   const cols: string[] = [];
   for (const r of rows.slice(0, sample)) {
@@ -14,7 +14,7 @@ export function collectColumns(rows: any[], sample = 200): string[] {
   return cols;
 }
 
-/** Suy ra kiểu dữ liệu của một cột từ tối đa 100 dòng đầu, trả về nhãn tiếng Việt. */
+/** Infers a column's data type from at most the first 100 rows, returning an already-translated label. */
 export function inferColType(rows: any[], col: string): string {
   let seen = 0, num = 0, bool = 0, date = 0, json = 0, hasDecimal = false;
   for (const r of rows.slice(0, 100)) {

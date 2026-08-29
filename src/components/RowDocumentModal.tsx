@@ -7,6 +7,10 @@ import {
 import Editor from '@monaco-editor/react';
 import { Modal, ModalBody, ModalFooter } from './Modal';
 import type { ColumnInfo } from '../utils/dbHelper';
+import { MediaCellPreview } from './media';
+
+/** Stable empty default for the `foreignKeys` prop: a fresh `[]` each render breaks memoisation downstream. */
+const NO_FKS: { column: string; refTable: string; refColumn: string }[] = [];
 
 export interface RowDocumentModalProps {
   isOpen: boolean;
@@ -101,7 +105,7 @@ export const RowDocumentModal: React.FC<RowDocumentModalProps> = ({
   rowIndex,
   rows,
   columns,
-  foreignKeys = [],
+  foreignKeys = NO_FKS,
   onNavigateRow,
 }) => {
   const { t } = useTranslation();
@@ -111,7 +115,7 @@ export const RowDocumentModal: React.FC<RowDocumentModalProps> = ({
   const [copiedAll, setCopiedAll] = useState(false);
   const [jsonText, setJsonText] = useState('');
 
-  // Tự động nhận diện theme sáng / tối từ attribute data-theme của ứng dụng
+  // Detect the light/dark theme from the app's own data-theme attribute
   const [isDark, setIsDark] = useState<boolean>(() => {
     return document.documentElement.getAttribute('data-theme') !== 'light';
   });
@@ -129,21 +133,23 @@ export const RowDocumentModal: React.FC<RowDocumentModalProps> = ({
   const currentRow = rows[rowIndex] || null;
   const totalRows = rows.length;
 
-  // Lấy dữ liệu dạng JSON đẹp của dòng hiện tại
+  // Format clean JSON representation of active row
   useEffect(() => {
     if (currentRow) {
-      // Bỏ các thuộc tính nội bộ như __tempId
-      const cleanRow: Record<string, any> = {};
-      Object.keys(currentRow).forEach(k => {
-        if (!k.startsWith('__')) {
-          cleanRow[k] = currentRow[k];
-        }
+      queueMicrotask(() => {
+        // Strip internal properties like __tempId
+        const cleanRow: Record<string, any> = {};
+        Object.keys(currentRow).forEach(k => {
+          if (!k.startsWith('__')) {
+            cleanRow[k] = currentRow[k];
+          }
+        });
+        setJsonText(JSON.stringify(cleanRow, null, 2));
       });
-      setJsonText(JSON.stringify(cleanRow, null, 2));
     }
   }, [currentRow]);
 
-  // Phím tắt điều hướng Alt+Left / Alt+Right
+  // The Alt+Left / Alt+Right navigation shortcuts
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -191,7 +197,7 @@ export const RowDocumentModal: React.FC<RowDocumentModalProps> = ({
     } catch {}
   }, [jsonText]);
 
-  // Sinh câu lệnh SQL INSERT từ dòng hiện tại
+  // Build an INSERT statement from the current row
   const copyAsSqlInsert = useCallback(() => {
     if (!currentRow) return;
     const cols = columns.map(c => c.name);
@@ -206,14 +212,14 @@ export const RowDocumentModal: React.FC<RowDocumentModalProps> = ({
     copyToClipboard(sql);
   }, [currentRow, columns, tableName, copyToClipboard]);
 
-  // Lọc trường cho Table View
+  // Filter the fields for the Table View
   const filteredColumns = useMemo(() => {
     if (!searchField.trim()) return columns;
     const query = searchField.toLowerCase().trim();
     return columns.filter(c => c.name.toLowerCase().includes(query) || (c.type || '').toLowerCase().includes(query));
   }, [columns, searchField]);
 
-  // Parsed Object cho Tree View (tự parse các trường JSON string nếu có)
+  // The parsed object for the Tree View (JSON-string fields are parsed too, where present)
   const treeData = useMemo(() => {
     if (!currentRow) return {};
     const res: Record<string, any> = {};
@@ -371,7 +377,12 @@ export const RowDocumentModal: React.FC<RowDocumentModalProps> = ({
                                 {val === null ? (
                                   <span className="grid-cell-null">NULL</span>
                                 ) : (
-                                  strVal
+                                  <MediaCellPreview
+                                    value={val}
+                                    columnName={col.name}
+                                    tableName={tableName}
+                                    fallbackText={strVal}
+                                  />
                                 )}
                               </div>
                               <button

@@ -1,9 +1,9 @@
 /**
- * Đặt vị trí menu ngữ cảnh (chuột phải) sao cho không bị tràn ra ngoài cửa sổ:
- * hết chỗ bên dưới thì lật lên trên điểm bấm, hết chỗ bên phải thì lật sang trái,
- * còn nếu menu cao/rộng hơn cả khoảng trống thì ép vào trong viewport.
+ * Places a (right-click) context menu so that it never spills outside the window: with no room
+ * below it flips above the click point, with no room to the right it flips to the left, and when the
+ * menu is taller or wider than the space itself it is clamped into the viewport.
  *
- * Hàm thuần để test được; phần đo kích thước thật do component làm bằng ref.
+ * A pure function so it can be tested; measuring the real size is the component's job, via a ref.
  */
 export interface MenuRect {
   top: number;
@@ -22,12 +22,12 @@ export function clampMenu(
   let left = x;
   let top = y;
 
-  // Không đủ chỗ bên phải -> mở sang trái điểm bấm
+  // Not enough room on the right -> open to the left of the click point
   if (left + menuWidth + margin > viewWidth) left = x - menuWidth;
-  // Không đủ chỗ bên dưới -> mở lên trên điểm bấm
+  // Not enough room below -> open above the click point
   if (top + menuHeight + margin > viewHeight) top = y - menuHeight;
 
-  // Vẫn tràn (menu lớn hơn khoảng trống) -> ép vào trong viewport
+  // Still spilling (the menu is larger than the space) -> clamp it into the viewport
   if (left + menuWidth + margin > viewWidth) left = viewWidth - menuWidth - margin;
   if (top + menuHeight + margin > viewHeight) top = viewHeight - menuHeight - margin;
 

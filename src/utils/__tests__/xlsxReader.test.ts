@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildXlsx, buildXlsxWorkbook } from '../xlsxWriter';
 import { parseXlsx } from '../xlsxReader';
 
-// Round-trip: xlsxWriter dựng file .xlsx thật -> xlsxReader đọc lại bằng parser XML tự viết.
+// A round trip: xlsxWriter builds a real .xlsx file -> xlsxReader reads it back with the hand-written XML parser.
 function toBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.slice().buffer as ArrayBuffer;
 }

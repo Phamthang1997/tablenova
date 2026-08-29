@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { ExplainFlag, ExplainNode, ExplainResult } from '../utils/explainHelper';
 import { planFieldText } from '../utils/explainHelper';
@@ -585,11 +585,11 @@ export const ExplainDiagramView: React.FC<ExplainDiagramViewProps> = ({ result, 
     : '';
 
   // A plan has no terminal operator; dbForge draws the SELECT that consumes the top node.
-  const flowRoot = useMemo<ExplainNode | null>(() => {
-    if (!rootNode) return null;
-    if (rootNode.type === 'Query Execution Plan') return { ...rootNode, type: 'SELECT' };
-    return { id: 'select', type: 'SELECT', selfCost: 0, children: [rootNode] };
-  }, [rootNode]);
+  const flowRoot: ExplainNode | null = !rootNode
+    ? null
+    : rootNode.type === 'Query Execution Plan'
+    ? { ...rootNode, type: 'SELECT' }
+    : { id: 'select', type: 'SELECT', selfCost: 0, children: [rootNode] };
 
   // Resolving the selection by id (instead of holding the node) means a new plan simply drops
   // the old selection rather than pinning a node that is no longer in the tree.
@@ -1250,7 +1250,6 @@ const FlagIcon: React.FC<{ flags: ExplainFlag[]; ctx: FlowContext }> = ({ flags,
 };
 
 const NodeCell: React.FC<{ node: ExplainNode; ctx: FlowContext }> = ({ node, ctx }) => {
-  const Icon = operatorIcon(node.type);
   const iconColor = operatorIconColor(node.type);
   const selected = ctx.selectedId === node.id;
   const pct = ctx.totalSelfCost > 0 && node.selfCost !== undefined
@@ -1310,7 +1309,7 @@ const NodeCell: React.FC<{ node: ExplainNode; ctx: FlowContext }> = ({ node, ctx
         flexShrink: 0,
         transition: 'all 0.15s ease',
       }}>
-        <Icon size={20} />
+        {React.createElement(operatorIcon(node.type), { size: 20 })}
       </div>
 
       <div

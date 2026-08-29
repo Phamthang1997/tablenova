@@ -20,8 +20,8 @@ interface ConsoleProps {
   theme: 'dark' | 'light';
   onError: (msg: string) => void;
   /**
-   * `SELECT n` gõ trong console. Kèm `connId` vì backend KHÔNG đổi db của kết nối này — nó phân
-   * giải ra kết nối của db đó và báo lại (§2.2); người nhận phải chuyển workspace sang id ấy.
+   * `SELECT n` in console. Includes `connId` because backend does NOT change this connection's db — it resolves
+   * the target db connection and reports back (§2.2); caller switches workspace to that id.
    */
   onSelectedDb: (index: number, connId?: string) => void;
 }
@@ -32,24 +32,25 @@ interface LogEntry {
   cmd: string;
   out: string;
   ok: boolean;
-  /** Dòng thông báo của hệ thống (đã chuyển db…), không phải kết quả của server. */
+  /** System message (switched db...), distinct from server responses. */
   note?: boolean;
 }
 
 /**
- * CLI console — một khung Monaco nhiều dòng, không phải một ô nhập một dòng.
+ * CLI console — a multi-line Monaco buffer, not a one-line input.
  *
- * Đổi hình vì ô một dòng ép người dùng vào đúng một thao tác: gõ một lệnh, Enter, quên nó đi. Cái
- * thực tế người ta làm với `redis-cli` là giữ lại một nhúm lệnh và chạy lại chúng — dò một key, sửa
- * TTL, kiểm lại. Một buffer làm được điều đó mà không cần thêm tính năng nào; nó cũng thay luôn
- * lịch sử ↑/↓ cũ, vì bản thân buffer đã là lịch sử và còn sửa được.
+ * The shape changed because a one-line input forces exactly one gesture: type a command, Enter,
+ * forget it. What people actually do with `redis-cli` is keep a handful of commands and re-run them
+ * — inspect a key, change its TTL, check again. A buffer does that without any extra feature; it
+ * also replaces the old ↑/↓ history, because the buffer *is* the history and it can be edited.
  *
- * Dùng lại nguyên bộ Monaco của phía SQL — `SQL_EDITOR_OPTIONS`, hai theme — nên phím tắt, cỡ chữ,
- * hành vi gợi ý giống hệt tab truy vấn. Riêng ngôn ngữ là của Redis (`redisLanguage.ts`).
+ * It reuses the SQL side's whole Monaco setup — `SQL_EDITOR_OPTIONS`, both themes — so shortcuts,
+ * font sizes and suggestion behaviour match the query tab exactly. Only the language is Redis's own
+ * (`redisLanguage.ts`).
  *
- * Hai lớp lệnh vẫn do backend từ chối chứ không phải ở đây — ghi khi đang chỉ đọc, và lệnh chiếm
- * dụng connection dùng chung (`SUBSCRIBE`, `MONITOR`, `BLPOP`…) — nên thông báo người dùng thấy
- * đúng là thông báo từ biên IPC, không phải một phán đoán thứ hai của UI.
+ * Two classes of command are still refused by the backend rather than here — writes while read-only,
+ * and commands that monopolise the shared connection (`SUBSCRIBE`, `MONITOR`, `BLPOP`…) — so the
+ * message the user sees really is the one from the IPC boundary, not a second guess made in the UI.
  */
 export const Console: React.FC<ConsoleProps> = ({ storageScope, theme, onError, onSelectedDb }) => {
   const { t } = useTranslation();
@@ -58,10 +59,10 @@ export const Console: React.FC<ConsoleProps> = ({ storageScope, theme, onError, 
 
   const [log, setLog] = useState<LogEntry[]>([]);
   const [running, setRunning] = useState(false);
-  // Vị trí con trỏ, hiển thị ở thanh hành động như khung SQL. State chứ không đọc thẳng từ Monaco:
-  // nó phải vẽ lại mỗi lần con trỏ nhích, và đó chính là việc của state.
+  // Cursor position displayed in action bar. Kept in state to trigger re-renders on cursor movements.
+  
   const [pos, setPos] = useState({ line: 1, col: 1 });
-  /** Chiều cao editor do người dùng kéo, tính bằng px. `null` = chưa kéo, dùng tỉ lệ mặc định. */
+  /** User-dragged editor height in px. `null` = unadjusted, uses default ratio. */
   const [editorH, setEditorH] = useState<number | null>(null);
   const [dragging, setDragging] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -70,44 +71,47 @@ export const Console: React.FC<ConsoleProps> = ({ storageScope, theme, onError, 
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
 
   /**
-   * Nội dung ban đầu.
+   * The initial contents.
    *
-   * Lần đầu chạy bản mới thì chưa có buffer, nhưng có thể có lịch sử ↑/↓ của bản cũ — nạp nó vào
-   * làm buffer thay vì bỏ mặc trong localStorage. Người dùng không mất những lệnh đã gõ chỉ vì
-   * chỗ chứa chúng đổi hình.
+   * On the first run of a new build there is no buffer yet, but there may be the old ↑/↓ history —
+   * load that as the buffer instead of leaving it stranded in localStorage. The user does not lose
+   * the commands they typed just because the place holding them changed shape.
    */
-  const initialRef = useRef<string | null>(null);
-  if (initialRef.current === null) {
+  const [initialValue] = useState<string>(() => {
     let buf = '';
     try {
-      buf = localStorage.getItem(bufKey) ?? '';
-      if (!buf) {
+      buf = typeof localStorage !== 'undefined' ? localStorage.getItem(bufKey) ?? '' : '';
+      if (!buf && typeof localStorage !== 'undefined') {
         const raw = localStorage.getItem(legacyHistoryKey);
         if (raw) buf = (JSON.parse(raw) as string[]).join('\n');
       }
-    } catch { /* localStorage hỏng -> bắt đầu rỗng */ }
-    initialRef.current = buf;
-  }
+    } catch { /* localStorage corrupt -> fallback to empty */ }
+    return buf;
+  });
 
   useEffect(() => { registerRedisLanguage(); defineSqlThemes(); }, []);
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+    // `log` is a trigger, not a read - the body only touches refs. Dropping it kills auto-scroll.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [log]);
 
-  /** Đọc thẳng từ Monaco, không qua state — giống `getPaneSql()` của SqlEditor. */
+  /** Reads directly from Monaco without React state — mirrors SqlEditor `getPaneSql()`. */
   const bufferText = () => editorRef.current?.getValue() ?? '';
 
   const persist = useCallback(() => {
     try { localStorage.setItem(bufKey, bufferText()); } catch { /* quota */ }
+    // Same as `runAll` below: `bufferText` is deliberately not a dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bufKey]);
 
   /**
-   * Chạy một dãy lệnh theo thứ tự.
+   * Runs a sequence of commands in order.
    *
-   * **Dừng ở `SELECT n`** thay vì chạy tiếp. Backend không đổi db của kết nối này — nó phân giải ra
-   * kết nối của `dbN` và báo lại (§2.2) — nên các lệnh phía sau, nếu chạy tiếp, sẽ chạy trên db
-   * CŨ trong khi người dùng viết chúng cho db mới. Chạy đúng một nửa ý định là tệ hơn dừng lại và
-   * nói ra.
+   * **Stops at `SELECT n`** rather than continuing. The backend does not change this connection's db
+   * — it resolves the connection for `dbN` and reports back (§2.2) — so the commands after it, if
+   * they ran, would run on the OLD db while the user wrote them for the new one. Carrying out half
+   * of an intention is worse than stopping and saying so.
    */
   const runCommands = useCallback(async (cmds: string[]) => {
     if (cmds.length === 0 || running) return;
@@ -137,9 +141,16 @@ export const Console: React.FC<ConsoleProps> = ({ storageScope, theme, onError, 
     } finally {
       setRunning(false);
     }
+    // memo-dependencies calls `onError`, `onSelectedDb` and `t` unnecessary here. **It is wrong**:
+    // the body calls all three (`onError(res.error)`, `onSelectedDb(...)`, `t(redis.cliStoppedAtSelect)`).
+    // The one thing that sets this callback apart from the two below is that it is `async`, which the
+    // rule appears not to traverse. Do NOT trim these: dropping `t` is the stale-translation bug the
+    // i18n notes in CLAUDE.md warn about, and dropping the two props is a stale closure over an old
+    // handler.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running, onError, onSelectedDb, t]);
 
-  /** Ctrl+Enter: lệnh dưới con trỏ. */
+  /** Ctrl+Enter: command under cursor. */
   const runCurrent = useCallback(() => {
     const ed = editorRef.current;
     if (!ed) return;
@@ -149,32 +160,37 @@ export const Console: React.FC<ConsoleProps> = ({ storageScope, theme, onError, 
     void runCommands([cmd.text]);
   }, [runCommands, onError, t]);
 
-  /** Ctrl+Shift+Enter: cả buffer. */
+  /** Ctrl+Shift+Enter: entire buffer. */
   const runAll = useCallback(() => {
     const cmds = splitRedisCommands(bufferText()).map((c) => c.text);
     if (cmds.length === 0) { onError(t('redis.cliNothingToRun')); return; }
     void runCommands(cmds);
+    // memo-dependencies wants `bufferText` here. Leaving it out is deliberate: it is recreated
+    // every render and only reads a ref, so listing it would make this callback change identity on
+    // every render - defeating the very memo it is inside.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runCommands, onError, t]);
 
-  // Hai handler được gọi từ phím tắt của Monaco, vốn giữ closure của lần mount đầu — đọc qua ref
-  // để phím tắt luôn gọi bản mới nhất. Cùng cách `SqlEditor` xử lý action của nó.
-  const runHintRef = useRef('');
-  runHintRef.current = t('redis.cliRunThisLine');
-
+  // Handlers invoked by Monaco keybindings retain initial closure — accessed via refs
+  // so shortcuts always execute latest handlers. Matches `SqlEditor` action handling.
+  const runHintRef = useRef(t('redis.cliRunThisLine'));
   const runCurrentRef = useRef(runCurrent);
-  runCurrentRef.current = runCurrent;
   const runAllRef = useRef(runAll);
-  runAllRef.current = runAll;
+  useEffect(() => {
+    runHintRef.current = t('redis.cliRunThisLine');
+    runCurrentRef.current = runCurrent;
+    runAllRef.current = runAll;
+  }, [t, runCurrent, runAll]);
 
-  /** Tháo listener kéo nếu tab bị đóng giữa chừng. */
+  /** Cleans up resize drag listeners on tab unmount. */
   const dragCleanupRef = useRef<(() => void) | null>(null);
   useEffect(() => () => dragCleanupRef.current?.(), []);
 
   /**
-   * Kéo đường kẻ giữa thanh hành động và vùng kết quả để đổi chiều cao editor.
+   * Drags separator between action bar and results area to resize editor.
    *
-   * Nghe `mousemove`/`mouseup` trên `window` chứ không trên chính đường kẻ: kéo nhanh thì con trỏ
-   * rời khỏi dải 4px trước khi trình duyệt kịp bắn sự kiện, và khi đó thao tác kéo đứt giữa chừng.
+   * Listens to `mousemove`/`mouseup` on `window`: fast dragging can move cursor outside separator
+   before browser fires event, which would prematurely break the drag operation.
    */
   const startDrag = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -184,8 +200,8 @@ export const Console: React.FC<ConsoleProps> = ({ storageScope, theme, onError, 
 
     const onMove = (ev: MouseEvent) => {
       const root = rootRef.current;
-      // Chừa tối thiểu 120px cho vùng kết quả và 80px cho editor — kéo hết cỡ mà một trong hai
-      // biến mất thì không còn đường kéo ngược lại.
+      // Preserves min 120px for results and 80px for editor to prevent either container collapsing.
+      
       const maxH = root ? root.clientHeight - 120 : window.innerHeight - 200;
       setEditorH(Math.max(80, Math.min(maxH, startH + ev.clientY - startY)));
     };
@@ -193,7 +209,7 @@ export const Console: React.FC<ConsoleProps> = ({ storageScope, theme, onError, 
       setDragging(false);
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
-      // Monaco đo lại ngay thay vì chờ vòng `automaticLayout` kế tiếp.
+      // Monaco recalculates layout immediately rather than waiting for next `automaticLayout` cycle.
       editorRef.current?.layout();
     };
     window.addEventListener('mousemove', onMove);
@@ -209,8 +225,8 @@ export const Console: React.FC<ConsoleProps> = ({ storageScope, theme, onError, 
       () => runAllRef.current(),
     );
 
-    // Bấm mũi tên ở lề = chạy đúng dòng đó. Đặt con trỏ trước rồi mới chạy, để `runCurrent` và cú
-    // bấm này không thể bất đồng về "dòng nào".
+    // Clicking glyph margin arrow executes that line. Moves cursor first to align `runCurrent` target.
+    
     ed.onMouseDown((e) => {
       if (e.target.type !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) return;
       if (!e.target.position) return;
@@ -218,15 +234,15 @@ export const Console: React.FC<ConsoleProps> = ({ storageScope, theme, onError, 
       runCurrentRef.current();
     });
 
-    // Tô sáng dòng mà Ctrl+Enter sẽ chạy. Rẻ hơn hẳn bản SQL — ở đây "câu lệnh" luôn là một dòng,
-    // nên không phải mask chuỗi/chú thích để tìm ranh giới; chỉ cần biết con trỏ ở dòng nào.
+    // Highlights line that Ctrl+Enter will execute. Line-based without SQL masking overhead.
+    
     const decorations = ed.createDecorationsCollection([]);
     const refresh = () => {
       const model = ed.getModel();
-      const pos = ed.getPosition();
-      if (!model || !pos) return;
+      const caret = ed.getPosition();
+      if (!model || !caret) return;
       const text = model.getValue();
-      const cmd = commandAtLine(text, pos.lineNumber);
+      const cmd = commandAtLine(text, caret.lineNumber);
       if (!cmd) { decorations.set([]); return; }
       const items: monaco.editor.IModelDeltaDecoration[] = [{
         range: new monaco.Range(cmd.line, 1, cmd.line, 1),
@@ -235,7 +251,7 @@ export const Console: React.FC<ConsoleProps> = ({ storageScope, theme, onError, 
           glyphMarginHoverMessage: { value: runHintRef.current },
         },
       }];
-      // Chỉ tô nền khi có nhiều hơn một lệnh — một lệnh duy nhất thì tô cả nó là vô nghĩa.
+      // Only highlight line when multiple commands exist — redundant on single-command buffers.
       if (splitRedisCommands(text).length > 1) {
         items.push({
           range: new monaco.Range(cmd.line, 1, cmd.line, model.getLineMaxColumn(cmd.line)),
@@ -254,7 +270,7 @@ export const Console: React.FC<ConsoleProps> = ({ storageScope, theme, onError, 
     ed.focus();
   };
 
-  /** Lệnh nhanh: chèn thành một dòng mới ở cuối buffer rồi chạy. */
+  /** Quick command: appends new line at end of buffer and executes. */
   const runQuick = (q: string) => {
     const ed = editorRef.current;
     if (ed) {
@@ -270,20 +286,18 @@ export const Console: React.FC<ConsoleProps> = ({ storageScope, theme, onError, 
 
   return (
     <div className="redis-console" ref={rootRef}>
-      {/* Thứ tự theo đúng khung truy vấn SQL: editor -> thanh hành động -> tab kết quả -> vùng kết
-          quả -> dòng trạng thái. Bản trước đặt toàn bộ nút LÊN TRÊN editor, nên nút Chạy nằm xa
-          chỗ mắt đang nhìn (dòng lệnh đang gõ) và vùng kết quả thì không có gì nhận dạng. */}
+      {/* Layout mirrors SQL query layout: editor -> action bar -> result tabs -> results area -> status bar. */}
       <div
         className="redis-cli-editor"
         ref={editorBoxRef}
-        // Chỉ ghi đè khi người dùng đã kéo; chưa kéo thì để tỉ lệ mặc định trong CSS quyết định.
+        // Overrides style only after user drag; otherwise CSS flex proportions apply.
         style={editorH != null ? { flex: '0 0 auto', height: editorH } : undefined}
       >
         <Editor
           height="100%"
           language={REDIS_LANG_ID}
           theme={sqlThemeName(theme)}
-          defaultValue={initialRef.current}
+          defaultValue={initialValue}
           onChange={persist}
           onMount={onMount}
           options={{ ...SQL_EDITOR_OPTIONS, lineNumbersMinChars: 2 }}

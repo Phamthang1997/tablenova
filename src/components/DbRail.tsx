@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { Database, Lock } from 'lucide-react';
@@ -17,8 +17,8 @@ const DIALECT: Record<string, { label: string; Icon: React.FC<{ size?: number }>
   sqlite: { label: 'SQLite', Icon: SqliteIcon },
   postgres: { label: 'PostgreSQL', Icon: PostgresIcon },
   mysql: { label: 'MySQL', Icon: MySqlIcon },
-  // Redis dùng chung registry với SQL nên nó xuất hiện ở đây như một kết nối bình thường; mỗi db
-  // index là một ô riêng, đúng như hai database của một server Postgres
+  // Redis shares the registry with SQL, so it appears here as an ordinary connection; each db index is
+  // a cell of its own, exactly as two databases of one Postgres server are
   // (docs/redis-ui-unification-plan.md §2.1).
   redis: { label: 'Redis', Icon: RedisIcon },
 };
@@ -34,9 +34,9 @@ interface DbRailProps {
   onCloseOthers: (connId: string) => void;
   /** Flip the read-only flag of one connection. */
   onToggleReadOnly: (connId: string) => void;
-  /** Môi trường của một kết nối. Trường riêng của profile, KHÔNG suy từ màu — xem `utils/connEnv.ts`. */
+  /** A connection's environment. A field of the profile's own, NEVER inferred from the colour — see `utils/connEnv.ts`. */
   envOf: (connId: string) => ConnEnv;
-  /** Nhãn màu của kết nối (chọn từ connection info popover). */
+  /** The connection's colour label (chosen in the connection info popover). */
   colorOf?: (connId: string) => string;
   /** Bumped by the caller when a connect/disconnect happened, to refetch. */
   reloadKey?: number;
@@ -69,22 +69,29 @@ export const DbRail: React.FC<DbRailProps> = ({
   const [connections, setConnections] = useState<OpenConnection[]>([]);
   const [menu, setMenu] = useState<{ connId: string; top: number; left: number } | null>(null);
 
-  const reload = useCallback(async () => {
-    try {
-      setConnections(await dbHelper.listConnections());
-    } catch {
-      /* not connected yet -> nothing to draw */
-    }
-  }, []);
-
-  // `database-restored` is the existing event Sidebar and DataGrid already listen to; a restore can
-  // rename or drop the database a connection points at, which is what this column displays.
   useEffect(() => {
-    void reload();
-    const onRestored = () => void reload();
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await dbHelper.listConnections();
+        if (!cancelled) setConnections(list);
+      } catch {
+        /* not connected yet -> nothing to draw */
+      }
+    })();
+    const onRestored = () => {
+      void dbHelper.listConnections().then((list) => {
+        if (!cancelled) setConnections(list);
+      }).catch(() => {});
+    };
     window.addEventListener('database-restored', onRestored);
-    return () => window.removeEventListener('database-restored', onRestored);
-  }, [reload, reloadKey, activeConnId]);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('database-restored', onRestored);
+    };
+    // Both deps are triggers: the body calls listConnections() and reads neither.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadKey, activeConnId]);
 
   // Hidden with one connection ONLY when that connection carries no warning.
   //

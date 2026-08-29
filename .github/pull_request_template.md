@@ -1,13 +1,18 @@
 <!--
-Các kiểm tra tự động (rustfmt, clippy, oxlint, tsc, test) do CI đảm nhiệm.
-Quy ước code chi tiết: xem CONTRIBUTING.md
+CI on this repo covers the RUST side only: cargo build, cargo test, cargo clippy.
+The frontend checks are NOT in CI — run them locally before you push:
+
+  npx oxlint  &&  npx tsc --noEmit  &&  npm run test
+  cd src-tauri  &&  cargo clippy --all-targets -- -D warnings  &&  cargo test --lib
+
+Conventions: CONTRIBUTING.md · docs/CODING_STANDARDS.md
 -->
 
-## Mô tả
+## Summary
 
-<!-- Thay đổi gì và vì sao cần thay đổi. 2–5 câu, viết dưới góc nhìn người dùng hoặc sản phẩm. -->
+<!-- What changed and why it was needed. 2–5 sentences, from the user's or the product's point of view. -->
 
-## Loại thay đổi
+## Type of change
 
 * [ ] Feature
 * [ ] Bugfix
@@ -15,66 +20,108 @@ Quy ước code chi tiết: xem CONTRIBUTING.md
 * [ ] Performance
 * [ ] Build / CI / dependency
 * [ ] Docs
+* [ ] Security
+* [ ] i18n / localization
 
-## Issue liên quan
+## Linked issue
 
 Closes #
 
-## Thay đổi chính
+## Key changes
 
-<!-- Gạch đầu dòng theo module hoặc theo hành vi. Không liệt kê từng file. -->
-
-*
-*
-*
-
-## Quyết định kỹ thuật
-
-<!-- Chỉ điền khi có đánh đổi, phương án đã cân nhắc rồi loại bỏ, hoặc giới hạn đã biết. Không có thì ghi "Không có". -->
+<!-- Bullets by module or by behaviour. Do not list files one by one. -->
 
 *
+*
+*
 
-## Kiểm thử
+## Technical decisions
 
-**Đã kiểm thử:**
+<!-- Fill in only when there is a trade-off, an option considered and rejected, or a known limitation. Write "None" if there is none. -->
 
-* [ ] Luồng chính
-* [ ] Dữ liệu rỗng hoặc không hợp lệ
-* [ ] Trường hợp lỗi
-* [ ] Regression các chức năng liên quan
+*
 
-**Cách kiểm thử lại:**
+## Out of scope / follow-ups
+
+<!-- What this PR deliberately does NOT do, and what is left for a later PR. "None" is a valid answer. -->
+
+*
+
+## Testing
+
+**Verified:**
+
+* [ ] Happy path
+* [ ] Empty or invalid input
+* [ ] Error path
+* [ ] Regression on the surrounding features
+
+**Ran against:**
+
+<!-- Most bugs in this app are dialect-specific. Tick what you actually ran, not what ought to work. -->
+
+* [ ] SQLite
+* [ ] PostgreSQL
+* [ ] MySQL
+* [ ] Redis
+* [ ] N/A — no database code touched
+
+**How to re-verify:**
 
 1.
 2.
 3.
 
-## Ảnh hưởng & rủi ro
+## Cross-cutting checks
 
-* **Breaking change:** không / có →
-* **Migration, đổi schema, config hoặc env:** không / có →
-* **Cần rebuild native hoặc bump version app:** không / có
-* **Cách rollback nếu lỗi:**
+<details>
+<summary>Open if this PR crosses the Rust ↔ TypeScript boundary, or touches the editor / build config</summary>
 
-## Ảnh chụp màn hình
+Nothing enforces the pairs below. They drift silently, and the failure shows up as
+wrong behaviour rather than as a build error.
 
-<!-- Chỉ khi có thay đổi giao diện. Không có thì xoá cả mục này. -->
+* [ ] New `#[tauri::command]` → registered in `src-tauri/src/app/handlers.rs`
+      *(missing = "unknown command" at runtime; the compiler will not catch it)*
+* [ ] New backend capability → matching method in `src/utils/dbHelper.ts`
+* [ ] New `redis_*` command → classified in `src/utils/safeMode.ts`
+      *(`safeMode.test.ts` fails on an unclassified one)*
+* [ ] Statement splitting changed → `src-tauri/src/database/splitter.rs` **and** `src/sql/statements.ts`
+* [ ] A Rust error message reworded → `src/utils/backendErrors.ts`
+* [ ] Redis SSL handling changed → `redis_ssl_mode()` **and** `REDIS_SSL_MODES` in `ConnectionManager.tsx`
+* [ ] The JSON shape a command returns changed → types in `dbHelper.ts`
+* [ ] Touched an editor component or `vite.config.mts` → the `monaco` chunk is still absent
+      from the `modulepreload` list in `dist/index.html` after `npm run build-frontend`
 
-| Trước | Sau |
-| ----- | --- |
-|       |     |
+</details>
+
+## Impact & risk
+
+* **Breaking change:** no / yes →
+* **Migration, schema, config or env change:** no / yes →
+* **Needs a native rebuild or an app version bump:** no / yes
+* **Rollback plan:**
+
+## Screenshots
+
+<!-- UI changes only; delete this section otherwise. Show light AND dark theme when colours changed. -->
+
+| Before | After |
+| ------ | ----- |
+|        |       |
 
 ## Checklist
 
-* [ ] CI xanh (format, lint, type check, test)
-* [ ] Đã tự đọc lại toàn bộ diff
-* [ ] Đã thêm hoặc cập nhật test cho phần thay đổi
-* [ ] Đã cập nhật tài liệu hoặc doc comment nếu hành vi thay đổi
-* [ ] Không còn debug code, `console.log`, `unwrap()` tạm hoặc TODO bỏ sót
-* [ ] Không chứa secret, token hoặc thông tin nhạy cảm
+* [ ] Rust CI green (build, test, clippy)
+* [ ] Frontend checks run locally: `npx oxlint`, `npx tsc --noEmit`, `npm run test`
+* [ ] Read the whole diff myself
+* [ ] Added or updated tests for the changed behaviour
+* [ ] Updated docs / doc comments where behaviour changed
+* [ ] Every user-facing string goes through i18n — a key in `en.ts` + `vi.ts` + `ja.ts`, never a literal
+* [ ] No leftover debug code, `console.log`, throwaway `unwrap()` or stray TODO
+* [ ] No secrets, tokens or connection credentials — screenshots included
 
-## Ghi chú cho reviewer
+## Notes for the reviewer
 
-<!-- Phần nào cần đọc kỹ, phần nào chỉ là di chuyển code, phần nào cần thêm ý kiến. -->
+<!-- What to read closely, what is only moved code, where you want a second opinion. -->
 
 *

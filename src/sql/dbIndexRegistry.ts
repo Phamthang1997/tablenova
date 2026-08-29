@@ -13,15 +13,16 @@ export interface TableIndexMeta {
   columnCount: number;
 }
 
-/** Tối đa số gợi ý trả về — thông báo lỗi và menu Quick Fix đều phải đọc được trong một liếc. */
+/** Maximum suggestion limit — error messages and Quick Fix menus must be glanceable. */
 const MAX_SUGGESTIONS = 3;
 
 /**
- * Khoảng cách Damerau–Levenshtein, dừng sớm khi đã chắc chắn vượt `max`.
+ * Damerau–Levenshtein distance, bailing out as soon as it is certain to exceed `max`.
  *
- * Cần *Damerau* (có phép hoán vị hai ký tự liền nhau) chứ không phải Levenshtein thuần: lỗi gõ
- * phổ biến nhất là đảo hai phím — `nmae` ↔ `name` cách nhau **1** phép hoán vị nhưng **2** phép
- * sửa thường, nên với ngưỡng chặt thì Levenshtein thuần bỏ lọt đúng trường hợp hay gặp nhất.
+ * *Damerau* is needed — it has a transposition of two adjacent characters — rather than plain
+ * Levenshtein: the most common typo is two keys swapped, and `nmae` ↔ `name` is **1** transposition
+ * but **2** ordinary edits, so at a tight threshold plain Levenshtein misses exactly the case that
+ * happens most.
  */
 function editDistance(a: string, b: string, max: number): number {
   if (Math.abs(a.length - b.length) > max) return max + 1;
@@ -35,14 +36,14 @@ function editDistance(a: string, b: string, max: number): number {
     for (let j = 1; j <= b.length; j++) {
       const cost = a[i - 1] === b[j - 1] ? 0 : 1;
       let v = Math.min(cur[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
-      // Hoán vị: "ab" -> "ba" tính là một phép.
+      // Transposition: "ab" -> "ba" counts as 1 edit operation.
       if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
         v = Math.min(v, prev2[j - 2] + 1);
       }
       cur[j] = v;
       if (v < rowMin) rowMin = v;
     }
-    if (rowMin > max) return max + 1; // cả hàng đã vượt ngưỡng -> không thể tốt hơn
+    if (rowMin > max) return max + 1; // entire row exceeds threshold -> early exit
     prev2.length = 0;
     prev2.push(...prev);
     prev = cur;
@@ -51,14 +52,15 @@ function editDistance(a: string, b: string, max: number): number {
 }
 
 /**
- * Xếp hạng tên gần giống `search` trong `pool`.
+ * Ranks the names in `pool` by how close they are to `search`.
  *
- * Bản trước chỉ so **chuỗi con**, nên nó bắt được `emai` → `email` nhưng bỏ qua `nmae` → `name`,
- * tức đúng loại lỗi mà một gợi ý "ý bạn là…" sinh ra để phục vụ. Giữ lại chuỗi con (gõ dở là
- * trạng thái rất thường gặp trong editor) và xếp nó **trên** khoảng cách sửa, rồi mới tới các tên
- * cách vài phép gõ.
+ * The previous version compared **substrings** only, so it caught `emai` → `email` but missed
+ * `nmae` → `name` — precisely the kind of mistake a "did you mean…" exists for. Substring matching
+ * is kept (half-typed text is a very common state in an editor) and ranked **above** edit distance,
+ * with names a few keystrokes away coming after.
  *
- * Ngưỡng nới theo độ dài: với tên 3 ký tự thì cho phép 2 phép sửa là gần như khớp mọi thứ.
+ * The threshold scales with length: for a 3-character name, allowing 2 edits would match nearly
+ * anything.
  */
 function rankSimilar(search: string, pool: string[]): string[] {
   if (!search) return [];
@@ -67,7 +69,7 @@ function rankSimilar(search: string, pool: string[]): string[] {
 
   for (const name of pool) {
     const lower = name.toLowerCase();
-    if (lower === search) continue; // trùng khít thì đã không có lỗi để gợi ý
+    if (lower === search) continue; // exact match produces no diagnostic
     if (lower.includes(search) || search.includes(lower)) {
       scored.push({ name, rank: 0, dist: Math.abs(lower.length - search.length) });
       continue;
@@ -203,7 +205,7 @@ export class DbIndexRegistry {
     return rankSimilar(search, pool);
   }
 
-  /** Bảng có tên gần giống — nguồn của Quick Fix trên lỗi "bảng không tồn tại". */
+  /** Similar table names — provides candidates for Quick Fix on "table not found" errors. */
   findSimilarTables(tableName: string): string[] {
     const search = tableName.replace(/[`"[\]]/g, '').toLowerCase();
     return rankSimilar(search, Array.from(this.tables.values()).map((tbl) => tbl.name));

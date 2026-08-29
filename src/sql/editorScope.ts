@@ -1,19 +1,19 @@
 /**
- * Kết nối mà editor SQL đang được focus thuộc về.
+ * The connection the focused SQL editor belongs to.
  *
- * Vì sao đây là một giá trị cấp module chứ không phải tham số, trong khi §4.1 của
- * `docs/multi-connection-plan.md` loại bỏ đúng kiểu "id ambient" đó:
+ * Why this is a module-level value and not a parameter, when §4.1 of
+ * `docs/multi-connection-plan.md` removes exactly that kind of "ambient id":
  *
- * Provider của Monaco (completion, hover, go-to-definition) được đăng ký **một lần cho cả app** và
- * sống suốt vòng đời tiến trình. Chúng không nhận được `connId` tĩnh vì lúc đăng ký chưa có tab nào,
- * và không thể nhận qua tham số vì Monaco là bên gọi chúng.
+ * Monaco's providers (completion, hover, go-to-definition) are registered **once for the whole app**
+ * and live for the life of the process. They cannot be given a static `connId`, because no tab
+ * exists at registration time, and they cannot take one as a parameter, because Monaco is the caller.
  *
- * Điều khiến giá trị này **an toàn** trong khi id ambient của `dbHelper` thì không, là phạm vi kích
- * hoạt: completion và hover chỉ chạy **trong editor đang focus**, do người dùng gõ. Không có đường
- * nào chạy nền. Race mà §4.1 mô tả — hai tab refetch đồng thời rồi chèn nhau — không tồn tại ở đây,
- * vì tại một thời điểm chỉ một editor nhận phím.
+ * What makes this value **safe** while `dbHelper`'s ambient id is not, is the scope in which it is
+ * read: completion and hover run only **inside the focused editor**, driven by the user typing.
+ * Nothing runs in the background. The race §4.1 describes — two tabs refetching at once and
+ * interleaving — cannot happen here, because only one editor takes keystrokes at a time.
  *
- * `SqlEditor` đặt giá trị này khi mount và khi editor giành focus.
+ * `SqlEditor` sets this on mount and whenever the editor takes focus.
  */
 let focusedConnId = '';
 

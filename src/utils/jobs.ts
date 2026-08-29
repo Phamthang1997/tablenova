@@ -147,7 +147,7 @@ function flush(): void {
     notifyTimer = null;
   }
   if (snapshotStale) rebuild();
-  for (const fn of [...listeners]) fn();
+  for (const fn of listeners) fn();
 }
 
 /** State changes publish at once; progress waits for the window. */
@@ -298,7 +298,7 @@ export function cancelJob(id: string): void {
     // Backend refusing to cancel must not kill the job — the loop still checks `cancelled()`.
     void Promise.resolve(entry.spec.onCancel?.(entry.ctx)).catch(() => {});
   } catch {
-    /* bỏ qua */
+    /* skip */
   }
 }
 
@@ -326,7 +326,7 @@ export function hasActiveJobs(): boolean {
 
 /** Drop the finished rows from the tray. Running jobs are untouched. */
 export function clearFinishedJobs(): void {
-  for (const [id, e] of [...entries]) {
+  for (const [id, e] of Array.from(entries)) {
     if (e.rec.state !== 'running' && e.rec.state !== 'queued') entries.delete(id);
   }
   snapshotStale = true;

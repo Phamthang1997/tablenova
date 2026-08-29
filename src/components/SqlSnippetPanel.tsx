@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import {
@@ -149,7 +149,14 @@ interface SqlSnippetPanelProps {
 
 export const SqlSnippetPanel: React.FC<SqlSnippetPanelProps> = ({ dbType, onInsertSnippet, onClose }) => {
   const { i18n } = useTranslation();
-  const [customSnippets, setCustomSnippets] = useState<SqlSnippet[]>([]);
+  const [customSnippets, setCustomSnippets] = useState<SqlSnippet[]>(() => {
+    try {
+      const stored = typeof localStorage !== 'undefined' ? localStorage.getItem(LOCAL_STORAGE_CUSTOM_KEY) : null;
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  });
   const [selectedCategory, setSelectedCategory] = useState<string>('All Labels');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -163,18 +170,6 @@ export const SqlSnippetPanel: React.FC<SqlSnippetPanelProps> = ({ dbType, onInse
   const [newCategory, setNewCategory] = useState<'DML' | 'DDL' | 'Flow Control' | 'Aggregate' | 'Comment' | 'Custom'>('Custom');
   const [newDesc, setNewDesc] = useState('');
   const [newTemplate, setNewTemplate] = useState('');
-
-  // Load custom snippets from localStorage
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem(LOCAL_STORAGE_CUSTOM_KEY);
-      if (stored) {
-        setCustomSnippets(JSON.parse(stored));
-      }
-    } catch (e) {
-      console.error('Failed to load custom snippets:', e);
-    }
-  }, []);
 
   // Leverage docsService to generate engine-specific snippets automatically
   const engineDocs = useMemo(() => {

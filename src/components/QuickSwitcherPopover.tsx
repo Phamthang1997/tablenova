@@ -11,18 +11,21 @@ import { scopeKey } from '../utils/connKey';
 import { envLabelKey, normalizeEnv, type ConnEnv } from '../utils/connEnv';
 
 /**
- * Quick Switcher: đổi **kết nối** hoặc **database** ngay trên thanh tiêu đề.
+ * The Quick Switcher: changing **connection** or **database** straight from the title bar.
  *
- * Thay khối popup inline cũ trong `TitleBar.tsx`, khối đó chỉ liệt kê database của server hiện tại —
- * muốn sang một kết nối khác thì phải quay về màn hình Connection Manager. Với N kết nối × N
- * database (§4.3 của `docs/multi-connection-plan.md`) đó là chỗ chậm nhất của luồng dùng hằng ngày.
+ * It replaces the old inline popup in `TitleBar.tsx`, which listed only the current server's databases
+ * — reaching another connection meant going back to the Connection Manager screen. With N connections
+ * × N databases (§4.3 of `docs/multi-connection-plan.md`) that was the slowest point of the daily
+ * workflow.
  *
- * Hai tab thay vì một danh sách gộp: một danh sách phẳng trộn "kết nối" với "database" thì hai thứ
- * có **hệ quả khác nhau** lại trông giống nhau — chọn kết nối là đổi cả workspace, chọn database là
- * mở thêm một kết nối trên cùng server. Tab tách chúng ra mà không cần chú giải.
+ * Two tabs rather than one merged list: a flat list mixing "connections" with "databases" makes two
+ * things with **different consequences** look alike — picking a connection changes the whole
+ * workspace, picking a database opens another connection on the same server. Tabs separate them
+ * without needing a caption.
  *
- * Mọi style ở `index.css` (`.qs-*`), không inline: khối cũ có ~40 object style rải trong JSX nên đổi
- * một khoảng cách phải sửa nhiều chỗ, và không chỗ nào theo được theme.
+ * Every style lives in `index.css` (`.qs-*`), none inline: the old block had ~40 style objects spread
+ * through its JSX, so changing one spacing meant editing many places, and none of them followed the
+ * theme.
  */
 
 const DIALECT_ICON: Record<string, React.FC<{ size?: number }>> = {
@@ -33,17 +36,18 @@ const DIALECT_ICON: Record<string, React.FC<{ size?: number }>> = {
 };
 
 /**
- * Tên tệp của một đường dẫn SQLite.
+ * The file name of a SQLite path.
  *
- * Đường dẫn đầy đủ (`C:\laragon\data\sqllite\chinook.db`) chiếm cả dòng phụ trong popover 340px và
- * phần đáng đọc — tên tệp — nằm ở cuối, tức là phần bị cắt. Đường dẫn đầy đủ vẫn ở tooltip.
+ * A full path (`C:\laragon\data\sqllite\chinook.db`) fills the whole sub-line of a 340px popover, and
+ * the part worth reading — the file name — is at the end, i.e. the part that gets cut. The full path
+ * stays in the tooltip.
  */
 function fileName(path: string): string {
   const parts = path.split(/[\\/]/);
   return parts[parts.length - 1] || path;
 }
 
-/** Kết nối đang mở, ghép từ registry backend với phần chỉ frontend biết (nhãn, môi trường). */
+/** An open connection, joining the backend registry with what only the frontend knows (label, environment). */
 export interface SwitcherConn {
   connId: string;
   db: string;
@@ -56,11 +60,11 @@ export interface SwitcherConn {
 }
 
 interface QuickSwitcherPopoverProps {
-  /** Vị trí đã tính sẵn từ getBoundingClientRect của nút database. */
+  /** The position, precomputed from the database button's getBoundingClientRect. */
   anchor: { top: number; left: number };
-  /** Kết nối đang xem — dòng của nó có dấu tích và không bấm được. */
+  /** The connection being viewed — its row shows a tick and is not clickable. */
   activeConnId: string;
-  /** Database đang xem, để đánh dấu trong tab Databases. */
+  /** The database being viewed, so it can be marked in the Databases tab. */
   activeDbName?: string;
   openConns: SwitcherConn[];
   onSelectConnection: (connId: string) => void;
@@ -88,24 +92,25 @@ export const QuickSwitcherPopover: React.FC<QuickSwitcherPopoverProps> = ({
   onClose,
 }) => {
   const { t } = useTranslation();
-  // Tab Kết nối mở sẵn: đó là việc mới mà popup này tồn tại để làm được, và danh sách database vẫn
-  // nằm cách một cú bấm với số lượng hiện ngay trên tab.
+  // The Connections tab opens first: it is the new thing this popup exists to do, and the database
+  // list is still one click away with its count right on the tab.
   const [tab, setTab] = useState<'conns' | 'dbs'>('conns');
   const [filter, setFilter] = useState('');
   const [dbList, setDbList] = useState<string[]>([]);
   const [dbLoading, setDbLoading] = useState(true);
   /**
-   * Latency mỗi kết nối, đo một lần khi popup mở.
+   * Each connection's latency, measured once when the popup opens.
    *
-   * Không lặp lại theo chu kỳ: đây là hộp thoại sống vài giây, và một `SELECT 1` mỗi vài giây trên
-   * *mọi* kết nối là tiếng ồn thường trực gửi tới cả những server mà người dùng không nhìn. Con số
-   * này trả lời "kết nối kia còn sống và nhanh chậm thế nào" tại thời điểm mở, đúng lúc cần biết.
+   * Not repeated on a timer: this dialog lives for a few seconds, and a `SELECT 1` every few seconds
+   * against *every* connection is constant noise sent to servers the user is not even looking at. This
+   * number answers "is that other connection alive, and how fast" at the moment it opens, which is
+   * exactly when it matters.
    */
   const [pings, setPings] = useState<Map<string, { ok: boolean; latencyMs: number }>>(new Map());
   const searchRef = useRef<HTMLInputElement>(null);
 
-  // Đọc một lần khi mở. Profile nằm trong localStorage nên không có gì phải chờ; danh sách database
-  // thì là truy vấn thật trên kết nối đang xem.
+  // Read once on open. The profiles are in localStorage so there is nothing to wait for; the database
+  // list is a real query against the connection being viewed.
   const savedProfiles = useMemo(() => loadSavedProfiles(), []);
 
   useEffect(() => {
@@ -115,7 +120,7 @@ export const QuickSwitcherPopover: React.FC<QuickSwitcherPopoverProps> = ({
         const res = await dbHelper.listDatabases(activeConnId);
         if (alive) setDbList(res.databases || []);
       } catch {
-        /* server không cho liệt kê -> danh sách rỗng, không phải lỗi chặn */
+        /* a server that refuses to list -> an empty list, not a blocking error */
       } finally {
         if (alive) setDbLoading(false);
       }
@@ -125,8 +130,8 @@ export const QuickSwitcherPopover: React.FC<QuickSwitcherPopoverProps> = ({
     };
   }, [activeConnId]);
 
-  // Song song với danh sách database, không xếp sau: hai lời gọi độc lập, và ping của một server ở xa
-  // có thể chậm hơn cả `listDatabases` cục bộ.
+  // Run alongside the database list rather than after it: the two calls are independent, and pinging
+  // a distant server can take longer than a local `listDatabases`.
   useEffect(() => {
     let alive = true;
     dbHelper
@@ -135,7 +140,7 @@ export const QuickSwitcherPopover: React.FC<QuickSwitcherPopoverProps> = ({
         if (alive) setPings(m);
       })
       .catch(() => {
-        /* không ping được thì các dòng chỉ không có số, không phải lỗi chặn */
+        /* a failed ping just leaves the rows without a number, not a blocking error */
       });
     return () => {
       alive = false;
@@ -154,10 +159,11 @@ export const QuickSwitcherPopover: React.FC<QuickSwitcherPopoverProps> = ({
   const q = filter.toLowerCase().trim();
 
   /**
-   * Profile đã lưu mà **chưa** mở, so theo `scopeKey` — tức server + database, không chỉ server.
+   * Saved profiles that are **not** open, compared by `scopeKey` — server plus database, not server
+   * alone.
    *
-   * `connKey` một mình sẽ coi profile trỏ vào `test` là "đã mở" khi đang mở `sakila` trên cùng
-   * server, nên bấm vào nó không có gì xảy ra và người dùng không hiểu tại sao.
+   * `connKey` by itself would treat a profile pointing at `test` as "already open" while `sakila` is
+   * open on the same server, so clicking it would do nothing and leave the user wondering why.
    */
   const openScopes = useMemo(
     () => new Set(openConns.map((c) => scopeKey(c.config, c.config?.database ?? c.db))),
@@ -174,12 +180,12 @@ export const QuickSwitcherPopover: React.FC<QuickSwitcherPopoverProps> = ({
   });
 
   /**
-   * Profile chưa mở — **chưa** lọc theo ô tìm kiếm.
+   * The unopened profiles — **before** the search box filters them.
    *
-   * Tách khỏi danh sách để hiển thị vì con số trên tab phải là "tab này có bao nhiêu thứ", không phải
-   * "bao nhiêu thứ khớp với thứ đang gõ". Trước đây tab đếm `openConns + savedProfiles` nguyên bản,
-   * tức cộng cả những profile đã mở lần thứ hai: 2 kết nối + 4 profile = tab hiện **6** trong khi
-   * danh sách dưới nó hiện 2 + 2.
+   * Kept apart from the displayed list because the tab's number has to mean "how many things are in
+   * this tab", not "how many match what is being typed". The tab used to count `openConns +
+   * savedProfiles` raw, i.e. counting the already-open profiles a second time: 2 connections + 4
+   * profiles showed **6** on the tab while the list below it showed 2 + 2.
    */
   const unopened = savedProfiles.filter(
     (p) => !openScopes.has(scopeKey(p.config as DbConnectionConfig, p.config?.database)),
@@ -197,10 +203,10 @@ export const QuickSwitcherPopover: React.FC<QuickSwitcherPopoverProps> = ({
   const dbs = dbList.filter((d) => d.toLowerCase().includes(q));
 
   /**
-   * Ô logo, dùng lại `cm-badge` của Connection Manager thay vì một icon trơn.
+   * The logo tile, reusing Connection Manager's `cm-badge` rather than a plain icon.
    *
-   * Không phải để cho giống: nền theo dialect làm mỗi dòng có một mỏ neo màu, nên quét danh sách là
-   * nhận ra engine trước khi đọc chữ — đúng việc mà một danh sách kết nối cần.
+   * Not for the sake of matching: a per-dialect background gives each row a colour anchor, so scanning
+   * the list identifies the engine before any text is read — exactly what a connection list needs.
    */
   const renderBadge = (dialect: string) => {
     const Icon = DIALECT_ICON[dialect];
@@ -304,9 +310,9 @@ export const QuickSwitcherPopover: React.FC<QuickSwitcherPopoverProps> = ({
                       <span className="qs-name">{c.profileName}</span>
                       <span className="qs-sub">{sub}</span>
                     </span>
-                    {/* Chưa có số thì KHÔNG chừa chỗ trống: một cột số nhấp nháy hiện ra sau vài trăm
-                        ms sẽ làm cả danh sách nhảy. Ping không thành công hiện dấu gạch đỏ — kết nối
-                        chết là thông tin, không phải thiếu dữ liệu. */}
+                    {/* With no number yet, NO space is reserved: a column of figures blinking into
+                        existence a few hundred ms later makes the whole list jump. A failed ping shows
+                        a red dash — a dead connection is information, not missing data. */}
                     {ping && (
                       <span className={`qs-ping${ping.ok ? '' : ' is-dead'}`}>
                         {ping.ok ? t('quickSwitcher.ms', { n: ping.latencyMs }) : '—'}
@@ -385,8 +391,8 @@ export const QuickSwitcherPopover: React.FC<QuickSwitcherPopoverProps> = ({
                         </span>
                         {isActive && <Check size={14} className="qs-check-on" />}
                       </button>
-                      {/* Không cho xoá database đang xem: lệnh sẽ thất bại ở server vì đang có kết
-                          nối tới nó, nên đưa nút ra là mời người dùng vào một lỗi chắc chắn. */}
+                      {/* The database being viewed cannot be dropped: the server would refuse while a
+                          connection to it is open, so offering the button invites a certain error. */}
                       {!isActive && (
                         <button
                           type="button"

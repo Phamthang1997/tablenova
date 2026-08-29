@@ -86,7 +86,7 @@ src-tauri/src/
 │   └── shell.rs                    ~45   open_url, set_app_window_size  ← đang nằm nhầm trong database.rs
 ├── state/
 │   ├── mod.rs
-│   ├── ids.rs                      ~80   SessionId, ServerId, ConnId, mint_id
+│   ├── ids.rs                      ~80   ConnScopeId, ServerId, ConnId, mint_id
 │   ├── server.rs                   ~90   ServerHandle
 │   ├── entry.rs                   ~160   LiveConn, RedisConn, ConnEntry, ConnCtx, RedisCtx
 │   └── registry.rs                ~180   ConnRegistry
@@ -140,7 +140,7 @@ src-tauri/src/
 │   ├── mod.rs
 │   ├── effect.rs                  ~220   TxEffect, tokens, tx_effect, is_write_stmt, isolation_allowed,
 │   │                                     begin_statements, is_aborted_error  ← thuần, test được
-│   ├── session.rs                 ~340   Meta, Session, SESSIONS, status_json, emit_state, apply_effect
+│   ├── session.rs                 ~340   Meta, Session, TX_REGISTRY, status_json, emit_state, apply_effect
 │   ├── route.rs                   ~330   should_route, lock_pinned, ensure_begin, run_raw/bound/stream
 │   └── commands.rs                ~210   7 command tx_*
 ├── redis/
@@ -278,3 +278,79 @@ in-memory), nên compiler gần như là mạng lưới an toàn duy nhất. Vì
 - **Không viết test mới trong cùng commit di chuyển.** Sau khi các hàm thuần đã ở tệp riêng
   (`tx/effect.rs`, `database/splitter.rs`, `datagen/{rng,regex,template,text}.rs`,
   `compare/diff.rs`), thêm `#[cfg(test)]` là việc riêng, và lúc đó mới rẻ.
+
+---
+
+## 8. Đã thực hiện
+
+Đợt 0–9 đã xong trên nhánh `refactor/backend-module-split`, mỗi đợt một commit, mỗi commit
+`cargo check` sạch (không error, không warning) và `cargo test --lib` 5/5.
+
+| Trước | Sau |
+|---|---|
+| 18 tệp phẳng, 16.833 dòng | 11 thư mục + 2 tệp lẻ ở gốc (`main.rs`, `lib.rs`), 124 tệp `.rs` |
+| `database.rs` 5.515 dòng | tệp lớn nhất còn 502 dòng (`datagen/column.rs` — một nhiệm vụ dài, không phải nhiều nhiệm vụ chồng lên nhau) |
+| `lib.rs` 239 dòng | **17 dòng** — chỉ danh sách module + 2 re-export |
+| 5 test Rust | **101** test Rust, phủ mọi tệp thuần |
+
+**Cách chia và cách kiểm.** Việc cắt được sinh bằng một bản đồ chunk cấp cao nhất (`chunks.awk`)
+rồi phân hoạch theo dòng, nên mỗi đợt kiểm được bằng một câu: *tập hợp dòng (bỏ dòng trắng) của
+các tệp mới phải GIỐNG HỆT tệp cũ*. Không đợt nào mất hay nhân đôi một dòng.
+
+**`cargo check` KHÔNG crash.** Giả định ở §5 (build script của Tauri có thể `STATUS_ACCESS_VIOLATION`)
+không xảy ra lần nào trong cả 10 đợt; vòng lặp sửa–kiểm chạy được bình thường (~18s tăng dần).
+
+**Ba chỗ lệch so với kế hoạch, đều có lý do:**
+
+1. **Không đổi tên `redis_db` → `redis`** (§3 dự tính đổi). `pub mod redis;` ở gốc crate trùng tên
+   với chính crate `redis`, và uniform path của Rust 2018 biến `use redis::aio::…` thành lỗi E0659
+   *ambiguous* ở mọi tệp con. Tên `redis_db` được giữ.
+2. **`open_url` / `set_app_window_size` chuyển ở đợt 0**, không phải đợt 9 — chúng đi cùng lúc với
+   việc tạo `app/`, và việc đó xảy ra trước khi `database.rs` bị cắt.
+3. **`get_primary_key_columns` / `detect_primary_key` về `commands/catalog.rs`**, không phải
+   `row_write.rs`: ba nhóm lệnh đọc chúng, và chúng là đọc metadata chứ không phải ghi.
+
+**Ba thay đổi vượt ra ngoài "di chuyển thuần", đều nhỏ và có chủ ý:**
+
+- `redis_ctx_of()` tách khỏi `ConnRegistry::acquire_redis` sang `state/ctx.rs`. Field của `RedisCtx`
+  là private có chủ đích, nên nơi duy nhất được dựng nó phải là module khai báo nó — cách này giữ
+  được điều đó, thay vì nới field thành `pub(super)`.
+- Khối comment mô tả `get_full_catalog` vốn nằm nhầm phía trên `rows_of`, nay về đúng chỗ.
+- Visibility: helper nội bộ được nới lên `pub(super)` (hoặc `pub(crate)` khi vượt một tầng module),
+  không nới lên `pub`.
+
+**Đã làm tiếp sau đó (đợt 10–14):**
+
+- **Đợt 10 — gom nốt tệp lẻ ở gốc:** `terminal/{local,ssh}.rs` (chung một giao thức message, nên
+  frontend chỉ có một component cho cả hai), `credentials/{aws_iam,oauth,secret_store}.rs` (chung một
+  *mối quan tâm*, không chung code — `mod.rs` nói thẳng điều đó), `datasets.rs` vào `datagen/`.
+  `ssh_tunnel.rs` tách tiếp thành `ssh/{auth,tunnel}.rs`: nó đang làm HAI việc — xác thực (dùng
+  chung với `terminal/ssh.rs`) và chuyển tiếp cổng. `TunnelHandler` đổi tên thành `SshHandler`,
+  vì nó là handler của client SSH chứ không riêng gì tunnel. Gốc `src/` giờ chỉ còn `main.rs`
+  và `lib.rs`.
+- **Đợt 11 — xoá code chết:** `export.rs` + dependency `flate2`, và ba stub `export_table` /
+  `import_dbeaver` / `restore_backup_old` (kèm wrapper `dbHelper` và mục `safeMode.ts` —
+  `safeMode.test.ts` kiểm hai chiều nên bỏ sót một bên là fail build). `ai_chat` sang `app/ai.rs`.
+- **Đợt 12 — test cho các tệp thuần:** 5 test -> **101**. Phủ `database/{splitter,rows,ident,decode}.rs`,
+  `tx/effect.rs`, `redis_db/cmds.rs`, `datagen/{rng,template,regex,text}.rs`, `compare/{diff,values}.rs`.
+  Hai chỗ đáng nói: `redis_db/cmds.rs` là **ranh giới bảo mật** của chế độ chỉ-đọc và trước đó chỉ
+  được kiểm bằng mẹo standalone-rustc; `database/splitter.rs` giờ có test hai bên cùng khoá cặp
+  sinh đôi với `src/sql/statements.ts`.
+- **Đợt 13 — `lib.rs` còn 17 dòng:** nó đang làm ba việc, và một trong ba mâu thuẫn với chính
+  `app/` — thư mục đó là "vòng đời Tauri" và `app/{setup,handlers}.rs` là hai MẢNH của Builder,
+  nhưng Builder thì lại ở `lib.rs`. Nay: `app/run.rs` (Builder, cạnh hai mảnh của nó),
+  `state/app.rs` (`AppState` + `AppState::new()` — nằm ở `state/` vì trường lớn nhất của nó
+  chính là `ConnRegistry` ngay cạnh đó), còn `lib.rs` chỉ giữ danh sách module cộng hai
+  re-export giữ nguyên `tablenova::run` và `crate::AppState` (152 call site).
+
+**Dọn nốt phần tài liệu lệch từ trước (2026-08-25).** `CLAUDE.md` còn năm chỗ mô tả `DatabaseManager`
+và `RedisState` như thứ đang tồn tại — hai kiểu này bị xoá từ đợt đa kết nối, TRƯỚC đợt tách module.
+Đã viết lại theo đúng cơ chế hiện tại, và mỗi chỗ đều kiểm lại bằng code chứ không suy từ tên:
+
+| Chỗ | Trước | Nay |
+|---|---|---|
+| `DbConnection` | "`DatabaseManager` giữ connection đang active, chỉ một cái cho cả app" | `state::ConnRegistry` khoá theo `conn_id`; **không có "connection đang active"**; `db_type`/`last_config`/tunnel nằm trên `Arc<ServerHandle>` dùng chung theo server |
+| Schema Postgres | `DatabaseManager.current_schema` | `ConnEntry.current_schema` — một `conn_id` là một `(server, database)` nên cũng là một schema. `pg_schema()` không còn; mọi call site đọc `ConnCtx::schema()`, vốn đã default sẵn |
+| Transaction | "chỉ có đúng một phiên; muốn per-tab thì phải chờ refactor đa kết nối" | refactor đó đã xong: `TX_REGISTRY` là `HashMap` theo `conn_id`, một phiên cho mỗi kết nối. `TxControl` nhận `connId` và **bỏ qua event của kết nối khác** |
+| Vòng đời | "`switch_database` từ chối khi transaction đang mở" | `switch_database` **đã bị xoá**; `open_database` THÊM một pool dưới `conn_id` mới nên không phải từ chối gì — transaction trên database cũ vẫn chạy |
+| Redis | `RedisState.config` | `ServerHandle` của Redis giữ config **đã qua tunnel** (khác SQL), vì Redis mở socket mới thường xuyên hơn nhiều |

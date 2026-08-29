@@ -15,7 +15,7 @@
 
 import { getCurrentWindow } from '@tauri-apps/api/window';
 
-/** `true` = tôi chặn lần đóng này và tự hỏi người dùng. `false` = không có gì để mất, mời đi tiếp. */
+/** `true` = blocks window close and prompts user. `false` = safe to proceed. */
 export type CloseBlocker = () => boolean | Promise<boolean>;
 
 export const CLOSE_PRIORITY_TX = 10;
@@ -28,7 +28,7 @@ interface Registered {
 
 const blockers = new Set<Registered>();
 
-/** Đăng ký một lý do chặn. Trả về hàm gỡ — gọi trong cleanup của effect. */
+/** Registers a close blocker. Returns cleanup function for effect disposal. */
 export function registerCloseBlocker(priority: number, fn: CloseBlocker): () => void {
   const entry: Registered = { priority, fn };
   blockers.add(entry);
@@ -49,22 +49,22 @@ export async function askBlockers(): Promise<boolean> {
     try {
       if (await b.fn()) return true;
     } catch {
-      /* bỏ qua: guard lỗi thì không được giữ người dùng lại */
+      /* skip: guard error should not hold user hostage */
     }
   }
   return false;
 }
 
-/** Đóng cửa sổ ngay, không hỏi ai — nút "đóng luôn" của từng hộp thoại gọi cái này. */
+/** Force closes window immediately without prompts. */
 export function forceClose(): void {
   void getCurrentWindow().destroy();
 }
 
 /**
- * Cài listener duy nhất. Gọi một lần ở gốc app; trả về hàm gỡ.
+ * Installs the one listener. Called once at the app root; returns a function that removes it.
  *
- * `preventDefault()` đi trước mọi thứ: các blocker là async, và nếu chờ chúng trước thì cửa sổ đã
- * đóng xong trước khi có câu trả lời.
+ * `preventDefault()` comes before anything else: the blockers are async, and waiting on them first
+ * means the window has already closed by the time an answer arrives.
  */
 export function installCloseGuard(): () => void {
   const un = getCurrentWindow().onCloseRequested(async (event) => {

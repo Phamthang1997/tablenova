@@ -1,10 +1,10 @@
-// Cache metadata cho smart completion: danh sách bảng/view, và schema (cột + kiểu + FK) từng bảng.
-// Nạp nền + cache, invalidate khi DDL.
+// Metadata cache for smart completion: table/view list, and schema (columns + types + FKs) per table.
+// Background loading + memory cache, invalidated on DDL execution.
 //
-// **Cache khoá theo `connId`.** Bản trước là một `Map` cấp module khoá bằng **tên bảng trơn**, đúng
-// khi cả app chỉ có một kết nối nhưng đụng nhau *theo cấu trúc* khi có nhiều: hai kết nối cùng có
-// bảng `users` thì kết nối thứ hai đọc phải cột của kết nối thứ nhất, và completion gợi ý sai mà
-// không có dấu hiệu gì. Khoá theo kết nối làm chuyện đó không biểu diễn được.
+// **Cache keyed by `connId`.** Previous global Map keyed strictly on table name caused collisions across
+// multiple active connections sharing identical table names (`users`).
+
+
 import { dbHelper } from '../utils/dbHelper';
 import type { SchemaInfo, TableItem } from '../utils/dbHelper';
 
@@ -29,7 +29,7 @@ function cacheFor(connId: string): ConnCache {
   return c;
 }
 
-// Nạp GỘP toàn bộ schema (1 lần) qua get_full_catalog -> warm schemas; nếu rỗng thì thôi (lazy sau).
+// Bulk-loads entire schema (1 call) via get_full_catalog -> warm schemas; if empty, fall back to lazy fetch.
 async function primeCatalog(connId: string): Promise<void> {
   const c = cacheFor(connId);
   if (c.primed || c.priming) return;
@@ -47,7 +47,7 @@ async function primeCatalog(connId: string): Promise<void> {
     }
     c.primed = true;
   } catch {
-    /* để getSchema fallback lazy per-table */
+    /* allow getSchema lazy per-table fallback */
   } finally {
     c.priming = false;
   }
@@ -61,12 +61,12 @@ export async function getTables(connId: string): Promise<TableItem[]> {
       c.tables = await dbHelper.getTables(connId);
       c.fetchedAt = Date.now();
     } catch {
-      /* giữ cache cũ */
+      /* preserve stale cache */
     } finally {
       c.fetching = false;
     }
   }
-  void primeCatalog(connId); // warm schema nền (không chặn)
+  void primeCatalog(connId); // background schema warm-up (non-blocking)
   return c.tables;
 }
 
@@ -84,17 +84,17 @@ export async function getSchema(connId: string, table: string): Promise<SchemaIn
 }
 
 /**
- * Chỉ đọc schema ĐÃ có trong cache, không gọi backend. Dùng cho các đường phải quét nhiều bảng
- * (vd hover một cột khi câu lệnh chưa có FROM) để tránh N lời gọi xuống Rust.
+ * Reads schema ONLY from memory cache without invoking backend. Used for multi-table scan paths
+ * (e.g. column hover when query lacks FROM) avoiding N backend IPC roundtrips.
  */
 export function getCachedSchema(connId: string, table: string): SchemaInfo | null {
   return byConn.get(connId)?.schemas.get(table) || null;
 }
 
 /**
- * Vứt cache. Không truyền `connId` thì vứt của **mọi** kết nối — đó là hành vi đúng cho các sự kiện
- * cấp app (`database-restored`, `table-renamed`) vì chúng chưa mang conn id (§4.5, Phase 3 sẽ thêm).
- * Truyền id thì chỉ vứt của kết nối đó, để đổi schema ở một kết nối không xoá cache của cái khác.
+ * Invalidates cache. Omitting `connId` clears for **all** connections — intended for app-level events
+ * (`database-restored`, `table-renamed`) lacking connection ID.
+ * Passing id clears that connection only, isolating schema changes across active databases.
  */
 export function invalidateCatalog(connId?: string): void {
   if (connId === undefined) {
@@ -104,11 +104,11 @@ export function invalidateCatalog(connId?: string): void {
   byConn.delete(connId);
 }
 
-// Làm mới khi cấu trúc thay đổi (đổi tên bảng / khôi phục / đổi database).
+// Refreshes when schema structure changes (rename table / restore / switch database).
 //
-// Sự kiện mang `detail.connId` của kết nối vừa đổi, nên chỉ cache của kết nối ĐÓ bị vứt. Trước đây
-// không mang gì và phải vứt sạch mọi kết nối: restore ở A bắt B nạp lại toàn bộ catalog dù B không
-// hề đổi. Sự kiện không mang id (bản cũ) vẫn vứt sạch — an toàn hơn là đoán.
+// Event contains `detail.connId` of modified connection, selectively invalidating only that cache.
+// Previously cleared all caches indiscriminately: restoring on A forced B to reload its entire catalog.
+// Events lacking id clear all caches as a safe fallback.
 function onSchemaChanged(e: Event): void {
   const connId = (e as CustomEvent<{ connId?: string }>).detail?.connId;
   invalidateCatalog(connId);

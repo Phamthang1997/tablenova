@@ -78,8 +78,10 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
   // Auto-attach current active table if setting is on and session has no tables yet
   useEffect(() => {
     if (tableNameContext && activeSession.attachedTables.length === 0) {
-      updateSessionTables(activeSession.id, [tableNameContext]);
-      setSessions(getAiSessions());
+      queueMicrotask(() => {
+        updateSessionTables(activeSession.id, [tableNameContext]);
+        setSessions(getAiSessions());
+      });
     }
   }, [tableNameContext, activeSession.id, activeSession.attachedTables.length]);
 
@@ -104,6 +106,8 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
   };
 
   useEffect(() => {
+      // All three deps are triggers. Adding `scrollToBottom` instead would fire this on every render.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     scrollToBottom();
   }, [activeSession.messages, streamingText, loading]);
 
@@ -139,7 +143,7 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
   };
 
   const handleRemoveTableFromContext = (tbl: string) => {
-    const updated = activeSession.attachedTables.filter((t) => t !== tbl);
+    const updated = activeSession.attachedTables.filter((name) => name !== tbl);
     updateSessionTables(activeSession.id, updated);
     setSessions(getAiSessions());
   };
@@ -378,7 +382,7 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
               assistantName: activeProfile.name,
               model: activeProfile.model,
               text: streamingText,
-              timestamp: Date.now(),
+              timestamp: 0,
             }}
             provider={activeProfile.provider}
             onInsertSql={onInsertSql}

@@ -7,10 +7,10 @@ import './i18n'
 import App from './App.tsx'
 import { TerminalWindow } from './TerminalWindow.tsx'
 
-// Nếu mở dưới dạng cửa sổ Terminal riêng (?term=...) thì render root chỉ có Terminal.
+// If opened as a standalone Terminal window (?term=...), render only the Terminal root.
 const termParam = new URLSearchParams(window.location.search).get('term');
 
-// Tắt menu chuột phải mặc định của webview (ngoại trừ trên input, textarea và Monaco Editor)
+// Disable default webview context menu (except on input, textarea, and Monaco Editor)
 //
 // The exemption exists for cut/copy/paste, so it is granted only where one of those is actually on
 // offer. A field the user cannot type into, with nothing selected, has none — and Chrome then falls

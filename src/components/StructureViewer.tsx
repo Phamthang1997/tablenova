@@ -16,7 +16,7 @@ type StructureSection = 'columns' | 'indexes' | 'fks' | 'check_constraints' | 't
 const CUSTOM_TYPE = '__custom_type__';
 
 interface StructureViewerProps {
-  /** Kết nối mà component này thao tác lên. Truyền tường minh, không đọc id ambient (§4.1). */
+  /** The connection this component acts on. Passed explicitly, never read from the ambient id (§4.1). */
   connId: string;
   tableName: string;
   schema: SchemaInfo;
@@ -216,8 +216,8 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
   // Automatically fetch referenced table columns whenever fkModalData refTable changes or modal opens
   useEffect(() => {
     if (fkModalData?.refTable) {
-      void getColumnsOfRef.current?.(fkModalData.refTable).then(cols => {
-        setRefColumns(cols);
+      void getColumnsOfRef.current?.(fkModalData.refTable).then(refCols => {
+        setRefColumns(refCols);
       });
     } else {
       setRefColumns([]);
@@ -235,11 +235,11 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
   const [allTables, setAllTables] = useState<string[]>([]);
   const [refColumns, setRefColumns] = useState<string[]>([]);
 
-  // Tự động ẩn thông báo lỗi sau 6 giây
+  // Error messages dismiss themselves after 6 seconds
   useEffect(() => {
     if (!errorMsg) return;
-    const t = setTimeout(() => setErrorMsg(null), 6000);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setErrorMsg(null), 6000);
+    return () => clearTimeout(timer);
   }, [errorMsg]);
 
   // Load all tables for foreign key referenced table dropdown selection
@@ -247,7 +247,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
     const fetchAllTables = async () => {
       try {
         const list = await dbHelper.getTables(connId);
-        setAllTables(list.map(t => t.name));
+        setAllTables(list.map(tbl => tbl.name));
       } catch (err) {
         console.error("Lỗi lấy danh sách bảng:", err);
       }
@@ -421,8 +421,8 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
     };
     const newCols = [...cols, newCol];
     setCols(newCols);
-    // Mở sẵn ô nhập tên cột như handleAddIndex vẫn làm — bấm "Thêm cột" mà dòng
-    // mới chỉ nằm im ở dưới thì người dùng không biết phải nhấp đôi để sửa.
+    // The column-name input is opened straight away, as handleAddIndex does — pressing "Add column"
+    // and getting a row that just sits there leaves the user unaware they must double-click to edit.
     setTimeout(() => startEditCol(newCols.length - 1, 'name', newCol.name), 50);
   };
 
@@ -570,12 +570,12 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
     }
   };
 
-  // Lấy danh sách cột của một bảng để chọn "Cột tham chiếu".
-  // Bản cũ gọi getTableSchema(refTable) MỖI LẦN nhấp đôi vào ô — mỗi lần là một
-  // vòng round-trip tới DB, và getTableSchema còn lấy cả index + khóa ngoại dù ở
-  // đây chỉ cần tên cột. Với DB ở xa thì mỗi lần mở dropdown phải chờ.
-  // Nay dùng getFullCatalog(): lấy cột của TẤT CẢ bảng trong ít truy vấn rồi cache
-  // lại, nên chỉ chậm đúng một lần đầu, sau đó mọi bảng đều tức thì.
+  // Fetches a table's columns for the "Referenced column" picker.
+  // The old version called getTableSchema(refTable) on EVERY double-click — one round trip to the
+  // database each time, and getTableSchema also fetches indexes and foreign keys when only column
+  // names are wanted here. Against a remote database, every dropdown meant a wait.
+  // It now uses getFullCatalog(): the columns of ALL tables in a few queries, cached — so only the
+  // very first time is slow and every table after it is instant.
   const [loadingRefCols, setLoadingRefCols] = useState(false);
 
   /**
@@ -628,8 +628,8 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
     }));
     setEditingFkCell(null);
 
-    // Vừa chọn bảng tham chiếu -> nạp sẵn cột của nó ngay, để khi người dùng mở ô
-    // "Cột tham chiếu" thì danh sách đã có, không phải chờ.
+    // A referenced table was just picked -> load its columns at once, so the "Referenced column" list
+    // is already there when the user opens it, with no wait.
     if (field === 'refTable' && finalVal) {
       void getColumnsOf(finalVal).then(setRefColumns);
     }
@@ -922,7 +922,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [section, tableName, schema, cols, idxs, fks, deletedColNames, deletedIdxNames, deletedFkNames]);
 
-  // Dựng các dump script theo dialect (dùng trong pane DDL)
+  // Builds the per-dialect dump scripts (used in the DDL pane)
   const q = dbType === 'mysql' ? '`' : '"';
   const dropScript = `DROP TABLE ${q}${tableName}${q};`;
   const truncateScript = dbType === 'sqlite'
@@ -1038,7 +1038,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
   const handleAddTrigger = () => {
     let baseName = `trg_${tableName}`;
     let counter = 1;
-    while (triggers.some(t => t.name === `${baseName}_${counter}`)) {
+    while (triggers.some(tbl => tbl.name === `${baseName}_${counter}`)) {
       counter++;
     }
     setTriggerModalData({
@@ -2513,7 +2513,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
         </Modal>
       )}
 
-      {/* Index Window Modal (Chỉnh sửa / Thêm Index trực quan) */}
+      {/* The index modal (visually adding or editing an index) */}
       {idxModalData && (
         <Modal
           title={idxModalData.isNew ? "Thêm Index Mới" : "Chỉnh sửa Index"}
@@ -2522,7 +2522,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
           zIndex={9999}
         >
           <ModalBody style={{ display: 'flex', flexDirection: 'column', gap: '14px', padding: '16px 20px' }}>
-            {/* Tên Index */}
+            {/* Index name */}
             <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', alignItems: 'center', gap: '12px' }}>
               <span style={{ fontWeight: 600, color: 'var(--win-text-secondary)', textAlign: 'right' }}>Tên Index</span>
               <input
@@ -2535,7 +2535,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
               />
             </div>
 
-            {/* Loại Index */}
+            {/* Index type */}
             <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', alignItems: 'center', gap: '12px' }}>
               <span style={{ fontWeight: 600, color: 'var(--win-text-secondary)', textAlign: 'right' }}>Loại Index</span>
               <select
@@ -2551,7 +2551,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
               </select>
             </div>
 
-            {/* Cột mục tiêu (Multi-column selector) */}
+            {/* Target columns (a multi-column selector) */}
             <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', alignItems: 'flex-start', gap: '12px' }}>
               <span style={{ fontWeight: 600, color: 'var(--win-text-secondary)', textAlign: 'right', paddingTop: '4px' }}>Cột chỉ mục</span>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -2639,7 +2639,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
         </Modal>
       )}
 
-      {/* Visual Check Constraint Modal (Thêm & Chỉnh sửa trực quan) */}
+      {/* The check-constraint modal (visually adding and editing) */}
       {checkModalData && (
         <Modal
           title={checkModalData.isNew ? "Thêm Check Constraint" : "Chỉnh sửa Check Constraint"}
@@ -2648,7 +2648,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
           zIndex={999999}
         >
           <ModalBody style={{ gap: '14px' }}>
-            {/* Tên Constraint */}
+            {/* Constraint name */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
               <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)' }}>Tên Constraint:</label>
               <input
@@ -2698,7 +2698,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
               </div>
             </div>
 
-            {/* Mẫu điều kiện phổ biến */}
+            {/* Common condition templates */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)' }}>Mẫu kiểm tra phổ biến:</label>
               <div className="st-chips-row">
@@ -2745,7 +2745,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
               </div>
             </div>
 
-            {/* Biểu thức Check Expression */}
+            {/* The check expression */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
               <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)' }}>Biểu thức Check (Expression):</label>
               <textarea
@@ -2771,7 +2771,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
         </Modal>
       )}
 
-      {/* Visual Trigger Modal (Thêm & Chỉnh sửa trực quan) */}
+      {/* The trigger modal (visually adding and editing) */}
       {triggerModalData && (
         <Modal
           title={triggerModalData.isNew ? "Thêm Trigger Mới" : "Chỉnh sửa Trigger"}
@@ -2780,7 +2780,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
           zIndex={999999}
         >
           <ModalBody style={{ gap: '14px' }}>
-            {/* Tên Trigger */}
+            {/* Trigger name */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
               <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)' }}>Tên Trigger:</label>
               <input
@@ -2849,7 +2849,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
               </div>
             )}
 
-            {/* Mẫu Trigger thường dùng */}
+            {/* Common trigger templates */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)' }}>Mẫu câu lệnh thường dùng:</label>
               <div className="st-chips-row">
@@ -2883,7 +2883,7 @@ export const StructureViewer: React.FC<StructureViewerProps> = ({
               </div>
             </div>
 
-            {/* Thân Trigger */}
+            {/* The trigger body */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
               <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--win-text-secondary)' }}>Thân Trigger (Action Statement):</label>
               <textarea

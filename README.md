@@ -1,64 +1,88 @@
 # 🚀 TABLENOVA
 
-> **A modern, blazingly fast, and elegant database management client & SQL editor for PostgreSQL, MySQL, SQLite, and Redis.**
+<div align="center">
 
-**TABLENOVA** is a high-performance cross-platform desktop application built with **Tauri v2 + Rust** on the backend and **React 19 + TypeScript + Vite + Monaco Editor** on the frontend. It provides a fluid, intuitive, and feature-packed experience designed for developers and database administrators.
+![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)
+![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)
+![Tauri](https://img.shields.io/badge/Tauri-v2-FFC131?logo=tauri&logoColor=black)
+![Rust](https://img.shields.io/badge/Rust-2024_Edition-DEA584?logo=rust&logoColor=black)
+![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
+![TypeScript](https://img.shields.io/badge/TypeScript-6.x-3178C6?logo=typescript&logoColor=white)
+
+**A modern, blazingly fast, and elegant database management client & SQL editor for PostgreSQL, MySQL, MariaDB, SQLite, and Redis with built-in MCP Server & AI Copilot.**
+
+</div>
+
+---
+
+**TABLENOVA** is a high-performance, cross-platform desktop application built with **Tauri v2 + Rust** on the backend and **React 19 + TypeScript + Vite + Monaco Editor** on the frontend. It provides a fluid, intuitive, and feature-packed experience designed for developers, data engineers, and database administrators.
 
 ---
 
 ## ✨ Key Features
 
 ### 🗄️ 1. Multi-Database & Redis Support
-- **PostgreSQL**: Native async support for advanced data types (UUID, JSONB, Numeric, Chrono Timestamps, Arrays).
-- **MySQL & MariaDB**: Native driver integration for MySQL 8+ and MariaDB.
-- **SQLite**: Blazingly fast local SQLite file management and query engine.
-- **Redis Key-Value Store**: Built-in **Redis Key Browser** with key filtering, TTL management, data type inspection (`String`, `Hash`, `List`, `Set`, `ZSet`), database index switching (`db0` – `db15`), and server metrics (`INFO`).
-- **Enterprise Security**: SSL/TLS encryption, SSH Tunneling (Russh), AWS IAM Authentication, and OS Keyring integration for safe credential storage.
+- **PostgreSQL**: Native async driver support for advanced data types (`UUID`, `JSONB`, `NUMERIC`, `TIMESTAMPTZ`, Arrays, Composite types).
+- **MySQL & MariaDB**: Native protocol integration for MySQL 8+ and MariaDB (including Sequence management).
+- **SQLite**: Fast local SQLite file inspection, schema editing, and query execution.
+- **Redis Key-Value & Stream Browser**:
+  - Tree and flat key views with prefix filtering, TTL editor, and real-time type inspection (`String`, `Hash`, `List`, `Set`, `ZSet`, `Stream`).
+  - **Redis CLI Console**: Embedded interactive command console with syntax highlighting and auto-completion.
+  - **Redis Stream Panel**: Field/Value inspector with range loading and live entries.
+  - **SlowLog & Metrics Dashboard**: Server latency monitor, `INFO` statistics, and client transfer tools.
+  - Database index switching (`db0` – `db15`).
 
-### 📝 2. Monaco SQL Editor Engine
-- **Schema-Aware Autocomplete**: Real-time context-aware completion for table names, column names, SQL keywords, and database functions.
-- **Query Parameters**: Supports `:param_name`, `$1`, and `?` placeholder syntaxes with automatic parameter prompt dialogs.
-- **1-Click SQL Formatting**: Built-in **Beautify SQL** and **Minify SQL** formatters.
-- **Flexible Split Views**: Single pane, Vertical split (Left/Right), or Horizontal split (Top/Bottom) with draggable resizers.
+### 🤖 2. Embedded Model Context Protocol (MCP) Server
+- **Built-in Local MCP Server**: Exposes database metadata, schema catalogs, and safe read queries to external AI clients (Claude Desktop, Cursor, Windsurf, Antigravity).
+- **Enterprise Security**: Constant-time SHA-256 Bearer Token verification and strict HTTP Origin/Host filtering against DNS rebinding.
 
-### 📊 3. Visual EXPLAIN & Plan Analyzer
-- **Plan Diagram View**: Interactive node flowchart visualizer with color-coded cost severity (*Green / Orange / Red*).
-- **Tree View**: Detailed expandable/collapsible hierarchy showing operation types, cost, estimated rows, and index usage.
-- **Raw View**: Copyable original text output for exact query execution plan inspection.
-- **Multiple Modes**: Supports `EXPLAIN (Estimated)`, `EXPLAIN ANALYZE (Actual Execution)`, and `JSON` format output.
+### 🧠 3. AI Assistant & SQL Copilot
+- **Multi-Provider AI Integration**: Direct support for **Ollama** (Local LLMs), **Google Gemini**, **OpenAI**, **Anthropic Claude**, and **OpenRouter**.
+- **Context-Aware SQL Generation**: Automatically injects current database schema and active table structures into the prompt context for accurate query generation.
+- **Live Streaming & 1-Click Execution**: Real-time markdown chat streaming with instant "Run in Editor" or "Insert into Script" actions.
 
-### ⚡ 4. Data Grid & Management Tools
-- High-performance data grid with configurable pagination (10, 20, 50, 100, 500+ rows/page).
-- Direct cell editing, column sorting, filtering, and table structure management.
-- Data export in **CSV**, **JSON**, or **SQL Dump** format.
-- **Database Backup & Restore**: Full database dump export/import supporting compressed `.sql.gz` files.
-- **Schema Migration**: Inspect and compare table structures and indexes.
+### 📝 4. Monaco SQL Editor Engine
+- **Schema-Aware Autocomplete**: Context-aware completion for table names, columns, SQL keywords, and stored functions.
+- **Query Parameters Modal**: Automatically detects `:param`, `$1`, and `?` placeholders and prompts with typed input dialogs.
+- **Visual Split Views**: Single pane, Vertical split, or Horizontal split with drag-to-resize.
+- **1-Click SQL Formatting**: Built-in Beautify and Minify formatters.
 
-### 💻 5. Embedded Terminal & SSH Integration
-- **Interactive Terminal**: Integrated local shell and remote SSH terminal powered by `@xterm/xterm`.
-- **SSH Tunneling**: Securely connect to databases inside private VPCs or remote servers via SSH port forwarding.
+### 📊 5. Visual EXPLAIN & Plan Analyzer
+- **Plan Diagram Flowchart**: Interactive visual node flowchart with color-coded cost severity (*Green / Amber / Red*).
+- **Tree & Raw Views**: Expandable/collapsible hierarchy showing node cost, startup cost, estimated rows, and index conditions.
+- **Multiple Modes**: Supports `EXPLAIN (Estimated)`, `EXPLAIN ANALYZE (Actual Execution)`, and `JSON` format inspection.
 
-### 🎨 6. Modern Liquid Glass Aesthetics
-- Premium Dark and Light modes with macOS Sequoia / VisionOS inspired Liquid Glass design system.
-- Dynamic smart dropdowns automatically calculated to fit screen boundaries.
+### ⚡ 6. Data Management, Migration & Comparison
+- **High-Performance Data Grid**: Virtualized row rendering, inline cell editing, sorting, column filters, and smart pagination.
+- **Data Generator (Mocking)**: Generates realistic mock data (Names, Emails, Dates, Regex patterns, Foreign Key constraints).
+- **Database Compare & Sync**: Visual structure and data comparison between two databases with auto-generated sync DDL/DML scripts.
+- **Schema Migration**: Create snapshot checkpoints, track structural changes, and export migration scripts.
+- **Dump Backup & Restore**: Full database backup and restore supporting compressed `.sql.gz` files.
+
+### 🔒 7. Enterprise Security & Transaction Controls
+- **Transaction Isolation Panel**: Switch isolation levels (`Read Committed`, `Repeatable Read`, `Serializable`) with live elapsed time tracking and uncommitted close protection.
+- **Safe Mode**: Read-Only lock mode to prevent accidental mutations on Production databases.
+- **OS Keyring Integration**: Credentials safely encrypted in Windows Credential Manager, macOS Keychain, or Linux Secret Service.
+- **SSH Tunneling (Russh)**: Connect to private databases via bastion hosts with pure-Rust SSH port forwarding.
+
+### 🎨 8. Liquid Glass Design & Internationalization
+- **Liquid Glass Theme**: Modern UI aesthetics inspired by macOS Sequoia and VisionOS with Dark and Light mode support.
+- **Multi-Language (i18n)**: English and Vietnamese language support with instant switching.
+- **Multi-Connection Rail (DbRail)**: Sidebar rail for managing multiple open connections concurrently with environment color tags.
 
 ---
 
 ## 🛠️ Tech Stack
 
-### Backend (Rust / Tauri v2)
-- **Tauri v2**: Lightweight, secure, and fast desktop application framework.
-- **SQLx & Rusqlite**: Async connection pooling for PostgreSQL, MySQL, and SQLite.
-- **Russh**: Pure-Rust SSH protocol implementation for secure tunneling and remote PTY terminal sessions.
-- **Tokio**: High-performance asynchronous runtime.
-- **Keyring**: OS-native credential storage (Windows Credential Manager, macOS Keychain, Linux Secret Service).
-
-### Frontend (React / TypeScript)
-- **React 19 & TypeScript 6**: Modern component-driven UI architecture.
-- **Vite 8**: High-speed frontend build tool and dev server.
-- **Monaco Editor**: VS Code's editor engine for SQL writing and syntax highlighting.
-- **@xterm/xterm**: Full PTY terminal emulator component.
-- **Lucide React**: Modern icon set.
+| Layer | Technologies |
+| :--- | :--- |
+| **Desktop Shell** | [Tauri v2](https://v2.tauri.app/) (Rust) |
+| **Backend Runtime** | [Tokio](https://tokio.rs/) · [SQLx](https://github.com/launchbadge/sqlx) · [Rusqlite](https://github.com/rusqlite/rusqlite) · [Redis-rs](https://github.com/redis-rs/redis-rs) |
+| **Protocols & Security** | [rmcp (MCP SDK)](https://github.com/modelcontextprotocol) · [Axum](https://github.com/tokio-rs/axum) · [Russh](https://github.com/warp-tech/russh) · [Keyring-rs](https://github.com/hwchen/keyring-rs) |
+| **Frontend Framework** | [React 19](https://react.dev/) · [TypeScript](https://www.typescriptlang.org/) · [Vite 8](https://vitejs.dev/) |
+| **Editor & Terminal** | [Monaco Editor](https://microsoft.github.io/monaco-editor/) · [@xterm/xterm](https://xtermjs.org/) |
+| **Styling & Icons** | Vanilla CSS (Liquid Glass Design Tokens) · [Lucide Icons](https://lucide.dev/) |
+| **Testing & Linting** | [Vitest](https://vitest.dev/) · [Oxlint](https://oxc.rs/) |
 
 ---
 
@@ -66,15 +90,15 @@
 
 ### Prerequisites
 - **Node.js**: `>= 18.x`
-- **Rust**: `>= 1.75`
-- **Package Manager**: `npm`, `yarn`, or `pnpm`
+- **Rust**: `>= 1.75` (Rust 2024 Edition)
+- **Package Manager**: `npm`, `pnpm`, or `yarn`
 
-### Installation & Run
+### Installation & Development
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/your-username/table.git
-   cd table
+   git clone https://github.com/Phamthang1997/tablenova.git
+   cd tablenova
    ```
 
 2. **Install frontend dependencies**:
@@ -85,18 +109,22 @@
 3. **Start in Development Mode**:
    ```bash
    npm run dev
-   # Or run the Windows batch starter script:
-   .\dev-start.bat
    ```
 
-4. **Build Production Desktop Package**:
+4. **Run Unit Tests & Linting**:
    ```bash
-   npm run build
+   npm test          # Run Vitest test suites
+   npx oxlint src    # Run Oxlint code analysis
+   ```
+
+5. **Build Desktop App for Production**:
+   ```bash
+   npm run build     # Compile frontend bundle & build native desktop executable
    ```
 
 ### ⚠️ macOS Gatekeeper Troubleshooting ("App is damaged and can't be opened")
-If you download a `.dmg` release built from GitHub Actions, macOS Gatekeeper blocks unsigned apps downloaded via web browsers. To fix this:
-1. Move `TableNova.app` to your `/Applications` folder.
+If you download a `.dmg` release built from GitHub Actions, macOS Gatekeeper may block unsigned binaries downloaded via web browsers. To resolve this:
+1. Drag `TableNova.app` into your `/Applications` folder.
 2. Open Terminal and run:
    ```bash
    sudo xattr -rd com.apple.quarantine /Applications/TableNova.app
@@ -108,44 +136,49 @@ If you download a `.dmg` release built from GitHub Actions, macOS Gatekeeper blo
 
 ```text
 table/
-├── src/                          # Frontend Source Code (React 19 + TS)
+├── src/                          # Frontend Source Code (React 19 + TypeScript)
 │   ├── components/               # UI Components
-│   │   ├── ConnectionManager.tsx # Connection Manager Modal & Profile List
-│   │   ├── DataGrid.tsx          # Data Grid Table Viewer & Cell Editor
-│   │   ├── SqlEditor.tsx         # Monaco SQL Editor & Query Executor
-│   │   ├── RedisBrowser.tsx      # Redis Key-Value Inspector & Manager
-│   │   ├── ExplainViewer.tsx     # EXPLAIN Plan Visualizer Tabs
-│   │   ├── ExplainDiagramView.tsx# Flowchart Plan Diagram
-│   │   ├── TerminalPanel.tsx     # Embedded Local & SSH Terminal (Xterm)
-│   │   └── StructureViewer.tsx   # Table Schema & Index Inspector
-│   ├── utils/
-│   │   ├── dbHelper.ts           # Tauri IPC Bridge for Database Operations
-│   │   └── explainHelper.ts      # Query Execution Plan Parser
-│   ├── App.tsx                   # Main Application Component
-│   └── index.css                 # CSS Design System & Theme Tokens
+│   │   ├── ai/                   # AI Assistant & Chatbot Panels
+│   │   ├── redis/                # Redis Key Browser, Stream, Console & SlowLog
+│   │   ├── ConnectionManager.tsx # Database Connections & Credential Dialogs
+│   │   ├── DataGrid.tsx          # Virtualized Data Grid Table & In-cell Editor
+│   │   ├── SqlEditor.tsx         # Monaco Editor SQL Workspace & Split Panes
+│   │   ├── ExplainViewer.tsx     # Visual EXPLAIN Flowchart & Plan Analyzer
+│   │   ├── DbRail.tsx            # Multi-Connection Sidebar Switcher Rail
+│   │   ├── TxControl.tsx         # Transaction Isolation & Safety Toolbar
+│   │   └── TerminalPanel.tsx     # Embedded Local & Remote SSH Terminal
+│   ├── sql/                      # Monaco SQL Language Service & Result Formatters
+│   ├── utils/                    # Tauri IPC Bridge & Helper Utilities
+│   ├── i18n/                     # Internationalization (EN / VI Locales)
+│   ├── App.tsx                   # Main Workspace Container Component
+│   └── index.css                 # Liquid Glass Design System Tokens
 ├── src-tauri/                    # Backend Source Code (Rust + Tauri v2)
 │   ├── src/
-│   │   ├── main.rs               # Desktop App Entrypoint
-│   │   ├── lib.rs                # Tauri IPC Command Handlers & App State
-│   │   ├── database.rs           # SQL Connection Pool, Query & Export Logic
-│   │   ├── redis_db.rs           # Redis Connection & Key Browser Handler
-│   │   ├── ssh_tunnel.rs         # SSH Port Forwarding Tunnel
-│   │   ├── ssh_terminal.rs       # Remote SSH PTY Terminal Streaming
-│   │   ├── local_terminal.rs     # Embedded Local PTY Shell Session
-│   │   ├── aws_iam.rs            # AWS IAM Authentication Token Provider
-│   │   └── secret_store.rs       # OS Keyring Secure Password Storage
+│   │   ├── app/                  # Tauri Handlers Registration & Run Entry
+│   │   ├── database/             # PostgreSQL / MySQL / SQLite Drivers & Catalog
+│   │   ├── redis_db/             # Redis Connection Session & Command Engine
+│   │   ├── mcp/                  # Built-in Streamable HTTP MCP Server & Security
+│   │   ├── state/                # Connection Pool Registry & App State
+│   │   ├── ssh/                  # Russh Secure Port Forwarding Tunnel
+│   │   ├── terminal/             # Local PTY & SSH Remote Shell Streamer
+│   │   ├── credentials/          # OS Keyring Secure Storage
+│   │   ├── datagen/              # Schema-Aware Mock Data Generator
+│   │   ├── compare/              # Database Schema & Data Comparison
+│   │   ├── stats/                # Database Server Performance Statistics
+│   │   └── tx/                   # Transaction Isolation & Safe Mode Handlers
 │   ├── Cargo.toml                # Rust Dependencies Manifest
-│   └── tauri.conf.json           # Tauri Desktop App Configuration
+│   └── tauri.conf.json           # Tauri Desktop Configuration
 ├── package.json
 └── README.md
 ```
 
 ---
 
-## 📄 License & Publisher
+## 📄 License & Code of Conduct
 
-- **Publisher / Author**: **MeoMeo**
+- **Author & Creator**: **Pham Thang**
   - 📧 **Email**: [pthang888@gmail.com](mailto:pthang888@gmail.com)
   - 💼 **LinkedIn**: [thangpx](https://www.linkedin.com/in/thangpx/)
-- **Copyright**: © 2026 MeoMeo · TABLENOVA
-- **License**: Released under the [MIT License](LICENSE).
+- **Copyright**: © 2026 Pham Thang and TableNova Contributors
+- **License**: Released under the [GNU Affero General Public License v3.0 (AGPL-3.0)](LICENSE).
+- **Code of Conduct**: Please follow our [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md).

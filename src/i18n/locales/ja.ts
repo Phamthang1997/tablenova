@@ -175,6 +175,7 @@ const ja: typeof en = {
     databaseInfo: 'データベース情報',
     schemaMigration: 'スキーマ差分 & マイグレーション',
     compareDatabases: '2つのデータベースを比較',
+    erDiagram: 'ER図 (ER Diagram)',
     generateData: 'テストデータを生成',
     exportDatabase: 'データベースのエクスポート',
     importDatabase: 'データベースのインポート',
@@ -698,6 +699,8 @@ const ja: typeof en = {
     loadingData: 'データを読み込み中...',
     dataTab: 'データ',
     structureTab: '構造',
+    chartTab: 'グラフ',
+    chartViewTitle: 'テーブルデータをグラフで可視化',
     addRowTitle: '新しい行を追加',
     deleteRowTitle: '選択中の行を削除',
     rowLabel: '行',
@@ -1646,11 +1649,13 @@ const ja: typeof en = {
     downloadSql: '.sql をダウンロード',
   },
 
-  // So sánh hai database (DbCompareDialog + db_compare.rs)
+  // Database comparison (DbCompareDialog + db_compare.rs)
   compare: {
     title: '2つのデータベースを比較',
     sourceLabel: 'ソース (A)',
+    sourceHint: '基準となるデータベース',
     targetLabel: 'ターゲット (B)',
+    targetHint: '変更が適用される側',
     currentDatabase: '(接続中のデータベース)',
     schemaPlaceholder: 'スキーマ (既定: public)',
     sqlitePathPlaceholder: 'パス\\ファイル.db',
@@ -1676,6 +1681,8 @@ const ja: typeof en = {
     errRun: '比較に失敗しました: {{message}}',
     copied: 'SQL をコピーしました。',
 
+    emptyTitleStructure: '2つのデータベース構造を比較',
+    emptyTitleData: 'テーブルデータの比較 (Data Diff)',
     emptyHintStructure:
       '各側のデータベースを選び「構造を比較」を押すと、異なるテーブル・列・インデックス・外部キーと、B を A に合わせる SQL が表示されます。',
     emptyHintData:
@@ -1772,7 +1779,7 @@ const ja: typeof en = {
     changeOther: 'その他',
   },
 
-  // Sinh dữ liệu test (DataGeneratorDialog + data_generator.rs)
+  // Test data generator (DataGeneratorDialog + data_generator.rs)
   dataGen: {
     title: 'テストデータを生成',
     titleWithDb: 'テストデータを生成 — {{db}}',
@@ -2175,7 +2182,7 @@ const ja: typeof en = {
     bulkDeleteProgress: "{{scanned}} 件スキャン、{{deleted}} 件削除…",
     bulkDeleteDone: "完了: {{scanned}} 件スキャン、{{deleted}} 件削除。",
     bulkDeleteCancelled: "キャンセル: {{scanned}} 件スキャン、{{deleted}} 件削除。",
-    // Xuất / nhập keyspace theo prefix (RedisTransferDialog + utils/redisTransfer.ts)
+    // Keyspace export / import by prefix (RedisTransferDialog + utils/redisTransfer.ts)
     ctxExportGroup: "このプレフィックス配下のキーをすべてエクスポート…",
     transferBtnTitle: "キーのエクスポート / インポート",
     transferTitle: "キーのエクスポート / インポート",
@@ -2481,7 +2488,7 @@ const ja: typeof en = {
     cancelled: 'キャンセルしました — セーフモードが確認を求めました。',
   },
 
-  // Giới hạn thời gian câu lệnh — cùng popover với Safe Mode. Xem stmtTimeout.ts.
+  // Statement timeout setting — shared popover with Safe Mode. See stmtTimeout.ts.
   stmtTimeout: {
     menuTitle: 'ステートメントの制限時間',
     off: 'なし',
@@ -2490,13 +2497,13 @@ const ja: typeof en = {
     hint: 'エディタのクエリやグリッドのページ読み込みがこの時間を超えたら停止します。リストア・データ生成・スキーマ変更は制限されません。',
   },
 
-  // Xem trước SQL trước khi grid lưu — công tắc nằm trong popover Safe Mode. Xem commitPreview.ts.
+  // Preview SQL before saving changes — toggle inside Safe Mode popover. See commitPreview.ts.
   commitPreview: {
     label: '保存前に SQL を確認',
     onDesc: 'グリッドが実行する文を表示し、確認を待ちます。',
     offDesc: 'グリッドはそのまま保存します。Safe Mode が有効なら引き続き確認します。',
   },
-  // Việc chạy nền (xuất/sao lưu, nhập/phục hồi, sinh dữ liệu). Xem utils/jobs.ts.
+  // Background jobs (export/backup, import/restore, data generator). See utils/jobs.ts.
   jobs: {
     panelTitle: 'バックグラウンド処理',
     trayRunning: '{{n}} 件実行中',
@@ -2724,6 +2731,84 @@ const ja: typeof en = {
 
   confirmDialog: {
     typeToConfirm: '確認のため <code>{{text}}</code> と入力してください:',
+  },
+  mcp: {
+    title: 'MCP サーバー',
+    subtitle: '開いているデータベースを AI クライアントから照会できるようにします。',
+    tabServer: 'サーバー & AI クライアント',
+    tabDatabases: '共有データベース',
+    tabLogs: '監査ログ',
+    securityPolicies: 'セキュリティポリシー',
+    statusRunning: '{{url}} で実行中',
+    statusStopped: '停止中',
+    start: '開始',
+    stop: '停止',
+    port: 'ポート',
+    autoStart: 'TableNova の起動時に自動で開始',
+    portHint: '変更した場合は、AI クライアントに貼り付けた設定も更新してください。',
+    token: 'アクセストークン',
+    copyToken: 'コピー',
+    tokenCopied: 'コピーしました',
+    regenerate: '再生成',
+    regenerateWarning: '古いトークンを使っているクライアントはすべて動かなくなり、サーバーは再起動します。',
+    tokenInConfigWarning:
+      'AI クライアントはこのトークンを平文の設定ファイルに保存します。パスワードと同じ扱いにしてください。',
+    shared: 'AI に共有する接続',
+    sharedEmpty: '開いている接続がありません。共有するにはまず接続してください。',
+    sharedHint: 'ここでチェックするまで何も共有されません。',
+    sharedReach:
+      '接続を 1 つチェックすると、その接続があるサーバー全体を AI が読めるようになります — information_schema、SHOW DATABASES、他データベースへの参照はいずれも読み取り文です。実際に範囲を絞るには、そのデータベースだけに権限を持つ DB ユーザーで接続してください。',
+    reachOne: 'このデータベースにしか到達しません — このサーバー上の他のデータベースは AI に見えません。',
+    reachSystem: '(+{{n}} システム)',
+    reachMany: 'このサーバー上の {{n}} 個のデータベースに到達します: {{list}}',
+    sharedNone: 'まだ何も共有していません — AI クライアントには空のリストが見えます。',
+    rowLimit: '1 リクエストあたりの返却行数',
+    timeLimit: '1 リクエストの時間制限: {{n}} 秒',
+    readOnlyShort: '読み取り専用',
+    readOnlyNote: 'このビルドは読み取り専用です。書き込みとスキーマ変更は拒否されます。',
+    config: 'クライアント設定',
+    configHint: '使用するクライアントを選んでください。実際にバインドされているポートを使います。',
+    clientClaudeCode: 'Claude Code',
+    clientAntigravity: 'Antigravity',
+    pickClient: 'クライアント',
+    pickTransport: 'トランスポート',
+    transportHttp: 'HTTP',
+    transportStdio: 'stdio (トークン不要)',
+    clientGeneric: 'その他 (Cursor など)',
+    targetClaudeCode:
+      'ターミナルで実行してください。最初の 2 行は再登録のときだけ必要です。スコープは project ではなく user です — project スコープの登録は CLI からは見えてもセッションからは見えないことがあります。settings.json に貼らないこと: Claude Code はそこから MCP サーバーを読まず、警告も出しません。',
+    targetAntigravity:
+      '~/.gemini/config/mcp_config.json に保存するか、Manage MCP Servers → View raw config を使ってください。これは URL ではなく stdio で TableNova を起動します — Antigravity の HTTP クライアントはサーバーに到達する前に失敗することがあり、この方式ならトークンをファイルに書く必要もありません。',
+    targetClaudeCodeStdio: 'ターミナルで実行してください。スコープは project ではなく user です — project スコープの登録は CLI からは見えてもセッションからは見えないことがあります。これは stdio で TableNova を起動するため、トークンはどこにも保存されません。',
+    targetAntigravityHttp: '~/.gemini/config/mcp_config.json に保存してください。Antigravity は serverUrl を要求します — url と httpUrl は無視されます。subscriptions/listen エラーで 0 tools と表示される場合、その環境の HTTP クライアントが壊れています: stdio に切り替えてください。',
+    targetGenericStdio: 'クライアントの MCP 設定ファイルに保存してください。この形式は stdio を話すすべてのクライアントで動作し、トークンを保存しません。',
+    targetGeneric:
+      'クライアントの MCP 設定ファイルに保存してください — Cursor なら .cursor/mcp.json です。',
+    configMismatch:
+      'クライアントごとに URL のフィールド名が異なり、他の名前は無視されるため、別のクライアント向けの設定はエラーも出さずに失敗します。',
+    copyConfig: '設定をコピー',
+    copyCommand: 'コマンドをコピー',
+    log: 'リクエスト',
+    logEmpty: 'まだリクエストはありません。',
+    logMemoryOnly: 'メモリ上のみ — TableNova を閉じると消えます。',
+    logClear: 'クリア',
+    logDenied: 'レイヤー {{n}} で拒否',
+    logFailed: '失敗',
+    logRows: '{{n}} 行',
+    denialBadOrigin: 'ブロックされた Origin または Host',
+    denialBadToken: 'トークンが不正または未指定',
+    denialNotShared: '共有されていない接続',
+    denialNotReadOnly: '読み取り文ではありません',
+    denialManualTransaction: 'TableNova でトランザクションが開いています',
+    denialFailed: 'クエリが失敗しました',
+  },
+
+  er: {
+    loadingSchema: 'スキーマとリレーションを読み込み中...',
+    loadError: 'ER図の読み込みに失敗しました',
+    emptyTitle: 'テーブルが見つかりません',
+    emptyDesc: '新しいテーブルを作成するか、既存のデータベースに接続してER図を生成してください。',
+    tabTitle: 'ER図',
   },
 };
 

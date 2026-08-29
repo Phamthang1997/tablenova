@@ -183,6 +183,7 @@ const en = {
     databaseInfo: 'Database info',
     schemaMigration: 'Schema diff & migration',
     compareDatabases: 'Compare 2 databases',
+    erDiagram: 'ER Diagram',
     generateData: 'Generate test data',
     exportDatabase: 'Export database',
     importDatabase: 'Import database',
@@ -193,7 +194,7 @@ const en = {
     tabQueries: 'Queries',
     tabHistory: 'History',
     tabTools: 'Tools',
-    // Nhãn nhóm: số lượng hiển thị ở huy hiệu riêng bên phải nên không nhúng vào chuỗi.
+    // Group label: item count displayed in separate badge on the right, not embedded in string.
     tablesSection: 'Tables',
     viewsSection: 'Views',
     loadingColumns: 'Loading columns...',
@@ -709,6 +710,8 @@ const en = {
     loadingData: 'Loading data...',
     dataTab: 'Data',
     structureTab: 'Structure',
+    chartTab: 'Chart',
+    chartViewTitle: 'Visualize table data with charts',
     addRowTitle: 'Add a new row',
     deleteRowTitle: 'Delete the selected row',
     rowLabel: 'Row',
@@ -1664,11 +1667,13 @@ const en = {
     downloadSql: 'Download .sql',
   },
 
-  // So sánh hai database (DbCompareDialog + db_compare.rs)
+  // Database comparison (DbCompareDialog + db_compare.rs)
   compare: {
     title: 'Compare 2 databases',
     sourceLabel: 'Source (A)',
+    sourceHint: 'Baseline source',
     targetLabel: 'Target (B)',
+    targetHint: 'Target to be updated',
     currentDatabase: '(current database)',
     schemaPlaceholder: 'schema (default: public)',
     sqlitePathPlaceholder: 'path\\to\\file.db',
@@ -1694,6 +1699,8 @@ const en = {
     errRun: 'Comparison failed: {{message}}',
     copied: 'SQL copied.',
 
+    emptyTitleStructure: 'Compare 2 Database Schemas',
+    emptyTitleData: 'Compare Table Data (Data Diff)',
     emptyHintStructure:
       'Pick a database on each side, then press "Compare structure" to see the tables, columns, indexes and foreign keys that differ — plus the SQL that makes B match A.',
     emptyHintData:
@@ -1790,7 +1797,7 @@ const en = {
     changeOther: 'other',
   },
 
-  // Sinh dữ liệu test (DataGeneratorDialog + data_generator.rs)
+  // Test data generator (DataGeneratorDialog + data_generator.rs)
   dataGen: {
     title: 'Generate test data',
     titleWithDb: 'Generate test data — {{db}}',
@@ -2078,8 +2085,8 @@ const en = {
     errScan: 'SCAN failed',
     errReadOnly: 'Read-only mode: cannot write to Redis. Turn off "Read-only" first.',
     errReadKey: 'Could not read the key',
-    // Tab `redis-key` mở lại mà key không còn — hết TTL hoặc bị xoá từ chỗ khác. Là chuyện
-    // bình thường của Redis, nên là trạng thái rỗng chứ không phải lỗi (kế hoạch §2.5).
+    // `redis-key` tab reopened after key expired via TTL or deleted externally — rendered as empty state.
+    
     keyGone: 'The key “{{key}}” no longer exists',
     keyGoneHint: 'It may have expired or been deleted from elsewhere.',
     retry: 'Look again',
@@ -2091,8 +2098,8 @@ const en = {
     cliResultEmpty: 'Press “Run” to see the result here.',
     cliPosition: 'line {{line}}, column {{col}}',
     cliStatusRunning: 'Running…',
-    // Dừng batch ở `SELECT n`: sau lệnh đó workspace đã sang kết nối của db khác, nên các lệnh
-    // còn lại nếu chạy tiếp sẽ chạy trên db CŨ — xem kế hoạch §2.2.
+    // Halts batch execution at `SELECT n` to avoid running remaining statements on stale db index.
+    
     cliStoppedAtSelect: 'Switched to db{{db}}. {{n}} remaining command(s) were not run — they would have run against the previous database.',
     cliNothingToRun: 'No command on this line',
     closeTab: 'Close tab',
@@ -2198,7 +2205,7 @@ const en = {
     bulkDeleteProgress: "Scanned {{scanned}} keys, deleted {{deleted}}…",
     bulkDeleteDone: "Done: scanned {{scanned}} keys, deleted {{deleted}}.",
     bulkDeleteCancelled: "Cancelled: scanned {{scanned}} keys, deleted {{deleted}}.",
-    // Xuất / nhập keyspace theo prefix (RedisTransferDialog + utils/redisTransfer.ts)
+    // Keyspace export / import by prefix (RedisTransferDialog + utils/redisTransfer.ts)
     ctxExportGroup: "Export every key under this prefix…",
     transferBtnTitle: "Export / import keys",
     transferTitle: "Export / import keys",
@@ -2513,7 +2520,7 @@ const en = {
     cancelled: 'Cancelled — Safe Mode asked for confirmation.',
   },
 
-  // Giới hạn thời gian câu lệnh — cùng popover với Safe Mode. Xem stmtTimeout.ts.
+  // Statement timeout setting — shared popover with Safe Mode. See stmtTimeout.ts.
   stmtTimeout: {
     menuTitle: 'Statement timeout',
     off: 'Off',
@@ -2522,13 +2529,13 @@ const en = {
     hint: 'Stops an editor query or a grid page read that runs longer than this. Restores, data generation and schema changes are never limited.',
   },
 
-  // Xem trước SQL trước khi grid lưu — công tắc nằm trong popover Safe Mode. Xem commitPreview.ts.
+  // Preview SQL before saving changes — toggle inside Safe Mode popover. See commitPreview.ts.
   commitPreview: {
     label: 'Preview SQL before saving',
     onDesc: 'The grid shows the statements and waits for confirmation.',
     offDesc: 'The grid saves straight away. Safe Mode still asks if it is on.',
   },
-  // Việc chạy nền (xuất/sao lưu, nhập/phục hồi, sinh dữ liệu). Xem utils/jobs.ts.
+  // Background jobs (export/backup, import/restore, data generator). See utils/jobs.ts.
   jobs: {
     panelTitle: 'Background jobs',
     trayRunning: '{{n}} running',
@@ -2757,6 +2764,84 @@ const en = {
 
   confirmDialog: {
     typeToConfirm: 'Type <code>{{text}}</code> to confirm:',
+  },
+  mcp: {
+    title: 'MCP Server',
+    subtitle: 'Let AI clients query the databases you already have open.',
+    tabServer: 'Server & Setup',
+    tabDatabases: 'Shared Databases',
+    tabLogs: 'Audit Logs',
+    securityPolicies: 'Security Policy',
+    statusRunning: 'Running on {{url}}',
+    statusStopped: 'Stopped',
+    start: 'Start',
+    stop: 'Stop',
+    port: 'Port',
+    autoStart: 'Start automatically when TableNova opens',
+    portHint: 'Changing this means updating the config you pasted into your AI client.',
+    token: 'Access token',
+    copyToken: 'Copy',
+    tokenCopied: 'Copied',
+    regenerate: 'Regenerate',
+    regenerateWarning: 'Every client using the old token stops working, and the server restarts.',
+    tokenInConfigWarning:
+      'AI clients store this token in a plain-text config file. Treat it like a password.',
+    shared: 'Connections shared with AI',
+    sharedEmpty: 'No connection is open. Open one to share it.',
+    sharedHint: 'Nothing is shared until you tick it here.',
+    sharedReach:
+      'A tick gives the AI read access to the whole server, not just that database — cross-database reads are read statements too. To limit it, connect with a user granted on that one database.',
+    reachOne: 'Reaches only this database — no other database on this server is visible to the AI.',
+    reachSystem: '(+{{n}} system)',
+    reachMany: 'Reaches {{n}} databases on this server: {{list}}',
+    sharedNone: 'Nothing shared yet — AI clients will see an empty list.',
+    rowLimit: 'Rows returned per request',
+    timeLimit: 'Time limit per request: {{n}}s',
+    readOnlyShort: 'Read-only',
+    readOnlyNote: 'This build is read-only: writes and schema changes are refused.',
+    config: 'Client configuration',
+    configHint: 'Pick your client. It uses the port the server is actually bound to.',
+    clientClaudeCode: 'Claude Code',
+    clientAntigravity: 'Antigravity',
+    pickClient: 'Client',
+    pickTransport: 'Transport',
+    transportHttp: 'HTTP',
+    transportStdio: 'stdio (no token)',
+    clientGeneric: 'Other (Cursor…)',
+    targetClaudeCode:
+      'Run these in a terminal — the first two only matter when re-registering. Scope is user, not project: a project-scoped entry can be visible to the CLI and still invisible to the session. Do not paste into settings.json: Claude Code ignores MCP servers there and will not warn you.',
+    targetAntigravity:
+      'Save into ~/.gemini/config/mcp_config.json, or use Manage MCP Servers → View raw config. This one spawns TableNova over stdio instead of using the URL, because Antigravity’s HTTP client can fail before reaching the server — and it needs no token in the file.',
+    targetClaudeCodeStdio: 'Run these in a terminal. Scope is user, not project — a project-scoped entry can be visible to the CLI and still invisible to the session. This one spawns TableNova over stdio, so no token is stored anywhere.',
+    targetAntigravityHttp: 'Save into ~/.gemini/config/mcp_config.json. Antigravity requires serverUrl — url and httpUrl are ignored. If it shows 0 tools with a subscriptions/listen error, its HTTP client is broken in that install: switch to stdio.',
+    targetGenericStdio:
+      "Save into your client's MCP config file. This shape works in every client that speaks stdio, and stores no token.",
+    targetGeneric: "Save into your client's MCP config file — for Cursor that is .cursor/mcp.json.",
+    configMismatch:
+      'Each client names the URL field differently and ignores the others, so a config meant for another client fails silently.',
+    copyConfig: 'Copy config',
+    copyCommand: 'Copy command',
+    log: 'Requests',
+    logEmpty: 'No request yet.',
+    logMemoryOnly: 'Kept in memory only — this list is gone when you close TableNova.',
+    logClear: 'Clear',
+    logDenied: 'Refused at layer {{n}}',
+    logFailed: 'Failed',
+    logRows: '{{n}} rows',
+    denialBadOrigin: 'Blocked origin or host',
+    denialBadToken: 'Wrong or missing token',
+    denialNotShared: 'Connection not shared',
+    denialNotReadOnly: 'Not a read statement',
+    denialManualTransaction: 'Transaction open in TableNova',
+    denialFailed: 'Query failed',
+  },
+
+  er: {
+    loadingSchema: 'Loading database schema & relationships...',
+    loadError: 'Failed to load ER Diagram',
+    emptyTitle: 'No tables found in this database',
+    emptyDesc: 'Create tables or connect to an existing database to generate the ER diagram.',
+    tabTitle: 'ER Diagram',
   },
 };
 

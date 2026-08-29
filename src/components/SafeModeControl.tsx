@@ -48,14 +48,14 @@ interface SafeModeControlProps {
   readOnly: boolean;
   onToggleReadOnly?: () => void;
   /**
-   * Kết nối đang xem — cần cho lệnh đổi giới hạn thời gian câu lệnh, thứ áp vào *phiên* đang chạy
-   * chứ không phải vào một server nào đó đã lưu.
+   * The connection being viewed — needed by the statement time-limit command, which applies to the
+   * *running session* rather than to some saved server.
    */
   connId?: string;
   /**
-   * Dialect của kết nối. Hàng "giới hạn thời gian" chỉ hiện với `postgres`/`mysql`: SQLite chạy
-   * đồng bộ trên tệp cục bộ nên không có chỗ chen một hạn chót vào, và bày ra một ô cài đặt không
-   * có tác dụng thì tệ hơn là không bày.
+   * The connection's dialect. The "time limit" row is shown only for `postgres`/`mysql`: SQLite runs
+   * synchronously against a local file, so there is nowhere to insert a deadline, and offering a
+   * setting that does nothing is worse than offering none.
    */
   dbType?: string;
 }
@@ -84,8 +84,8 @@ export const SafeModeControl: React.FC<SafeModeControlProps> = ({
     return () => window.removeEventListener(SAFE_MODE_CHANGED_EVENT, read);
   }, [connKey]);
 
-  // Cùng lối với Safe Mode ở trên: nguồn sự thật là localStorage, nên hai cửa sổ hoặc hai lần mount
-  // không hiện hai con số khác nhau.
+  // The same approach as Safe Mode above: localStorage is the source of truth, so two windows or two
+  // mounts never show two different numbers.
   useEffect(() => {
     const read = () => setStmtSecs(getStmtTimeoutForKey(connKey));
     read();
@@ -93,8 +93,9 @@ export const SafeModeControl: React.FC<SafeModeControlProps> = ({
     return () => window.removeEventListener(STMT_TIMEOUT_CHANGED_EVENT, read);
   }, [connKey]);
 
-  // Cái ô "đừng hiện lại" nằm trong chính hộp thoại xem trước, tức là nó bị tắt từ chỗ khác — nghe
-  // sự kiện để hàng ở đây không hiện trạng thái cũ khi popover mở lại.
+  // The "do not show again" checkbox lives in the preview dialog itself, so it is switched off from
+  // elsewhere — the event is listened for so this row does not show a stale state when the popover
+  // reopens.
   useEffect(() => {
     const read = () => setPreviewOn(getCommitPreviewForKey(connKey));
     read();
@@ -179,9 +180,9 @@ export const SafeModeControl: React.FC<SafeModeControlProps> = ({
   };
 
   /**
-   * Đặt giới hạn. Ghi vào localStorage (để lần kết nối sau vẫn còn) **và** đẩy sang phiên đang chạy
-   * — hai chỗ, vì một cái là bộ nhớ còn cái kia là hiệu lực. Popover không đóng lại: người ta hay
-   * thử một mức rồi đổi ngay sang mức khác.
+   * Sets the limit. Written into localStorage (so the next connect still has it) **and** pushed into
+   * the running session — two places, because one is memory and the other is effect. The popover does
+   * not close: people often try one level and immediately switch to another.
    */
   const pickTimeout = (secs: number) => {
     setStmtTimeoutForKey(connKey, secs);
@@ -231,10 +232,11 @@ export const SafeModeControl: React.FC<SafeModeControlProps> = ({
                   </button>
                 </React.Fragment>
               ))}
-              {/* Giới hạn thời gian câu lệnh — cùng popover vì nó trả lời cùng một câu hỏi với Safe
-                  Mode ("kết nối này bảo vệ mình tới đâu") và cũng lưu theo server. Các mức đặt sẵn
-                  chứ không phải ô nhập số: gõ số trong một menu là thao tác lạc, và sáu mức đã phủ
-                  hết khoảng người ta thực sự chọn. */}
+              {/* The statement time limit — in the same popover, because it answers the same question
+                  Safe Mode does ("how far does this connection protect me") and is likewise stored per
+                  server. Preset levels rather than a number field: typing a number inside a menu is a
+                  gesture that does not belong there, and six levels cover the range people actually
+                  pick from. */}
               {(dbType === 'postgres' || dbType === 'mysql') && (
                 <>
                   <div className="sm-divider" />
@@ -255,9 +257,9 @@ export const SafeModeControl: React.FC<SafeModeControlProps> = ({
                 </>
               )}
 
-              {/* Xem trước SQL trước khi grid lưu. Ở đây vì đây là đường BẬT LẠI: nó bị tắt từ ô
-                  "đừng hiện lại" trong chính hộp thoại đó, và một công tắc tắt được mà không bật
-                  lại được thì chỉ là một cái bẫy. */}
+              {/* Previewing the SQL before the grid saves. It is here because this is the way back ON:
+                  it is switched off by the "do not show again" checkbox inside that very dialog, and a
+                  switch that turns off but not on again is simply a trap. */}
               <div className="sm-divider" />
               <button
                 className={`sm-item ${previewOn ? 'is-on' : ''}`}

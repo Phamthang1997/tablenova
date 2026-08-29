@@ -54,14 +54,46 @@ export function setActiveConnId(id: string): void {
 export interface OpenConnection {
   connId: string;
   db: string;
-  /** `redis` kể từ khi Redis dùng chung registry — rail vẽ cả hai từ một danh sách (§2.3). */
+  /** `redis` since Redis shares the registry — the rail draws both from one list (§2.3). */
   dialect: 'sqlite' | 'postgres' | 'mysql' | 'redis';
   serverId: string;
   schema: string | null;
-  /** Số câu GHI đang chờ commit trên kết nối này — badge của rail (§4.2b). */
+  /** WRITE statements waiting to be committed on this connection — the rail's badge (§4.2b). */
   pending: number;
-  /** Kết nối đang từ chối mọi câu ghi. */
+  /** This connection is refusing every write. */
   readOnly: boolean;
+  /** Is this connection visible to AI clients through the built-in MCP server? Default false. */
+  mcpExposed: boolean;
+}
+
+/** State of the built-in MCP server. `url` is empty while stopped, so no one copies a dead address. */
+export interface McpStatus {
+  running: boolean;
+  port: number;
+  url: string;
+  /** This app's own executable, for the `--mcp-stdio` client config. */
+  exePath: string;
+}
+
+/** One request an AI client made. Mirrors `mcp/audit.rs`. */
+export interface McpAuditEntry {
+  /** Monotonic within one app run — a stable React key for a list that grows at the front. */
+  id: number;
+  at: string;
+  tool: string;
+  connId: string | null;
+  sql: string | null;
+  sqlTruncated: boolean;
+  ms: number;
+  ok: boolean;
+  /**
+   * Absent when `ok`. Mirrors `mcp::audit::Denial` — `badOrigin`/`badToken` are the two door layers,
+   * refused before any tool runs, so they carry no `connId` or `sql`.
+   */
+  denial?: 'badOrigin' | 'badToken' | 'notShared' | 'notReadOnly' | 'manualTransaction' | 'failed';
+  /** Which defence layer refused; `0` when the database itself failed. */
+  layer?: number;
+  message?: string;
 }
 
 /**
@@ -92,17 +124,18 @@ async function invoke<T = any>(cmd: string, args?: Record<string, unknown>): Pro
 }
 
 /**
- * Chỉ đặt `connId` khi có giá trị thật.
+ * Sets `connId` only when there is a real value.
  *
- * Không viết thẳng `{ ...args, connId }` được: `invoke` ở trên merge `{ connId: currentConnId,
- * ...args }`, nên một `connId: undefined` tường minh sẽ **ghi đè** id ambient bằng `undefined` và
- * mọi lệnh mất kết nối. Đây là chỗ duy nhất biết luật đó.
+ * Writing `{ ...args, connId }` directly will not do: `invoke` above merges
+ * `{ connId: currentConnId, ...args }`, so an explicit `connId: undefined` **overwrites** the ambient
+ * id with `undefined` and every command loses its connection. This is the one place that knows that
+ * rule.
  */
 function withConnId(args: Record<string, unknown>, connId?: string): Record<string, unknown> {
   return connId ? { ...args, connId } : args;
 }
 
-// Message do backend đẩy qua Channel khi stream kết quả SQL (execute_query_stream).
+// Messages the backend pushes over the Channel while streaming SQL results (execute_query_stream).
 export interface QueryStreamMessage {
   type: 'columns' | 'rows' | 'affected' | 'done' | 'error';
   stmtIndex?: number;
@@ -115,7 +148,7 @@ export interface QueryStreamMessage {
   message?: string;
 }
 
-// Message do backend đẩy qua Channel cho SSH Terminal (open_ssh_terminal).
+// Messages the backend pushes over the Channel for the SSH Terminal (open_ssh_terminal).
 export interface SshTerminalMessage {
   type: 'data' | 'exit' | 'closed';
   bytes?: number[];
@@ -162,7 +195,7 @@ export interface DbConnectionConfig {
   user?: string;
   password?: string;
   database?: string;
-  dbIndex?: number; // Redis: chỉ số database 0-15
+  dbIndex?: number; // Redis: the database index, 0-15
   sshEnabled?: boolean;
   sshHost?: string;
   sshPort?: number;
@@ -178,8 +211,9 @@ export interface DbConnectionConfig {
   sslCertPath?: string;
   sslCaPath?: string;
   /**
-   * Số giây tối đa cho MỘT câu lệnh người dùng chạy (SQL editor + đọc trang ở grid). `0`/vắng =
-   * không giới hạn. Postgres/MySQL; SQLite bỏ qua (xem `stmt_timeout` trong `database.rs`).
+   * The most seconds ONE statement the user runs may take (SQL editor + a page read in the grid).
+   * `0`/absent = no limit. Postgres/MySQL only; SQLite skips it (see `stmt_timeout` in
+   * `database.rs`).
    */
   statementTimeoutSecs?: number;
   // AWS IAM authentication (RDS/Aurora)
@@ -193,11 +227,12 @@ export interface DbConnectionConfig {
 }
 
 /**
- * Trạng thái phiên kết nối hiện tại (`get_connection_status`).
+ * The state of the current session (`get_connection_status`).
  *
- * Mọi trường mô tả phiên đều "best effort" phía Rust: server cũ hoặc tài khoản
- * thiếu quyền thì trả chuỗi rỗng chứ không báo lỗi, nên chỗ hiển thị phải tự
- * xử lý giá trị rỗng. `cipher`/`tlsVersion` rỗng nghĩa là phiên không mã hoá.
+ * Every field describing the session is "best effort" on the Rust side: an old server, or an
+ * account without the privilege, gets an empty string back rather than an error, so whatever
+ * displays it has to handle empty itself. An empty `cipher`/`tlsVersion` means the session is not
+ * encrypted.
  */
 export interface ConnectionStatus {
   isConnected: boolean;
@@ -214,46 +249,46 @@ export interface ConnectionStatus {
 }
 
 /**
- * Trạng thái transaction thủ công. Rust là nguồn sự thật duy nhất: frontend KHÔNG phân tích SQL
- * để đoán transaction còn mở hay không — xem `src-tauri/src/tx_session.rs`. Mỗi lần trạng thái đổi,
- * backend phát sự kiện `tx-state-changed` kèm đúng object này.
+ * Manual transaction state. Rust is the single source of truth: the frontend does NOT parse SQL to
+ * guess whether a transaction is still open — see `src-tauri/src/tx_session.rs`. Every time the
+ * state moves, the backend emits a `tx-state-changed` event carrying exactly this object.
  */
 export interface TxStatus {
   autocommit: boolean;
   open: boolean;
-  /** Postgres: một câu lỗi làm hỏng cả transaction, chỉ còn rollback được. */
+  /** Postgres: one failed statement poisons the whole transaction, leaving only rollback. */
   aborted: boolean;
-  /** Số câu lệnh **ghi** trong transaction. Câu đọc (SELECT/SHOW/...) mở transaction nhưng
-   *  không được đếm — con số này hứa "bấy nhiêu thay đổi đang chờ commit". */
+  /** The number of **write** statements in the transaction. A read (SELECT/SHOW/…) opens the
+   *  transaction but is not counted — this number promises "this many changes are waiting". */
   statements: number;
-  /** SQL của đúng những câu đó, để hộp thoại "thay đổi đang chờ" hiển thị. */
+  /** The SQL of exactly those statements, for the "pending changes" dialog to show. */
   pendingSql: string[];
-  /** Nhật ký đã chạm trần kích thước -> `pendingSql` ít hơn `statements`, phải nói ra. */
+  /** The log hit its size cap -> `pendingSql` holds fewer than `statements`, and that must be said. */
   sqlTruncated: boolean;
   sinceMs: number;
   isolation: string | null;
   readOnly: boolean;
   savepoints: string[];
-  /** Câu lệnh vừa chạy đã tự commit (DDL trên MySQL) -> bộ đếm về 0 không phải do người dùng. */
+  /** The statement just run committed by itself (DDL on MySQL) -> the counter reset without the user. */
   implicitCommit: boolean;
   /**
-   * Kết nối mà trạng thái này thuộc về. Mỗi kết nối một phiên, và backend phát một
-   * `tx-state-changed` cho từng phiên — `TxControl` lọc theo field này, nếu không thì event của
-   * kết nối thứ hai sẽ ghi đè hiển thị của kết nối thứ nhất.
+   * The connection this state belongs to. One session per connection, and the backend emits a
+   * `tx-state-changed` per session — `TxControl` filters on this field, without which the second
+   * connection's event would overwrite what the first one shows.
    *
-   * Không bắt buộc: backend cũ hơn cửa sổ đang chạy sẽ không gửi nó (`tauri dev` giữ lại binary
-   * build được gần nhất khi Rust lỗi biên dịch).
+   * Optional: a backend older than the running window will not send it (`tauri dev` keeps the last
+   * binary that built when Rust fails to compile).
    */
   connId?: string;
 }
 
 export const TX_EVENT = 'tx-state-changed';
 
-/** Mức cô lập theo từng dialect — twin của `isolation_allowed` trong tx_session.rs. */
+/** The isolation levels each dialect allows — the twin of `isolation_allowed` in tx_session.rs. */
 export const TX_ISOLATION_LEVELS: Record<string, string[]> = {
   postgres: ['READ COMMITTED', 'REPEATABLE READ', 'SERIALIZABLE'],
   mysql: ['READ UNCOMMITTED', 'READ COMMITTED', 'REPEATABLE READ', 'SERIALIZABLE'],
-  // SQLite không có isolation level; thứ tương ứng là mức khoá của BEGIN.
+  // SQLite has no isolation levels; the equivalent is BEGIN's locking mode.
   sqlite: ['DEFERRED', 'IMMEDIATE', 'EXCLUSIVE'],
 };
 
@@ -272,14 +307,14 @@ export interface ColumnInfo {
   comment?: string | null;
   extra?: string | null;
   /**
-   * Cột do database TỰ TÍNH (`GENERATED ALWAYS AS (...)`). Ghi vào là lỗi (MySQL 3105), nên
-   * dump phải bỏ hẳn khỏi danh sách cột của INSERT.
+   * A column the database COMPUTES itself (`GENERATED ALWAYS AS (...)`). Writing to it is an error
+   * (MySQL 3105), so a dump has to drop it from the INSERT column list entirely.
    */
   generated?: boolean;
   /**
-   * Postgres `GENERATED ALWAYS AS IDENTITY`. Khác `generated`: cột này VẪN phải nằm trong
-   * INSERT (bỏ đi là đánh số lại toàn bộ và mọi khoá ngoại trỏ tới nó sai theo), chỉ là câu
-   * lệnh cần thêm `OVERRIDING SYSTEM VALUE`.
+   * Postgres `GENERATED ALWAYS AS IDENTITY`. Unlike `generated`, this column MUST stay in the
+   * INSERT (leaving it out renumbers everything, and every foreign key pointing at it goes wrong
+   * with it) — the statement just needs `OVERRIDING SYSTEM VALUE` added.
    */
   identityAlways?: boolean;
   characterSet?: string | null;
@@ -303,7 +338,7 @@ export interface GridChange {
 export interface RedisKeyItem {
   key: string;
   type: string; // string | hash | list | set | zset | stream
-  ttl: number; // -1 = không hết hạn, -2 = không tồn tại
+  ttl: number; // -1 = no expiry, -2 = does not exist
 }
 
 export interface RedisValueDetail {
@@ -312,22 +347,22 @@ export interface RedisValueDetail {
   type: string;
   ttl: number;
   memory: number | null;
-  /** Số phần tử của collection (HLEN/LLEN/SCARD/ZCARD/XLEN); null với string. */
+  /** The collection's element count (HLEN/LLEN/SCARD/ZCARD/XLEN); null for a string. */
   length?: number | null;
-  value: any; // shape tùy kind (xem redis_get_key backend)
+  value: any; // the shape depends on kind (see redis_get_key in the backend)
   message?: string;
 }
 
-/** Kết quả của một lệnh sửa phần tử (hash/list/set/zset/stream). */
+/** The result of one element-editing command (hash/list/set/zset/stream). */
 export interface RedisEditResult {
   success: boolean;
   error?: string;
 }
 
 /**
- * Một phần tử của collection. `binary` = giá trị gốc không phải UTF-8 hợp lệ, `value` đã bị
- * lossy-convert -> KHÔNG được ghi lại (sẽ thay bytes thật bằng U+FFFD). Xem `is_binary` trong
- * `redis_db.rs`.
+ * One element of a collection. `binary` = the original value is not valid UTF-8 and `value` has
+ * been lossy-converted -> it must NOT be written back (that would replace the real bytes with
+ * U+FFFD). See `is_binary` in `redis_db.rs`.
  */
 export interface RedisElement {
   value: string;
@@ -403,10 +438,10 @@ export const dbHelper = {
     message: string;
     database?: string;
     schema?: string | null;
-    /** Id kết nối vừa mint. Redis cũng trả về từ khi nó dùng chung registry (§2.3). */
+    /** The connection id just minted. Redis returns one too, since it shares the registry (§2.3). */
     connId?: string;
   }> {
-    // Redis đi qua bộ command redis_* riêng (không dùng connect_db của SQL).
+    // Redis goes through its own redis_* commands, not SQL's connect_db.
     if (config.type === 'redis') {
       try {
         const res: any = await invoke('redis_connect', {
@@ -416,9 +451,9 @@ export const dbHelper = {
             user: config.user,
             password: config.password,
             dbIndex: config.dbIndex ?? 0,
-            // TLS: `sslEnabled` là công tắc cũ (profile trước khi có tab SSL chỉ có nó),
-            // `sslMode` mới là thứ quyết định mức kiểm tra chứng chỉ — xem redis_ssl_mode
-            // trong redis_db.rs.
+            // TLS: `sslEnabled` is the old switch (profiles from before the SSL tab have only it),
+            // while `sslMode` is what actually decides how far the certificate is checked — see
+            // redis_ssl_mode in redis_db.rs.
             sslEnabled: config.sslEnabled,
             sslMode: config.sslMode,
             sslKeyPath: config.sslKeyPath,
@@ -477,9 +512,9 @@ export const dbHelper = {
         sslKeyPath: config.sslKeyPath,
         sslCertPath: config.sslCertPath,
         sslCaPath: config.sslCaPath,
-        // Giới hạn thời gian câu lệnh lưu theo server ở localStorage (popover Safe Mode), không
-        // nằm trong profile. Đọc ở đây để một kết nối vừa mở đã có đúng giới hạn ngay từ câu lệnh
-        // đầu — `setStatementTimeout` chỉ dùng cho lần người dùng đổi giữa phiên.
+        // The statement time limit is stored per server in localStorage (the Safe Mode popover),
+        // not in the profile. It is read here so a freshly opened connection carries the right limit
+        // from its very first statement — `setStatementTimeout` is only for changing it mid-session.
         statementTimeoutSecs: getStmtTimeoutForConfig(config),
         authMethod: config.authMethod,
         awsAuthType: config.awsAuthType,
@@ -519,18 +554,19 @@ export const dbHelper = {
   },
 
   /**
-   * Đóng một kết nối. Không truyền `connId` thì đóng kết nối đang active.
+   * Closes a connection. Without a `connId` it closes the active one.
    *
-   * Truyền tường minh là cách rail đóng một kết nối **không** phải cái đang xem — và khi đó
-   * `currentConnId` phải giữ nguyên, vì kết nối đang xem không hề bị đụng tới.
+   * Passing one explicitly is how the rail closes a connection that is **not** the one being viewed
+   * — and in that case `currentConnId` must stay as it is, because the viewed connection was never
+   * touched.
    */
   async disconnect(connId?: string): Promise<{ success: boolean }> {
     const target = connId ?? currentConnId;
     try {
       const res: any = await invoke('disconnect_db', { connId: target });
-      // Xoá SAU khi gọi, và chỉ khi đóng đúng cái đang active: lệnh cần id để biết xoá entry nào.
-      // Id rỗng thì mọi lệnh sau đó fail bằng đúng lỗi "chưa kết nối" vì `acquire` không resolve
-      // được — đó chính là câu trả lời đúng.
+      // Cleared AFTER the call, and only when the active one is what closed: the command needs the
+      // id to know which entry to remove. With an empty id every later command fails with the very
+      // "not connected" error, because `acquire` cannot resolve it — which is the right answer.
       if (target === currentConnId) currentConnId = '';
       forgetConnection(target);
       return { success: !!res.success };
@@ -583,7 +619,7 @@ export const dbHelper = {
     }
   },
 
-  // Lấy toàn bộ catalog (cột+kiểu+PK, FK theo bảng) trong ít truy vấn để warm cache completion.
+  // Fetches the whole catalog (columns+types+PK, FKs per table) in few queries, to warm the completion cache.
   async getFullCatalog(connId: string, ): Promise<{ columns: Record<string, any[]>; foreignKeys: Record<string, any[]> }> {
     try {
       const res: any = await invoke('get_full_catalog', { connId });
@@ -594,21 +630,23 @@ export const dbHelper = {
   },
 
   /**
-   * Một trang dữ liệu của bảng, kèm tổng số dòng.
+   * One page of a table's data, with the total row count.
    *
-   * `countMode` mặc định `'exact'` — mọi lời gọi cũ giữ nguyên hành vi. Đừng đổi mặc định này: các
-   * đường xuất dữ liệu (`dumpBuilder`, `ExportTableDialog`) lặp cho tới khi `rows.length >=
-   * totalCount`, nên một con số **thiếu** ở đó sẽ kết thúc vòng lặp sớm và ghi ra bản dump bị cắt
-   * mà không báo lỗi. Chỉ có dòng trạng thái của grid — chỗ hiển thị được dấu `~` — mới xin
-   * `'auto'`/`'skip'`.
+   * `countMode` defaults to `'exact'` — every existing caller keeps its behaviour. Do not change
+   * that default: the export paths (`dumpBuilder`, `ExportTableDialog`) loop until
+   * `rows.length >= totalCount`, so a number that is **too low** there ends the loop early and
+   * writes a truncated dump with no error at all. Only the grid's status line — the one place that
+   * can show a `~` — asks for `'auto'`/`'skip'`.
    *
-   * `totalCount` là `null` khi không đếm (`'skip'`) hoặc đếm thất bại; `0` chỉ có nghĩa là bảng
-   * rỗng. `hasMore` tới từ một dòng đọc thừa ở backend nên đúng kể cả khi số đếm là ước lượng.
+   * `totalCount` is `null` when nothing was counted (`'skip'`) or the count failed; `0` only ever
+   * means the table is empty. `hasMore` comes from one extra row read in the backend, so it is right
+   * even when the count is an estimate.
    *
-   * `seekColumn` + `cursor` là keyset pagination: đưa `nextCursor` của trang trước vào `cursor` thì
-   * backend seek thay vì `OFFSET`. Bỏ trống cả hai là quay về phân trang theo số trang. `cursor`
-   * đối với frontend là **giá trị mờ** — đừng tự đọc khoá từ dòng dữ liệu để dựng nó: khoá i64 lớn
-   * hơn 2^53 mất chữ số khi qua `JSON.parse`, còn `nextCursor` thì backend viết ra chính xác.
+   * `seekColumn` + `cursor` are keyset pagination: put the previous page's `nextCursor` into
+   * `cursor` and the backend seeks instead of using `OFFSET`. Leave both out to fall back to
+   * page-number paging. To the frontend `cursor` is an **opaque value** — do not build one by
+   * reading the key out of a data row: an i64 key above 2^53 loses digits through `JSON.parse`,
+   * while `nextCursor` is written exactly by the backend.
    */
   async getTableData(connId: string,
     tableName: string,
@@ -647,9 +685,9 @@ export const dbHelper = {
       return {
         rows,
         totalCount: typeof res.totalCount === 'number' ? res.totalCount : null,
-        // Một backend cũ không gửi trường này; coi như đếm chính xác, đúng như nó vẫn làm.
+        // An older backend does not send this field; treat it as an exact count, which is what it did.
         countExact: res.countExact !== false,
-        // Cũng vậy: không có `hasMore` thì suy ra từ việc trang có đầy hay không.
+        // Likewise: with no `hasMore`, infer it from whether the page came back full.
         hasMore: typeof res.hasMore === 'boolean' ? res.hasMore : rows.length >= pageSize,
         nextCursor: typeof res.nextCursor === 'string' ? res.nextCursor : null,
         primaryKey: res.primaryKey,
@@ -661,11 +699,11 @@ export const dbHelper = {
   },
 
   /**
-   * Đổi giới hạn thời gian câu lệnh của một kết nối đang mở.
+   * Changes the statement time limit of an open connection.
    *
-   * Có hiệu lực từ câu lệnh kế tiếp, không cần kết nối lại: backend đọc lại config ở mỗi lần chạy
-   * (xem `stmt_timeout` trong `database.rs`). Nơi lưu lâu dài là localStorage theo server
-   * (`stmtTimeout.ts`); lệnh này chỉ đồng bộ giá trị đó sang phiên đang chạy.
+   * It takes effect from the next statement, with no reconnect: the backend re-reads the config on
+   * every run (see `stmt_timeout` in `database.rs`). The durable store is localStorage, per server
+   * (`stmtTimeout.ts`); this command only syncs that value into the running session.
    */
   async setStatementTimeout(connId: string, secs: number): Promise<boolean> {
     try {
@@ -682,7 +720,7 @@ export const dbHelper = {
     views: string[];
     functions: string[];
     procedures: string[];
-    /** MySQL scheduled event; luôn rỗng ở Postgres/SQLite (hai hệ này không có). */
+    /** MySQL scheduled events; always empty on Postgres/SQLite, which have none. */
     events: string[];
   }> {
     try {
@@ -695,8 +733,8 @@ export const dbHelper = {
         events: res.events || [],
       };
     } catch (err) {
-      // Nuốt lỗi im lặng ở đây từng làm popup Xuất hiện ra một danh sách thiếu routine mà
-      // không có dấu hiệu nào — log lại để còn dò được.
+      // Swallowing the error silently here once made the Export dialog show a list missing its
+      // routines with no sign of anything wrong — log it so it can still be traced.
       console.warn('[dbHelper] get_database_objects failed:', err);
       return { tables: [], views: [], functions: [], procedures: [], events: [] };
     }
@@ -723,11 +761,11 @@ export const dbHelper = {
   },
 
   /**
-   * Mọi trigger của database hiện tại, kèm câu `CREATE TRIGGER` chạy lại được.
+   * Every trigger in the current database, with a re-runnable `CREATE TRIGGER` for each.
    *
-   * Khác `getTableTriggers` (theo từng bảng, dùng cho tab Structure): bản này cho đường xuất
-   * dump — một lần gọi cho cả database, và có tên bảng chủ vì Postgres không DROP được trigger
-   * nếu thiếu `ON <table>`.
+   * Unlike `getTableTriggers` (per table, for the Structure tab), this one is for the dump path:
+   * one call for the whole database, and it carries the owning table name because Postgres cannot
+   * DROP a trigger without `ON <table>`.
    */
   async getAllTriggers(connId: string): Promise<{ name: string; table: string; statement: string }[]> {
     try {
@@ -740,9 +778,9 @@ export const dbHelper = {
   },
 
   /**
-   * Những câu lệnh đi kèm một bảng nhưng không nằm trong CREATE TABLE của dialect đó
-   * (index, FK/UNIQUE/CHECK, comment, sequence). Nhóm theo VỊ TRÍ phải chạy — xem
-   * `get_table_ddl_extras` bên Rust.
+   * The statements that belong to a table but are not part of that dialect's CREATE TABLE (indexes,
+   * FK/UNIQUE/CHECK, comments, sequences). Grouped by WHERE they have to run — see
+   * `get_table_ddl_extras` on the Rust side.
    */
   async getTableDdlExtras(connId: string, tableName: string): Promise<{
     sequences: string[];
@@ -894,9 +932,9 @@ export const dbHelper = {
     }
   },
 
-  // Chạy SQL và nhận kết quả theo từng batch qua Channel (streaming) thay vì đợi toàn bộ.
-  // Promise resolve khi backend chạy xong (đã gửi message 'done' hoặc 'error').
-  // queryId dùng để hủy giữa chừng qua cancelQuery.
+  // Runs SQL and receives the results batch by batch over a Channel (streaming) instead of waiting
+  // for all of them. The promise resolves when the backend has finished (it has already sent a
+  // 'done' or 'error' message). `queryId` is what cancelQuery uses to stop it midway.
   async executeQueryStream(connId: string, 
     sql: string,
     queryId: string,
@@ -905,14 +943,15 @@ export const dbHelper = {
   ): Promise<void> {
     const channel = new Channel<QueryStreamMessage>();
     channel.onmessage = onMessage;
-    // params: mảng giá trị đã ép kiểu (number/bool/null/string) để backend bind ở tầng driver
-    // (parameterized query, chống SQL injection). Bỏ qua nếu không dùng Tham số Truy vấn.
+    // params: values already coerced (number/bool/null/string) for the backend to bind at the driver
+    // level (a parameterized query, which is what stops SQL injection). Omitted when Query
+    // Parameters are not in use.
     await invoke('execute_query_stream', { connId, sql, queryId, channel, params: params ?? null });
   },
 
-  // ---- Transaction thủ công ----
-  // Lỗi được ném ra (không nuốt) vì mọi thao tác ở đây đều do người dùng bấm trực tiếp:
-  // "Commit không thành công" mà im lặng là kiểu sai tệ nhất trong nhóm này.
+  // ---- Manual transactions ----
+  // Errors are thrown, not swallowed, because every action here is a button the user pressed
+  // directly: a Commit that failed silently is the worst possible failure in this group.
 
   /**
    * Every connection the backend currently holds — what the left rail lists. The rail shows *open
@@ -920,15 +959,57 @@ export const dbHelper = {
    * used to run against the active connection.
    */
   /**
-   * Bật/tắt chế độ chỉ đọc cho MỘT kết nối.
+   * Turns read-only mode on or off for ONE connection.
    *
-   * Gate nằm ở backend, trong ba funnel SQL — không phải ở UI. SQL editor gửi text tuỳ ý, nên một
-   * cái khoá trong WebView là khoá ở sai phía của biên IPC. Đây là đúng kết luận mà
-   * `src-tauri/src/redis_db.rs` đã ghi cho console Redis.
+   * The gate is in the backend, inside the three SQL funnels — not in the UI. The SQL editor sends
+   * arbitrary text, so a lock in the WebView is a lock on the wrong side of the IPC boundary. This
+   * is the same conclusion `src-tauri/src/redis_db.rs` already reached for the Redis console.
    */
   async setConnectionReadOnly(connId: string, enabled: boolean): Promise<boolean> {
     const res = await invoke<{ readOnly: boolean }>('set_connection_read_only', { connId, enabled });
     return !!res.readOnly;
+  },
+
+  /**
+   * Show one connection to AI clients, or hide it again.
+   *
+   * Separate from `setConnectionReadOnly` even though the shape matches: "may this be written to"
+   * and "may an AI client see it at all" are different questions, and a connection can sensibly be
+   * read-only and hidden, or writable and shared.
+   */
+  async setConnectionMcpExposed(connId: string, enabled: boolean): Promise<boolean> {
+    const res = await invoke<{ mcpExposed: boolean }>('set_connection_mcp_exposed', { connId, enabled });
+    return !!res.mcpExposed;
+  },
+
+  async mcpStatus(): Promise<McpStatus> {
+    return invoke<McpStatus>('mcp_status');
+  },
+
+  async mcpStart(port?: number): Promise<McpStatus> {
+    return invoke<McpStatus>('mcp_start', { port });
+  },
+
+  async mcpStop(): Promise<McpStatus> {
+    return invoke<McpStatus>('mcp_stop');
+  },
+
+  async mcpGetToken(): Promise<string> {
+    return invoke<string>('mcp_get_token');
+  },
+
+  /** Mints a new token. The server restarts if it was running, so every client on the old token stops. */
+  async mcpRegenerateToken(): Promise<string> {
+    return invoke<string>('mcp_regenerate_token');
+  },
+
+  /** Newest first. In memory on the Rust side — it does not survive closing the app. */
+  async mcpAuditLog(): Promise<McpAuditEntry[]> {
+    return invoke<McpAuditEntry[]>('mcp_audit_log');
+  },
+
+  async mcpAuditClear(): Promise<void> {
+    await invoke<void>('mcp_audit_clear');
   },
 
   async listConnections(): Promise<OpenConnection[]> {
@@ -937,10 +1018,11 @@ export const dbHelper = {
   },
 
   /**
-   * Latency của mọi kết nối đang mở, khoá theo `connId`.
+   * The latency of every open connection, keyed by `connId`.
    *
-   * Riêng khỏi `getConnectionStatus`, cái đó hỏi thêm version/user/TLS nên tốn 3–5 round trip mỗi kết
-   * nối — xem `ping_connections`. Trả về `Map` chứ không phải mảng vì mọi chỗ dùng đều tra theo id.
+   * Separate from `getConnectionStatus`, which also asks for version/user/TLS and so costs 3–5 round
+   * trips per connection — see `ping_connections`. Returns a `Map` rather than an array because
+   * every caller looks it up by id.
    */
   async pingConnections(): Promise<Map<string, { ok: boolean; latencyMs: number }>> {
     const res = await invoke<{ pings: { connId: string; ok: boolean; latencyMs: number }[] }>(
@@ -987,37 +1069,38 @@ export const dbHelper = {
     return await invoke<TxStatus>('tx_rollback_to', { name });
   },
 
-  // Yêu cầu dừng một truy vấn đang stream. Bỏ qua nếu queryId không còn chạy.
+  // Asks a streaming query to stop. A queryId that is no longer running is simply ignored.
   async cancelQuery(queryId: string): Promise<void> {
     try {
       await invoke('cancel_query', { queryId });
     } catch {
-      /* bỏ qua */
+      /* skip */
     }
   },
 
-  // ---- Kho bí mật của HĐH ----
-  // Mật khẩu DB, mật khẩu/passphrase/private key SSH, AWS secret key... nằm trong
-  // Windows Credential Manager / Keychain / Secret Service chứ không trong localStorage.
-  // Xem src-tauri/src/secret_store.rs và src/utils/secretFields.ts.
+  // ---- The OS secret store ----
+  // DB passwords, SSH password/passphrase/private key, AWS secret key… live in Windows Credential
+  // Manager / Keychain / Secret Service, not in localStorage.
+  // See src-tauri/src/secret_store.rs and src/utils/secretFields.ts.
 
-  // Đọc các bí mật của một profile. Field chưa từng lưu sẽ không có trong kết quả.
+  // Reads a profile's secrets. A field that was never stored is simply absent from the result.
   async getSecrets(profileId: string, fields: string[]): Promise<Record<string, string>> {
     return await invoke('secret_get_many', { profileId, fields });
   },
 
-  // Ghi các bí mật của một profile. Giá trị rỗng đồng nghĩa với xoá field đó.
+  // Writes a profile's secrets. An empty value means delete that field.
   async setSecrets(profileId: string, values: Record<string, string>): Promise<void> {
     await invoke('secret_set_many', { profileId, values });
   },
 
-  // Xoá bí mật của một profile (khi xoá profile).
+  // Deletes a profile's secrets (when the profile itself is deleted).
   async deleteSecrets(profileId: string, fields: string[]): Promise<void> {
     await invoke('secret_delete_many', { profileId, fields });
   },
 
   // ---- SSH Terminal ----
-  // Mở phiên SSH + PTY/shell. output server đẩy về qua Channel (onMessage).
+  // Opens an SSH session plus a PTY/shell. The server pushes its output back over a Channel
+  // (onMessage).
   async openSshTerminal(
     profileConfig: DbConnectionConfig,
     sessionId: string,
@@ -1049,7 +1132,7 @@ export const dbHelper = {
     try {
       await invoke('send_ssh_input', { sessionId, data });
     } catch {
-      /* bỏ qua */
+      /* skip */
     }
   },
 
@@ -1057,7 +1140,7 @@ export const dbHelper = {
     try {
       await invoke('resize_ssh_terminal', { sessionId, cols, rows });
     } catch {
-      /* bỏ qua */
+      /* skip */
     }
   },
 
@@ -1065,11 +1148,11 @@ export const dbHelper = {
     try {
       await invoke('close_ssh_terminal', { sessionId });
     } catch {
-      /* bỏ qua */
+      /* skip */
     }
   },
 
-  // ---- Local Terminal (shell cục bộ, không qua SSH) ----
+  // ---- Local Terminal (a local shell, no SSH involved) ----
   async openLocalTerminal(
     sessionId: string,
     cols: number,
@@ -1085,7 +1168,7 @@ export const dbHelper = {
     try {
       await invoke('send_local_input', { sessionId, data });
     } catch {
-      /* bỏ qua */
+      /* skip */
     }
   },
 
@@ -1093,7 +1176,7 @@ export const dbHelper = {
     try {
       await invoke('resize_local_terminal', { sessionId, cols, rows });
     } catch {
-      /* bỏ qua */
+      /* skip */
     }
   },
 
@@ -1101,17 +1184,19 @@ export const dbHelper = {
     try {
       await invoke('close_local_terminal', { sessionId });
     } catch {
-      /* bỏ qua */
+      /* skip */
     }
   },
 
-  // Dò đường dẫn file log của DB server bằng cách hỏi chính DB (chạy trên kết nối đang mở).
-  // Trả về danh sách {label, path}. Rỗng nếu DB ghi log ra stderr/syslog/TABLE (không có file).
-  // Dò đường dẫn file log của DB server.
-  // Trả về cả `error` chứ KHÔNG nuốt lỗi: trước đây try/catch trả về mảng rỗng nên
-  // mọi thất bại (mất kết nối, thiếu quyền, driver không hỗ trợ) đều hiện ra y như
-  // "không có file log" — không thể biết vì sao tính năng không chạy.
-  // Mỗi dialect chỉ dùng MỘT câu lệnh, không dựa vào multi-statement của driver.
+  // Finds the DB server's log file paths by asking the database itself, over the open connection.
+  // Returns a list of {label, path}, empty when the server logs to stderr/syslog/TABLE and there is
+  // no file at all.
+  //
+  // It returns an `error` too rather than swallowing one: the old try/catch returned an empty array,
+  // so every failure (connection lost, missing privilege, driver without support) looked exactly
+  // like "there is no log file" — leaving no way to tell why the feature did nothing.
+  //
+  // Each dialect uses exactly ONE statement; nothing here relies on driver multi-statement support.
   async detectLogPaths(connId: string, 
     dbType: 'sqlite' | 'postgres' | 'mysql' | 'redis'
   ): Promise<{ paths: { label: string; path: string }[]; error?: string }> {
@@ -1130,7 +1215,7 @@ export const dbHelper = {
         for (const row of res.data || []) {
           const name = pick(row, 'Variable_name');
           const val = pick(row, 'Value');
-          // MySQL trả 'stderr' khi log không ra file -> không có gì để tail
+          // MySQL returns 'stderr' when the log does not go to a file -> nothing to tail
           if (name && val && val.toLowerCase() !== 'stderr') {
             paths.push({ label: name, path: val });
           }
@@ -1162,9 +1247,9 @@ export const dbHelper = {
     return { paths };
   },
 
-  // Bật ghi log ở phía DB server (chạy trên kết nối hiện tại). Cần quyền cao (SUPER/superuser).
-  // kind: mysql 'general'|'slow'; postgres 'statements'|'collector'.
-  // needsRestart = true nghĩa là phải khởi động lại server thủ công thì mới có tác dụng.
+  // Turns on logging on the DB server, over the current connection. Needs a high privilege
+  // (SUPER/superuser). kind: mysql 'general'|'slow'; postgres 'statements'|'collector'.
+  // needsRestart = true means it takes effect only after restarting the server by hand.
   async enableLogging(connId: string, 
     dbType: 'sqlite' | 'postgres' | 'mysql' | 'redis',
     kind: string
@@ -1285,9 +1370,9 @@ export const dbHelper = {
     }
   },
 
-  // isView/cascade/ignoreFk là các tuỳ chọn của dialog Delete. Backend chạy cả cụm (tắt kiểm
-  // tra khóa ngoại -> DROP -> bật lại) trên MỘT connection; đừng tự phát lệnh SET ở đây vì mỗi
-  // executeQuery lấy một connection khác từ pool.
+  // isView/cascade/ignoreFk are the Delete dialog's options. The backend runs the whole group
+  // (disable FK checks -> DROP -> enable again) on ONE connection; do not issue the SET here
+  // yourself, because each executeQuery takes a different connection out of the pool.
   async dropTable(connId: string, 
     name: string,
     opts?: { isView?: boolean; cascade?: boolean; ignoreFk?: boolean }
@@ -1316,13 +1401,14 @@ export const dbHelper = {
   },
 
   /**
-   * Mở một database khác trên **cùng server** thành một kết nối MỚI (§4.3).
+   * Opens another database on the **same server** as a NEW connection (§4.3).
    *
-   * Khác `switchDatabase`: cái kia *thay* pool nên phải từ chối khi còn thay đổi chưa commit và
-   * phải reset phiên transaction. Cái này *thêm* pool nên không đụng gì đang có — transaction đang
-   * mở ở database hiện tại cứ chạy tiếp trong khi người dùng làm việc ở database khác.
+   * Unlike `switchDatabase`, which *replaces* the pool and therefore has to refuse while changes are
+   * uncommitted and reset the transaction session, this one *adds* a pool and touches nothing that
+   * exists — a transaction open on the current database keeps running while the user works in
+   * another one.
    *
-   * Idempotent: database đã mở rồi thì trả về kết nối đang giữ nó.
+   * Idempotent: a database that is already open returns the connection already holding it.
    */
   async openDatabase(
     connId: string,
@@ -1411,7 +1497,7 @@ export const dbHelper = {
     }
   },
 
-  // Xem ghi chú ở dropTable: restartIdentity/disableFk được backend xử lý trên một connection.
+  // See the note on dropTable: restartIdentity/disableFk are handled by the backend on one connection.
   async truncateTable(connId: string, 
     name: string,
     opts?: { restartIdentity?: boolean; disableFk?: boolean; cascade?: boolean }
@@ -1455,15 +1541,16 @@ export const dbHelper = {
     }
   },
 
-  // onProgress: nhận {type:'start'|'progress'|'done', done, total} do backend gửi qua Channel
-  // sau mỗi ~20 câu lệnh, để UI vẽ thanh tiến độ thật thay vì thanh vô định.
+  // onProgress: receives {type:'start'|'progress'|'done', done, total}, which the backend sends over
+  // the Channel every ~20 statements, so the UI can draw a real progress bar instead of an
+  // indeterminate one.
   async restoreBackup(
     sqlContent: string,
     tables: string[],
     onProgress?: (msg: { type: string; done?: number; total?: number; statementsCount?: number }) => void,
-    /** Gặp lệnh lỗi thì bỏ qua và chạy tiếp thay vì rollback toàn bộ (xem `restore_backup`). */
+    /** Skip a failing statement and carry on instead of rolling everything back (see `restore_backup`). */
     continueOnError?: boolean,
-    /** Kết nối đích, tường minh — cùng lý do với `generateData`: job nền có thể chờ trong hàng đợi. */
+    /** The target connection, explicitly — the same reason as `generateData`: a background job can sit in the queue. */
     connId?: string,
   ): Promise<{
     success: boolean;
@@ -1474,8 +1561,9 @@ export const dbHelper = {
     failedSamples?: { sql: string; error: string }[];
   }> {
     try {
-      // Luôn tạo kênh: tham số onProgress ở Rust là Channel bắt buộc (Channel không impl
-      // Deserialize nên không dùng được Option<Channel>). Không có callback thì bỏ tin nhắn đi.
+      // Always create the channel: Rust's onProgress parameter is a required Channel (Channel does
+      // not implement Deserialize, so Option<Channel> is not available). With no callback, the
+      // messages are simply dropped.
       const channel = new Channel<any>();
       if (onProgress) channel.onmessage = onProgress;
       const res: any = await invoke('restore_backup', withConnId({
@@ -1500,15 +1588,6 @@ export const dbHelper = {
   async importTableData(connId: string, name: string, rows: any[]): Promise<{ success: boolean; error?: string }> {
     try {
       const res: any = await invoke('import_table_data', { connId, name, rows });
-      return { success: !!res.success, error: res.message };
-    } catch (err: any) {
-      return { success: false, error: err.toString() };
-    }
-  },
-
-  async exportTable(name: string, format: string): Promise<{ success: boolean; error?: string }> {
-    try {
-      const res: any = await invoke('export_table', { name, format });
       return { success: !!res.success, error: res.message };
     } catch (err: any) {
       return { success: false, error: err.toString() };
@@ -1557,15 +1636,16 @@ export const dbHelper = {
   // ---- Redis ----
   async redisDisconnect(connId?: string): Promise<void> {
     const target = connId ?? currentConnId;
-    try { await invoke('redis_disconnect', { connId: target }); } catch { /* bỏ qua */ }
+    try { await invoke('redis_disconnect', { connId: target }); } catch { /* skip */ }
     forgetConnection(target);
     if (target === currentConnId) currentConnId = '';
   },
 
   /**
-   * Đổi db index = **mở/chuyển sang một kết nối khác**, không phải đổi state của kết nối hiện tại
-   * (`redis-ui-unification-plan.md` §2.1). Trả về `connId` của db đó — đã mở sẵn thì trả lại đúng
-   * id cũ. Người gọi phải chuyển workspace sang id này; giữ id cũ nghĩa là vẫn đọc db cũ.
+   * Changing the db index means **opening or switching to another connection**, not mutating the
+   * current one's state (`redis-ui-unification-plan.md` §2.1). Returns that db's `connId` — already
+   * open and it hands back the same id. The caller must move the workspace onto this id; keeping the
+   * old one means still reading the old db.
    */
   async redisSelectDb(
     index: number,
@@ -1592,10 +1672,10 @@ export const dbHelper = {
     }
   },
 
-  // Stream danh sách key: nhận batch qua Channel.
-  // Message: {type:'keys',keys[],cursor} | {type:'done',total,cancelled} | {type:'error',message}.
-  // `cursor` đi kèm mỗi batch để UI dừng ở trần rồi nạp tiếp đúng chỗ (startCursor).
-  // Dừng bằng cancelQuery(queryId).
+  // Streams the key list, receiving batches over a Channel.
+  // Messages: {type:'keys',keys[],cursor} | {type:'done',total,cancelled} | {type:'error',message}.
+  // `cursor` rides along with every batch so the UI can stop at its cap and resume from exactly the
+  // right place (startCursor). Stop it with cancelQuery(queryId).
   async redisScanStream(
     pattern: string,
     count: number,
@@ -1626,9 +1706,11 @@ export const dbHelper = {
     }
   },
 
-  // Sửa từng phần tử của collection. Tách khỏi redisSetKey (ngữ nghĩa REPLACE: DEL rồi dựng lại,
-  // mất TTL và ghi lại toàn bộ phần tử) — mỗi hàm dưới đây map tới đúng một lệnh Redis.
-  // oldField/oldMember: đổi phần "định danh" của phần tử (ghi mới trước, xóa cũ sau).
+  // Editing one element of a collection at a time. Kept apart from redisSetKey, whose semantics are
+  // REPLACE (DEL then rebuild, losing the TTL and rewriting every element) — each function below
+  // maps to exactly one Redis command.
+  // oldField/oldMember: renaming the "identity" part of an element (write the new one, then delete
+  // the old).
   async redisHashSet(key: string, field: string, value: string, oldField?: string): Promise<RedisEditResult> {
     try {
       const res: any = await invoke('redis_hash_set', { key, field, value, oldField: oldField ?? null });
@@ -1710,7 +1792,7 @@ export const dbHelper = {
     }
   },
 
-  // id rỗng = '*' (server tự sinh id kế tiếp).
+  // An empty id means '*' (the server generates the next id itself).
   async redisStreamAdd(
     key: string,
     id: string,
@@ -1807,15 +1889,15 @@ export const dbHelper = {
   /**
    * Mirrors the app's read-only toggle into the backend, which is where writes are refused.
    *
-   * Từ Giai đoạn 0, cờ này **là** cờ read-only của kết nối trong registry — cùng cờ mà nhãn
-   * production và nút trên rail ghi. Người gọi phải truyền vào HOẶC của hai nguồn đó, chứ không
-   * phải riêng công tắc toàn cục: ghi `false` khi tắt công tắc sẽ xoá luôn cờ chỉ-đọc của một kết
-   * nối production.
+   * Since Phase 0 this flag **is** the connection's read-only flag in the registry — the same flag
+   * the production label and the rail button write. Callers must pass the OR of those two sources,
+   * not the global switch alone: writing `false` when the switch goes off would also clear the
+   * read-only flag of a production connection.
    */
   async redisSetReadOnly(flag: boolean, connId?: string): Promise<void> {
     try {
       await invoke('redis_set_read_only', { flag, connId: connId ?? currentConnId });
-    } catch { /* bỏ qua */ }
+    } catch { /* skip */ }
   },
 
   async redisGetElements(
@@ -1841,8 +1923,8 @@ export const dbHelper = {
     }
   },
 
-  // Xoá theo pattern: {type:'progress',scanned,deleted} | {type:'done',...} | {type:'error',message}.
-  // Dừng bằng cancelQuery(queryId).
+  // Delete by pattern: {type:'progress',scanned,deleted} | {type:'done',...} | {type:'error',message}.
+  // Stop it with cancelQuery(queryId).
   async redisDeleteByPattern(
     pattern: string,
     typeFilter: string | undefined,
@@ -1901,7 +1983,7 @@ export const dbHelper = {
     }
   },
 
-  // Pub/Sub trên một kết nối RIÊNG ở Rust: {type:'message',channel,pattern,payload,binary} | {type:'stopped',total}.
+  // Pub/Sub on a DEDICATED connection in Rust: {type:'message',channel,pattern,payload,binary} | {type:'stopped',total}.
   async redisPubsubStart(
     channels: string[],
     patterns: string[],
@@ -1930,7 +2012,7 @@ export const dbHelper = {
     }
   },
 
-  // Profiler (MONITOR) — tự dừng theo giới hạn của backend: {type:'line',line} | {type:'stopped',reason,total}.
+  // Profiler (MONITOR) — stops itself at the backend's limit: {type:'line',line} | {type:'stopped',reason,total}.
   async redisMonitorStart(
     queryId: string,
     onMessage: (msg: any) => void
@@ -1975,7 +2057,7 @@ export const dbHelper = {
     }
   },
 
-  /** Ghi giá trị string từ bytes thô — đường duy nhất sửa được giá trị nhị phân (HEX editor). */
+  /** Writes a string value from raw bytes — the only way to edit a binary value (the HEX editor). */
   async redisSetKeyBytes(key: string, bytes: number[]): Promise<RedisEditResult> {
     try {
       const res: any = await invoke('redis_set_key_bytes', { key, bytes });
@@ -2043,7 +2125,7 @@ export const dbHelper = {
     }
   },
 
-  // Phân tích DB: lấy mẫu ≤10k key. Progress qua Channel, huỷ bằng cancelQuery(queryId).
+  // Analyses the DB by sampling ≤10k keys. Progress over a Channel; cancel with cancelQuery(queryId).
   async redisAnalyzeDb(
     sample: number | undefined,
     queryId: string,
@@ -2070,13 +2152,14 @@ export const dbHelper = {
     }
   },
 
-  // ---- Xuất / nhập keyspace (xem `utils/redisTransfer.ts`) ----
+  // ---- Keyspace export / import (see `utils/redisTransfer.ts`) ----
   //
-  // Hai method này là `RedisExportReader.dump` và `RedisImportWriter.restore` — `redisTransfer`
-  // nhận chúng qua tham số nên nó không import `@tauri-apps/api` và test được. Chúng KHÔNG nhận
-  // `connId`: như mọi lệnh redis_* khác, `invoke` cục bộ đã ghép `currentConnId` vào.
+  // These two methods are `RedisExportReader.dump` and `RedisImportWriter.restore` —
+  // `redisTransfer` takes them as parameters, which is what keeps it free of `@tauri-apps/api` and
+  // testable. They do NOT take a `connId`: like every other redis_* command, the local `invoke` has
+  // already merged `currentConnId` in.
 
-  /** DUMP + PTTL + TYPE cho một lô key. `payload` là base64. */
+  /** DUMP + PTTL + TYPE for a batch of keys. `payload` is base64. */
   async redisDumpKeys(keys: string[]): Promise<{
     success: boolean;
     entries: { key: string; type: string; ttlMs: number; payload: string }[];
@@ -2092,9 +2175,9 @@ export const dbHelper = {
   },
 
   /**
-   * RESTORE một lô bản ghi. `failed[].error` là câu chữ của chính Redis (tiếng Anh, ví dụ
-   * "DUMP payload version or checksum are wrong") nên không đi qua `backendErrors.ts` — hiện
-   * nguyên văn là đúng: đó là chẩn đoán của server, không phải câu của app.
+   * RESTOREs a batch of records. `failed[].error` is Redis's own wording (English, e.g. "DUMP
+   * payload version or checksum are wrong") and so does not go through `backendErrors.ts` — showing
+   * it verbatim is right: it is the server's diagnosis, not a sentence this app wrote.
    */
   async redisRestoreKeys(
     entries: { key: string; type: string; ttlMs: number; payload: string }[],
@@ -2168,12 +2251,12 @@ export const dbHelper = {
     }
   },
 
-  // ---- So sánh hai database (db_compare.rs) ----
-  // Mỗi "phía" chỉ cần tên database / tệp SQLite: backend tự lấy cấu hình kết nối
-  // (kể cả mật khẩu, SSH tunnel, token IAM) từ kết nối đang mở, nên frontend KHÔNG
-  // phải giữ hay gửi lại thông tin đăng nhập.
+  // ---- Comparing two databases (db_compare.rs) ----
+  // Each "side" needs only a database name / SQLite file: the backend takes the connection config
+  // (password, SSH tunnel and IAM token included) from the open connection itself, so the frontend
+  // never has to hold or resend credentials.
 
-  /** So cấu trúc hai database. Trả về diff theo bảng + script SQL đồng bộ (source -> target). */
+  /** Compares two databases structurally. Returns a per-table diff plus a sync SQL script (source -> target). */
   async compareSchemas(
     source: CompareSide,
     target: CompareSide,
@@ -2184,7 +2267,7 @@ export const dbHelper = {
     );
   },
 
-  /** Đếm số dòng từng bảng ở hai phía để biết bảng nào đáng so chi tiết. */
+  /** Counts rows per table on both sides, to see which tables are worth comparing in detail. */
   async compareDataOverview(
     source: CompareSide,
     target: CompareSide,
@@ -2193,7 +2276,7 @@ export const dbHelper = {
     return await invoke<DataOverviewResult>('compare_data_overview', { source, target, tables });
   },
 
-  /** So dữ liệu MỘT bảng theo khóa. `keyColumns` bỏ trống -> dùng khóa chính của nguồn. */
+  /** Compares ONE table's data by key. Leave `keyColumns` empty to use the source's primary key. */
   async compareTableData(
     source: CompareSide,
     target: CompareSide,
@@ -2213,15 +2296,16 @@ export const dbHelper = {
     );
   },
 
-  // ---- Sinh dữ liệu test (data_generator.rs) ----
-  // Mọi giá trị được sinh Ở RUST, kể cả bản xem trước — nên preview đúng bằng dữ liệu sẽ chèn.
+  // ---- Test-data generation (data_generator.rs) ----
+  // Every value is produced IN RUST, the preview included — so what the preview shows is exactly
+  // what gets inserted.
 
-  /** Bảng/cột có thể sinh dữ liệu + generator gợi ý cho từng cột + thứ tự chèn an toàn FK. */
+  /** The tables/columns data can be generated for, a suggested generator per column, and an FK-safe insertion order. */
   async getGenerationTargets(): Promise<GenTargets> {
     return translateWarnings(await invoke<GenTargets>('get_generation_targets'));
   },
 
-  /** Sinh thử `limit` dòng của MỘT bảng, không ghi vào CSDL. */
+  /** Generates `limit` sample rows of ONE table without writing to the database. */
   async previewGeneratedData(spec: GenSpec, table: string, limit = 100): Promise<GenPreview> {
     return translateWarnings(
       await invoke<GenPreview>('preview_generated_data', { spec, table, limit }),
@@ -2229,19 +2313,21 @@ export const dbHelper = {
   },
 
   /**
-   * Sinh và chèn thật. `onProgress` nhận {type:'start'|'table'|'progress'|'done'|'error', ...}.
+   * Generates and really inserts. `onProgress` receives {type:'start'|'table'|'progress'|'done'|'error', ...}.
    *
-   * `connId` là tường minh vì lệnh này chạy như một **job nền**: một job có thể nằm trong hàng đợi
-   * một lúc, và tới lượt nó thì `currentConnId` (ambient) đã là kết nối khác — nghĩa là sinh dữ
-   * liệu vào đúng database mà người dùng không chọn. Bỏ trống thì vẫn về ambient như trước.
+   * `connId` is explicit because this runs as a **background job**: a job can sit in the queue for a
+   * while, and by the time its turn comes the ambient `currentConnId` may be another connection —
+   * which would mean generating data into exactly the database the user did not pick. Left out, it
+   * still falls back to the ambient one as before.
    */
   async generateData(
     spec: GenSpec,
     onProgress?: (msg: GenProgress) => void,
     connId?: string,
   ): Promise<GenResult> {
-    // Luôn tạo kênh: tham số onProgress ở Rust là Channel bắt buộc (Channel không impl
-    // Deserialize nên không dùng được Option<Channel>). Không có callback thì bỏ tin nhắn đi.
+    // Always create the channel: Rust's onProgress parameter is a required Channel (Channel does
+    // not implement Deserialize, so Option<Channel> is not available). With no callback, the
+    // messages are simply dropped.
     const channel = new Channel<GenProgress>();
     if (onProgress) channel.onmessage = onProgress;
     return translateWarnings(
@@ -2249,13 +2335,13 @@ export const dbHelper = {
     );
   },
 
-  /** Đánh dấu lần sinh dữ liệu đang chạy cần dừng. Không lỗi nếu không có gì đang chạy. */
+  /** Marks a running data generation as needing to stop. Not an error when nothing is running. */
   async cancelDataGeneration(connId?: string): Promise<void> {
     try {
-      // Cờ huỷ bên Rust khoá theo `conn_id`, nên huỷ phải nhắm đúng kết nối đang sinh dữ liệu.
+      // Rust keys the cancel flag by `conn_id`, so a cancel has to name the connection doing the generating.
       await invoke('cancel_data_generation', withConnId({}, connId));
     } catch {
-      // Huỷ là thao tác "best effort": lỗi ở đây không có gì để người dùng làm.
+      // Cancelling is "best effort": an error here leaves the user nothing to act on.
     }
   },
 };
@@ -2282,11 +2368,11 @@ export interface DatabaseStats {
 
 export interface AllDatabasesStatsItem {
   db_name: string;
-  /** Chỉ có với SQLite: tên schema (`main` / tên đã ATTACH). */
+  /** SQLite only: the schema name (`main`, or whatever was ATTACHed). */
   schema_name: string | null;
   is_system: boolean;
   is_current: boolean;
-  /** null = chưa có số liệu (Postgres khi chưa quét sâu, hoặc DB lỗi). */
+  /** null = no figure yet (Postgres before a deep scan, or a database that errored). */
   total_tables: number | null;
   total_rows: number | null;
   data_size_bytes: number | null;

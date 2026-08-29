@@ -1,9 +1,9 @@
-// Tab xem/sửa một key Redis.
+// View/edit tab for a Redis key.
 //
-// Phần trình bày giá trị vẫn là `ValuePanel` như cũ — file này chỉ là chỗ ở mới của nó: nạp key,
-// giữ ba hộp thoại của riêng key (đổi tên / TTL / xoá), và dòng thông báo. Trước đây tất cả những
-// thứ này nằm trong `RedisBrowser`, dùng chung cho cả workspace; giờ mỗi key là một tab nên chúng
-// thuộc về tab.
+// Value rendering remains in `ValuePanel` — this file provides its tab container: loads key,
+// manages key modals (rename / TTL / delete), and handles toast alerts. Previously these
+// resided in `RedisBrowser` globally; now each key tab owns its lifecycle.
+
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -16,15 +16,15 @@ import { useRedisToast } from './useRedisToast';
 import { notifyRedisKeysChanged } from './redisTabs';
 
 interface RedisKeyTabProps {
-  /** Kết nối của tab — cũng là db index, xem §2.1. */
+  /** Tab connection — also represents db index, see §2.1. */
   connId: string;
   keyName: string;
-  /** localStorage scope cho tuỳ chọn hiển thị của ValuePanel — định danh SERVER, không phải dbName. */
+  /** localStorage scope for ValuePanel display options — SERVER identifier, not dbName. */
   storageScope: string;
   readOnly: boolean;
-  /** Key đã đổi tên -> tab phải mang tên mới. */
+  /** Key renamed -> tab must update its title. */
   onRenamed: (next: string) => void;
-  /** Key không còn -> đóng tab (người dùng bấm nút trong trạng thái rỗng). */
+  /** Key gone -> close tab (user clicked action in empty state). */
   onClose: () => void;
 }
 
@@ -40,8 +40,8 @@ export const RedisKeyTab: React.FC<RedisKeyTabProps> = ({
   const { onError, onOk, blocked, node: toast } = useRedisToast(readOnly);
 
   const [detail, setDetail] = useState<RedisValueDetail | null>(null);
-  // Ba trạng thái, không phải hai: `loading` khác `gone`. Gộp lại thì lần vẽ đầu tiên của một key
-  // hoàn toàn bình thường cũng chớp qua thông báo "key không còn tồn tại".
+  // Three states rather than two: `loading` differs from `gone`. Merging them would cause the initial render
+  // of a valid key to flash a "key no longer exists" warning.
   const [state, setState] = useState<'loading' | 'ready' | 'gone'>('loading');
 
   const [renaming, setRenaming] = useState(false);
@@ -51,8 +51,8 @@ export const RedisKeyTab: React.FC<RedisKeyTabProps> = ({
   const load = useCallback(async () => {
     const d = await dbHelper.redisGetKey(keyName);
     if (!d.success) {
-      // Key biến mất KHÔNG phải lỗi (§2.5): nó có thể đã hết TTL hoặc bị xoá từ chỗ khác giữa hai
-      // phiên. Hiện trạng thái rỗng, không phải một dòng đỏ.
+      // Missing key is NOT an error (§2.5): it may have expired by TTL or been deleted externally
+      // between sessions. Renders empty state rather than an error banner.
       setDetail(null);
       setState('gone');
       return;
@@ -61,9 +61,26 @@ export const RedisKeyTab: React.FC<RedisKeyTabProps> = ({
     setState('ready');
   }, [keyName]);
 
-  // `connId` nằm trong deps: cùng một tên key trên hai db index là hai key khác nhau, và tab được
-  // dựng lại theo connId nên effect phải chạy lại cùng nó.
-  useEffect(() => { void load(); }, [load, connId]);
+  // `connId` in deps: identical key name on two db indices represents two distinct keys, and tab is
+  // reconstructed by connId, requiring effect to re-run.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setState('loading');
+      const d = await dbHelper.redisGetKey(keyName);
+      if (cancelled) return;
+      if (!d.success) {
+        setDetail(null);
+        setState('gone');
+        return;
+      }
+      setDetail(d);
+      setState('ready');
+    })();
+    return () => { cancelled = true; };
+    // `connId` is a trigger, not a read: the same key name on another connection is different data.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keyName, connId]);
 
   const doRename = async (next: string) => {
     setRenaming(false);

@@ -1,48 +1,51 @@
-// Nhóm tab kiểu Chrome: kiểu dữ liệu + phần logic thuần.
+// Chrome-style tab groups: the types plus the pure logic.
 //
-// Tách khỏi TabManager.tsx vì hai lý do. Thứ nhất, oxlint bật
-// `react/only-export-components`, nên một file component không được export hằng
-// như TAB_GROUP_COLORS. Thứ hai, và quan trọng hơn: hai hàm dưới đây là nơi bất
-// biến của cả tính năng được giữ, và ở đây chúng thuần nên test được (xem
-// __tests__/tabGroups.test.ts) — nằm trong App.tsx thì chỉ còn cách thử tay.
+// Split out of TabManager.tsx for two reasons. First, oxlint enables
+// `react/only-export-components`, so a component file may not export a constant
+// like TAB_GROUP_COLORS. Second, and more importantly: the two functions below
+// are where the whole feature's invariant is kept, and being pure here makes them
+// testable (see __tests__/tabGroups.test.ts) — inside App.tsx the only way to
+// check them would be by hand.
 //
-// BẤT BIẾN: các tab cùng một nhóm luôn NẰM LIỀN NHAU trong mảng `tabs`.
-// TabManager dựng thanh tab bằng cách quét mảng một lượt và mở cụm mới mỗi khi
-// `groupId` đổi, nên một nhóm bị ngắt quãng sẽ hiện thành hai cụm trùng tên.
+// INVARIANT: tabs of one group are always ADJACENT in the `tabs` array.
+// TabManager builds the tab strip in a single pass, opening a new cluster every
+// time `groupId` changes, so an interrupted group renders as two clusters that
+// share a name.
 
 import type { TabInfo } from '../components/TabManager';
 
 export interface TabGroup {
   id: string;
   name: string;
-  /** Mã màu hex, lấy từ TAB_GROUP_COLORS. */
+  /** Hex colour, taken from TAB_GROUP_COLORS. */
   color: string;
   collapsed?: boolean;
 }
 
 /**
- * Bảng màu nhóm. Nhóm mới lấy màu kế tiếp theo vòng để hai nhóm tạo liên tiếp
- * không trùng màu, mà người dùng vẫn không phải chọn gì lúc tạo.
+ * The group palette. A new group takes the next colour in the cycle, so two
+ * groups created in a row never share one, and the user still picks nothing.
  */
 export const TAB_GROUP_COLORS = ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#a855f7', '#14b8a6'];
 
 /**
- * Đổi nhóm của một tab, đồng thời dời nó về đúng chỗ để bất biến trên còn đúng.
+ * Moves a tab into a group, relocating it so the invariant above still holds.
  *
- * Thứ tự xét chỗ chèn, theo đúng cách Chrome hành xử:
+ * The insertion point is decided in this order, matching how Chrome behaves:
  *
- * 1. Nhóm đích đã có thành viên -> chèn ngay sau thành viên cuối của nhóm đó.
- * 2. Nhóm đích còn rỗng (vừa tạo) nhưng tab đang nằm trong một nhóm khác ->
- *    chèn ngay sau dải của nhóm CŨ. Không được để nguyên tại chỗ: một tab ở giữa
- *    nhóm cũ mà đổi groupId sẽ cắt nhóm đó làm đôi.
- * 3. Còn lại (tab rời, tạo nhóm mới cho chính nó) -> GIỮ NGUYÊN VỊ TRÍ. Đây là
- *    điểm bản đầu làm sai: nó rơi vào nhánh "nhóm rỗng" rồi ném tab về cuối dải,
- *    nên bấm "Nhóm mới" trên một tab ở giữa là thấy tab nhảy sang tận phải.
- *    Giữ nguyên chỗ ở đây an toàn: nếu bất biến đang đúng thì một tab rời không
- *    bao giờ nằm lọt giữa dải của nhóm nào cả.
+ * 1. The target group already has members -> insert right after its last member.
+ * 2. The target group is empty (just created) but the tab currently sits in
+ *    another group -> insert right after the OLD group's run. Leaving it where it
+ *    is would not do: a tab in the middle of its old group that changes groupId
+ *    cuts that group in two.
+ * 3. Otherwise (a loose tab creating a group for itself) -> KEEP ITS POSITION.
+ *    This is what the first version got wrong: it fell into the "empty group"
+ *    branch and threw the tab to the end of the run, so hitting "New group" on a
+ *    tab in the middle sent it flying to the far right. Staying put is safe here:
+ *    while the invariant holds, a loose tab never sits inside another group's run.
  *
- * Trả về chính `list` khi không tìm thấy tab, để người gọi setState không tạo
- * mảng mới vô ích.
+ * Returns `list` itself when the tab is not found, so a caller's setState does
+ * not build a new array for nothing.
  */
 export function moveTabIntoGroup(
   list: TabInfo[],
@@ -72,19 +75,20 @@ export function moveTabIntoGroup(
 }
 
 /**
- * Dời tab từ vị trí `from` tới `to` (kéo thả trên thanh tab).
+ * Moves a tab from `from` to `to` (a drag on the tab strip).
  *
- * `targetGroupId` là nhóm mà con trỏ đang nằm trong vùng của nó lúc thả, do
- * TabManager xác định bằng hình học của chính cụm .tab-group — `undefined` nghĩa
- * là thả ra ngoài mọi nhóm. Bản đầu suy ra nhóm từ hai tab HÀNG XÓM sau khi
- * splice, và như thế thả vào mép nhóm (một bên là thành viên, bên kia không)
- * lại không nhận nhóm — đúng thao tác tự nhiên nhất khi muốn thêm tab vào cuối
- * một nhóm thì lại trượt.
+ * `targetGroupId` is the group whose area the pointer was inside when it was
+ * dropped, decided by TabManager from the geometry of the .tab-group cluster
+ * itself — `undefined` means dropped outside every group. The first version
+ * inferred the group from the two NEIGHBOURING tabs after the splice, which meant
+ * dropping on the edge of a group (a member on one side, none on the other) did
+ * not join it — so the most natural gesture for appending a tab to a group was
+ * exactly the one that slipped.
  *
- * Khi nhóm thay đổi, việc đặt chỗ giao hết cho `moveTabIntoGroup`: đó là chỗ duy
- * nhất giữ bất biến "cùng nhóm nằm liền nhau", và nó xử lý được cả những ca mà
- * vị trí thả thô không xử lý nổi (thả lên chip của một nhóm đang thu gọn, tab
- * của nhóm đó đang bị giấu nên không có vị trí nào để chèn vào).
+ * When the group changes, placement is handed entirely to `moveTabIntoGroup`:
+ * that is the only place keeping the "one group stays adjacent" invariant, and it
+ * handles the cases a raw drop position cannot (dropping onto the chip of a
+ * collapsed group, whose tabs are hidden so there is no slot to insert into).
  */
 export function reorderTabs(
   list: TabInfo[],
@@ -99,8 +103,8 @@ export function reorderTabs(
     return moveTabIntoGroup(list, tab.id, targetGroupId);
   }
 
-  // Cùng nhóm (hoặc cùng "không nhóm"): thuần đổi chỗ. Con trỏ đã ở trong vùng
-  // của nhóm đó nên `to` chắc chắn nằm trong dải của nhóm, bất biến không đụng.
+  // Same group reordering within contiguous range.
+  
   if (from === to || to < 0 || to >= list.length) return list;
   const next = [...list];
   const [moved] = next.splice(from, 1);
@@ -109,17 +113,18 @@ export function reorderTabs(
 }
 
 /**
- * Dời NGUYÊN một nhóm (kéo chip của nhóm) tới chỗ của tab ở `targetIndex`.
+ * Moves an ENTIRE group (dragging its chip) to where the tab at `targetIndex` sits.
  *
- * Cả dải tab của nhóm đi cùng nhau. Điểm phải cẩn thận: chỗ thả có thể rơi vào
- * giữa dải của một nhóm KHÁC — chèn thẳng vào đó là cắt nhóm kia làm đôi. Nên
- * khi tab đích thuộc một nhóm khác, chỗ chèn được đẩy ra mép của cả nhóm đó:
- * mép trái nếu đang kéo sang trái, mép phải nếu kéo sang phải.
+ * The group's whole run travels together. The part to be careful about: the drop
+ * can land in the middle of ANOTHER group's run, and inserting straight there cuts
+ * that group in two. So when the target tab belongs to a different group, the
+ * insertion point is pushed out to that group's edge: its left edge when dragging
+ * left, its right edge when dragging right.
  */
 export function moveGroup(list: TabInfo[], groupId: string, targetIndex: number): TabInfo[] {
   const start = list.findIndex((tab) => tab.groupId === groupId);
   if (start === -1 || targetIndex < 0 || targetIndex >= list.length) return list;
-  // Thả vào chính nhóm đang kéo thì không có gì để làm.
+  // Dragged onto same group -> no-op.
   if (list[targetIndex].groupId === groupId) return list;
 
   const block = list.filter((tab) => tab.groupId === groupId);
@@ -130,7 +135,7 @@ export function moveGroup(list: TabInfo[], groupId: string, targetIndex: number)
   const j = rest.findIndex((tab) => tab.id === target.id);
   let insertAt: number;
   if (target.groupId) {
-    // Snap ra mép của nhóm đích, không bao giờ chèn vào giữa nó.
+    // Snaps to outer boundary of target group, never splitting it.
     insertAt = movingLeft
       ? rest.findIndex((tab) => tab.groupId === target.groupId)
       : rest.map((tab) => tab.groupId).lastIndexOf(target.groupId) + 1;

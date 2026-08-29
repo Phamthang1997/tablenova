@@ -43,7 +43,7 @@ import {
 import { Modal, ModalBody } from './Modal';
 
 interface DbCompareDialogProps {
-  /** Kết nối mà hộp thoại này lấy danh sách database từ đó. */
+  /** The connection this dialog reads its database list from. */
   connId: string;
   dbType: string;
   currentDb?: string;
@@ -300,8 +300,8 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
 
       // Select all non-identical tables by default
       const checked = new Set<string>();
-      res.tables.forEach((t) => {
-        if (t.status !== 'identical') checked.add(t.name);
+      res.tables.forEach((tbl) => {
+        if (tbl.status !== 'identical') checked.add(tbl.name);
       });
       setCheckedTables(checked);
       setBottomTab('ddl');
@@ -344,7 +344,7 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
   const toggleAllDataTablesChecked = (e?: React.MouseEvent) => {
     e?.stopPropagation();
     if (!overview) return;
-    const allNames = overview.tables.map((t) => t.name);
+    const allNames = overview.tables.map((tbl) => tbl.name);
     const allChecked = allNames.every((n) => checkedDataTables.has(n));
     if (allChecked) {
       setCheckedDataTables(new Set());
@@ -446,12 +446,12 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
 
   const toggleAllCheckedInGroup = (grpTables: TableDiff[], e: React.MouseEvent) => {
     e.stopPropagation();
-    const allChecked = grpTables.every((t) => checkedTables.has(t.name));
+    const allChecked = grpTables.every((tbl) => checkedTables.has(tbl.name));
     setCheckedTables((prev) => {
       const next = new Set(prev);
-      grpTables.forEach((t) => {
-        if (allChecked) next.delete(t.name);
-        else next.add(t.name);
+      grpTables.forEach((tbl) => {
+        if (allChecked) next.delete(tbl.name);
+        else next.add(tbl.name);
       });
       return next;
     });
@@ -471,79 +471,49 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
     };
 
     const isSrc = which === 'source';
-    const accentColor = isSrc ? '#10b981' : '#3b82f6';
-    const bgBadge = isSrc ? 'rgba(16, 185, 129, 0.12)' : 'rgba(59, 130, 246, 0.12)';
 
     return (
-      <div
-        style={{
-          flex: 1,
-          minWidth: 0,
-          border: `1px solid ${isSrc ? 'rgba(16, 185, 129, 0.25)' : 'rgba(59, 130, 246, 0.25)'}`,
-          borderRadius: '8px',
-          padding: '5px 10px',
-          background: 'var(--win-bg-card)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '10px',
-          boxShadow: '0 1px 3px rgba(0,0,0,0.03)',
-          transition: 'all 0.15s ease',
-        }}
-      >
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            padding: '3px 10px',
-            borderRadius: '6px',
-            background: bgBadge,
-            color: accentColor,
-            fontWeight: 600,
-            fontSize: '11px',
-            whiteSpace: 'nowrap',
-            flexShrink: 0,
-          }}
-        >
-          <Database size={13} />
-          <span>{isSrc ? t('compare.sourceLabel') : t('compare.targetLabel')}</span>
+      <div className="db-compare-side-box">
+        <div className="db-compare-side-header">
+          <span className={`db-compare-side-tag ${isSrc ? 'source-tag' : 'target-tag'}`}>
+            <Database size={12} />
+            <span>{isSrc ? t('compare.sourceLabel') : t('compare.targetLabel')}</span>
+          </span>
+          <span className="db-compare-side-hint">
+            {isSrc ? t('compare.sourceHint') : t('compare.targetHint')}
+          </span>
         </div>
 
         {isSqlite ? (
           <input
             type="text"
-            style={{ ...input, flex: 1, height: '30px' }}
+            className="db-compare-input"
             value={value.filePath || ''}
             placeholder={t('compare.sqlitePathPlaceholder')}
             onChange={(e) => patch({ filePath: e.target.value })}
           />
         ) : (
-          <div style={{ display: 'flex', gap: '6px', flex: 1, minWidth: 0 }}>
-            <select
-              style={{
-                ...input,
-                flex: 1,
-                height: '30px',
-                fontWeight: 600,
-                color: 'var(--win-text-primary)',
-                background: 'var(--win-bg-hover)',
-                borderRadius: '6px',
-                cursor: 'pointer',
-              }}
-              value={value.database || ''}
-              onChange={(e) => patch({ database: e.target.value })}
-            >
-              <option value="">{t('compare.currentDatabase')}</option>
-              {databases.map((d) => (
-                <option key={d} value={d}>
-                  {d}
-                </option>
-              ))}
-            </select>
+          <div style={{ display: 'flex', gap: '6px', width: '100%', alignItems: 'center' }}>
+            <div className="db-compare-select-wrap">
+              <select
+                className="db-compare-select"
+                value={value.database || ''}
+                onChange={(e) => patch({ database: e.target.value })}
+              >
+                <option value="">{t('compare.currentDatabase')}</option>
+                {databases.map((d) => (
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown size={14} className="db-compare-select-chevron" />
+            </div>
             {isPostgres && (
               <input
                 type="text"
-                style={{ ...input, width: '110px', height: '30px' }}
+                className="db-compare-input"
+                style={{ width: '110px', flex: 'none' }}
                 value={value.schema || ''}
                 placeholder={t('compare.schemaPlaceholder')}
                 onChange={(e) => patch({ schema: e.target.value })}
@@ -653,8 +623,8 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
   ) => {
     if (grpTables.length === 0) return null;
     const isExpanded = expandedGroups[grpKey] ?? true;
-    const allChecked = grpTables.every((t) => checkedTables.has(t.name));
-    const someChecked = grpTables.some((t) => checkedTables.has(t.name));
+    const allChecked = grpTables.every((tbl) => checkedTables.has(tbl.name));
+    const someChecked = grpTables.some((tbl) => checkedTables.has(tbl.name));
 
     return (
       <div key={grpKey} style={{ display: 'flex', flexDirection: 'column' }}>
@@ -685,7 +655,7 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
             {grpIcon}
             <span>{grpTitle}</span>
             <span style={{ fontSize: '10.5px', color: 'var(--win-text-disabled)', fontWeight: 400 }}>
-              ({grpTables.filter((t) => checkedTables.has(t.name)).length} of {grpTables.length} selected)
+              ({grpTables.filter((tbl) => checkedTables.has(tbl.name)).length} of {grpTables.length} selected)
             </span>
           </span>
         </div>
@@ -850,8 +820,16 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
       )}
 
       {!schemaResult && !busy && (
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--win-text-disabled)', fontSize: '12px', textAlign: 'center', padding: '0 32px' }}>
-          {t('compare.emptyHintStructure')}
+        <div className="db-compare-empty">
+          <div className="db-compare-empty-icon">
+            <ArrowLeftRight size={24} />
+          </div>
+          <span className="db-compare-empty-title">
+            {t('compare.emptyTitleStructure', 'So sánh cấu trúc 2 Database')}
+          </span>
+          <span className="db-compare-empty-desc">
+            {t('compare.emptyHintStructure')}
+          </span>
         </div>
       )}
 
@@ -880,7 +858,7 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
                 Tất cả ({schemaResult.tables.length})
               </button>
               {(['different', 'onlySource', 'onlyTarget', 'identical'] as DiffStatus[]).map((s) => {
-                const count = schemaResult.tables.filter((t) => t.status === s).length;
+                const count = schemaResult.tables.filter((tbl) => tbl.status === s).length;
                 if (count === 0 && !statusFilter.has(s)) return null;
                 return (
                   <button
@@ -948,8 +926,16 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
   const dataPane = (
     <>
       {!overview && !busy && !dataResult && (
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--win-text-disabled)', fontSize: '12px', textAlign: 'center', padding: '0 32px' }}>
-          {t('compare.emptyHintData')}
+        <div className="db-compare-empty">
+          <div className="db-compare-empty-icon">
+            <TableIcon size={24} />
+          </div>
+          <span className="db-compare-empty-title">
+            {t('compare.emptyTitleData', 'So sánh dữ liệu các bảng (Data Diff)')}
+          </span>
+          <span className="db-compare-empty-desc">
+            {t('compare.emptyHintData')}
+          </span>
         </div>
       )}
 
@@ -979,9 +965,9 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
             <div style={{ display: 'grid', gridTemplateColumns: '24px 24px 28px 1fr 50px 1fr 100px', gap: '6px', padding: '6px 12px', borderBottom: '1px solid var(--win-border)', background: 'var(--win-bg-popover)', ...label, position: 'sticky', top: 0, zIndex: 10, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
               <span />
               <span onClick={toggleAllDataTablesChecked} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
-                {overview.tables.length > 0 && overview.tables.every((t) => checkedDataTables.has(t.name)) ? (
+                {overview.tables.length > 0 && overview.tables.every((tbl) => checkedDataTables.has(tbl.name)) ? (
                   <CheckSquare size={13} style={{ color: 'var(--win-accent)' }} />
-                ) : overview.tables.some((t) => checkedDataTables.has(t.name)) ? (
+                ) : overview.tables.some((tbl) => checkedDataTables.has(tbl.name)) ? (
                   <MinusSquare size={13} style={{ color: 'var(--win-accent)' }} />
                 ) : (
                   <Square size={13} style={{ color: 'var(--win-text-disabled)' }} />
@@ -1210,51 +1196,69 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
       zIndex={10000}
     >
       <ModalBody style={{ padding: '14px 18px', gap: '12px', flex: 1 }}>
-        {/* Row 1: Selectors Nguồn (A) - Đích (B) */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          {sideCard('source')}
-          <button
-            className="btn btn-secondary"
-            title={t('compare.swapSides')}
-            onClick={swap}
-            style={{ width: '32px', height: '32px', padding: 0, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
-          >
-            <ArrowLeftRight size={14} />
-          </button>
-          {sideCard('target')}
-        </div>
+        {/* Unified Pipeline Control Card (DataGrip/Navicat Style) */}
+        <div className="db-compare-unified-card">
+          {/* Top: Pipeline Direction Row */}
+          <div className="db-compare-pipeline-row">
+            {sideCard('source')}
 
-        {/* Row 2: Control Toolbar (Mode tabs + Options + Progress Bar + Run Button) */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', background: 'var(--win-bg-card)', padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--win-border)', flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', gap: '4px' }}>
-            <button className={`btn ${mode === 'structure' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setMode('structure')} style={{ padding: '4px 12px', fontSize: '11px' }}>
-              {t('compare.tabStructure')}
-            </button>
-            <button className={`btn ${mode === 'data' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setMode('data')} style={{ padding: '4px 12px', fontSize: '11px' }}>
-              {t('compare.tabData')}
-            </button>
+            <div className="db-compare-pipeline-bridge">
+              <button
+                type="button"
+                className="db-compare-swap-circle-btn"
+                onClick={swap}
+                title={t('compare.swapSides')}
+              >
+                <ArrowLeftRight size={15} />
+              </button>
+              <span className="db-compare-bridge-label">A ➔ B</span>
+            </div>
+
+            {sideCard('target')}
           </div>
 
-          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--win-text-secondary)', cursor: 'pointer', userSelect: 'none' }}>
-            <input type="checkbox" checked={includeDrops} onChange={(e) => setIncludeDrops(e.target.checked)} />
-            {t('compare.includeDrops')}
-          </label>
+          {/* Bottom: Integrated Actions Toolbar Strip */}
+          <div className="db-compare-actions-strip">
+            <div style={{ display: 'flex', gap: '4px' }}>
+              <button
+                type="button"
+                className={`btn ${mode === 'structure' ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => setMode('structure')}
+                style={{ padding: '4px 12px', fontSize: '11px', height: '28px' }}
+              >
+                {t('compare.tabStructure')}
+              </button>
+              <button
+                type="button"
+                className={`btn ${mode === 'data' ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => setMode('data')}
+                style={{ padding: '4px 12px', fontSize: '11px', height: '28px' }}
+              >
+                {t('compare.tabData')}
+              </button>
+            </div>
 
-          {/* Diff Progress Bar Summary */}
-          {mode === 'structure' && schemaResult && (
-            <DiffProgressBar summary={schemaResult.summary} />
-          )}
+            <label className="db-compare-check-item">
+              <input type="checkbox" checked={includeDrops} onChange={(e) => setIncludeDrops(e.target.checked)} />
+              <span>{t('compare.includeDrops')}</span>
+            </label>
 
-          <button
-            className="btn btn-primary"
-            disabled={!!busy || !sideReady}
-            onClick={() => (mode === 'structure' ? runSchemaCompare() : runOverview())}
-            title={sideReady ? undefined : t('compare.pickSidesFirst')}
-            style={{ marginLeft: 'auto', padding: '6px 16px', fontSize: '11.5px', display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600 }}
-          >
-            {busy ? <Loader size={13} className="loading-spinner" /> : <Play size={13} />}
-            {mode === 'structure' ? t('compare.runStructure') : t('compare.runOverview')}
-          </button>
+            {mode === 'structure' && schemaResult && (
+              <DiffProgressBar summary={schemaResult.summary} />
+            )}
+
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={!!busy || !sideReady}
+              onClick={() => (mode === 'structure' ? runSchemaCompare() : runOverview())}
+              title={sideReady ? undefined : t('compare.pickSidesFirst')}
+              style={{ marginLeft: 'auto', padding: '5px 16px', fontSize: '11.5px', height: '28px', display: 'flex', alignItems: 'center', gap: '6px' }}
+            >
+              {busy ? <Loader size={13} className="loading-spinner" /> : <Play size={13} fill="currentColor" />}
+              <span>{mode === 'structure' ? t('compare.runStructure') : t('compare.runOverview')}</span>
+            </button>
+          </div>
         </div>
 
         {busy && (

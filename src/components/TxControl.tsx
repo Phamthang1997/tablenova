@@ -8,9 +8,9 @@ import { Modal, ModalBody, ModalFooter } from './Modal';
 import { CLOSE_PRIORITY_TX, registerCloseBlocker } from '../utils/closeGuard';
 
 interface TxControlProps {
-  /** 'sqlite' | 'postgres' | 'mysql' — quyết định danh sách mức cô lập hiển thị. */
+  /** 'sqlite' | 'postgres' | 'mysql' — decides which isolation levels are listed. */
   dbType: string;
-  /** Ẩn hoàn toàn khi chưa kết nối. */
+  /** Hidden entirely while nothing is connected. */
   connected: boolean;
   /**
    * Connection this control is showing. Every session is per connection now, and the backend emits
@@ -21,16 +21,16 @@ interface TxControlProps {
 }
 
 /**
- * Điều khiển transaction thủ công: MỘT nút trên thanh tiêu đề, mọi thao tác nằm trong hộp thoại
- * "thay đổi đang chờ".
+ * The manual-transaction control: ONE button on the title bar, with every action inside the
+ * "pending changes" dialog.
  *
- * Transaction ở đây thuộc về **kết nối**, không thuộc về tab — `DatabaseManager` giữ đúng một
- * connection cho cả app, nên nói rằng hai tab có hai transaction là nói dối. Vì vậy nút nằm ở thanh
- * tiêu đề chứ không ở toolbar từng tab.
+ * A transaction here belongs to the **connection**, not to a tab — so claiming that two tabs have two
+ * transactions would be a lie. That is why the button sits on the title bar rather than in each tab's
+ * toolbar.
  *
- * Frontend KHÔNG tự suy ra trạng thái: mọi thứ hiển thị ở đây đến từ sự kiện `tx-state-changed`
- * do Rust phát sau mỗi câu lệnh — kể cả câu người dùng tự gõ `COMMIT` trong SQL Editor và câu DDL
- * mà MySQL tự commit. Xem `src-tauri/src/tx_session.rs`.
+ * The frontend NEVER infers the state: everything shown here comes from the `tx-state-changed` event
+ * Rust emits after each statement — including a `COMMIT` the user typed in the SQL Editor, and a DDL
+ * statement MySQL commits by itself. See `src-tauri/src/tx_session.rs`.
  */
 export const TxControl: React.FC<TxControlProps> = ({ dbType, connected, connId }) => {
   const { t } = useTranslation();
@@ -39,30 +39,32 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected, connId 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [spName, setSpName] = useState('');
-  // Đồng hồ chỉ để vẽ lại phần "đã mở bao lâu"; `sinceMs` trong status là ảnh chụp lúc backend gửi.
-  const [tick, setTick] = useState(0);
+  // Elapsed duration in seconds for open transaction
+  const [totalSec, setTotalSec] = useState(0);
   const [askOnClose, setAskOnClose] = useState(false);
-  const openedAtRef = useRef<number>(0);
-  // Handler đóng cửa sổ chỉ đăng ký một lần; đọc trạng thái qua ref để không phải gỡ/gắn lại
-  // mỗi khi bộ đếm câu lệnh thay đổi.
+  // Handler close window registered once; reads status via ref to avoid re-binding
   const statusRef = useRef<TxStatus | null>(null);
-  statusRef.current = status;
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
 
   const refresh = useCallback(async () => {
     try {
       setStatus(await dbHelper.txStatus());
     } catch {
-      /* chưa kết nối -> giữ nguyên */
+      /* not connected -> preserve */
     }
   }, []);
 
   useEffect(() => {
     if (!connected) {
-      setStatus(null);
-      setOpen(false);
+      queueMicrotask(() => {
+        setStatus(null);
+        setOpen(false);
+      });
       return;
     }
-    void refresh();
+    queueMicrotask(() => void refresh());
     const un = listen<TxStatus>(TX_EVENT, (e) => {
       // Drop events belonging to another connection. `connId` is absent only on a backend older
       // than this window (tauri dev keeps the last binary that built), so treat a missing one as
@@ -75,30 +77,28 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected, connId 
     };
   }, [connected, connId, refresh]);
 
-  // Mốc thời gian tính ở client: backend chỉ gửi `sinceMs` tại thời điểm phát sự kiện, còn
-  // transaction có thể nằm im hàng phút mà không có sự kiện nào.
+  // Client-side timer: computes elapsed duration from transaction start
   useEffect(() => {
-    if (!status?.open) return;
-    openedAtRef.current = Date.now() - status.sinceMs;
-    const id = setInterval(() => setTick((n) => n + 1), 1000);
+    if (!status?.open) {
+      queueMicrotask(() => setTotalSec(0));
+      return;
+    }
+    const openedAt = Date.now() - status.sinceMs;
+    const update = () => {
+      const elapsedMs = Date.now() - openedAt;
+      setTotalSec(Math.max(0, Math.floor(elapsedMs / 1000)));
+    };
+    update();
+    const id = setInterval(update, 1000);
     return () => clearInterval(id);
   }, [status?.open, status?.sinceMs]);
 
-  // Đóng app khi còn thay đổi chưa commit = mất trắng. Chặn ở `onCloseRequested` chứ không ở nút
-  // × của TitleBar: Alt+F4 và nút đóng của hệ điều hành không đi qua nút đó.
-  //
-  // Listener `onCloseRequested` giờ do `closeGuard.ts` giữ, một cái duy nhất cho cả app: hai
-  // listener độc lập thì cái nào resolve trước sẽ gọi `destroy()` và giết luôn hộp thoại của cái
-  // kia. Đây là blocker ưu tiên cao nhất — mất dữ liệu là không lấy lại được.
+  // Prevent data loss on uncommitted transactions during app close
   useEffect(() => registerCloseBlocker(CLOSE_PRIORITY_TX, async () => {
-    // Asks the BACKEND about every connection, not `statusRef` about the one on screen. Closing
-    // the window ends every session, so a per-connection answer would silently discard another
-    // connection's transaction — see `tx_any_pending`.
     let pending = false;
     try {
       pending = await dbHelper.txAnyPending();
     } catch {
-      // Backend unreachable: fall back to what this window knows rather than trapping the user.
       const s = statusRef.current;
       pending = !!s?.open && s.statements > 0;
     }
@@ -109,22 +109,21 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected, connId 
 
   if (!connected || !status) return null;
 
-  const elapsedMs = status.open ? Date.now() - openedAtRef.current : 0;
-  const totalSec = Math.max(0, Math.floor(elapsedMs / 1000));
   const elapsed =
     totalSec < 60
       ? t('tx.elapsedSec', { n: totalSec })
       : t('tx.elapsedMin', { n: Math.floor(totalSec / 60), b: totalSec % 60 });
-  // Mốc mềm 5 phút: transaction dài giữ khoá và làm phình undo log/WAL.
+  // A soft 5-minute mark: a long transaction holds locks and swells the undo log / WAL.
   const isLong = status.open && totalSec >= 300;
   const levels = TX_ISOLATION_LEVELS[dbType] || [];
   const isSqlite = dbType === 'sqlite';
 
-  // Nút là một CÔNG TẮC, không phải dropdown: hộp thoại chỉ mở khi có thứ để quyết định.
-  //   Tự động            -> bấm: chuyển sang thủ công
-  //   Thủ công, chưa có gì -> bấm: chuyển về tự động
-  //   Thủ công, N câu chờ  -> bấm: mở hộp thoại (không đổi chế độ — backend cũng chặn đổi khi còn
-  //                          thay đổi chưa commit, nên đổi chế độ ở đây chỉ tổ báo lỗi)
+  // The button is a SWITCH, not a dropdown: the dialog opens only when there is something to decide.
+  //   Auto                  -> click: switch to manual
+  //   Manual, nothing yet   -> click: switch back to auto
+  //   Manual, N statements  -> click: open the dialog (the mode does not change — the backend refuses
+  //                           a mode change while changes are uncommitted, so changing it here would
+  //                           only produce an error)
   const hasPending = status.statements > 0;
   const summaryTitle = hasPending
     ? `${t('tx.clickToReview', { n: status.statements })} · ${
@@ -164,7 +163,7 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected, connId 
       if (refetch) window.dispatchEvent(new CustomEvent('database-restored', { detail: { connId } }));
       if (closeAfter) setOpen(false);
     } catch (err) {
-      // Message đã được dịch ở biên dbHelper (backendErrors.ts).
+      // The message was already translated at the dbHelper boundary (backendErrors.ts).
       setError(String(err));
       void refresh();
     } finally {
@@ -172,16 +171,17 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected, connId 
     }
   };
 
-  // `pendingSql` có thể vắng mặt nếu backend đang chạy là bản CŨ hơn cửa sổ này (tauri dev giữ
-  // nguyên binary cuối cùng build được khi Rust lỗi biên dịch). Nói thẳng ra thay vì hiện một ô
-  // trống không giải thích được — và đọc phòng thủ để không nổ TypeError giữa lúc render.
+  // `pendingSql` can be absent when the running backend is OLDER than this window (tauri dev keeps the
+  // last binary that built when Rust fails to compile). Say so plainly rather than showing an
+  // unexplained empty box — and read it defensively so no TypeError blows up mid-render.
   const pendingList = Array.isArray(status.pendingSql) ? status.pendingSql : null;
 
-  // Gom các câu giống hệt nhau thành một mục, giữ thứ tự lần chạy ĐẦU tiên và kèm số lần chạy.
+  // Identical statements are collapsed into one entry, keeping the order of the FIRST run and carrying
+  // how many times it ran.
   //
-  // Số lần phải hiện ra: bốn lần `UPDATE … SET first_name = 'X'` cho cùng kết quả với một lần, nhưng
-  // bốn lần `SET n = n + 1` thì không — và nhìn text thì không phân biệt được hai trường hợp. Server
-  // đã thực thi đủ bốn câu và Rollback đang gỡ cả bốn, nên bỏ hẳn con số là nói sai với người dùng.
+  // The count has to be shown: four `UPDATE … SET first_name = 'X'` give the same result as one, while
+  // four `SET n = n + 1` do not — and the text alone cannot tell the two apart. The server executed all
+  // four and Rollback is undoing all four, so dropping the number misstates what is happening.
   const groupedPending = (pendingList ?? []).reduce<{ sql: string; times: number }[]>((acc, sql) => {
     const hit = acc.find((g) => g.sql === sql);
     if (hit) hit.times += 1;
@@ -191,12 +191,12 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected, connId 
 
   return (
     <>
-      {/* MỘT nút duy nhất trên thanh tiêu đề. Bản trước bày mode + bộ đếm + Commit + Rollback thành
-          bốn thứ rời nhau, chiếm ~330px và bóp capsule trạng thái ở giữa (flex:1) xuống còn một
-          vòng tròn. Mọi thao tác nằm trong hộp thoại.
+      {/* ONE button on the title bar. The previous version laid out mode + counter + Commit + Rollback
+          as four loose items, taking ~330px and squeezing the centre status capsule (flex:1) down to a
+          circle. Every action lives in the dialog.
 
-          `tb-capsule-btn` giữ nguyên dáng mặc định của thanh — không override màu/độ đậm/gap ở đây;
-          khoảng cách đặt trên các phần tử con. */}
+          `tb-capsule-btn` keeps the bar's default shape — no colour, weight or gap is overridden here;
+          spacing goes on the child elements. */}
       <div className="tb-capsule" style={{ flexShrink: 0 }}>
         <button
           type="button"
@@ -204,8 +204,8 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected, connId 
           onClick={handleButton}
           disabled={busy}
           title={summaryTitle}
-          // `tick` chỉ để buộc render lại mỗi giây cho tooltip thời gian mở.
-          data-tick={tick}
+          // `totalSec` ensures re-render every second for elapsed tooltip.
+          data-tick={totalSec}
         >
           {hasPending && (
             <span
@@ -236,9 +236,9 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected, connId 
           zIndex={99999}
         >
           <ModalBody style={{ padding: 0, gap: 0, flex: 1, minHeight: 0 }}>
-            {/* Hàng thiết lập: chế độ + mức cô lập. Thiết kế gốc của hộp thoại chỉ có phần SQL và
-                hai nút, nhưng công tắc auto-commit và mức cô lập phải có chỗ nào đó — để ở đây thì
-                chúng nằm cùng nơi với thứ chúng chi phối. */}
+            {/* The settings row: mode and isolation level. The dialog's original design had only the
+                SQL and two buttons, but the auto-commit switch and the isolation level needed a home —
+                here they sit with the very thing they govern. */}
             <div
               style={{
                 display: 'flex',
@@ -255,8 +255,8 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected, connId 
                     key={String(auto)}
                     type="button"
                     className={`btn ${status.autocommit === auto ? 'btn-primary' : 'btn-secondary'}`}
-                    // Quay về tự động khi còn thay đổi chưa commit thì backend từ chối — chặn ở đây
-                    // và nói lý do, thay vì để người dùng bấm rồi nhận một dòng lỗi.
+                    // Switching back to auto with changes uncommitted is refused by the backend — so it
+                    // is blocked here with a reason, rather than letting the click return an error line.
                     disabled={busy || (auto && hasPending)}
                     title={auto && hasPending ? t('tx.autoBlocked') : auto ? t('tx.autoDesc') : t('tx.manualDesc')}
                     onClick={() => void run(() => dbHelper.txSetAutocommit(auto))}
@@ -302,10 +302,10 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected, connId 
               </div>
             </div>
 
-            {/* Các câu đang chờ. Dùng <pre> đơn sắc chứ không phải Monaco: hộp thoại xem trước SQL
-                của DataGrid (`commitPreview`) đã làm đúng như vậy, và một khung Monaco dựng trong
-                portal của Modal có quá nhiều cách hỏng lặng lẽ (đo kích thước lúc mount, theme
-                chưa kịp định nghĩa) — hỏng kiểu đó thì người dùng chỉ thấy một ô trắng. */}
+            {/* The pending statements. A monospaced <pre> rather than Monaco: DataGrid's SQL preview
+                dialog (`commitPreview`) already does exactly this, and a Monaco instance built inside
+                Modal's portal has too many ways to fail silently (measuring at mount, a theme not yet
+                defined) — and failing that way leaves the user looking at a blank box. */}
             <div
               style={{
                 flex: 1,
@@ -375,7 +375,7 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected, connId 
               )}
             </div>
 
-            {/* Cảnh báo + savepoint: chỉ hiện khi có gì để nói, không chiếm chỗ thường trực. */}
+            {/* Warnings and savepoints: shown only when there is something to say, never holding space permanently. */}
             {(status.aborted || status.implicitCommit || isLong || status.sqlTruncated) && (
               <div
                 style={{
@@ -523,7 +523,7 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected, connId 
               disabled={busy}
               onClick={async () => {
                 await run(() => dbHelper.txRollback());
-                // Transaction đã đóng -> lần close() này đi qua guard ở trên.
+                // The transaction is closed -> this close() passes the guard above.
                 void getCurrentWindow().close();
               }}
             >
@@ -540,7 +540,7 @@ export const TxControl: React.FC<TxControlProps> = ({ dbType, connected, connId 
                   setStatus(await dbHelper.txCommit());
                   void getCurrentWindow().close();
                 } catch (err) {
-                  // Commit lỗi thì KHÔNG đóng: đóng tiếp là vứt luôn thứ vừa báo lỗi.
+                  // A failed commit does NOT close: closing anyway would throw away the very thing that just failed.
                   setError(String(err));
                   void refresh();
                 } finally {

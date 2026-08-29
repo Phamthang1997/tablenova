@@ -1,24 +1,25 @@
 /**
- * MÔI TRƯỜNG của một kết nối — một trường riêng trên profile, không suy ra từ màu.
+ * A connection's ENVIRONMENT — a field of its own on the profile, never inferred from the colour.
  *
- * Trước đây nó được suy từ nhãn màu (đỏ = production). Cách đó sai ở chỗ căn bản: màu là thứ người
- * dùng đổi vì thẩm mỹ hoặc để phân loại việc khác, còn đây là thứ quyết định có bật chỉ-đọc và có
- * bắt gõ tên database trước câu lệnh nguy hiểm hay không. Buộc hai thứ vào nhau nghĩa là đổi màu
- * cho dễ nhìn có thể vô hiệu hoá lớp bảo vệ production mà không nói một lời — và ngược lại, muốn
- * đánh dấu production thì buộc phải chấp nhận một màu cụ thể.
+ * It used to be inferred from the colour label (red = production). That was wrong at the root: a
+ * colour is something the user changes for looks or to categorise something else, while this decides
+ * whether read-only comes on and whether a dangerous statement demands the database name typed out.
+ * Tying the two together means recolouring for readability can disable the production guard without a
+ * word — and conversely, marking something production forces a particular colour on it.
  *
- * Màu giờ thuần trang trí. `legacyEnvOfColor` chỉ còn dùng đúng một lần, lúc di trú các profile cũ.
+ * The colour is now purely decorative. `legacyEnvOfColor` is used exactly once, migrating old
+ * profiles.
  */
 export type ConnEnv = 'production' | 'staging' | 'development' | 'none';
 
-/** Thứ tự hiển thị trong ô chọn: từ vô hại đến cần cẩn thận nhất. */
+/** The order shown in the picker: from harmless to the one needing most care. */
 export const CONN_ENVS: readonly ConnEnv[] = ['none', 'development', 'staging', 'production'];
 
 /**
- * Bảng màu → môi trường của bản cũ. **Chỉ dùng để di trú**, không dùng lúc chạy.
+ * The old colour → environment table. **For migration only**, never at runtime.
  *
- * Xanh dương và "không màu" cố ý không map: người dùng có thể đã dùng chúng để phân loại việc khác,
- * và tự ý coi chúng là production sẽ khoá những kết nối họ không hề đánh dấu.
+ * Blue and "no colour" are deliberately unmapped: the user may have been using them to categorise
+ * something else, and treating them as production would lock connections they never marked.
  */
 const LEGACY_BY_COLOR: Record<string, ConnEnv> = {
   '#fca5a5': 'production',
@@ -27,34 +28,34 @@ const LEGACY_BY_COLOR: Record<string, ConnEnv> = {
 };
 
 /**
- * Môi trường mà một profile cũ (chỉ có màu) từng ngụ ý.
+ * The environment an old profile (colour only) used to imply.
  *
- * Gọi một lần khi nạp profile chưa có trường `env`, rồi ghi kết quả xuống. Không có bước này thì
- * mọi kết nối đang được đánh dấu production sẽ âm thầm mất dấu ngay ở lần nâng cấp — đúng loại thay
- * đổi im lặng mà lớp bảo vệ này tồn tại để chống.
+ * Called once while loading a profile without an `env` field, and the result is written back. Without
+ * this step every connection currently marked production silently loses that mark on the upgrade —
+ * exactly the kind of silent change this guard exists to prevent.
  */
 export function legacyEnvOfColor(color?: string | null): ConnEnv {
   if (!color) return 'none';
   return LEGACY_BY_COLOR[color.toLowerCase()] ?? 'none';
 }
 
-/** Đọc một giá trị từ localStorage/JSON về đúng kiểu, mọi thứ lạ thành `none`. */
+/** Reads a value from localStorage/JSON into the right type; anything unfamiliar becomes `none`. */
 export function normalizeEnv(value: unknown): ConnEnv {
   return CONN_ENVS.includes(value as ConnEnv) ? (value as ConnEnv) : 'none';
 }
 
 /**
- * Kết nối này có phải production không?
+ * Is this connection production?
  *
- * Quyết định hai thứ: bật chỉ-đọc ngay khi kết nối, và bắt xác nhận hai bước trước câu lệnh nguy
- * hiểm. Cả hai đều là "chặn nhầm thì phiền, không chặn thì mất dữ liệu", nên vị từ giữ đúng một
- * nghĩa và không nới ra.
+ * It decides two things: turning read-only on as soon as it connects, and demanding a two-step
+ * confirmation before a dangerous statement. Both are "blocking wrongly is a nuisance, not blocking
+ * loses data", so the predicate keeps exactly one meaning and is never loosened.
  */
 export function isProduction(env?: ConnEnv | null): boolean {
   return env === 'production';
 }
 
-/** Khoá i18n của nhãn môi trường. Có cả `none` vì ô chọn phải hiện được lựa chọn đó. */
+/** The i18n key of an environment's label. `none` is included, because the picker has to show that option. */
 export function envLabelKey(
   env: ConnEnv,
 ): 'connEnv.production' | 'connEnv.staging' | 'connEnv.development' | 'connEnv.none' {

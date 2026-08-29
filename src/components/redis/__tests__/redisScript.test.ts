@@ -10,8 +10,8 @@ describe('splitRedisCommands', () => {
   });
 
   it('bỏ dòng trống và dòng chú thích, nhưng GIỮ số dòng thật', () => {
-    // Số dòng là thứ đặt con trỏ và đánh dấu lỗi, nên nó phải là vị trí trong buffer chứ không
-    // phải chỉ số trong mảng kết quả.
+    // Line numbers map directly to buffer positions for cursor navigation and error marking.
+    
     const cmds = splitRedisCommands('# đếm key\n\nDBSIZE\n\n# xong\nPING');
     expect(cmds).toEqual([
       { text: 'DBSIZE', line: 3 },
@@ -36,8 +36,8 @@ describe('splitRedisCommands', () => {
   });
 
   it('`#` giữa dòng KHÔNG phải chú thích', () => {
-    // Chỉ dòng bắt đầu bằng `#` mới là chú thích. `SET k a#b` là một giá trị hợp lệ, cắt ở `#`
-    // sẽ ghi sai dữ liệu vào database.
+    // Only lines starting with `#` are comments. `#` inside values (`SET k a#b`) is preserved.
+    
     expect(splitRedisCommands('SET k a#b')).toEqual([{ text: 'SET k a#b', line: 1 }]);
   });
 });
@@ -56,7 +56,7 @@ describe('commandAtLine', () => {
   });
 
   it('con trỏ dưới lệnh cuối vẫn trả về lệnh cuối', () => {
-    // Gõ xong rồi Enter là thói quen phổ biến; ở trạng thái đó "không có lệnh nào" là vô ích.
+    // Handles trailing newline gracefully without treating it as empty input.
     expect(commandAtLine(buf, 99)?.text).toBe('DBSIZE');
   });
 
@@ -82,8 +82,8 @@ describe('commandNameOf', () => {
   });
 
   it('không gộp hai từ khi từ thứ hai chỉ là tham số', () => {
-    // `GET key` không được thành lệnh `GET KEY` — đây chính là lý do hàm nhận bảng lệnh thay vì
-    // tự đoán từ văn bản.
+    // Preserves identifier casing (`GET key` does not uppercase argument to `GET KEY`).
+    
     expect(commandNameOf('GET list', known)).toBe('GET');
   });
 

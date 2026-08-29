@@ -6,17 +6,17 @@ import { Modal, ModalBody, ModalFooter } from './Modal';
 interface ConfirmDialogProps {
   open: boolean;
   title: string;
-  /** Nội dung chính — mô tả hành động sẽ xảy ra. */
+  /** The main body — describing the action about to happen. */
   message: React.ReactNode;
-  /** Dòng nhỏ phía dưới, ví dụ "Không thể hoàn tác." */
+  /** The small line below, e.g. "This cannot be undone." */
   note?: React.ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
-  /** Nút xác nhận màu đỏ (hành động phá huỷ dữ liệu). */
+  /** A red confirm button (a destructive action). */
   danger?: boolean;
-  /** Sắc thái icon/nút: 'danger' (mặc định khi danger), 'success' hoặc 'info'. */
+  /** The icon and button tone: 'danger' (the default when danger), 'success' or 'info'. */
   tone?: 'danger' | 'success' | 'info';
-  /** Nếu có: người dùng phải gõ đúng chuỗi này mới bấm được nút xác nhận. */
+  /** When present: the user has to type this string exactly before the confirm button works. */
   requireText?: string;
   /** Override the stacking order. The default sits above the 9999/10000 dialogs, but a
    *  caller opened from a modal that raised itself higher (Sidebar, SequenceManagerModal
@@ -27,8 +27,8 @@ interface ConfirmDialogProps {
 }
 
 /**
- * Hộp xác nhận trong app cho các hành động phá huỷ dữ liệu (Drop / Truncate / Flush...),
- * thay cho window.confirm() để trông đồng bộ với các popup còn lại.
+ * The in-app confirmation box for destructive actions (Drop / Truncate / Flush…), replacing
+ * window.confirm() so it matches the rest of the dialogs.
  */
 export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   open,
@@ -48,13 +48,15 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   const [typed, setTyped] = useState('');
 
   useEffect(() => {
-    if (open) setTyped('');
+    queueMicrotask(() => {
+      if (open) setTyped('');
+    });
   }, [open]);
 
   const ready = !requireText || typed.trim() === requireText;
 
-  // Escape đã do Modal xử lý; ở đây chỉ cần Enter để xác nhận nhanh,
-  // và chỉ khi không phải nhập xác nhận bằng tay.
+  // Escape is already handled by Modal; all that is needed here is Enter for a quick confirm, and only
+  // when no typed confirmation is required.
   useEffect(() => {
     if (!open || requireText) return;
     const onKey = (e: KeyboardEvent) => {

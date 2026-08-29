@@ -1,19 +1,19 @@
-// Quick Fix (bóng đèn / Ctrl+. ) cho các chẩn đoán của `inspection.ts`.
+// Quick Fix (lightbulb / Ctrl+.) for diagnostics produced by `inspection.ts`.
 //
-// Toàn bộ phần "sửa cái gì thành cái gì" đã được `inspectSqlText()` tính sẵn vào `issue.fix`
-// (xem `QuickFixData`). File này cố ý chỉ còn phần dán vào Monaco: đổi `fix` thành `CodeAction`.
-// Nhờ vậy phần có thể sai — chọn ứng viên, xác định vùng thay — nằm trong một hàm thuần đã có
-// test, còn ở đây không có logic nào để mà kiểm thử.
+// Fix calculations are pre-computed by `inspectSqlText()` in `issue.fix` (`QuickFixData`).
+// This file solely adapts `fix` payloads into Monaco `CodeAction` objects.
+// Complex heuristics (fuzzy candidates, replacement ranges) reside in tested pure functions.
+
 //
-// Không đọc `context.markers`: marker chỉ mang chuỗi đã dịch, mà suy ngược tên định danh từ câu
-// chữ thì hỏng ngay khi đổi ngôn ngữ. Chạy lại `inspectSqlText` trên văn bản hiện tại rẻ hơn
-// nhiều so với việc phải giữ đồng bộ một bảng trạng thái song song với model.
+// Avoids parsing `context.markers`: localized strings break identifier extraction in multilingual UIs.
+// Re-running `inspectSqlText` on current buffer is cheaper and reliable.
+
 import type * as monaco from 'monaco-editor';
 import { inspectSqlText } from './inspection';
 import { LANG_IDS } from './sqlLanguage';
 import i18n from '../i18n';
 
-/** Một khoảng dòng/cột, đủ để so giao nhau. */
+/** Line/column range used for intersection checks. */
 interface Span {
   startLine: number;
   startColumn: number;
@@ -22,12 +22,13 @@ interface Span {
 }
 
 /**
- * Vùng chẩn đoán có chạm vùng Monaco đang hỏi không (con trỏ, hoặc phần bôi đen)?
+ * Does this diagnostic's range touch the range Monaco is asking about (the caret, or a selection)?
  *
- * So theo vùng **gạch chân**, không phải vùng sẽ thay. Hai vùng đó khác nhau ở lỗi cột: gạch chân
- * phủ `u.nmae` còn chỗ thay chỉ là `nmae`. Người dùng nhìn thấy đường gạch nên sẽ đặt con trỏ vào
- * bất kỳ đâu trong nó — nếu chỉ nhận vùng thay thì đứng ở `u` bấm Quick Fix sẽ không ra gì, và
- * điều đó không phân biệt được với "tính năng hỏng".
+ * Compared against the **underlined** range, not the range that will be replaced. Those differ for
+ * a column typo: the underline covers `u.nmae` while the replacement is only `nmae`. The user sees
+ * the underline and will put the caret anywhere inside it — accepting only the replacement range
+ * would mean Quick Fix on `u` offers nothing, which is indistinguishable from "the feature is
+ * broken".
  */
 function intersects(span: Span, range: monaco.IRange): boolean {
   if (span.endLine < range.startLineNumber || span.startLine > range.endLineNumber) return false;
@@ -37,17 +38,17 @@ function intersects(span: Span, range: monaco.IRange): boolean {
 }
 
 /**
- * Đăng ký code action provider cho cả 3 dialect.
+ * Registers the code action provider for all three dialects.
  *
- * Cờ chống-đăng-ký-trùng nằm trên `window` chứ không phải biến module, cùng lý do như hover:
- * Vite HMR nạp lại module thì biến module reset và provider bị đăng ký thêm lần nữa, khiến mỗi
- * Quick Fix hiện thành hai dòng giống hệt.
+ * The anti-double-registration flag lives on `window` rather than in a module variable, for the
+ * same reason as hover: a Vite HMR reload resets module state and the provider gets registered
+ * again, which makes every Quick Fix appear as two identical entries.
  */
 export function registerSqlQuickFix(monacoInstance: typeof monaco): void {
   const w = window as any;
   if (Array.isArray(w.__sqlQuickFixDisposables)) {
     for (const d of w.__sqlQuickFixDisposables) {
-      try { d.dispose(); } catch { /* đã huỷ */ }
+      try { d.dispose(); } catch { /* already disposed */ }
     }
   }
 
@@ -83,7 +84,7 @@ export function registerSqlQuickFix(monacoInstance: typeof monaco): void {
         }
       }
 
-      // Ứng viên đầu tiên là gần nhất, đánh dấu `isPreferred` để Ctrl+. + Enter chọn luôn nó.
+      // First candidate is closest match; marked `isPreferred` for immediate acceptance on Ctrl+. + Enter.
       if (actions.length) actions[0].isPreferred = true;
       return { actions, dispose: () => {} };
     },

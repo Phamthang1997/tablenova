@@ -1,6 +1,12 @@
 # Contributing to TABLENOVA
 
-Thank you for your interest in contributing to **TABLENOVA**! We welcome contributions from the community to help make TABLENOVA the best cross-platform database management tool.
+Thank you for your interest in contributing to **TABLENOVA**! We welcome contributions from the community to help make TABLENOVA the best modern cross-platform database management tool.
+
+---
+
+## 📜 Code of Conduct
+
+All contributors and participants are expected to follow our [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md). Please report any unacceptable behavior to [pthang888@gmail.com](mailto:pthang888@gmail.com).
 
 ---
 
@@ -8,18 +14,19 @@ Thank you for your interest in contributing to **TABLENOVA**! We welcome contrib
 
 ### Prerequisites
 
-Before you start developing, ensure you have the following installed on your machine:
+Ensure you have the following installed on your development machine:
 
 - **Node.js**: `>= 18.x`
-- **Rust**: `>= 1.75` (Install via [rustup](https://rustup.rs/))
+- **Rust**: `>= 1.85` (Rust 2024 Edition supported, install via [rustup.rs](https://rustup.rs/))
 - **Package Manager**: `npm` (or `pnpm` / `yarn`)
+- **Git**
 
-### Setting Up Development Environment
+### Setting Up the Environment
 
 1. **Fork & Clone the Repository**:
    ```bash
-   git clone https://github.com/your-username/table.git
-   cd table
+   git clone https://github.com/Phamthang1997/tablenova.git
+   cd tablenova
    ```
 
 2. **Install Frontend Dependencies**:
@@ -27,7 +34,7 @@ Before you start developing, ensure you have the following installed on your mac
    npm install
    ```
 
-3. **Launch Development Mode**:
+3. **Launch Desktop Development Mode**:
    ```bash
    npm run dev
    # Or run the Windows batch script:
@@ -36,45 +43,74 @@ Before you start developing, ensure you have the following installed on your mac
 
 ---
 
-## 🌿 Branching & Commit Conventions
+## 🏗️ Architecture & Coding Guidelines
 
-### Branch Naming
-Please create descriptive branch names using the following prefixes:
-- `feature/` — New features or UI enhancements (e.g., `feature/redis-key-exporter`)
-- `fix/` — Bug fixes (e.g., `fix/sqlite-connection-timeout`)
-- `docs/` — Documentation updates (e.g., `docs/readme-setup`)
-- `refactor/` — Code refactoring without changing functionality
+### Frontend (React 19 + TypeScript + CSS)
+- **No Inline CSS**: Never use inline styles (`style={{ ... }}`) for static design. All UI styling must use CSS utility and component classes defined in `src/index.css`.
+  - *Exception*: Inline styles are only permitted for dynamic runtime data (e.g. mouse drag coordinates, progress bar percentage, custom user color picker values).
+- **React Compiler & Hooks Compliance**:
+  - Do not mutate or read `useRef.current` directly in component render bodies. Synchronize refs inside `useEffect`.
+  - Avoid synchronous `setState` inside `useEffect` if it causes cascading renders; use `queueMicrotask(() => setState(...))` or derive state during render.
+- **Internationalization (i18n)**: Wrap user-facing strings with `t('namespace.key')` in `src/i18n/locales/`.
 
-### Commit Messages
-Keep commit messages concise and imperative:
-- `feat: add support for Redis key expiration setting`
-- `fix: resolve Monaco SQL autocomplete line height shift`
-- `docs: update setup steps in CONTRIBUTING.md`
+### Backend (Rust / Tauri v2)
+- **Domain-Driven Directory Structure**:
+  - Keep domain logic organized in its dedicated folder under `src-tauri/src/<domain>/` (`database`, `redis_db`, `mcp`, `ssh`, `terminal`, `credentials`, `datagen`, `compare`, `stats`, `tx`, `state`, `app`).
+  - Do not place raw business logic directly in `src-tauri/src/lib.rs` or `main.rs`.
+- **Registering Tauri Commands**:
+  - All new `#[tauri::command]` functions must be registered in the handler list inside `src-tauri/src/app/handlers.rs`.
+- **State Management**: Shared application state must be stored in `AppState` under `src-tauri/src/state/`.
 
 ---
 
-## 🧪 Code Quality & Verification
+## 🌿 Branching & Commit Conventions
 
-Before submitting a Pull Request, make sure your code passes all linting, type-checking, and unit tests.
+### Branch Naming
+Create descriptive branch names using standard prefixes:
+- `feat/` — New features or major enhancements (e.g., `feat/redis-stream-viewer`)
+- `fix/` — Bug fixes (e.g., `fix/sqlite-transaction-rollback`)
+- `docs/` — Documentation updates (e.g., `docs/mcp-setup-guide`)
+- `refactor/` — Code refactoring without changing behavior
+- `test/` — Adding or updating test suites
 
-### 1. Frontend Linting & Type Checks
-```bash
-# Check JavaScript/TypeScript code quality with oxlint
-npx oxlint
-
-# Run TypeScript type check
-npx tsc --noEmit
+### Conventional Commits
+Please use conventional commit messages:
+```text
+feat(redis): add real-time stream field inspector
+fix(editor): prevent monaco cursor jump on query format
+refactor(database): decouple connection pool from catalog inspector
+docs: update contribution guidelines for Rust 2024
 ```
 
-### 2. Frontend Unit Tests
+---
+
+## 🧪 Quality Assurance & Pre-Commit Verification
+
+Before submitting a Pull Request, ensure your code passes all checks:
+
+### 1. Frontend Linting & Zero-Warning Policy
 ```bash
-# Run Vitest test suite
-npm run test
+# Check code with Oxlint (must report 0 warnings and 0 errors)
+npx oxlint src
 ```
 
-### 3. Rust Backend Linting
+### 2. Frontend Unit Tests & Production Build
+```bash
+# Run Vitest test suites (all 725+ tests must pass)
+npm test
+
+# Verify TypeScript compilation and Vite build
+npm run build-frontend
+```
+
+### 3. Rust Backend Checks & Tests
 ```bash
 cd src-tauri
+
+# Run Rust unit tests
+cargo test
+
+# Run Rust linter
 cargo clippy --all-targets -- -D warnings
 ```
 
@@ -82,16 +118,16 @@ cargo clippy --all-targets -- -D warnings
 
 ## 📥 Submitting a Pull Request (PR)
 
-1. Push your branch to your forked repository:
+1. Push your changes to your feature branch:
    ```bash
-   git push origin feature/your-feature-name
+   git push origin feat/your-feature-name
    ```
-2. Open a Pull Request against the `main` branch of the official repository.
-3. Fill out the **Pull Request Template** completely.
-4. Ensure all CI checks (Linter, Typecheck, Cargo Clippy) pass cleanly.
+2. Open a Pull Request against the `main` branch of `Phamthang1997/tablenova`.
+3. Provide a clear description of the problem solved, changes made, and screenshots/GIFs for UI changes.
+4. Ensure all automated CI checks pass.
 
 ---
 
 ## 📄 License
 
-By contributing to TABLENOVA, you agree that your contributions will be licensed under the project's [MIT License](LICENSE).
+By contributing to **TABLENOVA**, you agree that your contributions will be licensed under the project's **[GNU Affero General Public License v3.0 (AGPL-3.0)](LICENSE)**.

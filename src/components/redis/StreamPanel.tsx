@@ -42,10 +42,12 @@ export const StreamPanel: React.FC<StreamPanelProps> = ({
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
   useEffect(() => {
-    setEntries(initial.elements);
-    setCursor(initial.cursor);
-    setDone(initial.done);
-    setAdding(false);
+    queueMicrotask(() => {
+      setEntries(initial.elements);
+      setCursor(initial.cursor);
+      setDone(initial.done);
+      setAdding(false);
+    });
   }, [initial]);
 
   const loadMore = async () => {
@@ -254,7 +256,7 @@ const ConsumerGroups: React.FC<GroupsProps> = ({ keyName, readOnly, onError, onO
     if (p.success) setPending(p.pending); else onError(p.error || t('redis.errStreamGroups'));
   }, [keyName, onError, t]);
 
-  useEffect(() => { loadGroups(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [keyName]);
+    useEffect(() => { loadGroups(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [keyName]);
   useEffect(() => { loadGroupDetail(group); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [group]);
 
   const ack = async (id: string) => {

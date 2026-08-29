@@ -196,9 +196,9 @@ export const COMMANDS: CommandEntry[] = [
 /** Longest-first so `CONFIG GET` wins over `CONFIG` when both could match. */
 const BY_LENGTH = [...COMMANDS].sort((a, b) => b.name.length - a.name.length);
 
-// `matchCommands` từng ở đây: nó lọc danh sách gợi ý cho popup tự viết của console cũ. Monaco tự
-// lọc theo tiền tố người dùng gõ, nên provider trong `redisLanguage.ts` đưa cả bảng và không cần
-// hàm này nữa.
+// `matchCommands` previously here: filtered suggestions for custom popup in legacy console. Monaco
+// filters by prefix automatically, so provider in `redisLanguage.ts` supplies full table directly.
+
 
 /**
  * Syntax hint for the command already typed on the line, or `null` when it is not in the

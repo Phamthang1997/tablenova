@@ -46,6 +46,8 @@ export const PubSub: React.FC<PubSubProps> = ({ readOnly, onError, onOk, onBlock
 
   useEffect(() => {
     if (followRef.current && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+    // `messages` is a trigger, not a read - the body only touches refs. Dropping it kills auto-scroll.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages]);
 
   // Leaving the tab must not leave a subscription (and its connection) running in Rust.

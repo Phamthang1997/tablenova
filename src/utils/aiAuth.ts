@@ -93,7 +93,7 @@ export async function startGoogleBrowserOAuth(
       };
     }
 
-    // Trao đổi Authorization Code lấy Access Token qua Google OAuth2 Token Endpoint
+    // Exchanges Authorization Code for Access Token via Google OAuth2 Token Endpoint
     const bodyParams = new URLSearchParams();
     bodyParams.append('client_id', clientId);
     if (clientSecret) {
@@ -141,7 +141,7 @@ export async function startGoogleBrowserOAuth(
       // ignore
     }
 
-    // Lưu cấu hình token
+    // Persists token configuration
     const currentSettings = getAiSettings();
     currentSettings.googleAuthToken = accessToken;
     currentSettings.googleAuthEmail = userEmail;

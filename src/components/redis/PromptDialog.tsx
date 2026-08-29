@@ -39,7 +39,9 @@ export const PromptDialog: React.FC<PromptDialogProps> = ({
 
   // Reopening for a different key must not show the previous key's text.
   useEffect(() => {
-    if (open) setValue(defaultValue);
+    queueMicrotask(() => {
+      if (open) setValue(defaultValue);
+    });
   }, [open, defaultValue]);
 
   if (!open) return null;

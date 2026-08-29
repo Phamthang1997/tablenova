@@ -15,19 +15,21 @@ import { openInFileManager } from '../utils/fileSave';
 import { ProgressBar } from './ProgressBar';
 import { Modal, ModalBody, ModalFooter } from './Modal';
 
-/** Cùng chiều rộng với `.jobs-pop` trong index.css — dùng để neo popover cho khỏi tràn màn hình. */
+/** The same width as `.jobs-pop` in index.css — used to anchor the popover so it cannot overflow the screen. */
 const POP_WIDTH = 380;
 
 /**
- * Việc chạy nền: một nút **chuông** trên thanh tiêu đề, danh sách nằm trong popover **neo ngay dưới
- * nút** — không phải hộp thoại giữa màn hình. Một việc đang chạy nền là thông báo, không phải một
- * thao tác cần cả màn hình; và mở nó ra không được che thứ người dùng đang làm.
+ * Background jobs: a **bell** button on the title bar, with the list in a popover **anchored right
+ * below it** — not a dialog in the middle of the screen. A job running in the background is a
+ * notification, not an action needing the whole screen; and opening it must not cover what the user
+ * is doing.
  *
- * Cách neo (`top`/`left` + portal + backdrop) lấy đúng theo `SafeModeControl`, popover kia của thanh
- * tiêu đề: `right` + `position: fixed` làm lớp blur bị lệch khỏi nội dung của chính nó.
+ * The anchoring (`top`/`left` + portal + backdrop) follows `SafeModeControl`, the title bar's other
+ * popover: `right` + `position: fixed` leaves the blur layer offset from its own content.
  *
- * Component này **không** giữ tiến độ: nó đọc từ `utils/jobs.ts` qua `useSyncExternalStore`, nên
- * đóng popover (hay unmount cả nút) không làm mất job. Đó là toàn bộ mục đích của module kia.
+ * This component holds **no** progress: it reads from `utils/jobs.ts` through `useSyncExternalStore`,
+ * so closing the popover (or unmounting the button entirely) loses no job. That is the whole point of
+ * that module.
  */
 export const JobsTray: React.FC = () => {
   const { t } = useTranslation();
@@ -39,8 +41,8 @@ export const JobsTray: React.FC = () => {
   const active = jobs.filter((j) => j.state === 'running' || j.state === 'queued');
   const finished = jobs.filter((j) => j.state !== 'running' && j.state !== 'queued');
 
-  // Đóng app khi job đang chạy = một bản restore nạp được một nửa, không resume được. Hỏi trước.
-  // Blocker chứ không phải listener riêng — xem `closeGuard.ts`.
+  // Closing the app with a job running = a half-loaded restore that cannot be resumed. Ask first.
+  // A blocker rather than a listener of its own — see `closeGuard.ts`.
   useEffect(() => registerCloseBlocker(CLOSE_PRIORITY_JOBS, () => {
     if (activeJobs().length === 0) return false;
     setAskOnClose(true);
@@ -56,7 +58,7 @@ export const JobsTray: React.FC = () => {
     return () => document.removeEventListener('keydown', onKey);
   }, [anchor]);
 
-  // Chưa từng có job nào thì không chiếm chỗ trên thanh tiêu đề.
+  // With no job ever queued, it takes no space on the title bar.
   if (jobs.length === 0) return null;
 
   const failed = finished.some((j) => j.state === 'error');
@@ -66,7 +68,7 @@ export const JobsTray: React.FC = () => {
       ? t('jobs.trayFailed')
       : t('jobs.trayIdle');
 
-  // Neo phải theo nút rồi kẹp lại, để nút sát mép nào cũng thấy trọn popover.
+  // Anchored to the button's right and then clamped, so the whole popover is visible however close to an edge the button sits.
   const open = () => {
     const rect = btnRef.current?.getBoundingClientRect();
     if (!rect) return;
@@ -76,8 +78,8 @@ export const JobsTray: React.FC = () => {
 
   return (
     <>
-      {/* Bọc `.tb-capsule` như `TxControl`: lớp đó giữ chiều cao 34px và canh giữa của thanh tiêu
-          đề, `.tb-capsule-btn` một mình chỉ có dáng của cái nút. */}
+      {/* Wrapped in `.tb-capsule` like `TxControl`: that class holds the title bar's 34px height and
+          centring, while `.tb-capsule-btn` alone only shapes the button. */}
       <div className="tb-capsule" style={{ flexShrink: 0 }}>
         <button
           ref={btnRef}
@@ -86,8 +88,8 @@ export const JobsTray: React.FC = () => {
           title={capsuleTitle}
           aria-label={capsuleTitle}
         >
-          {/* Chuông là biểu tượng của thông báo; số việc đang chạy là cái badge cạnh nó — cùng
-              cách đọc với mọi khay thông báo, không phải một icon đổi hình theo trạng thái. */}
+          {/* A bell is the notification symbol; the count of running jobs is the badge beside it — read
+              the way every notification tray is read, rather than an icon that changes shape by state. */}
           <Bell size={13} />
           {active.length > 0 && <span className="jobs-badge">{active.length}</span>}
         </button>
@@ -96,11 +98,11 @@ export const JobsTray: React.FC = () => {
       {anchor &&
         createPortal(
           <>
-            {/* `.jobs-backdrop`/`.jobs-pop` dùng CHUNG rule với `.sm-backdrop`/`.sm-pop` của Safe
-                Mode (một selector ghép trong index.css, không phải bản sao) — dáng popover của thanh
-                tiêu đề sửa một chỗ là cả hai đổi theo. `.sm-pop-title` là hàng tiêu đề của dáng đó. */}
+            {/* `.jobs-backdrop`/`.jobs-pop` SHARE a rule with Safe Mode's `.sm-backdrop`/`.sm-pop` (one
+                combined selector in index.css, not a copy) — so the title bar's popover shape is edited
+                in one place and both follow. `.sm-pop-title` is that shape's heading row. */}
             <div className="jobs-backdrop" onClick={() => setAnchor(null)} />
-            {/* Chỉ `top`/`left` là inline — đó là giá trị đo lúc render; dáng nằm ở .jobs-pop. */}
+            {/* Only `top`/`left` are inline — they are measured at render; the shape lives in .jobs-pop. */}
             <div className="jobs-pop" style={{ top: anchor.top, left: anchor.left }} role="dialog">
               <div className="jobs-pop-head">
                 <div className="sm-pop-title">{t('jobs.panelTitle')}</div>
@@ -139,7 +141,7 @@ export const JobsTray: React.FC = () => {
               className="btn btn-primary"
               onClick={() => {
                 setAskOnClose(false);
-                // Đóng thẳng: đi qua `close()` lần nữa là hỏi lại đúng câu vừa trả lời.
+                // Closed directly: going through `close()` again would ask the very question just answered.
                 forceClose();
               }}
             >
@@ -165,8 +167,8 @@ const JobRow: React.FC<{ job: JobRecord }> = ({ job }) => {
   const running = job.state === 'running';
   const queued = job.state === 'queued';
 
-  // Nhãn trạng thái là key literal tra trong bảng trên, không phải key ghép chuỗi — `t()` được
-  // kiểm kiểu theo cây key của `en.ts`.
+  // The status label is a literal key looked up in the table above, never a concatenated one — `t()` is
+  // type-checked against `en.ts`'s key tree.
   const stateLabel = t(STATE_KEY[job.state] as 'jobs.stateQueued');
 
   const icon = running ? (
@@ -192,7 +194,7 @@ const JobRow: React.FC<{ job: JobRecord }> = ({ job }) => {
           </span>
         </div>
 
-        {/* Đang chờ vì có job khác đang ghi vào cùng database — nói ra, đừng để nó im ở 0%. */}
+        {/* Waiting because another job is writing to the same database — say so, rather than sitting silently at 0%. */}
         {queued && <div className="jobs-row-note">{t('jobs.waitingTurn')}</div>}
 
         {running && job.progress && (
@@ -224,9 +226,9 @@ const JobRow: React.FC<{ job: JobRecord }> = ({ job }) => {
           <button
             type="button"
             className="btn btn-secondary"
-            // Mở THƯ MỤC, không mở tệp: `openInFileManager` gọi `open_url`, nên đưa đường dẫn tệp
-            // vào là hệ điều hành mở tệp .sql bằng ứng dụng mặc định — không phải điều người ta
-            // muốn khi bấm "mở thư mục". Đường dẫn tệp đi vào tooltip.
+            // Opens the DIRECTORY, not the file: `openInFileManager` calls `open_url`, so passing a file
+            // path makes the OS open the .sql in its default application — not what anyone means by
+            // "open folder". The file path goes into the tooltip.
             title={job.result.path || job.result.dir}
             onClick={() => void openInFileManager(job.result!.dir!)}
           >

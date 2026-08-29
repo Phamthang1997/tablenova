@@ -28,14 +28,14 @@ CREATE FUNCTION get_customer_balance(p INT) RETURNS DECIMAL(5,2) BEGIN RETURN 0;
 `;
 
 describe('stripLeadingSqlComments / isSkippedDumpStatement', () => {
-  // Dump của mysqldump dán comment liền trước câu lệnh, splitter giữ nguyên comment trong
-  // text câu lệnh -> phân loại phải bỏ comment trước, không thì LOCK TABLES lọt qua và
-  // gây lỗi MySQL 1100 ở bảng kế tiếp.
+  // A mysqldump file glues a comment directly in front of a statement and the splitter keeps that
+  // comment in the statement text -> classification has to strip comments first, or LOCK TABLES slips
+  // through and causes MySQL 1100 on the next table.
   const lockStmt = '--\n-- Dumping data for table `store`\n--\n\nLOCK TABLES `store` WRITE';
 
   it('bỏ comment dòng, comment khối và khoảng trắng ở đầu câu', () => {
     expect(stripLeadingSqlComments(lockStmt)).toBe('LOCK TABLES `store` WRITE');
-    expect(stripLeadingSqlComments('/* c1 */ /* c2 */\n# ghi chú\nSELECT 1')).toBe('SELECT 1');
+    expect(stripLeadingSqlComments('/* c1 */ /* c2 */\n# a note\nSELECT 1')).toBe('SELECT 1');
     expect(stripLeadingSqlComments('-- ghi chú tiếng Việt\nSELECT 1')).toBe('SELECT 1');
   });
 
@@ -44,9 +44,9 @@ describe('stripLeadingSqlComments / isSkippedDumpStatement', () => {
     expect(isSkippedDumpStatement('-- x\nUNLOCK TABLES')).toBe(true);
     expect(isSkippedDumpStatement('COMMIT')).toBe(true);
     expect(isSkippedDumpStatement('START TRANSACTION')).toBe(true);
-    // INSERT/CREATE thì vẫn chạy
+    // INSERT/CREATE still run
     expect(isSkippedDumpStatement('-- x\nINSERT INTO store VALUES (1)')).toBe(false);
-    // Thân routine bắt đầu bằng CREATE nên chữ BEGIN bên trong không bị nhầm
+    // A routine body starts with CREATE, so the BEGIN inside it is not mistaken for one
     expect(isSkippedDumpStatement('CREATE TRIGGER t AFTER INSERT ON f FOR EACH ROW BEGIN\nSELECT 1;\nEND')).toBe(false);
   });
 
@@ -61,7 +61,7 @@ describe('parseDumpObjects', () => {
   it('liệt kê đủ bảng, view, trigger, procedure, function', () => {
     const o = parseDumpObjects(SAKILA_LIKE);
     expect(o.tables).toEqual(['actor', 'film_text']);
-    // View có DEFINER / SQL SECURITY vẫn nhận đúng tên
+    // A view carrying DEFINER / SQL SECURITY is still named correctly
     expect(o.views).toEqual(['customer_list', 'actor_info']);
     expect(o.triggers).toEqual(['ins_film']);
     expect(o.procedures).toEqual(['rewards_report']);
@@ -135,10 +135,10 @@ describe('parseCreateTable', () => {
     expect(t?.columns.map((c) => c.name)).toEqual(['id', 'email', 'note']);
     expect(t?.columns[0].notNull).toBe(true);
     expect(t?.columns[0].autoIncrement).toBe(true);
-    // PRIMARY KEY mức bảng phải được đánh dấu lại lên cột
+    // A table-level PRIMARY KEY has to be marked back onto the column
     expect(t?.columns[0].primaryKey).toBe(true);
     expect(t?.columns[1].primaryKey).toBe(false);
-    // DEFAULT có dấu phẩy bên trong chuỗi không được cắt cột sai
+    // A DEFAULT holding a comma inside its string must not split the columns wrongly
     expect(t?.columns[2].defaultValue).toBe("'a, b'");
     expect(t?.constraints.some((c) => c.startsWith('UNIQUE KEY'))).toBe(true);
   });
@@ -153,7 +153,7 @@ describe('parseCreateTable', () => {
     );
     expect(t?.name).toBe('Trip');
     expect(t?.columns.map((c) => c.name)).toEqual(['id', 'price', 'created_at']);
-    // numeric(12, 2) chứa phẩy trong ngoặc -> vẫn là một cột
+    // numeric(12, 2) holds a comma inside parentheses -> still one column
     expect(t?.columns[1].type).toContain('numeric(12, 2)');
     expect(t?.columns[1].defaultValue).toBe('0');
     expect(t?.columns[0].primaryKey).toBe(true);
@@ -194,7 +194,7 @@ describe('parseInsert', () => {
     expect(parseInsert('UPDATE t SET a = 1')).toBeNull();
   });
 
-  // Export gộp tới 500 dòng vào một INSERT -> phần đọc tuple phải là O(n), và phải đọc đủ.
+  // Export packs up to 500 rows into one INSERT -> the tuple reader has to be O(n), and has to read them all.
   it('đọc đủ dòng của một INSERT gộp nhiều dòng', () => {
     const tuples = Array.from({ length: 500 }, (_, i) => `(${i}, 'name ${i}')`).join(',\n');
     const r = parseInsert(`INSERT INTO \`t\` (\`id\`, \`name\`) VALUES\n${tuples}`);
@@ -229,8 +229,8 @@ describe('parseDumpTableNames', () => {
     expect(parseDumpTableNames(sql)).toEqual(['actor', 'payment']);
   });
 
-  // Lý do hàm này tồn tại: view được ghi bằng CREATE VIEW / DROP VIEW, không phải DROP TABLE.
-  // Không dò được thì view không vào danh sách chọn và backend loại luôn lệnh của nó.
+  // Why this function exists: a view is written with CREATE VIEW / DROP VIEW, not DROP TABLE.
+  // Undetected, the view never reaches the selection list and the backend drops its statements.
   it('dò cả view, kể cả dạng có ALGORITHM/DEFINER/SQL SECURITY', () => {
     const sql = [
       'DROP VIEW IF EXISTS `actor_info`;',
@@ -238,7 +238,7 @@ describe('parseDumpTableNames', () => {
       'CREATE VIEW `film_list` AS select * from film;',
       'CREATE OR REPLACE VIEW "staff_list" AS select 1;',
     ].join('\n');
-    // Chỉ tên đối tượng ĐƯỢC TẠO, không phải bảng đọc trong thân view (`from film`).
+    // Only the name of the object being CREATED, not a table read inside the view body (`from film`).
     expect(parseDumpTableNames(sql)).toEqual(['actor_info', 'film_list', 'staff_list']);
   });
 

@@ -49,7 +49,7 @@ describe('DbIndexRegistry & SQL Inspection Tests', () => {
   });
 
   it('should catch a transposed-letter typo, not just substrings', () => {
-    // `nmae` chứa `name` cũng không, `name` chứa `nmae` cũng không — bản so chuỗi con bỏ lọt.
+    // `nmae` does not contain `name`, nor `name` `nmae` — the substring version misses it.
     expect(dbIndexRegistry.findSimilarColumns('nmae', 'users')).toContain('name');
     expect(dbIndexRegistry.findSimilarColumns('emial', 'users')).toContain('email');
   });
@@ -68,7 +68,7 @@ describe('DbIndexRegistry & SQL Inspection Tests', () => {
     const sql = 'SELECT u.nmae FROM users u;';
     const issue = inspectSqlText(sql).find((i) => i.fix);
     expect(issue?.fix?.candidates).toContain('name');
-    // Vùng gạch chân phủ `u.nmae`, vùng sửa chỉ phủ `nmae`.
+    // The underline covers `u.nmae`, while the edit range covers only `nmae`.
     expect(sql.slice(issue!.startColumn - 1, issue!.endColumn - 1)).toBe('u.nmae');
     expect(sql.slice(issue!.fix!.startColumn - 1, issue!.fix!.endColumn - 1)).toBe('nmae');
   });
@@ -147,7 +147,7 @@ describe('DbIndexRegistry & SQL Inspection Tests', () => {
         .toEqual([]);
     });
 
-    // Mỗi ca dưới đây từng là một kiểu báo nhầm khác nhau nếu thiếu một bộ lọc.
+    // Each case below was a different kind of false positive when one filter was missing.
     it('does not mistake a function call, a keyword or a literal for a column', () => {
       expect(messages('SELECT COUNT(id) FROM users;')).toEqual([]);
       expect(messages('SELECT NULL, TRUE, 42 FROM users;')).toEqual([]);
@@ -161,16 +161,16 @@ describe('DbIndexRegistry & SQL Inspection Tests', () => {
     });
 
     it('stays silent when the scope is not fully known', () => {
-      // Bảng lạ: đã có lỗi riêng cho nó, và cột thì không thể kết luận.
+      // An unknown table: it has an error of its own, and its columns cannot be judged.
       expect(messages('SELECT whatever FROM ghost_table;')).toHaveLength(1);
-      // CTE: cột của nó không nằm trong catalog.
+      // A CTE: its columns are not in the catalog.
       expect(messages('WITH c AS (SELECT 1 AS x) SELECT x FROM c;')).toEqual([]);
-      // Truy vấn con trong FROM.
+      // query con in FROM.
       expect(messages('SELECT anything FROM (SELECT id FROM users) t;')).toEqual([]);
     });
 
-    // `users` và `orders` đều có cột `id` -> `SELECT id FROM users JOIN orders` là lỗi thật
-    // trên MySQL/Postgres ("column 'id' is ambiguous"), nhưng SQLite thì chạy được.
+    // `users` and `orders` both have an `id` column -> `SELECT id FROM users JOIN orders` is a real
+    // error on MySQL/Postgres ("column 'id' is ambiguous"), but perfectly runnable on SQLite.
     describe('ambiguous columns', () => {
       const ambiguous = 'SELECT id FROM users JOIN orders ON users.id = orders.user_id;';
 
@@ -212,7 +212,7 @@ describe('DbIndexRegistry & SQL Inspection Tests', () => {
         expect(msgs("SELECT total FROM orders o WHERE o.total > 'x';")).toHaveLength(1);
       });
 
-      // Mỗi ca dưới đây là một cách viết bình thường; báo ở đây là báo nhầm.
+      // Each case below is an ordinary way to write it; a warning here is a false positive.
       it('accepts the coercions every dialect performs', () => {
         expect(msgs("SELECT id FROM users WHERE id = '5';")).toEqual([]);
         expect(msgs("SELECT id FROM users WHERE name = 'abc';")).toEqual([]);
@@ -225,7 +225,7 @@ describe('DbIndexRegistry & SQL Inspection Tests', () => {
       });
 
       it('says nothing when the column is ambiguous, since the two types may differ', () => {
-        // `id` có ở cả users lẫn orders, nên không biết đang so với kiểu nào -> không kết luận.
+        // `id` exists on both users and orders, so which type is being compared is unknown -> no conclusion.
         const sql = "SELECT users.id FROM users JOIN orders ON users.id = orders.user_id WHERE id = 'abc';";
         expect(inspectSqlText(sql, 'mysql')).toEqual([]);
       });
@@ -255,7 +255,7 @@ describe('DbIndexRegistry & SQL Inspection Tests', () => {
       });
 
       it('accepts anything when grouping by a primary key', () => {
-        // Cả Postgres lẫn MySQL đều cho chọn cột phụ thuộc hàm vào khoá chính đã gom nhóm.
+        // Both Postgres and MySQL allow selecting a column functionally dependent on a grouped primary key.
         expect(inspectSqlText('SELECT id, name, email FROM users GROUP BY id;', 'pgsql'))
           .toEqual([]);
       });
@@ -266,7 +266,7 @@ describe('DbIndexRegistry & SQL Inspection Tests', () => {
     });
 
     it('scopes each statement separately', () => {
-      // `total` là cột của orders, không phải của users -> chỉ câu thứ hai hợp lệ.
+      // `total` is a column of orders, not of users -> only the second statement is valid.
       const msgs = messages('SELECT total FROM users;\nSELECT total FROM orders;');
       expect(msgs).toHaveLength(1);
       expect(msgs[0]).toContain('total');

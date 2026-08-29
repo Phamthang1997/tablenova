@@ -1,33 +1,35 @@
-// Một thiết lập lưu **theo server** (`connKey`), trong localStorage, có phát sự kiện khi đổi.
+// A setting stored **per server** (`connKey`) in localStorage, emitting an event when it changes.
 //
-// Đây là khuôn chung, không phải một thiết lập cụ thể. `safeMode.ts` viết tay đoạn này trước (nó
-// cần thêm phần phân loại command nên vẫn giữ bản riêng), rồi `stmtTimeout` và "xem trước SQL khi
-// lưu" lặp lại y nguyên: đọc localStorage một lần rồi ghi nhớ, xoá entry khi giá trị bằng mặc định,
-// bỏ cache khi cửa sổ khác ghi, phát một `CustomEvent` để control đang mở tự cập nhật. Bản sao thứ
-// ba là lúc phải dừng lại — bốn dòng logic đó sai ở một bản là một thiết lập âm thầm không lưu.
+// This is the shared shape, not one particular setting. `safeMode.ts` wrote it by hand first (it also
+// needs command classification, so it keeps its own copy), and then `stmtTimeout` and "preview the SQL
+// before saving" repeated it verbatim: read localStorage once and memoise, delete the entry when the
+// value equals the default, drop the cache when another window writes, emit a `CustomEvent` so an open
+// control updates itself. A third copy is where it has to stop — those four lines wrong in one copy is
+// a setting that silently does not persist.
 //
-// Hai quy tắc nằm trong khuôn này, không phải ở chỗ dùng:
+// Two rules live in this shape rather than at the call sites:
 //
-//  - **Mặc định thì XOÁ entry** thay vì ghi giá trị mặc định. Nhờ vậy localStorage không phình lên
-//    một dòng cho mỗi server người dùng từng mở, và một bản ghi cũ (trước khi thiết lập này tồn
-//    tại) đọc ra đúng mặc định chứ không phải `undefined`.
-//  - **Key rỗng thì trả mặc định và không ghi gì.** Key rỗng nghĩa là "chưa biết đây là server
-//    nào" (`connKey` của một config chưa đủ thông tin); ghi vào đó là ghi cho mọi server một lúc.
+//  - **The default DELETES the entry** rather than writing the default value. That keeps localStorage
+//    from growing a row per server the user ever opened, and an older record (from before this setting
+//    existed) reads back as the default rather than `undefined`.
+//  - **An empty key returns the default and writes nothing.** An empty key means "which server this is
+//    is not known yet" (the `connKey` of a config that lacks the information); writing under it would
+//    write for every server at once.
 
-/** Đọc/ghi một thiết lập theo server, cùng tên sự kiện để nghe khi nó đổi. */
+/** Reads and writes one per-server setting, plus the event name to listen on for changes. */
 export interface ConnPref<T> {
-  /** Tên `CustomEvent` phát ra sau mỗi lần ghi. */
+  /** The name of the `CustomEvent` emitted after every write. */
   readonly EVENT: string;
   get(key: string): T;
   set(key: string, value: T): void;
 }
 
 /**
- * Dựng một thiết lập theo server.
+ * Builds one per-server setting.
  *
- * `normalize` nhận giá trị thô lấy từ JSON và trả về `null` khi nó không dùng được (kiểu sai, ngoài
- * miền giá trị, hay đúng bằng mặc định) — `null` nghĩa là "dùng mặc định", nên một entry rác không
- * bao giờ thành một giá trị lạ, và `set` cũng dùng chính hàm này để quyết định xoá entry hay ghi.
+ * `normalize` takes the raw value out of JSON and returns `null` when it is unusable (wrong type, out
+ * of range, or exactly the default) — `null` means "use the default", so a junk entry never becomes a
+ * strange value, and `set` uses the very same function to decide between deleting and writing.
  */
 export function createConnPref<T>(
   storageKey: string,
@@ -74,9 +76,9 @@ export function createConnPref<T>(
       try {
         localStorage.setItem(storageKey, JSON.stringify(all));
       } catch {
-        // Hết quota thì giá trị không lưu lại được, nhưng control không được trông như bị hỏng.
+        // Out of quota means the value does not persist, but the control must not look broken.
       }
-      // Dưới Vitest (`environment: 'node'`) không có `window` — chặn thay vì làm module chết lúc import.
+      // Under Vitest (`environment: 'node'`) there is no `window` — guarded, rather than killing the module at import.
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent(event));
       }

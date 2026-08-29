@@ -1,25 +1,25 @@
 /**
- * Sinh gợi ý điều kiện `JOIN ... ON` từ metadata bảng.
+ * Builds `JOIN ... ON` suggestions from table metadata.
  *
- * Ở module riêng, **không import monaco**: cùng lý do với `statements.ts` — logic này là
- * hàm thuần trên dữ liệu schema nên phải test được trong môi trường node.
+ * In a module of its own that **imports no monaco**, for the same reason as `statements.ts`: this
+ * logic is a pure function over schema data, so it has to be testable in a node environment.
  */
 
-/** Chỉ phần schema mà hàm dưới đây cần (không phụ thuộc SchemaInfo đầy đủ của dbHelper). */
+/** Minimal schema subset needed for JOIN condition inference. */
 export interface JoinSchema {
   columns: { name: string }[];
   foreignKeys?: { column: string; refTable: string; refColumn: string }[];
 }
 
-/** Cột trông giống khoá -> dùng cho fallback khi hai bảng không khai báo FK. */
+/** Key-like column candidates used for fallback when tables lack explicit FK definitions. */
 const KEY_LIKE = /(^id$|_id$|number$|code$)/i;
 
 /**
- * Điều kiện JOIN giữa bảng được JOIN **sau cùng** và từng bảng trước đó.
- * Ưu tiên foreign key (cả hai chiều); nếu không có FK thì lấy cột trùng tên trông giống khoá.
+ * JOIN conditions between the table joined **last** and each table before it.
+ * Foreign keys win (in either direction); with no FK it falls back to same-named, key-looking columns.
  *
- * `scopeTables` phải theo thứ tự xuất hiện trong câu lệnh — phần tử cuối được coi là bảng
- * vừa JOIN, tức bảng mà người dùng đang viết điều kiện cho nó.
+ * `scopeTables` must be in the order the tables appear in the statement — the last element is taken
+ * to be the freshly joined table, i.e. the one the user is writing a condition for.
  */
 export async function buildJoinConditions(
   scopeTables: string[],
@@ -49,21 +49,21 @@ export async function buildJoinConditions(
     const otherSchema = await getSchema(other);
     const before = out.length;
 
-    // FK: bảng vừa JOIN -> bảng trước đó
+    // FK: recently joined table -> previous table
     for (const fk of lastSchema?.foreignKeys || []) {
       if ((fk.refTable || '').toLowerCase() === other.toLowerCase()) {
         add(last, fk.column, other, fk.refColumn);
       }
     }
-    // FK: bảng trước đó -> bảng vừa JOIN
+    // FK: previous table -> recently joined table
     for (const fk of otherSchema?.foreignKeys || []) {
       if ((fk.refTable || '').toLowerCase() === last.toLowerCase()) {
         add(other, fk.column, last, fk.refColumn);
       }
     }
 
-    // Fallback theo cột trùng tên — xét RIÊNG cho từng cặp bảng. Trước đây điều kiện là
-    // `out.length === 0`, nên chỉ cần một cặp bảng có FK là mọi cặp còn lại mất fallback.
+    // Fallback by matching column names evaluated per table pair independently.
+    
     if (out.length === before) {
       const lastCols = lastSchema?.columns || [];
       const lastByLower = new Map(lastCols.map(c => [c.name.toLowerCase(), c.name]));

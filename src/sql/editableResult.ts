@@ -71,7 +71,7 @@ function stripQuotes(ident: string): string {
  * reads as 0 and the text it encloses reads as 1 — which is what "top level" checks want.
  */
 function depthAt(masked: string): number[] {
-  const out = new Array<number>(masked.length);
+  const out: number[] = Array.from({ length: masked.length });
   let depth = 0;
   for (let i = 0; i < masked.length; i++) {
     const c = masked[i];

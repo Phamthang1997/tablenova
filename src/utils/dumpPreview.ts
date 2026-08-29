@@ -1,16 +1,17 @@
 /**
- * Parser "vừa đủ" cho phần xem trước tệp dump ở popup Nhập Cơ sở dữ liệu:
- * đọc CREATE TABLE thành danh sách cột, và INSERT INTO thành các dòng giá trị,
- * để hiển thị dạng bảng trực quan bên cạnh dạng SQL thô.
+ * A "just enough" parser for the dump preview in the Import Database dialog: it reads a CREATE TABLE
+ * into a column list and an INSERT INTO into value rows, so the visual table can be shown next to the
+ * raw SQL.
  *
- * Chỉ phục vụ hiển thị — câu lệnh chạy thật do backend (split_sql_statements) xử lý.
+ * For display only — the statements that really run are handled by the backend
+ * (split_sql_statements).
  */
 
 import i18n from '../i18n';
 
 export interface DumpColumn {
   name: string;
-  /** Phần kiểu + phần còn lại của định nghĩa cột, ví dụ "varchar(255) NOT NULL". */
+  /** The type plus the rest of the column definition, e.g. "varchar(255) NOT NULL". */
   type: string;
   notNull: boolean;
   primaryKey: boolean;
@@ -21,28 +22,28 @@ export interface DumpColumn {
 export interface DumpTable {
   name: string;
   columns: DumpColumn[];
-  /** Ràng buộc mức bảng: PRIMARY KEY (...), FOREIGN KEY ..., UNIQUE KEY ..., CHECK ... */
+  /** Table-level constraints: PRIMARY KEY (...), FOREIGN KEY ..., UNIQUE KEY ..., CHECK ... */
   constraints: string[];
 }
 
 export interface DumpRows {
   table: string;
-  /** null khi INSERT không liệt kê cột. */
+  /** null when the INSERT lists no columns. */
   columns: string[] | null;
   rows: string[][];
 }
 
-// Identifier có thể kèm dấu bao (`x`, "x", [x]) và schema đứng trước (public."Trip").
+// An identifier may be quoted (`x`, "x", [x]) and may carry a schema prefix (public."Trip").
 const IDENT = '((?:[A-Za-z0-9_$]|[`"\'\\[\\]]|\\.)+)';
 
-/** Bỏ dấu bao quanh identifier và phần schema đứng trước, lấy tên trần. */
+/** Strips an identifier's quotes and any schema prefix, leaving the bare name. */
 function unquoteIdent(raw: string): string {
   const cleaned = raw.trim().replace(/[`"'[\]]/g, '');
   const dot = cleaned.lastIndexOf('.');
   return dot >= 0 ? cleaned.slice(dot + 1) : cleaned;
 }
 
-/** Cắt theo dấu phẩy ở mức ngoặc ngoài cùng, bỏ qua phẩy trong chuỗi/ngoặc lồng. */
+/** Splits on commas at the outermost paren level, ignoring those inside strings or nested parens. */
 function splitTopLevel(body: string, sep = ','): string[] {
   const out: string[] = [];
   let depth = 0;
@@ -54,7 +55,7 @@ function splitTopLevel(body: string, sep = ','): string[] {
       cur += ch;
       if (ch === '\\') { if (i + 1 < body.length) cur += body[++i]; continue; }
       if (ch === quote) {
-        // '' bên trong chuỗi là dấu nháy escape, không phải kết thúc chuỗi
+        // A '' inside a string is an escaped quote, not the end of the string
         if (body[i + 1] === quote) { cur += body[++i]; continue; }
         quote = null;
       }
@@ -71,8 +72,8 @@ function splitTopLevel(body: string, sep = ','): string[] {
 }
 
 /**
- * Vị trí dấu ')' đóng cặp ngoặc mở tại `start` (bỏ qua ngoặc lồng và ngoặc trong chuỗi),
- * -1 nếu không đóng. `start` phải trỏ vào một dấu '('.
+ * The position of the ')' closing the paren opened at `start` (ignoring nested parens and parens
+ * inside strings), or -1 when it never closes. `start` has to point at a '('.
  */
 function matchingParen(s: string, start: number): number {
   let depth = 0;
@@ -97,7 +98,7 @@ function matchingParen(s: string, start: number): number {
   return -1;
 }
 
-/** Lấy nội dung trong cặp ngoặc ngoài cùng đầu tiên. */
+/** Takes the contents of the first outermost paren pair. */
 function outerParens(stmt: string): string | null {
   const start = stmt.indexOf('(');
   if (start < 0) return null;
@@ -125,7 +126,7 @@ function outerParens(stmt: string): string | null {
 
 const TABLE_CONSTRAINT_RE = /^(PRIMARY\s+KEY|UNIQUE|KEY|INDEX|FULLTEXT|SPATIAL|CONSTRAINT|FOREIGN\s+KEY|CHECK|EXCLUDE)\b/i;
 
-/** Parse một câu lệnh CREATE TABLE. Trả về null nếu không phải CREATE TABLE. */
+/** Parses a CREATE TABLE statement. Returns null when it is not one. */
 export function parseCreateTable(stmt: string): DumpTable | null {
   const head = new RegExp(`^\\s*CREATE\\s+(?:TEMP(?:ORARY)?\\s+)?TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?${IDENT}`, 'i').exec(stmt);
   if (!head) return null;
@@ -155,7 +156,7 @@ export function parseCreateTable(stmt: string): DumpTable | null {
     });
   }
 
-  // PRIMARY KEY (a, b) ở mức bảng -> đánh dấu lại vào cột cho dễ đọc.
+  // A table-level PRIMARY KEY (a, b) -> marked back onto the columns, to read more easily.
   for (const c of constraints) {
     const pk = /^PRIMARY\s+KEY\s*\(([^)]*)\)/i.exec(c);
     if (!pk) continue;
@@ -169,11 +170,11 @@ export function parseCreateTable(stmt: string): DumpTable | null {
 }
 
 /**
- * Dò tên database mà tệp dump nhắm tới: ưu tiên `USE <db>`, sau đó
- * `CREATE DATABASE/SCHEMA <db>`. Trả null nếu tệp không nói database nào.
+ * Detects the database a dump targets: `USE <db>` first, then `CREATE DATABASE/SCHEMA <db>`.
+ * Returns null when the file names none.
  */
 export function parseDumpDatabase(sql: string): string | null {
-  // Tên database cho phép cả '-' (hợp lệ khi được bao dấu), khác IDENT của tên bảng/cột.
+  // A database name may contain '-' (valid when quoted), unlike the IDENT used for table and column names.
   const DB_IDENT = '([`"\'\\[]?[A-Za-z0-9_$-]+[`"\'\\]]?)';
   const use = new RegExp(`\\bUSE\\s+${DB_IDENT}\\s*;`, 'i').exec(sql);
   if (use) {
@@ -192,9 +193,9 @@ export function parseDumpDatabase(sql: string): string | null {
 }
 
 /**
- * Bỏ khoảng trắng + comment ở đầu câu lệnh. Bản song sinh của `strip_leading_comments()`
- * trong database.rs: splitter giữ comment trong text câu lệnh nên dump của mysqldump có
- * `-- Dumping data for table x` dán liền trước LOCK TABLES / INSERT.
+ * Strips leading whitespace and comments from a statement. The twin of `strip_leading_comments()` in
+ * database.rs: the splitter keeps comments inside a statement's text, so a mysqldump file has
+ * `-- Dumping data for table x` sitting immediately before its LOCK TABLES / INSERT.
  */
 export function stripLeadingSqlComments(stmt: string): string {
   return stmt.replace(/^(?:\s+|--[^\n]*(?:\n|$)|#[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/)+/, '');
@@ -203,42 +204,42 @@ export function stripLeadingSqlComments(stmt: string): string {
 const SKIPPED_HEAD_RE = /^(?:LOCK\s+TABLES|UNLOCK\s+TABLES|START\s+TRANSACTION|BEGIN\b|COMMIT|ROLLBACK)/i;
 
 /**
- * Câu lệnh của dump mà restore KHÔNG chạy lại (xem `is_skipped_stmt()` ở database.rs):
- * LOCK/UNLOCK TABLES và các lệnh transaction. Dùng để đếm số câu lệnh sẽ chạy cho khớp backend.
+ * The dump statements a restore does NOT replay (see `is_skipped_stmt()` in database.rs):
+ * LOCK/UNLOCK TABLES and the transaction statements. Used so the statement count matches the backend.
  */
 export function isSkippedDumpStatement(stmt: string): boolean {
   return isSkippedDumpBody(stripLeadingSqlComments(stmt));
 }
 
 /**
- * Như `isSkippedDumpStatement` nhưng nhận sẵn phần đã bỏ comment đầu — để nơi nào đã strip rồi
- * thì không strip lại lần nữa (một tệp dump có hàng chục nghìn câu lệnh).
+ * Like `isSkippedDumpStatement` but takes the already-stripped text — so a caller that stripped the
+ * leading comment does not strip it a second time (a dump holds tens of thousands of statements).
  */
 export function isSkippedDumpBody(body: string): boolean {
   return SKIPPED_HEAD_RE.test(body);
 }
 
 /**
- * Câu chỉ còn comment sau khi bỏ comment đầu: comment điều kiện của MySQL (`/*!40101 SET ... *​/`)
- * vẫn là lệnh thật nên có chạy; comment thường thì không.
+ * Statement containing only comments after stripping leading comments: MySQL conditional comments (`/*!40101 SET ... * /`)
+ * remain executable statements, whereas standard comments do not.
  */
 export function isCommentOnlyStatement(stmt: string): { commentOnly: boolean; willRun: boolean } {
   return commentOnlyFromBody(stmt, stripLeadingSqlComments(stmt));
 }
 
-/** Như `isCommentOnlyStatement` nhưng nhận sẵn phần đã bỏ comment đầu (khỏi strip hai lần). */
+/** Like `isCommentOnlyStatement` but takes the already-stripped text, to avoid stripping twice. */
 export function commentOnlyFromBody(stmt: string, body: string): { commentOnly: boolean; willRun: boolean } {
   if (body.length > 0) return { commentOnly: false, willRun: true };
   return { commentOnly: true, willRun: stmt.includes('/*!') };
 }
 
 /**
- * Đầu câu lệnh giới thiệu một đối tượng của dump, ngay trước tên của nó.
+ * The statement head that introduces one of the dump's objects, immediately before its name.
  *
- * Có cả VIEW: dump ghi view bằng `CREATE ... VIEW` / `DROP VIEW IF EXISTS` (không phải
- * `DROP TABLE`), nên nếu chỉ dò bảng thì view không lọt vào danh sách chọn — và backend chỉ
- * chạy câu lệnh nào có nhắc một tên trong danh sách đó (`stmt_mentions_table`), tức là lệnh
- * `DROP VIEW` của view bị loại và lần nhập lại lỗi "view already exists".
+ * VIEWs are included: a dump writes them with `CREATE ... VIEW` / `DROP VIEW IF EXISTS` and not with
+ * `DROP TABLE`, so detecting tables alone leaves views out of the selection list — and the backend only
+ * runs statements mentioning a name from that list (`stmt_mentions_table`), which drops the view's
+ * `DROP VIEW` and makes the re-import fail with "view already exists".
  */
 const OBJECT_HEAD =
   '(?:CREATE\\s+TABLE|INSERT\\s+INTO|DROP\\s+(?:TABLE|VIEW|TRIGGER|PROCEDURE|FUNCTION)\\s+IF\\s+EXISTS' +
@@ -247,15 +248,15 @@ const OBJECT_HEAD =
 
 const OBJECT_NAME_SRC = `${OBJECT_HEAD}\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?[\`"']?([a-zA-Z0-9_]+)[\`"']?`;
 
-// Bảng TẠM khai báo trong thân procedure/function — không phải bảng của database.
+// TEMPORARY tables declared inside a procedure or function body — not tables of the database.
 const TEMP_TABLE_SRC = 'CREATE\\s+TEMPORARY\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?[`"\']?([a-zA-Z0-9_]+)[`"\']?';
 
 /**
- * Tên các bảng/view mà tệp dump nhắc tới, theo thứ tự xuất hiện.
+ * The table and view names a dump mentions, in the order they appear.
  *
- * Đây là danh sách để người dùng chọn nhập một phần, và cũng chính là bộ lọc truyền xuống
- * `restore_backup`. Bảng tạm bên trong thân procedure/function bị loại: chúng lọt vào qua
- * `INSERT INTO <temp>` nhưng không phải đối tượng của database.
+ * This is the list the user picks from for a partial import, and it is also the filter passed down to
+ * `restore_backup`. Temporary tables inside a procedure or function body are excluded: they slip in
+ * through `INSERT INTO <temp>` but are not objects of the database.
  */
 export function parseDumpTableNames(sql: string): string[] {
   const temps = new Set<string>();
@@ -277,13 +278,13 @@ export function parseDumpTableNames(sql: string): string[] {
   return found;
 }
 
-/** Tên bảng/view của MỘT câu lệnh (để lọc preview theo bảng đang chọn); null nếu không dò được. */
+/** The table or view name of ONE statement (for filtering the preview by selection); null when undetectable. */
 export function dumpStatementObject(stmt: string): string | null {
   const m = new RegExp(OBJECT_NAME_SRC, 'i').exec(stmt);
   return m ? m[1] : null;
 }
 
-/** Các đối tượng mà tệp dump sẽ tạo — dùng để xoá cái trùng tên trước khi chạy lại. */
+/** The objects a dump will create — used to drop same-named ones before replaying it. */
 export interface DumpObjects {
   tables: string[];
   views: string[];
@@ -303,7 +304,7 @@ function collectNames(sql: string, re: RegExp): string[] {
   return out;
 }
 
-/** Liệt kê đối tượng được tạo trong dump (bảng, view, trigger, procedure, function). */
+/** Lists the objects created in a dump (tables, views, triggers, procedures, functions). */
 export function parseDumpObjects(sql: string): DumpObjects {
   const tables = collectNames(sql, new RegExp(`CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?${IDENT}`, 'gi'));
   // CREATE [OR REPLACE] [ALGORITHM=..] [DEFINER=..] [SQL SECURITY ..] VIEW <name>
@@ -318,13 +319,14 @@ export function parseDumpObjects(sql: string): DumpObjects {
 }
 
 /**
- * Dựng các lệnh DROP ... IF EXISTS để chạy lại một dump lên database đã có sẵn đối tượng
- * trùng tên (nếu không, `CREATE TABLE` sẽ lỗi "already exists" và cả lần nhập bị rollback).
+ * Builds the DROP ... IF EXISTS statements for replaying a dump onto a database that already holds
+ * same-named objects (without them, `CREATE TABLE` fails with "already exists" and the whole import
+ * rolls back).
  *
- * Thứ tự: trigger -> view -> routine -> table. Khác biệt theo dialect:
- *   - Postgres: `DROP TRIGGER` cần kèm `ON <table>` và `DROP FUNCTION` cần chữ ký -> bỏ qua,
- *     chỉ xoá bảng/view với CASCADE.
- *   - SQLite: không có procedure/function.
+ * The order: triggers -> views -> routines -> tables. Per-dialect differences:
+ *   - Postgres: `DROP TRIGGER` needs `ON <table>` and `DROP FUNCTION` needs a signature -> both are
+ *     skipped, and only tables and views are dropped, with CASCADE.
+ *   - SQLite: has no procedures or functions.
  */
 export function buildDropStatements(objs: DumpObjects, dbType: string): string[] {
   const q = dbType === 'mysql' ? '`' : '"';
@@ -354,8 +356,8 @@ export function buildDropStatements(objs: DumpObjects, dbType: string): string[]
 }
 
 /**
- * Lỗi "đối tượng đã tồn tại" (MySQL 1050, Postgres 42P07, SQLite "already exists") không nói
- * cho người dùng biết phải làm gì -> gợi ý bật tuỳ chọn ghi đè.
+ * An "object already exists" error (MySQL 1050, Postgres 42P07, SQLite "already exists") tells the
+ * user nothing about what to do -> suggest turning the overwrite option on.
  */
 export function addExistsHint(error: string, overwriteAlreadyOn: boolean): string {
   const isExists = /already exists|1050|42P07/i.test(error);
@@ -363,14 +365,14 @@ export function addExistsHint(error: string, overwriteAlreadyOn: boolean): strin
   return i18n.t('errors.existsHint', { error });
 }
 
-/** Bỏ dấu nháy của một literal SQL để hiển thị (NULL giữ nguyên chữ NULL). */
+/** Strips the quotes from a SQL literal for display (NULL stays the word NULL). */
 function literalToText(raw: string): string {
   const s = raw.trim();
   if (/^'([\s\S]*)'$/.test(s)) return s.slice(1, -1).replace(/''/g, "'").replace(/\\'/g, "'");
   return s;
 }
 
-/** Parse một câu lệnh INSERT INTO. Trả về null nếu không phải INSERT. */
+/** Parses an INSERT INTO statement. Returns null when it is not one. */
 export function parseInsert(stmt: string): DumpRows | null {
   const head = new RegExp(`^\\s*INSERT(?:\\s+OR\\s+\\w+)?(?:\\s+IGNORE)?\\s+INTO\\s+${IDENT}`, 'i').exec(stmt);
   if (!head) return null;
@@ -385,13 +387,13 @@ export function parseInsert(stmt: string): DumpRows | null {
   const rows: string[][] = [];
   if (valuesIdx >= 0) {
     const tuplesPart = afterName.slice(valuesIdx).replace(/^\s*VALUES?\b/i, '');
-    // Mỗi tuple là một cặp ngoặc ở mức ngoài cùng: (...),(...). Đi bằng chỉ số thay vì cắt
-    // dần phần còn lại: export gộp tới 500 dòng vào một INSERT, và slice theo từng tuple làm
-    // việc này thành O(n²) trên một câu lệnh dài hàng trăm nghìn ký tự.
+    // Each tuple is one outermost paren pair: (...),(...). Walked by index rather than by repeatedly
+    // slicing the remainder: the export batches up to 500 rows into one INSERT, and slicing per tuple
+    // would make this O(n²) on a statement hundreds of thousands of characters long.
     let i = 0;
     while (i < tuplesPart.length) {
       while (i < tuplesPart.length && /[\s,]/.test(tuplesPart[i])) i++;
-      // Không còn tuple nào -> phần đuôi là thứ khác (ON DUPLICATE KEY UPDATE, RETURNING...).
+      // No tuples left -> what follows is something else (ON DUPLICATE KEY UPDATE, RETURNING…).
       if (tuplesPart[i] !== '(') break;
       const end = matchingParen(tuplesPart, i);
       if (end < 0) break;

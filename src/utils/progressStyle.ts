@@ -1,13 +1,12 @@
-// Kiểu hiển thị của thanh tiến độ dùng chung (ProgressBar.tsx / .tn-progress).
+// The visual style of the shared progress bar (ProgressBar.tsx / .tn-progress).
 //
-// Chỉ là hình thức: mọi biến thể vẽ bằng CSS thuần, chọn qua thuộc tính
-// `data-progress-style` trên <html> — cùng cơ chế với `data-theme`. Để trên
-// <html> chứ không truyền prop xuống vì ProgressBar được dựng ở rất nhiều dialog,
-// và các dialog đó render qua portal ra ngoài <body> (xem Modal.tsx) nên không có
-// context chung nào bao hết chúng.
+// Purely visual: every variant is drawn in plain CSS and selected through the `data-progress-style`
+// attribute on <html> — the same mechanism as `data-theme`. It lives on <html> rather than being
+// passed down as a prop because ProgressBar is built inside a great many dialogs, and those render
+// through a portal into <body> (see Modal.tsx), so no shared context encloses them all.
 //
-// Giá trị lưu ở `tf_progress_style` (quy ước tf_* cho thiết lập toàn app, khác
-// với các khoá theo từng kết nối đi qua connKey.ts).
+// The value is stored in `tf_progress_style` (the tf_* convention for app-wide settings, as opposed
+// to the per-connection keys that go through connKey.ts).
 
 const STORAGE_KEY = 'tf_progress_style';
 
@@ -24,10 +23,10 @@ export type ProgressStyle = (typeof PROGRESS_STYLES)[number];
 const DEFAULT_STYLE: ProgressStyle = 'classic';
 
 /**
- * Nhãn của từng kiểu, dạng khoá i18n literal.
+ * Each style's label, as a literal i18n key.
  *
- * Không ghép chuỗi `progress.${style}`: khoá động thì `t()` mất kiểm tra kiểu
- * (xem i18next.d.ts), một kiểu mới thêm vào mà quên dịch sẽ lọt tới người dùng.
+ * Never concatenated as `progress.${style}`: a dynamic key loses `t()`'s type checking (see
+ * i18next.d.ts), so a newly added style left untranslated would reach the user.
  */
 export const PROGRESS_STYLE_LABEL_KEYS = {
   classic: 'connInfo.progressClassic',
@@ -41,7 +40,7 @@ function isProgressStyle(value: string | null): value is ProgressStyle {
   return !!value && (PROGRESS_STYLES as readonly string[]).includes(value);
 }
 
-/** Kiểu đang lưu, hoặc `classic` nếu chưa chọn / giá trị lạ (bản cũ, sửa tay). */
+/** The stored style, or `classic` when none was chosen or the value is unfamiliar (an old build, or hand-edited). */
 export function getProgressStyle(): ProgressStyle {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -51,12 +50,12 @@ export function getProgressStyle(): ProgressStyle {
   }
 }
 
-/** Áp kiểu lên <html> và ghi nhớ. Gọi cả lúc khởi động lẫn khi người dùng đổi. */
+/** Applies the style to <html> and remembers it. Called at startup and whenever the user changes it. */
 export function applyProgressStyle(style: ProgressStyle): void {
   document.documentElement.setAttribute('data-progress-style', style);
   try {
     localStorage.setItem(STORAGE_KEY, style);
   } catch {
-    // Hết quota: kiểu vẫn áp cho phiên này, chỉ là không nhớ được sang lần sau.
+    // Quota exceeded: style applies to current session, but won't persist to next session.
   }
 }

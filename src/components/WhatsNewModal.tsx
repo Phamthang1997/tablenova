@@ -37,9 +37,11 @@ export const WhatsNewModal: React.FC<WhatsNewModalProps> = ({ isOpen, onClose })
   const totalSlides = 5;
 
   useEffect(() => {
-    if (isOpen) {
-      setActiveSlide(0);
-    }
+    queueMicrotask(() => {
+      if (isOpen) {
+        setActiveSlide(0);
+      }
+    });
   }, [isOpen]);
 
   useEffect(() => {

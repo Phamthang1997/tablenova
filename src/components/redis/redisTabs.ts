@@ -1,17 +1,15 @@
-// Những thứ mà sidebar Redis, `TabManager` và `App.tsx` đều phải đồng ý về tab Redis: định danh
-// tab, danh sách tab công cụ, và tên sự kiện báo "danh sách key đã đổi".
-//
-// Tách ra một module không import React để ba nơi kia dùng chung mà không nơi nào phải import nơi
-// còn lại — cùng lý do `utils/tabGroups.ts` tồn tại.
+// Shared definitions for Redis tabs across sidebar, TabManager, and App.tsx:
+// tab IDs, tool tab list, and key change mutation event names.
+// Independent of React to allow shared usage without circular imports (similar to `utils/tabGroups.ts`).
 
 import type { TFunction } from 'i18next';
 
 import type { TabInfo } from '../TabManager';
 
-/** Bảy loại tab của một kết nối Redis. Trích từ union của `TabInfo` nên không thể lệch với nó. */
+/** 7 tab types of a Redis connection extracted from TabInfo union. */
 export type RedisTabType = Extract<TabInfo['type'], `redis-${string}`>;
 
-/** Các tab công cụ (mọi loại trừ `redis-key`), theo thứ tự hiện trong footer sidebar. */
+/** Tool tabs (all kinds except `redis-key`), in sidebar footer display order. */
 export const REDIS_TOOL_TABS: Exclude<RedisTabType, 'redis-key'>[] = [
   'redis-console',
   'redis-dashboard',
@@ -22,12 +20,12 @@ export const REDIS_TOOL_TABS: Exclude<RedisTabType, 'redis-key'>[] = [
 ];
 
 /**
- * Nhãn của một tab công cụ.
+ * The label of a tool tab.
  *
- * Một `switch` trả về khoá **nguyên văn**, không phải `t(labelKey)` với khoá lấy từ bảng: khoá động
- * thì `i18next.d.ts` không kiểm được, và một khoá gõ sai sẽ lọt tới lúc chạy thay vì lúc biên dịch
- * (xem CLAUDE.md, mục i18n). Nhận `t` làm tham số vì đây là hàm cấp module, không gọi hook được —
- * cùng cách `formatRestoreEta` làm.
+ * A `switch` returning **literal** keys, not `t(labelKey)` with a key taken from a table: a dynamic
+ * key is something `i18next.d.ts` cannot check, so a mistyped one survives to runtime instead of
+ * failing the build (see CLAUDE.md, the i18n section). `t` is taken as a parameter because this is a
+ * module-level function and cannot call the hook — the same way `formatRestoreEta` does it.
  */
 export function redisToolTabLabel(type: Exclude<RedisTabType, 'redis-key'>, t: TFunction): string {
   switch (type) {
@@ -41,38 +39,38 @@ export function redisToolTabLabel(type: Exclude<RedisTabType, 'redis-key'>, t: T
 }
 
 /**
- * Id của tab xem một key.
+ * The id of a tab viewing one key.
  *
- * Chứa cả `connId` chứ không chỉ tên key: id tab là duy nhất trên toàn app (xem `handleCloseTab`),
- * mà cùng một tên key hoàn toàn có thể mở trên hai kết nối Redis khác nhau — hoặc trên `db0` và
- * `db3` của cùng một server, vốn là hai `connId` khác nhau (§2.1).
+ * It carries `connId` and not just the key name: a tab id is unique across the whole app (see
+ * `handleCloseTab`), and the same key name can perfectly well be open on two different Redis
+ * connections — or on `db0` and `db3` of one server, which are two different `connId`s (§2.1).
  */
 export function redisKeyTabId(connId: string, key: string): string {
   return `rediskey_${connId}_${key}`;
 }
 
-/** Id của một tab công cụ. Một tab mỗi loại trên mỗi kết nối — bấm lại là focus, không mở thêm. */
+/** Tool tab ID. One instance per tool type per connection — re-clicking focuses existing tab. */
 export function redisToolTabId(connId: string, type: RedisTabType): string {
   return `redistool_${connId}_${type}`;
 }
 
 /**
- * Một tab đã ghi/xoá key và danh sách bên sidebar cần quét lại.
+ * A tab has written or deleted keys and the sidebar list needs rescanning.
  *
- * `CustomEvent` trên `window` thay vì props: người phát là một tab nằm trong `ActivePanel`, người
- * nhận là sidebar — hai nhánh khác nhau của cây, và đây đã là cách `table-renamed` /
- * `database-restored` đi trong dự án này.
+ * A `CustomEvent` on `window` rather than props: the sender is a tab inside `ActivePanel` and the
+ * receiver is the sidebar — two different branches of the tree, and this is already how
+ * `table-renamed` / `database-restored` travel in this project.
  *
- * `detail.connId` là bắt buộc: hai kết nối Redis có thể cùng mở, và quét lại nhầm cái kia vừa tốn
- * một vòng SCAN vừa không sửa được danh sách thật sự đã cũ.
+ * `detail.connId` is required: two Redis connections can be open at once, and rescanning the wrong
+ * one both costs a SCAN round and fails to fix the list that actually went stale.
  */
 export const REDIS_KEYS_CHANGED_EVENT = 'redis-keys-changed';
 
 export interface RedisKeysChangedDetail {
   connId: string;
-  /** Key vừa biến mất — sidebar bỏ nó khỏi danh sách mà không cần quét lại toàn bộ. */
+  /** Key deleted — sidebar removes it immediately without a full keyspace rescan. */
   removed?: string;
-  /** Đổi tên: bỏ `removed` và thêm tên mới. */
+  /** Renamed key: removes `removed` and inserts new name. */
   renamedTo?: string;
 }
 
