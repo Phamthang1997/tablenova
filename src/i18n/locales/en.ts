@@ -1287,6 +1287,7 @@ const en = {
     cmplListColumns: 'list {{n}} columns',
     cmplAllColumnsOf: 'All columns of {{table}}',
     cmplColumnValue: 'Allowed value · {{table}}',
+    cmplInsertColumns: 'list {{n}} writable columns · {{table}}',
     quickFixReplaceWith: "Change to '{{n}}'",
     renameRejected: 'Cannot rename this element.',
     actionQuickFix: 'Quick Fix',

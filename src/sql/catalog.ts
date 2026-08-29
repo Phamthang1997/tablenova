@@ -15,6 +15,14 @@ interface ConnCache {
   primed: boolean;
   priming: boolean;
   schemas: Map<string, SchemaInfo>;
+  /**
+   * Per-table schemas fetched through `get_table_schema` — see `getSchemaDetailed`.
+   *
+   * A SECOND map, deliberately: `schemas` holds the bulk-primed entries, which carry only
+   * name/type/isPrimaryKey and fabricate the rest, and merging the two would make it impossible
+   * to tell a real `autoIncrement: false` from an absent one.
+   */
+  fullSchemas: Map<string, SchemaInfo>;
 }
 
 const byConn = new Map<string, ConnCache>();
@@ -23,7 +31,7 @@ const TTL = 15000;
 function cacheFor(connId: string): ConnCache {
   let c = byConn.get(connId);
   if (!c) {
-    c = { tables: [], fetchedAt: 0, fetching: false, primed: false, priming: false, schemas: new Map() };
+    c = { tables: [], fetchedAt: 0, fetching: false, primed: false, priming: false, schemas: new Map(), fullSchemas: new Map() };
     byConn.set(connId, c);
   }
   return c;
@@ -89,6 +97,31 @@ export async function getSchema(connId: string, table: string): Promise<SchemaIn
  */
 export function getCachedSchema(connId: string, table: string): SchemaInfo | null {
   return byConn.get(connId)?.schemas.get(table) || null;
+}
+
+/**
+ * The FULL schema of one table — every flag the backend reports, unlike `getSchema`.
+ *
+ * `getSchema` answers from the bulk-primed cache when it can, and `primeCatalog` only receives
+ * name/type/isPrimaryKey from `get_full_catalog`: it hardcodes `nullable: true`, leaves
+ * `defaultValue` null and `indexes` empty, and drops `autoIncrement`/`generated`/`identityAlways`
+ * entirely. A caller that must distinguish a column the database WRITES ITSELF therefore cannot
+ * use it — `get_table_schema` is the only path carrying those flags (`database/introspect.rs`).
+ *
+ * One IPC call per table, then cached. Only call this for a table the user has named explicitly
+ * (an `INSERT INTO <table>` target); on a path that scans several tables it is N round trips.
+ */
+export async function getSchemaDetailed(connId: string, table: string): Promise<SchemaInfo | null> {
+  const c = cacheFor(connId);
+  const cached = c.fullSchemas.get(table);
+  if (cached) return cached;
+  try {
+    const s = await dbHelper.getTableSchema(connId, table);
+    c.fullSchemas.set(table, s);
+    return s;
+  } catch {
+    return null; // unknown table, or a name that is not a table at all
+  }
 }
 
 /**

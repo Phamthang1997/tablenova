@@ -3,6 +3,7 @@
 
 import * as monaco from 'monaco-editor';
 import { setupLanguageFeatures, LanguageIdEnum, EntityContextType } from 'monaco-sql-languages';
+import { insertTargetBeforeCaret, buildInsertColumnsSnippet } from './insertColumns';
 import type { CompletionService, ICompletionItem, CompletionSnippet } from 'monaco-sql-languages';
 import 'monaco-sql-languages/esm/languages/mysql/mysql.contribution';
 import 'monaco-sql-languages/esm/languages/pgsql/pgsql.contribution';
@@ -264,6 +265,30 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
         insertText: list,
         filterText: '*',
         sortText: '00_starlist_' + pfx,
+      });
+    }
+  }
+
+  // 2d) Directly following `INSERT INTO <table> ` -> the table's real column list.
+  //
+  // Uses `getSchemaDetailed`, NOT `getSchema`: the bulk-primed cache carries no
+  // `autoIncrement`/`generated`/`identityAlways`, and suggesting a column the database writes
+  // itself produces a statement that fails (MySQL 3105). One IPC call for a table the user just
+  // named by hand, cached afterwards.
+  const insertTarget = insertTargetBeforeCaret(textBefore);
+  if (insertTarget) {
+    const schema = await catalog.getSchemaDetailed(editorConnId(), insertTarget);
+    const snippet = buildInsertColumnsSnippet(schema?.columns || []);
+    if (snippet) {
+      items.push({
+        label: snippet.text.replace(' VALUES ($1)', ''),
+        kind: monaco.languages.CompletionItemKind.Snippet,
+        detail: i18n.t('sqlEditor.cmplInsertColumns', { n: snippet.count, table: insertTarget }),
+        documentation: { value: ['```sql', snippet.text.replace('$1', ''), '```'].join('\n') },
+        insertText: snippet.text,
+        insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+        sortText: '00_insertcols',
+        preselect: true,
       });
     }
   }

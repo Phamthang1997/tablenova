@@ -4,6 +4,11 @@ Mục tiêu: gợi ý code chính xác theo ngữ cảnh trong Monaco cho **MySQ
 **subquery/CTE/derived table**, có **alias resolution**, **gợi ý JOIN ON theo FK**, **kiểu dữ liệu**, snippet.
 Khác bản MVP heuristic ở chỗ dùng **parser SQL thật (ANTLR4)** thay vì regex.
 
+> **Trạng thái: đã ship tới B5.** Phần mở rộng còn lại — một item gợi ý **danh sách cột cho
+> `INSERT INTO`**, cùng lý do **loại** phương án ghost text inline — nằm ở
+> [`sql-ghost-text-completion-guide.md`](sql-ghost-text-completion-guide.md). B3 (`JOIN … ON` theo FK,
+> bung `SELECT *`) ở lại popup và không bị làm lại.
+
 ---
 
 ## 1. Kiến trúc tổng thể (toàn bộ chạy frontend)

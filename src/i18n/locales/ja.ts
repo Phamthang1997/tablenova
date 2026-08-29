@@ -1270,6 +1270,7 @@ const ja: typeof en = {
     cmplListColumns: '{{n}} 列を展開',
     cmplAllColumnsOf: '{{table}} のすべての列',
     cmplColumnValue: '有効な値 · {{table}}',
+    cmplInsertColumns: '書き込み可能な {{n}} 列 · {{table}}',
     quickFixReplaceWith: "'{{n}}' に変更",
     renameRejected: 'この要素の名前は変更できません。',
     actionQuickFix: 'クイックフィックス',

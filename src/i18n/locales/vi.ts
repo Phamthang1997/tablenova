@@ -1273,6 +1273,7 @@ const vi: typeof en = {
     cmplListColumns: 'liệt kê {{n}} cột',
     cmplAllColumnsOf: 'Tất cả cột của {{table}}',
     cmplColumnValue: 'Giá trị hợp lệ · {{table}}',
+    cmplInsertColumns: 'điền {{n}} cột ghi được · {{table}}',
     quickFixReplaceWith: "Đổi thành '{{n}}'",
     renameRejected: 'Không đổi tên được phần tử này.',
     actionQuickFix: 'Sửa nhanh',
