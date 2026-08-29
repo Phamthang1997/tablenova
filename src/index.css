@@ -1758,30 +1758,37 @@ select.form-input {
   background: rgba(2, 132, 199, 0.12);
   color: #0284c7;
 }
+
 .sb-tool-icon-wrap.emerald {
   background: rgba(16, 185, 129, 0.12);
   color: #10b981;
 }
+
 .sb-tool-icon-wrap.indigo {
   background: rgba(99, 102, 241, 0.12);
   color: #6366f1;
 }
+
 .sb-tool-icon-wrap.violet {
   background: rgba(139, 92, 246, 0.12);
   color: #8b5cf6;
 }
+
 .sb-tool-icon-wrap.amber {
   background: rgba(245, 158, 11, 0.12);
   color: #f59e0b;
 }
+
 .sb-tool-icon-wrap.rose {
   background: rgba(244, 63, 94, 0.12);
   color: #f43f5e;
 }
+
 .sb-tool-icon-wrap.cyan {
   background: rgba(6, 182, 212, 0.12);
   color: #06b6d4;
 }
+
 .sb-tool-icon-wrap.teal {
   background: rgba(20, 184, 166, 0.12);
   color: #14b8a6;
@@ -1791,30 +1798,37 @@ select.form-input {
   background: rgba(56, 189, 248, 0.18);
   color: #38bdf8;
 }
+
 [data-theme='dark'] .sb-tool-icon-wrap.emerald {
   background: rgba(52, 211, 153, 0.18);
   color: #34d399;
 }
+
 [data-theme='dark'] .sb-tool-icon-wrap.indigo {
   background: rgba(129, 140, 248, 0.18);
   color: #818cf8;
 }
+
 [data-theme='dark'] .sb-tool-icon-wrap.violet {
   background: rgba(167, 139, 250, 0.18);
   color: #a78bfa;
 }
+
 [data-theme='dark'] .sb-tool-icon-wrap.amber {
   background: rgba(251, 191, 36, 0.18);
   color: #fbbf24;
 }
+
 [data-theme='dark'] .sb-tool-icon-wrap.rose {
   background: rgba(251, 113, 133, 0.18);
   color: #fb7185;
 }
+
 [data-theme='dark'] .sb-tool-icon-wrap.cyan {
   background: rgba(34, 211, 238, 0.18);
   color: #22d3ee;
 }
+
 [data-theme='dark'] .sb-tool-icon-wrap.teal {
   background: rgba(45, 212, 191, 0.18);
   color: #2dd4bf;
@@ -11838,6 +11852,7 @@ input.rename-input {
   width: 14px;
   font-weight: bold;
   color: var(--win-accent);
+  padding-right: 5px;
 }
 
 .sql-item-icon {
@@ -12906,7 +12921,7 @@ input.rename-input {
   padding: 8px 10px;
 }
 
-.jobs-row + .jobs-row {
+.jobs-row+.jobs-row {
   border-top: 1px solid var(--win-border);
 }
 
@@ -13452,6 +13467,7 @@ input.rename-input {
   color: var(--st-danger, #ef4444);
   font-weight: 700;
 }
+
 /* ============================================================
    The Redis workspace
    ============================================================
@@ -14710,13 +14726,33 @@ input.rename-input {
 
 /* Fixed-width table columns. Named after their pixel width: these are real column widths, not a
    concept — calling one `.redis-col-id` would mean renaming it the next time 60px becomes 70px. */
-.redis-col-60 { width: 60px; }
-.redis-col-80 { width: 80px; }
-.redis-col-90 { width: 90px; }
-.redis-col-110 { width: 110px; }
-.redis-col-130 { width: 130px; }
-.redis-col-150 { width: 150px; }
-.redis-col-bar { width: 30%; }
+.redis-col-60 {
+  width: 60px;
+}
+
+.redis-col-80 {
+  width: 80px;
+}
+
+.redis-col-90 {
+  width: 90px;
+}
+
+.redis-col-110 {
+  width: 110px;
+}
+
+.redis-col-130 {
+  width: 130px;
+}
+
+.redis-col-150 {
+  width: 150px;
+}
+
+.redis-col-bar {
+  width: 30%;
+}
 
 /* ---- The Redis dialogs (PromptDialog, BulkDeleteDialog) ----
    `ModalBody style={{ gap }}` stays as it is: that is `Modal.tsx`'s API, and its inline style
@@ -16015,6 +16051,7 @@ input.rename-input {
     opacity: 0;
     transform: scale(0.96) translateY(4px);
   }
+
   to {
     opacity: 1;
     transform: scale(1) translateY(0);
@@ -16097,8 +16134,13 @@ input.rename-input {
 }
 
 @keyframes mediaBackdropFadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 .media-lightbox-container {
@@ -17793,5 +17835,3 @@ input.rename-input {
   max-width: 420px;
   line-height: 1.5;
 }
-
-
