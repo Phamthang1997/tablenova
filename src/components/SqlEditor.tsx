@@ -457,6 +457,9 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
 
     document.body.style.userSelect = 'none';
     document.body.style.cursor = 'row-resize';
+    if (editorEl) {
+      editorEl.style.pointerEvents = 'none';
+    }
 
     const onMouseMove = (moveEvent: MouseEvent) => {
       const deltaY = moveEvent.clientY - startY;
@@ -464,15 +467,12 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       const newHeight = Math.max(60, Math.min(maxH, startHeight + deltaY));
       currentH = newHeight;
 
-      if (editorEl) {
-        editorEl.style.flex = `0 0 ${newHeight}px`;
-      }
-
       if (rafId === null) {
         rafId = requestAnimationFrame(() => {
           rafId = null;
-          const ed = paneId === 1 ? editorRef.current : editorRef2.current;
-          if (ed) ed.layout();
+          if (editorEl) {
+            editorEl.style.flex = `0 0 ${currentH}px`;
+          }
         });
       }
     };
@@ -484,6 +484,9 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       }
       document.body.style.userSelect = '';
       document.body.style.cursor = '';
+      if (editorEl) {
+        editorEl.style.pointerEvents = '';
+      }
       setIsDraggingResizer(false);
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
