@@ -848,3 +848,46 @@ export function analyzeStatements(
   }
   return { statements, current: pickCurrent(text, mask, segments, offset) };
 }
+
+/** Applies the toolbar dropdown's row limit (LIMIT) to a SELECT/WITH statement that has none */
+export function applyLimitToSql(sqlText: string, limitOption: string): string {
+  if (!limitOption || limitOption === 'No limit') return sqlText;
+  const match = limitOption.match(/[\d,]+/);
+  if (!match) return sqlText;
+  const limitNum = parseInt(match[0].replace(/,/g, ''), 10);
+  if (!limitNum || limitNum <= 0) return sqlText;
+
+  const trimmed = sqlText.trim();
+  if (!trimmed) return sqlText;
+
+  const statements = splitStatements(trimmed);
+  if (statements.length === 0) return sqlText;
+
+  let modified = false;
+  const newStmts = statements.map((s) => {
+    const code = s.text.trim();
+    if (!code) return s.text;
+
+    let clean = code.endsWith(';') ? code.slice(0, -1).trim() : code;
+    const firstWord = clean.split(/\s+/)[0]?.toUpperCase();
+
+    if (firstWord === 'SELECT' || firstWord === 'WITH') {
+      const hasLimit = /\bLIMIT\s+\d+/i.test(clean);
+      // Clauses that must stay LAST. `LIMIT` goes BEFORE a locking clause (`SELECT … LIMIT 1 FOR
+      // UPDATE`), so appending it at the end turns a working statement into a syntax error on both
+      // Postgres and MySQL; MySQL's `INTO OUTFILE`/`DUMPFILE`/`INTO @var` are the same shape. This
+      // mattered little while the limit was opt-in and off by default — it is now on by default, so
+      // the statement is left alone instead. A row cap is a convenience; breaking someone's
+      // `SELECT … FOR UPDATE` inside a transaction is not a trade the convenience is worth.
+      const endsClauseLocked = /\bFOR\s+(UPDATE|SHARE|NO\s+KEY\s+UPDATE|KEY\s+SHARE)\b|\bLOCK\s+IN\s+SHARE\s+MODE\b|\bINTO\s+(OUTFILE|DUMPFILE|@)/i.test(clean);
+      if (!hasLimit && !endsClauseLocked) {
+        modified = true;
+        return `${clean} LIMIT ${limitNum};`;
+      }
+    }
+    return code.endsWith(';') ? code : `${code};`;
+  });
+
+  return modified ? newStmts.join('\n\n') : sqlText;
+}
+
