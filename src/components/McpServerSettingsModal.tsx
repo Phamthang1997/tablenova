@@ -100,9 +100,10 @@ function readTransport(): McpTransport | null {
 
 interface Props {
   onClose: () => void;
+  asTab?: boolean;
 }
 
-export function McpServerSettingsModal({ onClose }: Props) {
+export function McpServerSettingsModal({ onClose, asTab = false }: Props) {
   const { t, i18n } = useTranslation();
   const [activeTab, setActiveTab] = useState<'server' | 'databases' | 'logs'>('server');
   const [status, setStatus] = useState<McpStatus | null>(null);
@@ -302,19 +303,10 @@ export function McpServerSettingsModal({ onClose }: Props) {
     }
   };
 
-  return (
-    <Modal
-      title={t('mcp.title')}
-      icon={<Plug size={14} />}
-      onClose={onClose}
-      width="820px"
-      maxHeight="92vh"
-      zIndex={10000}
-    >
-      <ModalBody>
-        <div className="mcp-container">
-          {/* Top 3-Tab Navigator */}
-          <div className="mcp-tabs-header">
+  const content = (
+    <div className="mcp-container">
+      {/* Top 3-Tab Navigator */}
+      <div className="mcp-tabs-header">
             <button
               type="button"
               className={`mcp-tab-btn ${activeTab === 'server' ? 'active' : ''}`}
@@ -651,6 +643,37 @@ export function McpServerSettingsModal({ onClose }: Props) {
             </div>
           )}
         </div>
+  );
+
+  if (asTab) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, height: '100%', width: '100%', overflow: 'hidden', background: 'var(--win-bg-window)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 18px', borderBottom: '1px solid var(--win-border)', background: 'var(--win-bg-card)', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Plug size={15} style={{ color: 'var(--win-accent)' }} />
+            <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--win-text-primary)' }}>
+              {t('mcp.title')}
+            </span>
+          </div>
+        </div>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+          {content}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <Modal
+      title={t('mcp.title')}
+      icon={<Plug size={14} />}
+      onClose={onClose}
+      width="820px"
+      maxHeight="92vh"
+      zIndex={10000}
+    >
+      <ModalBody>
+        {content}
       </ModalBody>
     </Modal>
   );

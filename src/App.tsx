@@ -337,8 +337,6 @@ export const App: React.FC = () => {
   const [globalImportTargetTable, setGlobalImportTargetTable] = useState<string | null>(null);
   const [globalImportTab, setGlobalImportTab] = useState<'structure' | 'data'>('structure');
   const [globalImportProgress, setGlobalImportProgress] = useState<ProgressState | null>(null);
-  // The columns present in the file (the union of every row's keys, since CSV/JSON rows may omit some)
-  const [showMcpSettings, setShowMcpSettings] = useState(false);
   const [showSidebar, setShowSidebar] = useState(true);
   const [showAbout, setShowAbout] = useState(false);
   // Reads the real version from tauri.conf.json rather than hardcoding it in JSX, which drifts the
@@ -2003,6 +2001,25 @@ export const App: React.FC = () => {
     setActiveTabId(tabId);
   };
 
+  const handleOpenMcpServer = () => {
+    const tabId = 'mcp_server';
+    const existing = visibleTabs.find((tb) => tb.id === tabId);
+    if (existing) {
+      setActiveTabId(tabId);
+      return;
+    }
+    const label = 'MCP Server';
+    const newTab: TabInfo = {
+      id: tabId,
+      connId: activeConnIdState,
+      type: 'mcp-server',
+      name: label,
+      label,
+    };
+    setTabs((prev) => [...prev, newTab]);
+    setActiveTabId(tabId);
+  };
+
   /**
    * The tab whose panel is on screen — looked up in `visibleTabs`, not `tabs`.
    *
@@ -2218,7 +2235,7 @@ export const App: React.FC = () => {
                 onSchemaMigration={handleOpenSchemaMigration}
                 onCompareDatabases={handleOpenDbCompare}
                 onOpenErDiagram={handleOpenErDiagram}
-                onMcpSettings={() => setShowMcpSettings(true)}
+                onMcpSettings={handleOpenMcpServer}
                 onGenerateData={handleOpenDataGen}
                 onTableRenamed={(oldName, newName) => handleTableRenamed(activeConnIdState, oldName, newName)}
                 onTableDropped={handleTableDropped}
@@ -2407,6 +2424,12 @@ export const App: React.FC = () => {
                         asTab={true}
                         onClose={() => handleCloseTab(activeTab.id)}
                         onSubmit={handleImportDatabase}
+                      />
+                    ) : activeTab.type === 'mcp-server' ? (
+                      <McpServerSettingsModal
+                        key={activeTab.id}
+                        asTab={true}
+                        onClose={() => handleCloseTab(activeTab.id)}
                       />
                     ) : null}
                   </div>
@@ -2765,11 +2788,6 @@ export const App: React.FC = () => {
           </ModalFooter>
         </Modal>
       )}
-
-      {/* Comparing two databases (structure + data) */}
-      {/* Not gated on `connection`: the server, its token and the request log are app-wide, and the
-          screen has to be reachable to turn the thing OFF even with nothing open. */}
-      {showMcpSettings && <McpServerSettingsModal onClose={() => setShowMcpSettings(false)} />}
 
       {/* About Modal */}
       {showAbout && (

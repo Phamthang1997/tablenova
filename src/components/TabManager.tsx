@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { Table, Terminal, TerminalSquare, X, Plus, Trash2, XCircle, ArrowRight, ChevronDown, Cog, Braces, Layers, Pencil, Key, Activity, Timer, Radio, BarChart3, GitCompare, ArrowLeftRight, Wand2, Database, Download, Upload } from 'lucide-react';
+import { Table, Terminal, TerminalSquare, X, Plus, Trash2, XCircle, ArrowRight, ChevronDown, Cog, Braces, Layers, Pencil, Key, Activity, Timer, Radio, BarChart3, GitCompare, ArrowLeftRight, Wand2, Database, Download, Upload, Plug } from 'lucide-react';
 import { TAB_GROUP_COLORS, type TabGroup } from '../utils/tabGroups';
 
 /** Stable empty default for the `groups` prop: a fresh `[]` each render breaks memoisation downstream. */
@@ -44,6 +44,7 @@ export interface TabInfo {
     | 'db-info'
     | 'export-db'
     | 'import-db'
+    | 'mcp-server'
     | 'redis-key'
     | 'redis-console'
     | 'redis-dashboard'
@@ -597,6 +598,8 @@ export const TabManager: React.FC<TabManagerProps> = ({
                     <Download size={12} style={{ color: '#06b6d4', marginRight: '6px' }} />
                   ) : tab.type === 'import-db' ? (
                     <Upload size={12} style={{ color: '#10b981', marginRight: '6px' }} />
+                  ) : tab.type === 'mcp-server' ? (
+                    <Plug size={12} style={{ color: '#10b981', marginRight: '6px' }} />
                   ) : tab.type.startsWith('redis-') ? (
                     (() => {
                       const RedisIcon = REDIS_TAB_ICON[tab.type] ?? Key;
