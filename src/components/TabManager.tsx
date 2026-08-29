@@ -37,6 +37,7 @@ export interface TabInfo {
     | 'routine'
     | 'view'
     | 'er'
+    | 'process-monitor'
     | 'redis-key'
     | 'redis-console'
     | 'redis-dashboard'
@@ -574,6 +575,8 @@ export const TabManager: React.FC<TabManagerProps> = ({
                     )
                   ) : tab.type === 'view' ? (
                     <Layers size={12} style={{ color: '#8b5cf6', marginRight: '6px' }} />
+                  ) : tab.type === 'process-monitor' ? (
+                    <Activity size={12} style={{ color: '#06b6d4', marginRight: '6px' }} />
                   ) : tab.type.startsWith('redis-') ? (
                     (() => {
                       const RedisIcon = REDIS_TAB_ICON[tab.type] ?? Key;

@@ -28,7 +28,7 @@ import { RoutineEditorModal } from './components/RoutineEditorModal';
 import { ViewEditorModal } from './components/ViewEditorModal';
 import { SchemaMigration } from './components/SchemaMigration';
 import { DbCompareDialog } from './components/DbCompareDialog';
-import { LiveProcessListModal } from './components/LiveProcessListModal';
+import { LiveProcessListPanel } from './components/LiveProcessListPanel';
 import { McpServerSettingsModal } from './components/McpServerSettingsModal';
 import { DataGeneratorDialog } from './components/DataGeneratorDialog';
 import { RedisSidebarView } from './components/redis/RedisSidebarView';
@@ -343,7 +343,6 @@ export const App: React.FC = () => {
   // The columns present in the file (the union of every row's keys, since CSV/JSON rows may omit some)
   const globalImportCols = React.useMemo(() => collectColumns(globalImportPendingRows), [globalImportPendingRows]);
   const [showDbInfoModal, setShowDbInfoModal] = useState(false);
-  const [showProcessMonitor, setShowProcessMonitor] = useState(false);
   // Which DatabaseInfoModal tab opens: 'current' when entered from "Database info",
   // 'all' when entered from "Statistics for all databases" in the Databases menu.
   const [dbInfoTab, setDbInfoTab] = useState<'current' | 'all'>('current');
@@ -1879,6 +1878,25 @@ export const App: React.FC = () => {
     setActiveTabId(tabId);
   };
 
+  const handleOpenProcessMonitor = () => {
+    const tabId = `process_monitor_${activeConnIdState}`;
+    const existing = visibleTabs.find((tb) => tb.id === tabId);
+    if (existing) {
+      setActiveTabId(tabId);
+      return;
+    }
+    const label = `Processes: ${connection?.dbName || 'Server'}`;
+    const newTab: TabInfo = {
+      id: tabId,
+      connId: activeConnIdState,
+      type: 'process-monitor',
+      name: label,
+      label,
+    };
+    setTabs((prev) => [...prev, newTab]);
+    setActiveTabId(tabId);
+  };
+
   /**
    * The tab whose panel is on screen — looked up in `visibleTabs`, not `tabs`.
    *
@@ -2089,7 +2107,7 @@ export const App: React.FC = () => {
                 onImportDatabase={() => setShowImportDbDialog(true)}
                 onImportNewTable={() => { setGlobalImportTargetTable(null); setShowGlobalImportPicker(true); }}
                 onOpenDbInfo={() => { setDbInfoTab('current'); setShowDbInfoModal(true); }}
-                onOpenProcessMonitor={() => setShowProcessMonitor(true)}
+                onOpenProcessMonitor={handleOpenProcessMonitor}
                 onOpenAllDbStats={() => { setDbInfoTab('all'); setShowDbInfoModal(true); }}
                 onSchemaMigration={() => setShowSchemaMigration(true)}
                 onCompareDatabases={() => setShowDbCompare(true)}
@@ -2221,6 +2239,13 @@ export const App: React.FC = () => {
                           onOpenTable={(tableName) => handleSelectTable(tableName, 'data')}
                         />
                       </React.Suspense>
+                    ) : activeTab.type === 'process-monitor' ? (
+                      <LiveProcessListPanel
+                        key={activeConnIdState + '|' + activeTab.id}
+                        connId={activeTab.connId || activeConnIdState}
+                        databaseName={connection?.dbName}
+                        onClose={() => handleCloseTab(activeTab.id)}
+                      />
                     ) : null}
                   </div>
                 )}
@@ -2607,15 +2632,6 @@ export const App: React.FC = () => {
         initialTab={dbInfoTab}
         onDatabaseOpened={handleDatabaseOpened}
       />
-
-      {/* Live Processlist & Query Monitor */}
-      {showProcessMonitor && activeConnIdState && (
-        <LiveProcessListModal
-          connId={activeConnIdState}
-          databaseName={connection?.dbName}
-          onClose={() => setShowProcessMonitor(false)}
-        />
-      )}
 
       {/* Diff Schema & Migration Modal */}
       {showSchemaMigration && connection && (

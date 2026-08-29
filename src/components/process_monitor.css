@@ -22,6 +22,13 @@
   overflow-y: auto;
 }
 
+.pm-container.pm-tab-panel {
+  flex: 1;
+  background: var(--win-bg-window, var(--win-bg-popover));
+  padding: 16px 24px;
+}
+
+
 /* Header & Controls Bar */
 .pm-header-bar {
   display: flex;
