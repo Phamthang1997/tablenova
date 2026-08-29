@@ -1308,17 +1308,49 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     let markStreamEnd: () => void = () => {};
     const streamEnded = new Promise<void>(resolve => { markStreamEnd = resolve; });
 
-    const flush = () => {
+    const flushNow = () => {
       const snapshot = acc.map(r => ({ query: r.query, columns: r.columns, data: r.data, affected: r.affected }));
       if (isPane1) {
         setAllResults(snapshot);
         const first = snapshot[0];
+        // `.slice()` is not a copy for its own sake: `acc[i].data` is pushed into in place, so the
+        // array identity never changes and React would bail out of every update after the first.
+        // What made it expensive was how OFTEN it ran, which is what the throttle below fixes.
         if (first) { setColumns(first.columns); setResults(first.data.slice()); }
       } else {
         setAllResults2(snapshot);
         const first = snapshot[0];
         if (first) { setColumns2(first.columns); setResults2(first.data.slice()); }
       }
+    };
+
+    // Rust pushes a batch every 500 rows (`STREAM_BATCH`), so a run returning 79k rows delivers ~159
+    // of them — and mirroring each one straight into state was ~159 React commits, every one
+    // re-rendering the editor and the result grid to display the same 50 rows, plus one copy of the
+    // whole first result set each time. Measured at ~9-18ms per commit, that is seconds of the
+    // "transfer" figure in the status bar, spent on frames nobody can see: the screen repaints at
+    // ~16ms and the numbers scroll past unread anyway.
+    //
+    // Leading-edge throttle, deliberately: the FIRST batch still lands immediately, so results
+    // appear as fast as they ever did; only the flood behind it is coalesced. Rows are never
+    // dropped — `acc` keeps accumulating and the final `flushNow()` after the stream ends mirrors
+    // whatever the last window was still holding.
+    const FLUSH_INTERVAL_MS = 120;
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
+    let flushPending = false;
+
+    const flush = () => {
+      if (flushTimer !== null) { flushPending = true; return; }
+      flushNow();
+      flushTimer = setTimeout(function tick() {
+        flushTimer = null;
+        if (flushPending) { flushPending = false; flush(); }
+      }, FLUSH_INTERVAL_MS);
+    };
+
+    const stopFlushing = () => {
+      if (flushTimer !== null) { clearTimeout(flushTimer); flushTimer = null; }
+      flushPending = false;
     };
 
     try {
@@ -1352,7 +1384,10 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       errText = t('sqlEditor.errQuery', { message: String(e) });
     }
 
-    flush(); // one last mirror (so the final batch has reached the state)
+    // One last mirror, unthrottled: whatever the final window was still holding has to reach state,
+    // and the pending timer must not fire into a run that is already over.
+    stopFlushing();
+    flushNow();
 
     const totalRows = acc.reduce((s, r) => s + r.data.length, 0);
     const affectedTotal = acc.reduce((s, r) => s + (r.affected || 0), 0);
