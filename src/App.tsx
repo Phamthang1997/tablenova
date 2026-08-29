@@ -28,6 +28,7 @@ import { RoutineEditorModal } from './components/RoutineEditorModal';
 import { ViewEditorModal } from './components/ViewEditorModal';
 import { SchemaMigration } from './components/SchemaMigration';
 import { DbCompareDialog } from './components/DbCompareDialog';
+import { LiveProcessListModal } from './components/LiveProcessListModal';
 import { McpServerSettingsModal } from './components/McpServerSettingsModal';
 import { DataGeneratorDialog } from './components/DataGeneratorDialog';
 import { RedisSidebarView } from './components/redis/RedisSidebarView';
@@ -342,6 +343,7 @@ export const App: React.FC = () => {
   // The columns present in the file (the union of every row's keys, since CSV/JSON rows may omit some)
   const globalImportCols = React.useMemo(() => collectColumns(globalImportPendingRows), [globalImportPendingRows]);
   const [showDbInfoModal, setShowDbInfoModal] = useState(false);
+  const [showProcessMonitor, setShowProcessMonitor] = useState(false);
   // Which DatabaseInfoModal tab opens: 'current' when entered from "Database info",
   // 'all' when entered from "Statistics for all databases" in the Databases menu.
   const [dbInfoTab, setDbInfoTab] = useState<'current' | 'all'>('current');
@@ -2087,6 +2089,7 @@ export const App: React.FC = () => {
                 onImportDatabase={() => setShowImportDbDialog(true)}
                 onImportNewTable={() => { setGlobalImportTargetTable(null); setShowGlobalImportPicker(true); }}
                 onOpenDbInfo={() => { setDbInfoTab('current'); setShowDbInfoModal(true); }}
+                onOpenProcessMonitor={() => setShowProcessMonitor(true)}
                 onOpenAllDbStats={() => { setDbInfoTab('all'); setShowDbInfoModal(true); }}
                 onSchemaMigration={() => setShowSchemaMigration(true)}
                 onCompareDatabases={() => setShowDbCompare(true)}
@@ -2604,6 +2607,15 @@ export const App: React.FC = () => {
         initialTab={dbInfoTab}
         onDatabaseOpened={handleDatabaseOpened}
       />
+
+      {/* Live Processlist & Query Monitor */}
+      {showProcessMonitor && activeConnIdState && (
+        <LiveProcessListModal
+          connId={activeConnIdState}
+          databaseName={connection?.dbName}
+          onClose={() => setShowProcessMonitor(false)}
+        />
+      )}
 
       {/* Diff Schema & Migration Modal */}
       {showSchemaMigration && connection && (
