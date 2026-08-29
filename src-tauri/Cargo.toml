@@ -98,6 +98,27 @@ keyring = { version = "4.1.6", features = [
     "zbus-secret-service-keyring-store",
 ] }
 
+# Dev runs the real app against real databases, so it should not run it at a tenth of its speed.
+# Plain `[profile.dev]` is `opt-level = 0`, and measurement showed what that costs: decoding 79,040
+# rows into JSON took 3.5s of a 6.8s run, ~45us per row, for work that is a few string moves.
+#
+# The split matters. `opt-level = 3` on DEPENDENCIES is where the win is — serde_json, sqlx and
+# rusqlite do the per-row work — and they are compiled once and then cached forever, so their
+# optimization is free after the first build. Our own crate stays at 1: enough to remove the worst
+# of the debug-mode overhead, cheap enough that editing a command still recompiles in seconds.
+#
+# Deliberately no `lto` and no `codegen-units` here: those two are what make the release build take
+# 17 minutes, and fat LTO is also what inflates the `generate_handler!` dispatch into a stack frame
+# big enough to overflow at startup (see src-tauri/.cargo/config.toml). Dev wants neither.
+#
+# Cost of adding this: one full rebuild of every dependency, once. After that, iteration is faster
+# than before AND the app is several times quicker at anything data-heavy.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
 # Release-only tuning: `tauri build` (the installable app) uses this profile, while
 # `tauri dev` uses [profile.dev] and writes to a different target dir, so a running
 # dev session is unaffected. Cost is a full recompile on the first build afterwards.
