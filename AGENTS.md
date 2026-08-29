@@ -22,3 +22,9 @@
 - **Pull Requests**: Tiêu đề (PR Title) và nội dung mô tả (PR Description) bắt buộc phải viết bằng **tiếng Anh (English)**. Không thêm footer/trailer `Co-Authored-By`.
 - **Code Comments**: Toàn bộ ghi chú, giải thích, docstring trong mã nguồn TypeScript & Rust bắt buộc phải viết bằng **tiếng Anh (English)**.
 
+## Quy tắc Kiểm tra & Refactor Mã nguồn (Refactoring & Verification Protocol)
+- **Bắt buộc chạy `npx tsc --noEmit` và `oxlint` sau mỗi lần refactor**: Tuyệt đối không chỉ phụ thuộc vào `vitest` / `npm test` vì test suite không kiểm tra type toàn diện cho các file JSX lớn như `App.tsx`.
+- **Grep toàn bộ codebase trước khi xóa/thay thế state hoặc props**: Khi chuyển đổi công cụ (ví dụ từ modal sang tab) hoặc xóa state setter, bắt buộc phải `grep_search` để rà soát và cập nhật đồng bộ tất cả các nơi gọi (bao gồm `TitleBar`, `Sidebar`, Shortcuts, Context Menus).
+- **Phân biệt rạch ròi các tính năng có tên tương tự**: Tuyệt đối không xóa nhầm logic/memo giữa các module độc lập nhưng có tên tương tự nhau (ví dụ: công cụ *Import Database* dạng dump SQL vs tính năng *Global Import Table* từ CSV/JSON/SQL).
+
+
