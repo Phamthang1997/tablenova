@@ -7,7 +7,7 @@ use serde_json::Value;
 use crate::database::DbConnection;
 use crate::redis_db::RedisCaps;
 use super::entry::{ConnEntry, LiveConn};
-use super::ids::SessionId;
+use super::ids::ConnScopeId;
 use super::server::ServerHandle;
 
 /// A connection plus everything a command used to clone out of `DatabaseManager` by hand.
@@ -16,7 +16,7 @@ use super::server::ServerHandle;
 /// bare `DbConnection` next to a separately-passed id would let a caller pair A's handle with B's
 /// id, which is the failure class this whole refactor exists to remove.
 pub struct ConnCtx {
-    id: SessionId,
+    id: ConnScopeId,
     server: Arc<ServerHandle>,
     conn: DbConnection,
     dialect: &'static str,
@@ -26,7 +26,7 @@ pub struct ConnCtx {
 }
 
 impl ConnCtx {
-    pub fn id(&self) -> &SessionId {
+    pub fn id(&self) -> &ConnScopeId {
         &self.id
     }
 
@@ -81,7 +81,7 @@ impl ConnCtx {
 /// `conn_id` means a SQL command was called with one, which the UI never does, and a new literal
 /// would have to be added to `src/utils/backendErrors.ts` and its byte-identical round-trip test
 /// for a string no user is meant to see.
-pub(super) fn ctx_of(key: &SessionId, entry: &ConnEntry) -> Result<ConnCtx, String> {
+pub(super) fn ctx_of(key: &ConnScopeId, entry: &ConnEntry) -> Result<ConnCtx, String> {
     let conn = entry
         .conn
         .sql()
@@ -106,7 +106,7 @@ pub(super) fn ctx_of(key: &SessionId, entry: &ConnEntry) -> Result<ConnCtx, Stri
 /// and every Redis call site a `conn()` of the wrong type. Two types means the compiler decides
 /// which commands may see which connection.
 pub struct RedisCtx {
-    id: SessionId,
+    id: ConnScopeId,
     server: Arc<ServerHandle>,
     conn: redis::aio::MultiplexedConnection,
     db_index: i64,
@@ -116,7 +116,7 @@ pub struct RedisCtx {
 
 impl RedisCtx {
     #[allow(dead_code)]
-    pub fn id(&self) -> &SessionId {
+    pub fn id(&self) -> &ConnScopeId {
         &self.id
     }
 
@@ -165,7 +165,7 @@ impl RedisCtx {
 /// `read_only` is read from the entry — i.e. inside the registry lock the caller holds — and carried
 /// on the ctx: a command that asked the registry a second time could see a different answer than
 /// the one it validated against.
-pub(super) fn redis_ctx_of(key: &SessionId, entry: &ConnEntry) -> Result<RedisCtx, String> {
+pub(super) fn redis_ctx_of(key: &ConnScopeId, entry: &ConnEntry) -> Result<RedisCtx, String> {
     let LiveConn::Redis(r) = &entry.conn else {
         return Err("Chưa kết nối Redis".to_string());
     };

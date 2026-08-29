@@ -26,7 +26,7 @@ pub struct DbConnection {
 
 impl DbConnection {
     /// A handle on a registry entry — the only kind a transaction session may pin.
-    pub fn session(id: crate::state::SessionId, kind: DbKind) -> Self {
+    pub fn session(id: crate::state::ConnScopeId, kind: DbKind) -> Self {
         DbConnection { id: crate::state::ConnId::Session(id), kind }
     }
 

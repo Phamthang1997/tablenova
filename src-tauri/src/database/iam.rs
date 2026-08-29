@@ -56,7 +56,7 @@ pub(crate) fn spawn_iam_refresh(
     app: tauri::AppHandle,
     db_type: String,
     config: Value,
-    conn_id: crate::state::SessionId,
+    conn_id: crate::state::ConnScopeId,
 ) {
     tauri::async_runtime::spawn(async move {
         loop {

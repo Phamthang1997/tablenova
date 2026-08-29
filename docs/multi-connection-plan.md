@@ -213,7 +213,7 @@ struct Session {
     meta: Mutex<Meta>,
     pinned: tokio::sync::Mutex<Option<Pinned>>,
 }
-static SESSIONS: OnceLock<Mutex<HashMap<SessionId, Arc<Session>>>>;
+static TX_REGISTRY: OnceLock<Mutex<HashMap<ConnScopeId, Arc<Session>>>>;
 static APP: OnceLock<Mutex<Option<AppHandle>>>;   // stays a single handle
 ```
 
@@ -229,7 +229,7 @@ Ba điều nữa, mỗi điều là một lỗi im lặng nếu bỏ:
   hot path là sai. `tx_set_autocommit` tạo entry; "không có entry" = `autocommit = true`, vốn đã đúng
   cho một kết nối mới. Tra bằng `map.get(&*id)` (`Arc<str>: Borrow<str>`) để không cấp phát `String`
   mỗi câu.
-- **`reset()` (`:787`) phải `SESSIONS.remove(&id)`.** Không thì map rò một entry mỗi vòng
+- **`reset()` (`:787`) phải `TX_REGISTRY.remove(&id)`.** Không thì map rò một entry mỗi vòng
   connect/disconnect, **và** một id được dùng lại sẽ thừa hưởng `Meta` cũ với `autocommit = false` —
   câu lệnh kế tiếp của người dùng âm thầm mở một transaction họ không yêu cầu.
 - **`any_pending()` — hàm mới, KHÔNG mang id.** Guard `onCloseRequested` phải hỏi "có kết nối **nào**
@@ -380,10 +380,10 @@ song với đường mới.**
 **(a) Đặt id vào *trong* `DbConnection`, không thêm tham số.**
 
 ```rust
-pub type SessionId = Arc<str>;
+pub type ConnScopeId = Arc<str>;
 
 pub enum ConnId {
-    Session(SessionId),
+    Session(ConnScopeId),
     /// A short-lived pool (db_compare, deep scan). Never routable to a tx session — see §0.
     Adhoc,
 }
@@ -422,7 +422,7 @@ Schema **không** vào kiểu funnel — funnel không dùng nó. Nó nằm ở 
 **(c) `state.rs` mới, `inner` private.**
 
 ```rust
-pub struct ConnRegistry { inner: Mutex<HashMap<SessionId, ConnEntry>> }   // `inner` PRIVATE
+pub struct ConnRegistry { inner: Mutex<HashMap<ConnScopeId, ConnEntry>> }   // `inner` PRIVATE
 
 impl ConnRegistry {
     /// The only way to obtain a DbConnection carrying ConnId::Session.

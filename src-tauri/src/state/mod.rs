@@ -22,7 +22,7 @@
 // `AppState` (`app.rs`) lives here too: it is the root of every piece of live state, and its biggest
 // field is the `ConnRegistry` below — splitting two nested things across two directories would be worse.
 //
-// `ConnId` lives here too (§4.4a): it is identity, and putting it next to `SessionId` keeps the one
+// `ConnId` lives here too (§4.4a): it is identity, and putting it next to `ConnScopeId` keeps the one
 // question "which connection is this" answered in a single place.
 
 mod app;

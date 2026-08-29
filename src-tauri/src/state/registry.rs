@@ -8,7 +8,7 @@ use serde_json::Value;
 use crate::database::DbConnection;
 use super::ctx::{ctx_of, redis_ctx_of, ConnCtx, RedisCtx};
 use super::entry::{ConnEntry, LiveConn, RedisConn};
-use super::ids::SessionId;
+use super::ids::ConnScopeId;
 
 /// Every open connection, keyed by `conn_id`.
 ///
@@ -17,7 +17,7 @@ use super::ids::SessionId;
 /// §6.3). An async mutex is slower uncontended and invites exactly the hold-across-await this
 /// codebase forbids.
 pub struct ConnRegistry {
-    inner: Mutex<HashMap<SessionId, ConnEntry>>,
+    inner: Mutex<HashMap<ConnScopeId, ConnEntry>>,
 }
 
 impl Default for ConnRegistry {
@@ -65,7 +65,7 @@ impl ConnRegistry {
     /// Sorted by id so the rail does not reshuffle itself on every poll — a `HashMap` has no order.
     pub fn list(&self) -> Result<Vec<Value>, String> {
         let map = self.inner.lock().map_err(|e| e.to_string())?;
-        let mut out: Vec<(SessionId, Value)> = map
+        let mut out: Vec<(ConnScopeId, Value)> = map
             .iter()
             .map(|(id, e)| {
                 (
@@ -96,9 +96,9 @@ impl ConnRegistry {
     ///
     /// SQL connections only. `ping_connections` runs a liveness SELECT, which means nothing for Redis;
     /// pinging Redis is a `PING` on a `RedisCtx` and is a separate job.
-    pub fn handles(&self) -> Result<Vec<(SessionId, DbConnection)>, String> {
+    pub fn handles(&self) -> Result<Vec<(ConnScopeId, DbConnection)>, String> {
         let map = self.inner.lock().map_err(|e| e.to_string())?;
-        let mut out: Vec<(SessionId, DbConnection)> = map
+        let mut out: Vec<(ConnScopeId, DbConnection)> = map
             .iter()
             .filter_map(|(id, e)| e.conn.sql().map(|c| (id.clone(), c.clone())))
             .collect();
@@ -106,7 +106,7 @@ impl ConnRegistry {
         Ok(out)
     }
 
-    pub fn insert(&self, id: SessionId, entry: ConnEntry) -> Result<(), String> {
+    pub fn insert(&self, id: ConnScopeId, entry: ConnEntry) -> Result<(), String> {
         let mut map = self.inner.lock().map_err(|e| e.to_string())?;
         map.insert(id, entry);
         Ok(())
@@ -133,7 +133,7 @@ impl ConnRegistry {
 
     /// The connection already open on this `(server, database)`, if any. Makes `open_database`
     /// idempotent: clicking a database twice must not mint a second pool for the same place.
-    pub fn find(&self, server: &str, db: &str) -> Result<Option<SessionId>, String> {
+    pub fn find(&self, server: &str, db: &str) -> Result<Option<ConnScopeId>, String> {
         let map = self.inner.lock().map_err(|e| e.to_string())?;
         Ok(map
             .iter()
@@ -151,7 +151,7 @@ impl ConnRegistry {
     /// Paths are compared after `canonicalize`, which folds `..`, relative paths and — on Windows —
     /// case. A path that cannot be canonicalized (the file is gone) falls back to a raw compare, so
     /// a missing file never *matches* something it should not.
-    pub fn find_sqlite(&self, path: &str) -> Result<Option<SessionId>, String> {
+    pub fn find_sqlite(&self, path: &str) -> Result<Option<ConnScopeId>, String> {
         let want = std::fs::canonicalize(path).ok();
         let map = self.inner.lock().map_err(|e| e.to_string())?;
         Ok(map
@@ -242,7 +242,7 @@ impl ConnRegistry {
 
     pub fn list_mcp_exposed(&self) -> Result<Vec<Value>, String> {
         let map = self.inner.lock().map_err(|e| e.to_string())?;
-        let mut out: Vec<(SessionId, Value)> = map
+        let mut out: Vec<(ConnScopeId, Value)> = map
             .iter()
             .filter(|(_, e)| e.mcp_exposed && e.conn.sql().is_some())
             .map(|(id, e)| {

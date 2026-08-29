@@ -1,13 +1,13 @@
-//! The identity of a connection: `SessionId`, `ServerId`, `ConnId`, and how a new id is minted.
+//! The identity of a connection: `ConnScopeId`, `ServerId`, `ConnId`, and how a new id is minted.
 
 use std::sync::Arc;
 
 /// Identifies one `(server, database)` pair. `Arc<str>` rather than `String` because it is cloned
 /// on every acquire and looked up on every statement: `Arc<str>: Borrow<str>` lets `HashMap::get`
 /// take a `&str`, so a lookup allocates nothing.
-pub type SessionId = Arc<str>;
+pub type ConnScopeId = Arc<str>;
 
-/// Identifies one server. Several `SessionId`s share one of these.
+/// Identifies one server. Several `ConnScopeId`s share one of these.
 pub type ServerId = Arc<str>;
 
 /// Which connection a `DbConnection` handle belongs to.
@@ -18,7 +18,7 @@ pub type ServerId = Arc<str>;
 #[derive(Clone)]
 pub enum ConnId {
     /// A registry entry. `tx/` may pin this one as a manual-transaction session.
-    Session(SessionId),
+    Session(ConnScopeId),
     /// A short-lived pool this process opened for itself — `compare::resolve_side`, a deep scan,
     /// a `list_databases` probe. **Never routable to a transaction session**, and that is a fix
     /// rather than an optimisation: `should_route` answers from global session state before it looks

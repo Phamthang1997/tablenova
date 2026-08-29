@@ -86,7 +86,7 @@ src-tauri/src/
 │   └── shell.rs                    ~45   open_url, set_app_window_size  ← đang nằm nhầm trong database.rs
 ├── state/
 │   ├── mod.rs
-│   ├── ids.rs                      ~80   SessionId, ServerId, ConnId, mint_id
+│   ├── ids.rs                      ~80   ConnScopeId, ServerId, ConnId, mint_id
 │   ├── server.rs                   ~90   ServerHandle
 │   ├── entry.rs                   ~160   LiveConn, RedisConn, ConnEntry, ConnCtx, RedisCtx
 │   └── registry.rs                ~180   ConnRegistry
@@ -140,7 +140,7 @@ src-tauri/src/
 │   ├── mod.rs
 │   ├── effect.rs                  ~220   TxEffect, tokens, tx_effect, is_write_stmt, isolation_allowed,
 │   │                                     begin_statements, is_aborted_error  ← thuần, test được
-│   ├── session.rs                 ~340   Meta, Session, SESSIONS, status_json, emit_state, apply_effect
+│   ├── session.rs                 ~340   Meta, Session, TX_REGISTRY, status_json, emit_state, apply_effect
 │   ├── route.rs                   ~330   should_route, lock_pinned, ensure_begin, run_raw/bound/stream
 │   └── commands.rs                ~210   7 command tx_*
 ├── redis/
@@ -351,6 +351,6 @@ và `RedisState` như thứ đang tồn tại — hai kiểu này bị xoá từ
 |---|---|---|
 | `DbConnection` | "`DatabaseManager` giữ connection đang active, chỉ một cái cho cả app" | `state::ConnRegistry` khoá theo `conn_id`; **không có "connection đang active"**; `db_type`/`last_config`/tunnel nằm trên `Arc<ServerHandle>` dùng chung theo server |
 | Schema Postgres | `DatabaseManager.current_schema` | `ConnEntry.current_schema` — một `conn_id` là một `(server, database)` nên cũng là một schema. `pg_schema()` không còn; mọi call site đọc `ConnCtx::schema()`, vốn đã default sẵn |
-| Transaction | "chỉ có đúng một phiên; muốn per-tab thì phải chờ refactor đa kết nối" | refactor đó đã xong: `SESSIONS` là `HashMap` theo `conn_id`, một phiên cho mỗi kết nối. `TxControl` nhận `connId` và **bỏ qua event của kết nối khác** |
+| Transaction | "chỉ có đúng một phiên; muốn per-tab thì phải chờ refactor đa kết nối" | refactor đó đã xong: `TX_REGISTRY` là `HashMap` theo `conn_id`, một phiên cho mỗi kết nối. `TxControl` nhận `connId` và **bỏ qua event của kết nối khác** |
 | Vòng đời | "`switch_database` từ chối khi transaction đang mở" | `switch_database` **đã bị xoá**; `open_database` THÊM một pool dưới `conn_id` mới nên không phải từ chối gì — transaction trên database cũ vẫn chạy |
 | Redis | `RedisState.config` | `ServerHandle` của Redis giữ config **đã qua tunnel** (khác SQL), vì Redis mở socket mới thường xuyên hơn nhiều |
