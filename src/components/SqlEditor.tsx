@@ -2906,7 +2906,10 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     );
   };
 
-  const editorOptions = React.useMemo(() => ({
+  // The generic is load-bearing: without a contextual type, `wordWrap: cond ? 'on' : 'off'` and
+  // `renderWhitespace` widen to `string` in the object literal and no longer satisfy Monaco's
+  // unions, so the `options={editorOptions}` call sites below fail to compile.
+  const editorOptions = React.useMemo<monaco.editor.IStandaloneEditorConstructionOptions>(() => ({
     ...SQL_EDITOR_OPTIONS,
     fontSize: editorFontSize,
     renderWhitespace: showInvisibleChars ? 'all' : 'none',
