@@ -11844,6 +11844,103 @@ input.rename-input {
   flex-shrink: 0;
 }
 
+/* SQL Editor Results Bar Controls (Grid / Chart View Modes & Badges) */
+.sql-results-controls {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 2px 0;
+}
+
+.sql-view-modes {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sql-view-btn {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.sql-view-btn.btn-secondary {
+  background: var(--win-bg-btn-secondary, #ffffff);
+  border: 1px solid var(--win-border);
+  color: var(--win-text-btn-secondary, var(--win-text-primary));
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.sql-view-btn.btn-secondary:hover {
+  background: var(--win-bg-btn-secondary-hover, #f8fafc);
+  border-color: var(--win-accent);
+  color: var(--win-accent);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.10);
+}
+
+.sql-view-btn.btn-primary {
+  background: var(--win-accent);
+  border: 1px solid var(--win-accent-secondary);
+  color: #ffffff !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+.sql-view-btn.btn-primary:hover {
+  background: var(--win-accent-secondary);
+}
+
+[data-theme='dark'] .sql-view-btn.btn-secondary {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--win-border);
+  color: var(--win-text-primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+
+[data-theme='dark'] .sql-view-btn.btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: var(--win-accent);
+  color: var(--win-accent);
+}
+
+.sql-badge-editable {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 9px;
+  color: var(--st-ok);
+  border: 1px solid var(--st-ok);
+  white-space: nowrap;
+}
+
+.sql-badge-readonly {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 9px;
+  color: var(--win-text-disabled);
+  border: 1px solid var(--win-border);
+  white-space: nowrap;
+}
+
+.sql-edit-btn {
+  padding: 2px 6px;
+  font-size: 11px;
+  height: 22px;
+}
+
+.sql-edit-btn-save {
+  background: var(--st-ok);
+  border-color: var(--st-ok);
+}
+
 /* ==========================================================================
    Explain Plan Diagram Connectors
    ========================================================================== */
@@ -16347,36 +16444,34 @@ input.rename-input {
 .bi-btn-group {
   display: flex;
   align-items: center;
-  background: var(--win-bg-card, rgba(255, 255, 255, 0.04));
-  border: 1px solid var(--win-border, rgba(255, 255, 255, 0.1));
-  border-radius: 6px;
-  padding: 2px;
-  gap: 2px;
+  gap: 4px;
 }
 
 .bi-type-btn {
   background: transparent;
-  border: none;
+  border: 1px solid var(--win-border, rgba(255, 255, 255, 0.1));
   color: var(--win-text-secondary, #94a3b8);
   font-size: 11px;
   font-weight: 500;
-  padding: 3px 7px;
-  border-radius: 4px;
+  padding: 3px 8px;
+  border-radius: 6px;
   cursor: pointer;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 4px;
   transition: all 0.12s ease;
 }
 
 .bi-type-btn:hover {
-  color: var(--win-text-primary, #ffffff);
-  background: rgba(255, 255, 255, 0.06);
+  color: var(--win-accent);
+  border-color: var(--win-accent);
+  background: var(--win-bg-hover, rgba(255, 255, 255, 0.05));
 }
 
 .bi-type-btn.active {
-  background: var(--win-accent, #3b82f6);
-  color: #ffffff;
+  background: var(--win-accent-glow, rgba(59, 130, 246, 0.15));
+  border-color: var(--win-accent);
+  color: var(--win-accent);
   font-weight: 600;
 }
 
@@ -16634,22 +16729,25 @@ input.rename-input {
 }
 
 [data-theme='light'] .bi-btn-group {
-  background: #f1f5f9;
-  border-color: #e2e8f0;
+  background: transparent;
+  border-color: transparent;
 }
 
 [data-theme='light'] .bi-type-btn {
   color: #64748b;
+  border-color: var(--win-border, #e2e8f0);
 }
 
 [data-theme='light'] .bi-type-btn:hover {
-  color: #0f172a;
-  background: #e2e8f0;
+  color: var(--win-accent);
+  border-color: var(--win-accent);
+  background: rgba(0, 0, 0, 0.04);
 }
 
 [data-theme='light'] .bi-type-btn.active {
-  background: var(--win-accent, #3b82f6);
-  color: #ffffff;
+  background: var(--win-accent-glow, rgba(59, 130, 246, 0.12));
+  border-color: var(--win-accent);
+  color: var(--win-accent);
 }
 
 [data-theme='light'] .bi-select {

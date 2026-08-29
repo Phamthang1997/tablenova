@@ -355,8 +355,26 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   const [runningQueryId2, setRunningQueryId2] = useState<string | null>(null);
 
   // Result visualization view modes ('grid' | 'chart')
-  const [pane1ViewMode, setPane1ViewMode] = useState<'grid' | 'chart'>('grid');
-  const [pane2ViewMode, setPane2ViewMode] = useState<'grid' | 'chart'>('grid');
+  // Grid vs Chart, kept PER RESULT TAB rather than per pane. One run produces one result set per
+  // statement ("1: SELECT (19,040)", "2: SELECT (20,000)", …) and they are different shapes of
+  // data, so the one worth charting is rarely the one worth reading as a grid; a single flag per
+  // pane forced every result into the same view.
+  //
+  // Keyed by result index, and deliberately NOT cleared when a new run replaces the results: while
+  // you iterate on a statement, re-running it should come back in the view you left it in — the
+  // same way the sort column survives a re-run.
+  const [pane1ViewModes, setPane1ViewModes] = useState<Record<number, 'grid' | 'chart'>>({});
+  const [pane2ViewModes, setPane2ViewModes] = useState<Record<number, 'grid' | 'chart'>>({});
+
+  const viewModeOf = (paneId: 1 | 2, resultIndex: number): 'grid' | 'chart' =>
+    (paneId === 1 ? pane1ViewModes : pane2ViewModes)[resultIndex] ?? 'grid';
+
+  const setViewMode = (paneId: 1 | 2, resultIndex: number, mode: 'grid' | 'chart') => {
+    const setter = paneId === 1 ? setPane1ViewModes : setPane2ViewModes;
+    // `prev` is returned unchanged when the mode is already the one asked for, so clicking the
+    // button that is already active costs no render at all.
+    setter((prev) => (prev[resultIndex] === mode ? prev : { ...prev, [resultIndex]: mode }));
+  };
 
   const [userEditorHeight, setUserEditorHeight] = useState<number | null>(
     initialEditorHeight ?? null
@@ -2446,6 +2464,9 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     const pSetPageSize = paneId === 1 ? setPageSize : setPageSize2;
     const pSetShowCopyDropdown = paneId === 1 ? setShowCopyDropdown : setShowCopyDropdown2;
 
+    // Read for the result tab currently on screen, not for the pane — see `pane1ViewModes`.
+    const pViewMode = viewModeOf(paneId, pActiveTabIndex);
+
     const pExplainResult = paneId === 1 ? explainResult1 : explainResult2;
     const pActiveTabType = paneId === 1 ? activeTabType1 : activeTabType2;
     const pSetActiveTabType = paneId === 1 ? setActiveTabType1 : setActiveTabType2;
@@ -2542,48 +2563,40 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
           </div>
 
             {pResults.length > 0 && (
-            <div style={{ display: 'flex', gap: '6px', alignItems: 'center', padding: '2px 0' }}>
+            <div className="sql-results-controls">
               {/* Grid / Chart View Mode Toggle */}
-              <div style={{ display: 'inline-flex', alignItems: 'center', background: 'var(--win-bg-card)', border: '1px solid var(--win-border)', borderRadius: '6px', padding: '1px' }}>
+              <div className="sql-view-modes">
                 <button
                   type="button"
-                  className={`gp-btn ${(paneId === 1 ? pane1ViewMode : pane2ViewMode) === 'grid' ? 'on' : ''}`}
-                  onClick={() => (paneId === 1 ? setPane1ViewMode('grid') : setPane2ViewMode('grid'))}
-                  style={{ padding: '2px 6px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '3px' }}
-                  title="Table Grid View"
+                  className={`btn sql-view-btn ${pViewMode === 'grid' ? 'btn-primary' : 'btn-secondary'}`}
+                  onClick={() => setViewMode(paneId, pActiveTabIndex, 'grid')}
+                  title={t('sqlEditor.viewModeGridTitle', 'Table Grid View')}
                 >
-                  <Rows size={11} />
-                  <span>Grid</span>
+                  <Rows size={12} />
+                  <span>{t('sqlEditor.viewModeGrid', 'Grid')}</span>
                 </button>
                 <button
                   type="button"
-                  className={`gp-btn ${(paneId === 1 ? pane1ViewMode : pane2ViewMode) === 'chart' ? 'on' : ''}`}
-                  onClick={() => (paneId === 1 ? setPane1ViewMode('chart') : setPane2ViewMode('chart'))}
-                  style={{ padding: '2px 6px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '3px' }}
-                  title="Visualize with Chart"
+                  className={`btn sql-view-btn ${pViewMode === 'chart' ? 'btn-primary' : 'btn-secondary'}`}
+                  onClick={() => setViewMode(paneId, pActiveTabIndex, 'chart')}
+                  title={t('sqlEditor.viewModeChartTitle', 'Visualize with Chart')}
                 >
-                  <BarChart2 size={11} />
-                  <span>Chart</span>
+                  <BarChart2 size={12} />
+                  <span>{t('sqlEditor.viewModeChart', 'Chart')}</span>
                 </button>
               </div>
 
               {pEditability.editable ? (
                 <span
+                  className="sql-badge-editable"
                   title={t('sqlEditor.editableHint', { table: pEditability.table })}
-                  style={{
-                    fontSize: '10px', fontWeight: 600, padding: '1px 6px', borderRadius: '9px',
-                    color: 'var(--st-ok)', border: '1px solid var(--st-ok)', whiteSpace: 'nowrap',
-                  }}
                 >
                   {t('sqlEditor.editableBadge', { table: pEditability.table })}
                 </span>
               ) : (
                 <span
+                  className="sql-badge-readonly"
                   title={notEditableLabel(pEditability.reason, pEditability.table)}
-                  style={{
-                    fontSize: '10px', padding: '1px 6px', borderRadius: '9px',
-                    color: 'var(--win-text-disabled)', border: '1px solid var(--win-border)', whiteSpace: 'nowrap',
-                  }}
                 >
                   {t('sqlEditor.readOnlyBadge')}
                 </span>
@@ -2592,18 +2605,16 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
               {pTarget && pEditCount > 0 && (
                 <>
                   <button
-                    className="btn btn-secondary"
+                    className="btn btn-secondary sql-edit-btn"
                     onClick={() => discardEdits(paneId)}
                     title={t('sqlEditor.editDiscardTitle')}
-                    style={{ padding: '2px 6px' }}
                   >
                     {t('sqlEditor.editDiscard')}
                   </button>
                   <button
-                    className="btn btn-primary"
+                    className="btn btn-primary sql-edit-btn sql-edit-btn-save"
                     onClick={() => handleEditSave(paneId, pTarget.table, pTarget.primaryKey)}
                     title={t('sqlEditor.editSaveTitle')}
-                    style={{ padding: '2px 6px', background: 'var(--st-ok)', borderColor: 'var(--st-ok)' }}
                   >
                     {t('sqlEditor.editSave', { n: pEditCount })}
                   </button>
@@ -2653,7 +2664,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
               )}
 
               {!pErrorMsg && (pResults.length > 0 || pColumns.length > 0) && (
-                (paneId === 1 ? pane1ViewMode : pane2ViewMode) === 'chart' ? (
+                pViewMode === 'chart' ? (
                   <DataVisualizer
                     rows={pResults}
                     columnNames={pColumns}
@@ -3023,7 +3034,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     results, columns, allResults, activeTabIndex, loading, hasRun, errorMsg, statusMsg,
     page, pageSize, showCopyDropdown, explainResult1, activeTabType1,
     sortCol1, sortDir1, sortedResults1, cellEdits, editingCell, editValue, editMsg,
-    pane1ViewMode, showRowNumbers, autoFitColsPane1, userEditorHeight, dbType, locale, t
+    pane1ViewModes, showRowNumbers, autoFitColsPane1, userEditorHeight, dbType, locale, t
   ]);
 
   const memoizedResultGrid2 = React.useMemo(() => {
@@ -3033,7 +3044,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     results2, columns2, allResults2, activeTabIndex2, loading2, hasRun2, errorMsg2, statusMsg2,
     page2, pageSize2, showCopyDropdown2, explainResult2, activeTabType2,
     sortCol2, sortDir2, sortedResults2, cellEdits, editingCell, editValue, editMsg,
-    pane2ViewMode, showRowNumbers, autoFitColsPane2, userEditorHeight2, dbType, locale, t
+    pane2ViewModes, showRowNumbers, autoFitColsPane2, userEditorHeight2, dbType, locale, t
   ]);
 
   return (
