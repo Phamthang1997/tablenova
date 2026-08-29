@@ -71,5 +71,39 @@ Registered via `monaco.languages.registerInlineCompletionsProvider` for:
 ### 3.2. Settings & Preferences
 Configurable in User Preferences:
 - `enableGhostText: boolean` (Default: `true`)
-- `ghostTextMode: 'local' | 'hybrid' | 'ai'` (Default: `'local'`)
+- `ghostTextMode: 'local' | 'hybrid' | 'ai_only'` (Default: `'local'`)
 - `ghostTextDelayMs: number` (Default: `0`)
+
+---
+
+## 4. Implementation Roadmap & Target Files
+
+### 4.1. Core Engine Implementation
+- **`src/sql/sqlInlineCompletion.ts`** [NEW]:
+  - Register `monaco.languages.registerInlineCompletionsProvider` for supported dialects (`LanguageIdEnum.PG`, `LanguageIdEnum.MYSQL`, `LanguageIdEnum.GENERIC`).
+  - Implement `provideLocalInlineCompletion(model, position)` to parse current line context, query `catalog.ts` for schema foreign keys and column definitions, inspect `joinConditions.ts`, and match prefix against `sqlHistory`.
+  - Provide optional fallback to remote AI completion if `ghostTextMode === 'hybrid'` and local heuristics produce no candidate.
+
+### 4.2. Monaco Editor Integration
+- **`src/sql/editorOptions.ts`** [MODIFY]:
+  - Configure Monaco editor settings with `inlineSuggest: { enabled: true, mode: 'subMode' }`.
+- **`src/components/SqlEditor.tsx`** [MODIFY]:
+  - Mount inline completions provider lifecycle on editor instantiation.
+  - Display completion status badge or toggle indicator in the editor toolbar.
+
+### 4.3. User Configuration & Preferences
+- **`src/utils/aiConfig.ts` & Settings Modal** [MODIFY]:
+  - Add configuration keys:
+    - `enableGhostText`: toggle inline ghost text on/off.
+    - `ghostTextMode`: select between `'local'` (0ms, offline schema heuristics), `'hybrid'` (local first with AI fallback), or `'ai_only'`.
+    - `ghostTextDelayMs`: debounce threshold in milliseconds.
+
+---
+
+## 5. Key Advantages of the Local-First Architecture
+
+1. **Instantaneous Response (< 5ms Latency)**: Runs synchronously on keystrokes with no UI lag or typing stutter.
+2. **100% Privacy & Offline Security**: Database metadata, table definitions, and credentials never leave the workstation.
+3. **Zero Token Cost**: Unlimited auto-completions without requiring external API keys or recurring LLM expenses.
+4. **Deterministic Accuracy**: Column lists, foreign key joins, and primary key clauses always reflect actual in-memory database catalog schema.
+
