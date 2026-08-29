@@ -319,7 +319,13 @@ export const TabManager: React.FC<TabManagerProps> = ({
 
   useEffect(() => {
     const closeAll = () => {
-      setContextMenu((prev) => ({ ...prev, visible: false }));
+      // `prev` is returned UNCHANGED when the menu is already hidden, which is almost always.
+      // Spreading it unconditionally built a new object on every click anywhere in the app, and a
+      // new object is never `Object.is`-equal, so React could not bail out: every click in the SQL
+      // editor, the grid or the sidebar re-rendered the whole tab strip for nothing (measured at
+      // 0.5ms a click, the most expensive thing left in those commits). `setShowListDropdown(false)`
+      // needs no such guard — React already bails out on an identical primitive.
+      setContextMenu((prev) => (prev.visible ? { ...prev, visible: false } : prev));
       setShowListDropdown(false);
     };
     window.addEventListener('click', closeAll);
