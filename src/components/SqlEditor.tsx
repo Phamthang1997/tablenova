@@ -2906,6 +2906,34 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     );
   };
 
+  const editorOptions = React.useMemo(() => ({
+    ...SQL_EDITOR_OPTIONS,
+    fontSize: editorFontSize,
+    renderWhitespace: showInvisibleChars ? 'all' : 'none',
+    wordWrap: wordWrap ? 'on' : 'off',
+    readOnly: readOnly,
+  }), [editorFontSize, showInvisibleChars, wordWrap, readOnly]);
+
+  const memoizedResultGrid1 = React.useMemo(() => {
+    return renderResultGrid(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    results, columns, allResults, activeTabIndex, loading, hasRun, errorMsg, statusMsg,
+    page, pageSize, showCopyDropdown, explainResult1, activeTabType1,
+    sortCol1, sortDir1, sortedResults1, cellEdits, editingCell, editValue, editMsg,
+    pane1ViewMode, showRowNumbers, autoFitColsPane1, userEditorHeight, dbType, locale, t
+  ]);
+
+  const memoizedResultGrid2 = React.useMemo(() => {
+    return renderResultGrid(2);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    results2, columns2, allResults2, activeTabIndex2, loading2, hasRun2, errorMsg2, statusMsg2,
+    page2, pageSize2, showCopyDropdown2, explainResult2, activeTabType2,
+    sortCol2, sortDir2, sortedResults2, cellEdits, editingCell, editValue, editMsg,
+    pane2ViewMode, showRowNumbers, autoFitColsPane2, userEditorHeight2, dbType, locale, t
+  ]);
+
   return (
     <div className="sql-editor-container" ref={containerRef} style={{ display: 'flex', flexDirection: 'row', height: '100%', width: '100%', overflow: 'hidden', position: 'relative' }}>
       {/* Main Split Wrapper: holds Pane 1 and optional Pane 2 side-by-side or stacked */}
@@ -2955,13 +2983,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                   {t('sqlEditor.loadingEditor')}
                 </div>
               }
-              options={{
-                ...SQL_EDITOR_OPTIONS,
-                fontSize: editorFontSize,
-                renderWhitespace: showInvisibleChars ? 'all' : 'none',
-                wordWrap: wordWrap ? 'on' : 'off',
-                readOnly: readOnly,
-              }}
+              options={editorOptions}
             />
           </div>
 
@@ -2969,7 +2991,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
           {renderPaneActionBar(1)}
 
           {/* Result Grid 1 Section */}
-          {renderResultGrid(1)}
+          {memoizedResultGrid1}
         </div>
 
         {/* Resizer Divider Bar between Pane 1 & Pane 2 */}
@@ -3032,13 +3054,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                     {t('sqlEditor.loadingEditor')}
                   </div>
                 }
-                options={{
-                  ...SQL_EDITOR_OPTIONS,
-                  fontSize: editorFontSize,
-                  renderWhitespace: showInvisibleChars ? 'all' : 'none',
-                  wordWrap: wordWrap ? 'on' : 'off',
-                  readOnly: readOnly,
-                }}
+                options={editorOptions}
               />
             </div>
 
@@ -3046,7 +3062,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
             {renderPaneActionBar(2)}
 
             {/* Result Grid 2 Section */}
-            {renderResultGrid(2)}
+            {memoizedResultGrid2}
           </div>
         )}
       </div>

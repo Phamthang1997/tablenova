@@ -16,7 +16,7 @@ export interface MediaCellPreviewProps {
  * Smart Cell Component that preserves the original cell text content
  * while adding a compact, interactive image preview button on the right.
  */
-export const MediaCellPreview: React.FC<MediaCellPreviewProps> = ({
+export const MediaCellPreview: React.FC<MediaCellPreviewProps> = React.memo(({
   value,
   columnName = '',
   tableName,
@@ -133,4 +133,4 @@ export const MediaCellPreview: React.FC<MediaCellPreviewProps> = ({
       )}
     </>
   );
-};
+});
