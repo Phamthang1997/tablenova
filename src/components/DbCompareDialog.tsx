@@ -42,13 +42,14 @@ import {
 } from '../utils/compareHelper';
 import { Modal, ModalBody } from './Modal';
 
-interface DbCompareDialogProps {
+export interface DbCompareDialogProps {
   /** The connection this dialog reads its database list from. */
   connId: string;
   dbType: string;
   currentDb?: string;
   onClose: () => void;
   onOpenInSqlEditor?: (sql: string) => void;
+  asTab?: boolean;
 }
 
 const TONE_COLOR: Record<string, string> = {
@@ -213,6 +214,7 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
   currentDb,
   onClose,
   onOpenInSqlEditor,
+  asTab = false,
 }) => {
   const { t, i18n } = useTranslation();
   const isSqlite = dbType === 'sqlite';
@@ -1185,6 +1187,109 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
     </>
   );
 
+  const content = (
+    <>
+      {/* Unified Pipeline Control Card (DataGrip/Navicat Style) */}
+      <div className="db-compare-unified-card">
+        {/* Top: Pipeline Direction Row */}
+        <div className="db-compare-pipeline-row">
+          {sideCard('source')}
+
+          <div className="db-compare-pipeline-bridge">
+            <button
+              type="button"
+              className="db-compare-swap-circle-btn"
+              onClick={swap}
+              title={t('compare.swapSides')}
+            >
+              <ArrowLeftRight size={15} />
+            </button>
+            <span className="db-compare-bridge-label">A ➔ B</span>
+          </div>
+
+          {sideCard('target')}
+        </div>
+
+        {/* Bottom: Integrated Actions Toolbar Strip */}
+        <div className="db-compare-actions-strip">
+          <div style={{ display: 'flex', gap: '4px' }}>
+            <button
+              type="button"
+              className={`btn ${mode === 'structure' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setMode('structure')}
+              style={{ padding: '4px 12px', fontSize: '11px', height: '28px' }}
+            >
+              {t('compare.tabStructure')}
+            </button>
+            <button
+              type="button"
+              className={`btn ${mode === 'data' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setMode('data')}
+              style={{ padding: '4px 12px', fontSize: '11px', height: '28px' }}
+            >
+              {t('compare.tabData')}
+            </button>
+          </div>
+
+          <label className="db-compare-check-item">
+            <input type="checkbox" checked={includeDrops} onChange={(e) => setIncludeDrops(e.target.checked)} />
+            <span>{t('compare.includeDrops')}</span>
+          </label>
+
+          {mode === 'structure' && schemaResult && (
+            <DiffProgressBar summary={schemaResult.summary} />
+          )}
+
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={!!busy || !sideReady}
+            onClick={() => (mode === 'structure' ? runSchemaCompare() : runOverview())}
+            title={sideReady ? undefined : t('compare.pickSidesFirst')}
+            style={{ marginLeft: 'auto', padding: '5px 16px', fontSize: '11.5px', height: '28px', display: 'flex', alignItems: 'center', gap: '6px' }}
+          >
+            {busy ? <Loader size={13} className="loading-spinner" /> : <Play size={13} fill="currentColor" />}
+            <span>{mode === 'structure' ? t('compare.runStructure') : t('compare.runOverview')}</span>
+          </button>
+        </div>
+      </div>
+
+      {busy && (
+        <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)', display: 'flex', alignItems: 'center', gap: '6px', padding: '0 4px' }}>
+          <Loader size={12} className="loading-spinner" />
+          {busy}
+        </div>
+      )}
+      {notice && !busy && <div style={{ fontSize: '11px', color: 'var(--st-ok)', padding: '0 4px' }}>{notice}</div>}
+      {error && (
+        <div style={{ fontSize: '11px', color: 'var(--st-danger)', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '6px', padding: '8px 12px' }}>
+          {error}
+        </div>
+      )}
+
+      {mode === 'structure' ? structurePane : dataPane}
+    </>
+  );
+
+  if (asTab) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, height: '100%', width: '100%', padding: '16px 20px', gap: '12px', overflowY: 'auto', boxSizing: 'border-box', background: 'var(--win-bg-window)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+          <ArrowLeftRight size={16} style={{ color: 'var(--win-accent)' }} />
+          <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--win-text-primary)' }}>
+            {t('compare.title')}
+          </span>
+          {currentDb && (
+            <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '4px', background: 'var(--win-bg-hover)', border: '1px solid var(--win-border)', color: 'var(--win-text-secondary)' }}>
+              {currentDb}
+            </span>
+          )}
+        </div>
+        {content}
+      </div>
+    );
+  }
+
   return (
     <Modal
       title={t('compare.title')}
@@ -1196,85 +1301,7 @@ export const DbCompareDialog: React.FC<DbCompareDialogProps> = ({
       zIndex={10000}
     >
       <ModalBody style={{ padding: '14px 18px', gap: '12px', flex: 1 }}>
-        {/* Unified Pipeline Control Card (DataGrip/Navicat Style) */}
-        <div className="db-compare-unified-card">
-          {/* Top: Pipeline Direction Row */}
-          <div className="db-compare-pipeline-row">
-            {sideCard('source')}
-
-            <div className="db-compare-pipeline-bridge">
-              <button
-                type="button"
-                className="db-compare-swap-circle-btn"
-                onClick={swap}
-                title={t('compare.swapSides')}
-              >
-                <ArrowLeftRight size={15} />
-              </button>
-              <span className="db-compare-bridge-label">A ➔ B</span>
-            </div>
-
-            {sideCard('target')}
-          </div>
-
-          {/* Bottom: Integrated Actions Toolbar Strip */}
-          <div className="db-compare-actions-strip">
-            <div style={{ display: 'flex', gap: '4px' }}>
-              <button
-                type="button"
-                className={`btn ${mode === 'structure' ? 'btn-primary' : 'btn-secondary'}`}
-                onClick={() => setMode('structure')}
-                style={{ padding: '4px 12px', fontSize: '11px', height: '28px' }}
-              >
-                {t('compare.tabStructure')}
-              </button>
-              <button
-                type="button"
-                className={`btn ${mode === 'data' ? 'btn-primary' : 'btn-secondary'}`}
-                onClick={() => setMode('data')}
-                style={{ padding: '4px 12px', fontSize: '11px', height: '28px' }}
-              >
-                {t('compare.tabData')}
-              </button>
-            </div>
-
-            <label className="db-compare-check-item">
-              <input type="checkbox" checked={includeDrops} onChange={(e) => setIncludeDrops(e.target.checked)} />
-              <span>{t('compare.includeDrops')}</span>
-            </label>
-
-            {mode === 'structure' && schemaResult && (
-              <DiffProgressBar summary={schemaResult.summary} />
-            )}
-
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={!!busy || !sideReady}
-              onClick={() => (mode === 'structure' ? runSchemaCompare() : runOverview())}
-              title={sideReady ? undefined : t('compare.pickSidesFirst')}
-              style={{ marginLeft: 'auto', padding: '5px 16px', fontSize: '11.5px', height: '28px', display: 'flex', alignItems: 'center', gap: '6px' }}
-            >
-              {busy ? <Loader size={13} className="loading-spinner" /> : <Play size={13} fill="currentColor" />}
-              <span>{mode === 'structure' ? t('compare.runStructure') : t('compare.runOverview')}</span>
-            </button>
-          </div>
-        </div>
-
-        {busy && (
-          <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)', display: 'flex', alignItems: 'center', gap: '6px', padding: '0 4px' }}>
-            <Loader size={12} className="loading-spinner" />
-            {busy}
-          </div>
-        )}
-        {notice && !busy && <div style={{ fontSize: '11px', color: 'var(--st-ok)', padding: '0 4px' }}>{notice}</div>}
-        {error && (
-          <div style={{ fontSize: '11px', color: 'var(--st-danger)', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '6px', padding: '8px 12px' }}>
-            {error}
-          </div>
-        )}
-
-        {mode === 'structure' ? structurePane : dataPane}
+        {content}
       </ModalBody>
     </Modal>
   );

@@ -346,8 +346,6 @@ export const App: React.FC = () => {
   // Which DatabaseInfoModal tab opens: 'current' when entered from "Database info",
   // 'all' when entered from "Statistics for all databases" in the Databases menu.
   const [dbInfoTab, setDbInfoTab] = useState<'current' | 'all'>('current');
-  const [showSchemaMigration, setShowSchemaMigration] = useState(false);
-  const [showDbCompare, setShowDbCompare] = useState(false);
   const [showMcpSettings, setShowMcpSettings] = useState(false);
   // Data Generator: the table preselected when entered from a table's context menu.
   const [showDataGen, setShowDataGen] = useState(false);
@@ -1897,6 +1895,44 @@ export const App: React.FC = () => {
     setActiveTabId(tabId);
   };
 
+  const handleOpenSchemaMigration = () => {
+    const tabId = `schema_migration_${activeConnIdState}`;
+    const existing = visibleTabs.find((tb) => tb.id === tabId);
+    if (existing) {
+      setActiveTabId(tabId);
+      return;
+    }
+    const label = `Diff: ${connection?.dbName || 'Schema'}`;
+    const newTab: TabInfo = {
+      id: tabId,
+      connId: activeConnIdState,
+      type: 'schema-migration',
+      name: label,
+      label,
+    };
+    setTabs((prev) => [...prev, newTab]);
+    setActiveTabId(tabId);
+  };
+
+  const handleOpenDbCompare = () => {
+    const tabId = `db_compare_${activeConnIdState}`;
+    const existing = visibleTabs.find((tb) => tb.id === tabId);
+    if (existing) {
+      setActiveTabId(tabId);
+      return;
+    }
+    const label = `Compare: ${connection?.dbName || 'Databases'}`;
+    const newTab: TabInfo = {
+      id: tabId,
+      connId: activeConnIdState,
+      type: 'db-compare',
+      name: label,
+      label,
+    };
+    setTabs((prev) => [...prev, newTab]);
+    setActiveTabId(tabId);
+  };
+
   /**
    * The tab whose panel is on screen — looked up in `visibleTabs`, not `tabs`.
    *
@@ -2109,8 +2145,8 @@ export const App: React.FC = () => {
                 onOpenDbInfo={() => { setDbInfoTab('current'); setShowDbInfoModal(true); }}
                 onOpenProcessMonitor={handleOpenProcessMonitor}
                 onOpenAllDbStats={() => { setDbInfoTab('all'); setShowDbInfoModal(true); }}
-                onSchemaMigration={() => setShowSchemaMigration(true)}
-                onCompareDatabases={() => setShowDbCompare(true)}
+                onSchemaMigration={handleOpenSchemaMigration}
+                onCompareDatabases={handleOpenDbCompare}
                 onOpenErDiagram={handleOpenErDiagram}
                 onMcpSettings={() => setShowMcpSettings(true)}
                 onGenerateData={(tableName) => {
@@ -2245,6 +2281,24 @@ export const App: React.FC = () => {
                         connId={activeTab.connId || activeConnIdState}
                         databaseName={connection?.dbName}
                         onClose={() => handleCloseTab(activeTab.id)}
+                      />
+                    ) : activeTab.type === 'schema-migration' && connection ? (
+                      <SchemaMigration
+                        key={activeConnIdState + '|' + activeTab.id}
+                        dbType={connection.dbType}
+                        database={connection.dbName}
+                        asTab={true}
+                        onClose={() => handleCloseTab(activeTab.id)}
+                      />
+                    ) : activeTab.type === 'db-compare' && connection ? (
+                      <DbCompareDialog
+                        key={activeConnIdState + '|' + activeTab.id}
+                        connId={activeTab.connId || activeConnIdState}
+                        dbType={connection.dbType}
+                        currentDb={connection.dbName}
+                        asTab={true}
+                        onClose={() => handleCloseTab(activeTab.id)}
+                        onOpenInSqlEditor={openQueryTabWithSql}
                       />
                     ) : null}
                   </div>
@@ -2633,29 +2687,10 @@ export const App: React.FC = () => {
         onDatabaseOpened={handleDatabaseOpened}
       />
 
-      {/* Diff Schema & Migration Modal */}
-      {showSchemaMigration && connection && (
-        <SchemaMigration
-          dbType={connection.dbType}
-          database={connection.dbName}
-          onClose={() => setShowSchemaMigration(false)}
-        />
-      )}
-
       {/* Comparing two databases (structure + data) */}
       {/* Not gated on `connection`: the server, its token and the request log are app-wide, and the
           screen has to be reachable to turn the thing OFF even with nothing open. */}
       {showMcpSettings && <McpServerSettingsModal onClose={() => setShowMcpSettings(false)} />}
-
-      {showDbCompare && connection && (
-        <DbCompareDialog
-          connId={activeConnIdState}
-          dbType={connection.dbType}
-          currentDb={connection.dbName}
-          onClose={() => setShowDbCompare(false)}
-          onOpenInSqlEditor={openQueryTabWithSql}
-        />
-      )}
 
       {/* Bulk test-data generation */}
       {showDataGen && connection && (
