@@ -18,9 +18,20 @@ ChartJS.register(...registerables);
 /**
  * Builds Chart.js configuration options based on user settings and UI theme.
  */
+/**
+ * Above this many points the entry animation is dropped.
+ *
+ * An animation is not one draw, it is ~18 frames of redrawing EVERY element, so its cost is the
+ * per-frame draw multiplied by the frame count — the one place where a big chart stops being slow
+ * and becomes a freeze. Under a few hundred elements the movement is worth it and costs nothing;
+ * past that it is a stutter the user has to sit through before seeing their data.
+ */
+const ANIMATION_POINT_LIMIT = 300;
+
 export function buildChartOptions(
   config: ChartConfig,
-  isDarkMode: boolean = true
+  isDarkMode: boolean = true,
+  pointCount: number = 0
 ): ChartOptions {
   const { chartType, isStacked, showGridlines, showLegend } = config;
   const isHorizontal = chartType === 'horizontalBar';
@@ -37,9 +48,7 @@ export function buildChartOptions(
     responsive: true,
     maintainAspectRatio: false,
     indexAxis: isHorizontal ? 'y' : 'x',
-    animation: {
-      duration: 300,
-    },
+    animation: pointCount > ANIMATION_POINT_LIMIT ? false : { duration: 300 },
     plugins: {
       legend: {
         display: showLegend,
@@ -129,7 +138,7 @@ export function createChartInstance(
       labels: processedData.labels,
       datasets: processedData.datasets as any,
     },
-    options: buildChartOptions(config, isDarkMode),
+    options: buildChartOptions(config, isDarkMode, processedData.labels.length),
   };
 
   return new ChartJS(canvas, chartConfig);

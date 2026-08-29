@@ -43,7 +43,10 @@ export interface ProcessedChartData {
     pointBackgroundColor?: string;
   }[];
   stats: {
+    /** Every point the data produced — the KPI cards summarise all of these. */
     totalPoints: number;
+    /** How many were actually handed to Chart.js; below `totalPoints` when the cap applied. */
+    plottedPoints: number;
     columnSummaries: {
       column: string;
       sum: number;
@@ -56,6 +59,43 @@ export interface ProcessedChartData {
 
 // Curated modern vibrant HSL color palette
 const BASE_HUES = [217, 142, 262, 330, 38, 187, 15, 290, 84, 199];
+
+/**
+ * The most points ever drawn, per series.
+ *
+ * A raw (`aggregation: 'none'`) chart of a query result is one point per ROW, and the SQL editor
+ * happily returns tens of thousands. Chart.js then lays out that many category ticks, and draws
+ * that many elements per animation frame — for a picture that cannot be read anyway: 19,000 bars
+ * across an 800px canvas is 0.04px each. So the cap costs no information that was ever visible,
+ * and `stats.plottedPoints` vs `totalPoints` lets the UI say so out loud rather than silently
+ * showing a slice of the data.
+ *
+ * It is applied AFTER sorting, which is what makes it useful rather than arbitrary: with sort set
+ * to y-desc the chart becomes "the top 2,000", not "the first 2,000 the database happened to
+ * return".
+ */
+export const MAX_PLOT_POINTS = 2000;
+
+/**
+ * `Math.min(...values)` passes every element as a separate function ARGUMENT, and V8 throws
+ * `RangeError: Maximum call stack size exceeded` somewhere above ~100k of them — the chart dies
+ * outright rather than being slow. Both call sites below can reach that: an un-aggregated chart
+ * summarises one value per row, and a `min`/`max` aggregation over a low-cardinality X column puts
+ * nearly every row in one group. Folding takes no arguments and no stack.
+ *
+ * Both return the identity value for an empty array; every call site guards for that already.
+ */
+function minOf(values: number[]): number {
+  let out = Infinity;
+  for (const v of values) if (v < out) out = v;
+  return out;
+}
+
+function maxOf(values: number[]): number {
+  let out = -Infinity;
+  for (const v of values) if (v > out) out = v;
+  return out;
+}
 
 /**
  * Analyzes columns and their data types from rows.
@@ -176,7 +216,7 @@ export function processChartData(
     return {
       labels: [],
       datasets: [],
-      stats: { totalPoints: 0, columnSummaries: [] },
+      stats: { totalPoints: 0, plottedPoints: 0, columnSummaries: [] },
     };
   }
 
@@ -243,10 +283,10 @@ export function processChartData(
             aggregatedMetrics[yCol] = values.length;
             break;
           case 'min':
-            aggregatedMetrics[yCol] = Math.min(...values);
+            aggregatedMetrics[yCol] = minOf(values);
             break;
           case 'max':
-            aggregatedMetrics[yCol] = Math.max(...values);
+            aggregatedMetrics[yCol] = maxOf(values);
             break;
           default:
             aggregatedMetrics[yCol] = values[0] || 0;
@@ -271,11 +311,20 @@ export function processChartData(
   }
 
   // 3. Build Labels and Datasets
-  const labels = intermediateData.map((d) => d.xVal);
+  //
+  // The cap lands here, after sorting and before anything is built: `labels` and every dataset are
+  // derived from `plotted`, while the KPI summary below deliberately still reads the FULL
+  // `intermediateData` — the cards say "sum / avg / min / max of your data", and answering that
+  // from a truncated slice would be a wrong number rather than a smaller chart.
+  const totalPoints = intermediateData.length;
+  const plotted =
+    totalPoints > MAX_PLOT_POINTS ? intermediateData.slice(0, MAX_PLOT_POINTS) : intermediateData;
+
+  const labels = plotted.map((d) => d.xVal);
   const isPieOrDonut = chartType === 'pie' || chartType === 'donut';
 
   const datasets = yColumns.map((yCol, colIdx) => {
-    const data = intermediateData.map((d) => Number((d.metrics[yCol] || 0).toFixed(2)));
+    const data = plotted.map((d) => Number((d.metrics[yCol] || 0).toFixed(2)));
     const hue = BASE_HUES[colIdx % BASE_HUES.length];
 
     if (isPieOrDonut) {
@@ -327,8 +376,8 @@ export function processChartData(
     const vals = intermediateData.map((d) => d.metrics[yCol] || 0);
     const sum = vals.reduce((a, b) => a + b, 0);
     const avg = vals.length > 0 ? sum / vals.length : 0;
-    const min = vals.length > 0 ? Math.min(...vals) : 0;
-    const max = vals.length > 0 ? Math.max(...vals) : 0;
+    const min = vals.length > 0 ? minOf(vals) : 0;
+    const max = vals.length > 0 ? maxOf(vals) : 0;
 
     return { column: yCol, sum, avg, min, max };
   });
@@ -337,7 +386,8 @@ export function processChartData(
     labels,
     datasets,
     stats: {
-      totalPoints: labels.length,
+      totalPoints,
+      plottedPoints: labels.length,
       columnSummaries,
     },
   };

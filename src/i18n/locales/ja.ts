@@ -2811,6 +2811,12 @@ const ja: typeof en = {
     emptyDesc: '新しいテーブルを作成するか、既存のデータベースに接続してER図を生成してください。',
     tabTitle: 'ER図',
   },
+
+  chart: {
+    plotLimited: '{{total}} 件中 {{n}} 件を表示',
+    plotLimitedHint:
+      'グラフに描画されるのは最大 {{n}} 点です。集計や並べ替えでどの点を描画するか選べます。上部のサマリーカードは {{total}} 件すべてを対象にしています。',
+  },
 };
 
 export default ja;

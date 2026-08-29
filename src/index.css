@@ -16288,6 +16288,16 @@ input.rename-input {
   border: 1px solid var(--win-border, rgba(255, 255, 255, 0.08));
 }
 
+/* Same pill as `.bi-badge-count`, in the warning colour: the chart is showing fewer points than
+   the data has. It sits next to the row count on purpose — the two numbers only make sense read
+   together. */
+.bi-badge-count.bi-badge-warn {
+  background: transparent;
+  color: var(--st-warn);
+  border-color: var(--st-warn);
+  cursor: help;
+}
+
 .bi-close-btn {
   background: transparent;
   border: none;

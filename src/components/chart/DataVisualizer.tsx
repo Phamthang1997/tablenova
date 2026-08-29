@@ -5,6 +5,7 @@
  */
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   BarChart3, X, AlertCircle
 } from 'lucide-react';
@@ -13,6 +14,7 @@ import {
   getDefaultChartConfig,
   processChartData,
   formatCompactNumber,
+  MAX_PLOT_POINTS,
   type ChartConfig,
   type ProcessedChartData,
   type ColumnMeta,
@@ -37,6 +39,7 @@ export const DataVisualizer: React.FC<DataVisualizerProps> = ({
   onClose,
   isModal = false,
 }) => {
+  const { t, i18n } = useTranslation();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const chartInstanceRef = useRef<ChartJS | null>(null);
   const [isCopied, setIsCopied] = useState<boolean>(false);
@@ -170,6 +173,22 @@ export const DataVisualizer: React.FC<DataVisualizerProps> = ({
             {title || (tableName ? `Visualization: ${tableName}` : 'Data Visualizer & BI Lite')}
           </span>
           <span className="bi-badge-count">{rows.length} rows</span>
+          {/* Said out loud rather than silently drawing a slice: the cap changes WHICH data is on
+              screen, so the row count next to it would otherwise be a lie. */}
+          {processedData.stats.plottedPoints < processedData.stats.totalPoints && (
+            <span
+              className="bi-badge-count bi-badge-warn"
+              title={t('chart.plotLimitedHint', {
+                n: MAX_PLOT_POINTS.toLocaleString(i18n.language),
+                total: processedData.stats.totalPoints.toLocaleString(i18n.language),
+              })}
+            >
+              {t('chart.plotLimited', {
+                n: processedData.stats.plottedPoints.toLocaleString(i18n.language),
+                total: processedData.stats.totalPoints.toLocaleString(i18n.language),
+              })}
+            </span>
+          )}
         </div>
 
         {onClose && (

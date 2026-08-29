@@ -2816,6 +2816,12 @@ const vi: typeof en = {
     emptyDesc: 'Tạo bảng mới hoặc kết nối đến database có sẵn để tự động vẽ sơ đồ quan hệ.',
     tabTitle: 'Sơ đồ ER',
   },
+
+  chart: {
+    plotLimited: 'hiển thị {{n}} / {{total}}',
+    plotLimitedHint:
+      'Biểu đồ vẽ tối đa {{n}} điểm. Gộp dữ liệu bằng một hàm tổng hợp, hoặc sắp xếp lại, để chọn điểm nào được vẽ — các thẻ tổng kết phía trên vẫn tính trên đủ {{total}}.',
+  },
 };
 
 export default vi;

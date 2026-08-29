@@ -2844,6 +2844,12 @@ const en = {
     emptyDesc: 'Create tables or connect to an existing database to generate the ER diagram.',
     tabTitle: 'ER Diagram',
   },
+
+  chart: {
+    plotLimited: 'showing {{n}} of {{total}}',
+    plotLimitedHint:
+      'The chart draws at most {{n}} points. Group the data with an aggregation, or sort it, to choose which ones — the summary cards above still cover all {{total}}.',
+  },
 };
 
 export default en;
