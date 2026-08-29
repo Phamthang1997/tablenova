@@ -13,7 +13,8 @@ import {
   exportToMermaid,
   exportToDbml,
   exportToSql,
-  captureDiagramToPng,
+  generateFullDiagramSvg,
+  exportDiagramToPng,
   downloadFile,
 } from './erExportHelper';
 import { ERTableNode } from './ERTableNode';
@@ -337,16 +338,18 @@ export const ERDiagramView: React.FC<ERDiagramViewProps> = ({
         break;
       }
       case 'svg': {
-        if (!svgRef.current) return;
-        const svgContent = new XMLSerializer().serializeToString(svgRef.current);
-        downloadFile(svgContent, `${baseName}.svg`, 'image/svg+xml');
+        const theme = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+        const { svgString } = generateFullDiagramSvg(visibleTables, relationships, positions, detailLevel, theme);
+        downloadFile(svgString, `${baseName}.svg`, 'image/svg+xml');
         break;
       }
       case 'png':
       case 'clipboard': {
-        if (!svgRef.current) return;
         try {
-          const { blob } = await captureDiagramToPng(svgRef.current, 2.0);
+          const theme = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+          const bg = theme === 'light' ? '#f8fafc' : '#0f172a';
+          const { svgString, width, height } = generateFullDiagramSvg(visibleTables, relationships, positions, detailLevel, theme);
+          const { blob } = await exportDiagramToPng(svgString, width, height, 2.0, bg);
           if (format === 'clipboard') {
             await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
           } else {
