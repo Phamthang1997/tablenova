@@ -2350,6 +2350,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
 
     const activeResult = pAllResults[pActiveTabIndex] || { data: [], columns: [], affectedRows: 0, query: '' };
     const totalPagesNum = Math.ceil(pResults.length / pPageSize) || 1;
+    const pSortCol = paneId === 1 ? sortCol1 : sortCol2;
+    const pSortDir = paneId === 1 ? sortDir1 : sortDir2;
     const sortedResults = paneId === 1 ? sortedResults1 : sortedResults2;
 
     const pEditability = editabilityInMode(activeResult.query || '', pColumns);
