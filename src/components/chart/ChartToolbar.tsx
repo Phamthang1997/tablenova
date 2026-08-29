@@ -9,11 +9,25 @@
  */
 
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   BarChart2, LineChart, PieChart, TrendingUp, Layers,
   Grid, Eye, Download, Copy, Check
 } from 'lucide-react';
 import type { ChartConfig, ChartType, AggregationFn, SortOption, ColumnMeta } from './chartDataEngine';
+
+/**
+ * Module level, holding translation KEYS rather than text — the table is then built once instead of
+ * on every render, and `t()` still runs inside the component so a language switch re-renders it.
+ */
+const CHART_TYPES: { type: ChartType; labelKey: 'chart.typeBar' | 'chart.typeHBar' | 'chart.typeLine' | 'chart.typeArea' | 'chart.typePie' | 'chart.typeDonut'; icon: React.ReactNode }[] = [
+  { type: 'bar', labelKey: 'chart.typeBar', icon: <BarChart2 size={14} /> },
+  { type: 'horizontalBar', labelKey: 'chart.typeHBar', icon: <BarChart2 size={14} className="bi-rotate-90" /> },
+  { type: 'line', labelKey: 'chart.typeLine', icon: <LineChart size={14} /> },
+  { type: 'area', labelKey: 'chart.typeArea', icon: <TrendingUp size={14} /> },
+  { type: 'pie', labelKey: 'chart.typePie', icon: <PieChart size={14} /> },
+  { type: 'donut', labelKey: 'chart.typeDonut', icon: <PieChart size={14} /> },
+];
 
 export interface ChartToolbarProps {
   config: ChartConfig;
@@ -32,14 +46,7 @@ export const ChartToolbar: React.FC<ChartToolbarProps> = ({
   onDownloadImage,
   isCopied,
 }) => {
-  const chartTypes: { type: ChartType; label: string; icon: React.ReactNode }[] = [
-    { type: 'bar', label: 'Bar', icon: <BarChart2 size={14} /> },
-    { type: 'horizontalBar', label: 'H-Bar', icon: <BarChart2 size={14} className="bi-rotate-90" /> },
-    { type: 'line', label: 'Line', icon: <LineChart size={14} /> },
-    { type: 'area', label: 'Area', icon: <TrendingUp size={14} /> },
-    { type: 'pie', label: 'Pie', icon: <PieChart size={14} /> },
-    { type: 'donut', label: 'Donut', icon: <PieChart size={14} /> },
-  ];
+  const { t } = useTranslation();
 
   const handleTypeChange = (type: ChartType) => {
     onChangeConfig({ ...config, chartType: type });
@@ -73,20 +80,23 @@ export const ChartToolbar: React.FC<ChartToolbarProps> = ({
     <div className="bi-toolbar-container">
       {/* Chart Type Selector Group */}
       <div className="bi-toolbar-section">
-        <span className="bi-section-label">Type:</span>
+        <span className="bi-section-label">{t('chart.typeLabel')}</span>
         <div className="bi-btn-group">
-          {chartTypes.map((item) => (
-            <button
-              key={item.type}
-              type="button"
-              className={`bi-type-btn ${config.chartType === item.type ? 'active' : ''}`}
-              onClick={() => handleTypeChange(item.type)}
-              title={`${item.label} Chart`}
-            >
-              {item.icon}
-              <span>{item.label}</span>
-            </button>
-          ))}
+          {CHART_TYPES.map((item) => {
+            const label = t(item.labelKey);
+            return (
+              <button
+                key={item.type}
+                type="button"
+                className={`bi-type-btn ${config.chartType === item.type ? 'active' : ''}`}
+                onClick={() => handleTypeChange(item.type)}
+                title={t('chart.typeButtonTitle', { name: label })}
+              >
+                {item.icon}
+                <span>{label}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -94,12 +104,12 @@ export const ChartToolbar: React.FC<ChartToolbarProps> = ({
 
       {/* Dimension (X-Axis) Dropdown */}
       <div className="bi-toolbar-section">
-        <span className="bi-section-label">X Axis:</span>
+        <span className="bi-section-label">{t('chart.xAxisLabel')}</span>
         <select
           className="bi-select"
           value={config.xColumn}
           onChange={handleXChange}
-          title="Select X-Axis Dimension"
+          title={t('chart.xAxisTitle')}
         >
           {columns.map((col) => (
             <option key={col.name} value={col.name}>
@@ -111,7 +121,7 @@ export const ChartToolbar: React.FC<ChartToolbarProps> = ({
 
       {/* Measure (Y-Axis) Multi-Selection Pills */}
       <div className="bi-toolbar-section">
-        <span className="bi-section-label">Y Metric:</span>
+        <span className="bi-section-label">{t('chart.yMetricLabel')}</span>
         <div className="bi-measure-pills">
           {[...columns]
             .sort((a, b) => {
@@ -127,7 +137,7 @@ export const ChartToolbar: React.FC<ChartToolbarProps> = ({
                   type="button"
                   className={`bi-measure-pill ${isSelected ? 'selected' : ''}`}
                   onClick={() => handleYToggle(col.name)}
-                  title={`Toggle metric ${col.name}`}
+                  title={t('chart.toggleMetric', { col: col.name })}
                 >
                   {col.name}
                 </button>
@@ -140,14 +150,16 @@ export const ChartToolbar: React.FC<ChartToolbarProps> = ({
 
       {/* Aggregation Function Dropdown */}
       <div className="bi-toolbar-section">
-        <span className="bi-section-label">Aggregate:</span>
+        <span className="bi-section-label">{t('chart.aggregateLabel')}</span>
         <select
           className="bi-select"
           value={config.aggregation}
           onChange={handleAggChange}
-          title="Select Aggregation Function"
+          title={t('chart.aggregateTitle')}
         >
-          <option value="none">Raw Rows</option>
+          {/* SUM / AVG / COUNT / MIN / MAX stay as they are: they name SQL aggregate functions,
+              the same way keywords are left alone everywhere else in the app. */}
+          <option value="none">{t('chart.aggRaw')}</option>
           <option value="sum">SUM</option>
           <option value="avg">AVG</option>
           <option value="count">COUNT</option>
@@ -158,18 +170,18 @@ export const ChartToolbar: React.FC<ChartToolbarProps> = ({
 
       {/* Sorting Dropdown */}
       <div className="bi-toolbar-section">
-        <span className="bi-section-label">Sort:</span>
+        <span className="bi-section-label">{t('chart.sortLabel')}</span>
         <select
           className="bi-select"
           value={config.sortBy}
           onChange={handleSortChange}
-          title="Sort Chart Order"
+          title={t('chart.sortTitle')}
         >
-          <option value="none">Default</option>
-          <option value="x-asc">X (A → Z)</option>
-          <option value="x-desc">X (Z → A)</option>
-          <option value="y-desc">Y (High → Low)</option>
-          <option value="y-asc">Y (Low → High)</option>
+          <option value="none">{t('chart.sortDefault')}</option>
+          <option value="x-asc">{t('chart.sortXAsc')}</option>
+          <option value="x-desc">{t('chart.sortXDesc')}</option>
+          <option value="y-desc">{t('chart.sortYDesc')}</option>
+          <option value="y-asc">{t('chart.sortYAsc')}</option>
         </select>
       </div>
 
@@ -182,7 +194,7 @@ export const ChartToolbar: React.FC<ChartToolbarProps> = ({
             type="button"
             className={`bi-icon-toggle ${config.isStacked ? 'active' : ''}`}
             onClick={() => onChangeConfig({ ...config, isStacked: !config.isStacked })}
-            title="Toggle Stacked Bars"
+            title={t('chart.toggleStacked')}
           >
             <Layers size={14} />
           </button>
@@ -192,7 +204,7 @@ export const ChartToolbar: React.FC<ChartToolbarProps> = ({
           type="button"
           className={`bi-icon-toggle ${config.showGridlines ? 'active' : ''}`}
           onClick={() => onChangeConfig({ ...config, showGridlines: !config.showGridlines })}
-          title="Toggle Gridlines"
+          title={t('chart.toggleGridlines')}
         >
           <Grid size={14} />
         </button>
@@ -201,7 +213,7 @@ export const ChartToolbar: React.FC<ChartToolbarProps> = ({
           type="button"
           className={`bi-icon-toggle ${config.showLegend ? 'active' : ''}`}
           onClick={() => onChangeConfig({ ...config, showLegend: !config.showLegend })}
-          title="Toggle Legend"
+          title={t('chart.toggleLegend')}
         >
           <Eye size={14} />
         </button>
@@ -215,20 +227,20 @@ export const ChartToolbar: React.FC<ChartToolbarProps> = ({
           type="button"
           className="bi-action-btn"
           onClick={onCopyImage}
-          title="Copy chart image to clipboard"
+          title={t('chart.copyTitle')}
         >
           {isCopied ? <Check size={13} className="bi-text-success" /> : <Copy size={13} />}
-          <span>{isCopied ? 'Copied' : 'Copy'}</span>
+          <span>{isCopied ? t('chart.copied') : t('chart.copy')}</span>
         </button>
 
         <button
           type="button"
           className="bi-action-btn primary"
           onClick={onDownloadImage}
-          title="Download chart image as PNG"
+          title={t('chart.exportTitle')}
         >
           <Download size={13} />
-          <span>Export PNG</span>
+          <span>{t('chart.exportPng')}</span>
         </button>
       </div>
     </div>

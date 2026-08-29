@@ -19,7 +19,7 @@ import {
   type ProcessedChartData,
   type ColumnMeta,
 } from './chartDataEngine';
-import { createChartInstance, ChartJS } from './chartSetup';
+import { createChartInstance, buildChartOptions, chartJsTypeFor, ChartJS } from './chartSetup';
 import { ChartToolbar } from './ChartToolbar';
 
 export interface DataVisualizerProps {
@@ -90,40 +90,75 @@ export const DataVisualizer: React.FC<DataVisualizerProps> = ({
     return processChartData(rows, config, isDarkMode);
   }, [rows, config, isDarkMode]);
 
-  // 4. Render and update Chart.js instance on Canvas
+  // 4. Render the chart, updating the live instance in place wherever Chart.js allows it.
+  //
+  // This effect used to destroy and rebuild the whole instance on every run, and it runs for every
+  // toolbar change — ticking "show legend" threw away the chart and re-parsed every point to draw
+  // the same picture with one box on it. `chart.update()` re-reads data and options and redraws,
+  // which is what Chart.js provides for exactly this.
+  //
+  // Only a change of Chart.js TYPE still rebuilds, since that is a different controller. Note this
+  // is the type Chart.js knows, not ours: bar <-> horizontal bar is one type with a different
+  // `indexAxis`, so that switch goes through the update path too.
+  //
+  // Consequence for the cleanup: it can no longer live here. A cleanup runs before EVERY next run
+  // of the effect, so destroying there would leave nothing to update; the instance is torn down on
+  // unmount instead, by the effect below.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    // Safely destroy any existing chart attached to this canvas before creating a new one
-    const existingChart = ChartJS.getChart(canvas);
-    if (existingChart) {
-      existingChart.destroy();
-    }
-    if (chartInstanceRef.current) {
-      chartInstanceRef.current.destroy();
-      chartInstanceRef.current = null;
-    }
-
-    if (processedData.labels.length > 0 && processedData.datasets.length > 0) {
-      try {
-        chartInstanceRef.current = createChartInstance(canvas, processedData, config, isDarkMode);
-      } catch (err) {
-        console.error('Failed to create Chart.js instance:', err);
+    const destroyChart = () => {
+      // `getChart` covers an instance still attached to this canvas that we lost the ref to — a
+      // React strict-mode double-mount, or a hot reload.
+      const attached = ChartJS.getChart(canvas);
+      if (attached) attached.destroy();
+      if (chartInstanceRef.current) {
+        chartInstanceRef.current.destroy();
+        chartInstanceRef.current = null;
       }
+    };
+
+    if (processedData.labels.length === 0 || processedData.datasets.length === 0) {
+      destroyChart();
+      return;
     }
 
+    const chart = chartInstanceRef.current;
+    // `chart.config` is a union in Chart.js's own types and only one arm of it carries `type`. We
+    // always build with one, so the `in` check is simply how the compiler is told that.
+    const liveType = chart && 'type' in chart.config ? chart.config.type : null;
+    if (chart && liveType === chartJsTypeFor(config.chartType)) {
+      chart.data.labels = processedData.labels;
+      chart.data.datasets = processedData.datasets as any;
+      chart.options = buildChartOptions(config, isDarkMode, processedData.labels.length);
+      chart.update();
+      return;
+    }
+
+    destroyChart();
+    try {
+      chartInstanceRef.current = createChartInstance(canvas, processedData, config, isDarkMode);
+    } catch (err) {
+      console.error('Failed to create Chart.js instance:', err);
+    }
+  }, [processedData, config, isDarkMode]);
+
+  // Teardown, on unmount only. A canvas that outlives its Chart.js instance keeps the whole dataset
+  // alive through the instance's own registry, so this is not optional.
+  useEffect(() => {
+    const canvas = canvasRef.current;
     return () => {
-      const activeChart = ChartJS.getChart(canvas);
-      if (activeChart) {
-        activeChart.destroy();
+      if (canvas) {
+        const attached = ChartJS.getChart(canvas);
+        if (attached) attached.destroy();
       }
       if (chartInstanceRef.current) {
         chartInstanceRef.current.destroy();
         chartInstanceRef.current = null;
       }
     };
-  }, [processedData, config, isDarkMode]);
+  }, []);
 
   // Copy rendered chart as high-res PNG to clipboard
   const handleCopyImage = useCallback(async () => {
@@ -170,9 +205,11 @@ export const DataVisualizer: React.FC<DataVisualizerProps> = ({
         <div className="bi-header-title-group">
           <BarChart3 size={18} className="bi-header-icon" />
           <span className="bi-header-title">
-            {title || (tableName ? `Visualization: ${tableName}` : 'Data Visualizer & BI Lite')}
+            {title || (tableName ? t('chart.titleFor', { name: tableName }) : t('chart.titleDefault'))}
           </span>
-          <span className="bi-badge-count">{rows.length} rows</span>
+          <span className="bi-badge-count">
+            {t('chart.rows', { n: rows.length.toLocaleString(i18n.language) })}
+          </span>
           {/* Said out loud rather than silently drawing a slice: the cap changes WHICH data is on
               screen, so the row count next to it would otherwise be a lie. */}
           {processedData.stats.plottedPoints < processedData.stats.totalPoints && (
@@ -196,7 +233,7 @@ export const DataVisualizer: React.FC<DataVisualizerProps> = ({
             type="button"
             className="bi-close-btn"
             onClick={onClose}
-            title="Close Visualizer"
+            title={t('chart.close')}
           >
             <X size={16} />
           </button>
@@ -217,13 +254,13 @@ export const DataVisualizer: React.FC<DataVisualizerProps> = ({
       {hasData && processedData.stats.columnSummaries.length > 0 && (
         <div className="bi-kpi-bar">
           <div className="bi-kpi-card">
-            <span className="bi-kpi-label">Total Data Points</span>
-            <span className="bi-kpi-value">{processedData.stats.totalPoints}</span>
+            <span className="bi-kpi-label">{t('chart.kpiTotalPoints')}</span>
+            <span className="bi-kpi-value">{processedData.stats.totalPoints.toLocaleString(i18n.language)}</span>
           </div>
 
           {processedData.stats.columnSummaries.map((summary) => (
             <div key={summary.column} className="bi-kpi-card">
-              <span className="bi-kpi-label">{summary.column} (Total / Avg)</span>
+              <span className="bi-kpi-label">{t('chart.kpiColumn', { col: summary.column })}</span>
               <span className="bi-kpi-value">
                 {formatCompactNumber(summary.sum)}
                 <span className="bi-kpi-sub"> ~ {formatCompactNumber(summary.avg)}</span>
@@ -242,8 +279,8 @@ export const DataVisualizer: React.FC<DataVisualizerProps> = ({
         ) : (
           <div className="bi-empty-state">
             <AlertCircle size={32} className="bi-empty-icon" />
-            <span className="bi-empty-text">No numeric data or valid dimensions to visualize.</span>
-            <span className="bi-empty-sub">Select a different X or Y column from the toolbar.</span>
+            <span className="bi-empty-text">{t('chart.emptyTitle')}</span>
+            <span className="bi-empty-sub">{t('chart.emptyDesc')}</span>
           </div>
         )}
       </div>

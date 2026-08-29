@@ -117,6 +117,18 @@ export function buildChartOptions(
 }
 
 /**
+ * Chart.js's own name for one of our chart types — two of ours are the same Chart.js type wearing
+ * different options (`horizontalBar` is a `bar` with `indexAxis: 'y'`).
+ *
+ * Exported because `DataVisualizer` compares it against a live instance's type to decide whether it
+ * can update in place or has to rebuild; keeping the mapping in one place is what stops those two
+ * decisions from drifting apart.
+ */
+export function chartJsTypeFor(chartType: ChartConfig['chartType']): string {
+  return chartType === 'horizontalBar' ? 'bar' : chartType === 'donut' ? 'doughnut' : chartType;
+}
+
+/**
  * Initializes or updates a Chart.js instance on a canvas element.
  */
 export function createChartInstance(
@@ -125,12 +137,7 @@ export function createChartInstance(
   config: ChartConfig,
   isDarkMode: boolean = true
 ): ChartJS {
-  const chartType =
-    config.chartType === 'horizontalBar'
-      ? 'bar'
-      : config.chartType === 'donut'
-      ? 'doughnut'
-      : config.chartType;
+  const chartType = chartJsTypeFor(config.chartType);
 
   const chartConfig: ChartConfiguration = {
     type: chartType as any,
