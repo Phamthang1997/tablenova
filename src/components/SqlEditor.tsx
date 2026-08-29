@@ -203,6 +203,66 @@ function applyLimitToSql(sqlText: string, limitOption: string): string {
   return modified ? newStmts.join('\n\n') : sqlText;
 }
 
+/** Where the caret is, as the toolbar spells it out. */
+interface CaretPos { line: number; column: number }
+
+/**
+ * The caret readout is the one thing on the toolbar that changes on every keystroke, every arrow
+ * key and every frame of a drag-selection — and it is read by nothing else. Held as `useState` on
+ * `SqlEditor` it re-rendered all 3,500 lines of it ~30 times a second for two numbers (measured:
+ * 83 commits in 2.5s, ~4ms each, all attributed to that one hook).
+ *
+ * So it lives outside React instead, in the smallest store that can notify one subscriber — the
+ * same shape as `utils/jobs.ts` and `utils/queryHistory.ts`, for the same reason. One store per
+ * pane, created per `SqlEditor` instance rather than at module level: several tabs stay mounted at
+ * once (see `QueryTabPanel` in App.tsx) and a module-level store would let them share a caret.
+ *
+ * `set` keeps the SAME object when the position has not moved, because `useSyncExternalStore`
+ * compares snapshots by identity and a fresh object every time would re-render on every event
+ * again — which is the bug this exists to remove.
+ */
+function createCaretStore() {
+  let pos: CaretPos = { line: 1, column: 1 };
+  const listeners = new Set<() => void>();
+  return {
+    get: () => pos,
+    set: (line: number, column: number) => {
+      if (pos.line === line && pos.column === column) return;
+      pos = { line, column };
+      listeners.forEach((fn) => fn());
+    },
+    subscribe: (fn: () => void) => {
+      listeners.add(fn);
+      return () => { listeners.delete(fn); };
+    },
+  };
+}
+
+type CaretStore = ReturnType<typeof createCaretStore>;
+
+/** Memoized so a `SqlEditor` render does not drag it along; `store` is a stable per-pane object. */
+const CaretReadout = React.memo(function CaretReadout({ store }: { store: CaretStore }) {
+  const pos = React.useSyncExternalStore(store.subscribe, store.get);
+  return <span className="sql-status-info">line {pos.line}, column {pos.column}</span>;
+});
+
+/**
+ * `<Editor>` from `@monaco-editor/react` is `memo()`'d, and a `loading` prop written inline as JSX
+ * is a new element on every render, which defeats that on its own. Rendered once here instead —
+ * it needs a component rather than a plain string because the text is translated.
+ */
+const EditorLoading: React.FC = () => {
+  const { t } = useTranslation();
+  return (
+    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', color: 'var(--win-text-secondary)', fontSize: '13px' }}>
+      {t('sqlEditor.loadingEditor')}
+    </div>
+  );
+};
+
+/** Created once: the whole point is that this element's identity never changes. */
+const EDITOR_LOADING = <EditorLoading />;
+
 export const SqlEditor: React.FC<SqlEditorProps> = ({
   connId,
   isProdConn = false,
@@ -233,6 +293,15 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   const langId = langIdForDbType(dbType); // 'mysql' | 'pgsql' cho smart completion
   const [sql, setSql] = useState(initialSql);
   const [sql2, setSql2] = useState(initialSql2);
+
+  // `initialSql` is a prop, and the parent hands back a NEW one every time the draft is flushed up
+  // to `App` (`tabs[].sql`) — which changed `<Editor>`'s `defaultValue` and so defeated its memo on
+  // every flush, no matter what this file does with its own callbacks. Only the mount-time value
+  // ever means anything: Monaco reads `defaultValue` when it creates the model and never again, and
+  // the `sql`/`sql2` state above is seeded from it once. Frozen here so a parent re-render cannot
+  // churn the prop.
+  const initialSqlRef = useRef(initialSql);
+  const initialSql2Ref = useRef(initialSql2);
   const [splitMode, setSplitMode] = useState<'none' | 'vertical' | 'horizontal'>(initialSplitMode);
   const [splitRatio, setSplitRatio] = useState<number>(50);
   const [isDraggingSplit, setIsDraggingSplit] = useState<boolean>(false);
@@ -365,8 +434,10 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     void dbIndexRegistry.buildIndex();
   }, [connId]);
 
-  const [cursorPos1, setCursorPos1] = useState<{ line: number; column: number }>({ line: 1, column: 1 });
-  const [cursorPos2, setCursorPos2] = useState<{ line: number; column: number }>({ line: 1, column: 1 });
+  // Caret position, per pane. A store rather than state — see `createCaretStore` for why.
+  // Lazy `useState` because these must be created exactly once per mount and never replaced;
+  // nothing ever calls the setter.
+  const [caretStores] = useState(() => ({ 1: createCaretStore(), 2: createCaretStore() }));
 
   // The SQL result grid's column sort state (sort column and direction)
   const [sortCol1, setSortCol1] = useState<string | null>(null);
@@ -716,9 +787,19 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   // The content is synced out to React state and the parent on a BEAT (a trailing debounce).
   // Every keystroke used to call onSqlChange -> App.setTabs -> a re-render of the WHOLE app (every
   // tab, DataGrid included), so holding Backspace stuttered visibly. The "real" content is always
-  // read from the editor (getPaneSql/getCurrentStatement), so a 150ms lag in state changes no
-  // behaviour.
-  const SQL_SYNC_DELAY = 150;
+  // read from the editor (getPaneSql/getCurrentStatement), so lagging the state changes no
+  // behaviour: `sql`/`sql2` are only ever read as a fallback for when there is no editor instance.
+  //
+  // 600ms rather than 150ms, because one flush is NOT cheap and never was local to this component:
+  // it calls `onSqlChange` -> `App.setTabs`, which re-renders App and the whole title bar/sidebar
+  // chrome (DbRail, TabManager, TxControl, SafeModeControl…) and re-serializes every tab into
+  // localStorage. Measured at ~9ms per flush. At 150ms a continuous typing burst paid that four
+  // times a second; at 600ms an uninterrupted burst pays it zero times, because the flush only
+  // lands once the user pauses. Nothing is risked by the longer wait: `onDidBlurEditorText` flushes
+  // immediately, and so does the unmount cleanup below, so leaving the pane, switching tabs and
+  // closing all still persist at once. Only a crash mid-burst can lose anything, and it now loses
+  // at most 600ms of typing.
+  const SQL_SYNC_DELAY = 600;
   const sqlSyncRef = useRef<{ timer: any; value: string | null }[]>([
     { timer: null, value: null },
     { timer: null, value: null },
@@ -816,10 +897,9 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
 
     const syncCursor = () => {
       const pos = editor.getPosition();
-      if (pos) {
-        if (editorId === 1) setCursorPos1({ line: pos.lineNumber, column: pos.column });
-        else setCursorPos2({ line: pos.lineNumber, column: pos.column });
-      }
+      // Straight into the store: this fires on every cursor and selection event, so it must not
+      // touch `SqlEditor`'s state. Only `CaretReadout` re-renders.
+      if (pos) caretStores[editorId].set(pos.lineNumber, pos.column);
     };
 
     editor.onDidFocusEditorText(() => {
@@ -1074,6 +1154,27 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       editor.layout();
     }, 100);
   };
+
+  // `Editor` is `memo()`'d inside @monaco-editor/react, so an inline arrow for `onChange`/`onMount`
+  // is a new prop identity every render and defeats it — and its `onChange` effect then disposes
+  // and re-subscribes Monaco's `onDidChangeModelContent` listener each time, for nothing. These
+  // four wrappers never change identity and read the current implementation through a ref, the
+  // same trick `tRef` and `changeCallbacksRef` above use.
+  const editorCallbacksRef = useRef({ queueSqlSync, handleEditorDidMount });
+  editorCallbacksRef.current = { queueSqlSync, handleEditorDidMount };
+
+  const handleChange1 = React.useCallback((val: string | undefined) => {
+    editorCallbacksRef.current.queueSqlSync(1, val || '');
+  }, []);
+  const handleChange2 = React.useCallback((val: string | undefined) => {
+    editorCallbacksRef.current.queueSqlSync(2, val || '');
+  }, []);
+  const handleMount1 = React.useCallback((editor: any) => {
+    editorCallbacksRef.current.handleEditorDidMount(editor, 1);
+  }, []);
+  const handleMount2 = React.useCallback((editor: any) => {
+    editorCallbacksRef.current.handleEditorDidMount(editor, 2);
+  }, []);
 
   // Opens a table tab when `name` really is a table or view in the current DB.
   // `notify` = false for Ctrl+Click (a stray click on a keyword stays silent), = true for F12.
@@ -1642,9 +1743,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
             </div>
 
             {/* status cursor position: line X, column Y (Image 2) */}
-            <span className="sql-status-info">
-              line {(paneId === 1 ? cursorPos1 : cursorPos2).line}, column {(paneId === 1 ? cursorPos1 : cursorPos2).column}
-            </span>
+            <CaretReadout store={caretStores[paneId]} />
           </div>
 
           {/* Right block: the No-limit button plus the Format, Run and [...] cluster */}
@@ -2978,14 +3077,10 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
               height="100%"
               language={langId}
               theme={sqlThemeName(theme)}
-              defaultValue={initialSql}
-              onChange={(val) => queueSqlSync(1, val || '')}
-              onMount={(editor) => handleEditorDidMount(editor, 1)}
-              loading={
-                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', color: 'var(--win-text-secondary)', fontSize: '13px' }}>
-                  {t('sqlEditor.loadingEditor')}
-                </div>
-              }
+              defaultValue={initialSqlRef.current}
+              onChange={handleChange1}
+              onMount={handleMount1}
+              loading={EDITOR_LOADING}
               options={editorOptions}
             />
           </div>
@@ -3049,14 +3144,10 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                 height="100%"
                 language={langId}
                 theme={sqlThemeName(theme)}
-                defaultValue={initialSql2}
-                onChange={(val) => queueSqlSync(2, val || '')}
-                onMount={(editor) => handleEditorDidMount(editor, 2)}
-                loading={
-                  <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', color: 'var(--win-text-secondary)', fontSize: '13px' }}>
-                    {t('sqlEditor.loadingEditor')}
-                  </div>
-                }
+                defaultValue={initialSql2Ref.current}
+                onChange={handleChange2}
+                onMount={handleMount2}
+                loading={EDITOR_LOADING}
                 options={editorOptions}
               />
             </div>
