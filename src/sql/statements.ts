@@ -868,21 +868,21 @@ export function applyLimitToSql(sqlText: string, limitOption: string): string {
     const code = s.text.trim();
     if (!code) return s.text;
 
-    let clean = code.endsWith(';') ? code.slice(0, -1).trim() : code;
-    const firstWord = clean.split(/\s+/)[0]?.toUpperCase();
+    const body = code.endsWith(';') ? code.slice(0, -1).trim() : code;
+    const firstWord = body.split(/\s+/)[0]?.toUpperCase();
 
     if (firstWord === 'SELECT' || firstWord === 'WITH') {
-      const hasLimit = /\bLIMIT\s+\d+/i.test(clean);
+      const hasLimit = /\bLIMIT\s+\d+/i.test(body);
       // Clauses that must stay LAST. `LIMIT` goes BEFORE a locking clause (`SELECT … LIMIT 1 FOR
       // UPDATE`), so appending it at the end turns a working statement into a syntax error on both
       // Postgres and MySQL; MySQL's `INTO OUTFILE`/`DUMPFILE`/`INTO @var` are the same shape. This
       // mattered little while the limit was opt-in and off by default — it is now on by default, so
       // the statement is left alone instead. A row cap is a convenience; breaking someone's
       // `SELECT … FOR UPDATE` inside a transaction is not a trade the convenience is worth.
-      const endsClauseLocked = /\bFOR\s+(UPDATE|SHARE|NO\s+KEY\s+UPDATE|KEY\s+SHARE)\b|\bLOCK\s+IN\s+SHARE\s+MODE\b|\bINTO\s+(OUTFILE|DUMPFILE|@)/i.test(clean);
+      const endsClauseLocked = /\bFOR\s+(UPDATE|SHARE|NO\s+KEY\s+UPDATE|KEY\s+SHARE)\b|\bLOCK\s+IN\s+SHARE\s+MODE\b|\bINTO\s+(OUTFILE|DUMPFILE|@)/i.test(body);
       if (!hasLimit && !endsClauseLocked) {
         modified = true;
-        return `${clean} LIMIT ${limitNum};`;
+        return `${body} LIMIT ${limitNum};`;
       }
     }
     return code.endsWith(';') ? code : `${code};`;
