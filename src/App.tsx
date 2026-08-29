@@ -69,7 +69,7 @@ import type { SavedProfile } from './components/ConnectionManager';
 import { updateProfileDisplay } from './utils/connectionProfiles';
 import { applyProgressStyle, getProgressStyle } from './utils/progressStyle';
 import { parseXlsx } from './utils/xlsxReader';
-import { inferColType } from './utils/importPreview';
+import { collectColumns, inferColType } from './utils/importPreview';
 import { addExistsHint } from './utils/dumpPreview';
 import { ProgressBar, type ProgressState } from './components/ProgressBar';
 import { buildDatabaseFile } from './utils/exportHelper';
@@ -337,6 +337,7 @@ export const App: React.FC = () => {
   const [globalImportTargetTable, setGlobalImportTargetTable] = useState<string | null>(null);
   const [globalImportTab, setGlobalImportTab] = useState<'structure' | 'data'>('structure');
   const [globalImportProgress, setGlobalImportProgress] = useState<ProgressState | null>(null);
+  const globalImportCols = React.useMemo(() => collectColumns(globalImportPendingRows), [globalImportPendingRows]);
   const [showSidebar, setShowSidebar] = useState(true);
   const [showAbout, setShowAbout] = useState(false);
   // Reads the real version from tauri.conf.json rather than hardcoding it in JSX, which drifts the
@@ -2110,19 +2111,19 @@ export const App: React.FC = () => {
       onNewConnection={handleNewConnection}
       onDisconnect={handleDisconnect}
       onNewQuery={handleNewQueryTab}
-      onExportDatabase={() => setShowExportDbDialog(true)}
-      onImportDatabase={() => setShowImportDbDialog(true)}
+      onExportDatabase={handleOpenExportDb}
+      onImportDatabase={handleOpenImportDb}
       onToggleSidebar={() => setShowSidebar(prev => !prev)}
       onToggleTheme={toggleTheme}
       onShowShortcuts={() => setShowShortcuts(true)}
       onShowAbout={() => setShowAbout(true)}
       onShowWhatsNew={() => setShowWhatsNew(true)}
-      onOpenCompare={() => setShowDbCompare(true)}
+      onOpenCompare={handleOpenDbCompare}
       onToggleTerminal={handleOpenTerminal}
       aiOpen={showAi}
       onToggleAiAssistant={() => setShowAi(prev => !prev)}
       onDatabaseOpened={handleDatabaseOpened}
-      onOpenAllDbStats={() => { setDbInfoTab('all'); setShowDbInfoModal(true); }}
+      onOpenAllDbStats={() => handleOpenDbInfo('all')}
       onOpenDocs={() => setShowDocModal(true)}
     />
   );

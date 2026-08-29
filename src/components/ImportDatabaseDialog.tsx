@@ -104,7 +104,7 @@ function formatSize(bytes: number): string {
 }
 
 interface ImportDatabaseDialogProps {
-  open: boolean;
+  open?: boolean;
   onClose: () => void;
   /** The connected database (the default target when the file names none). */
   currentDb?: string;

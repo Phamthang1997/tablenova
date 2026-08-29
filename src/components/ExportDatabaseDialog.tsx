@@ -39,7 +39,7 @@ export interface DatabaseExportOptions {
 interface ExportDatabaseDialogProps {
   /** The connection this component acts on. Passed explicitly, never read from the ambient id (§4.1). */
   connId: string;
-  open: boolean;
+  open?: boolean;
   onClose: () => void;
   /** Returns true when the export finished (the dialog closes itself), false to keep it open for edits. */
   onSubmit: (options: DatabaseExportOptions) => Promise<boolean>;
