@@ -17,7 +17,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde::Serialize;
 use serde_json::{Value, json};
 
-
 /// How many requests are kept. Old entries fall off the front.
 const CAP: usize = 500;
 
@@ -234,8 +233,10 @@ mod tests {
         let origin = entry("POST /mcp", None, None, 0)
             .denied(Denial::BadOrigin, "origin not allowed".to_string());
         assert_eq!(origin.layer, Some(1));
-        let token = entry("POST /mcp", None, None, 0)
-            .denied(Denial::BadToken, "missing or invalid bearer token".to_string());
+        let token = entry("POST /mcp", None, None, 0).denied(
+            Denial::BadToken,
+            "missing or invalid bearer token".to_string(),
+        );
         assert_eq!(token.layer, Some(2));
         // The layer must survive serialisation: the UI switches on `denial`, and falls back to
         // `layer` for a variant it does not know yet.

@@ -1,8 +1,8 @@
 //! A table's partitions.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::database::{execute_raw_sql_generic, result_rows, row_i64, row_str, DbKind};
+use crate::database::{DbKind, execute_raw_sql_generic, result_rows, row_i64, row_str};
 
 #[tauri::command]
 pub async fn get_table_partitions(conn_id: String, table_name: String) -> Result<Value, String> {

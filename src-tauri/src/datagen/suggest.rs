@@ -1,6 +1,6 @@
 //! Picking the DEFAULT generator for a column, from its data type and its name.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::meta::{ColMeta, FkMeta};
 
@@ -23,7 +23,9 @@ pub(super) fn type_family(data_type: &str) -> &'static str {
         "year" => "year",
         "json" | "jsonb" => "json",
         "uuid" => "uuid",
-        "blob" | "bytea" | "binary" | "varbinary" | "longblob" | "mediumblob" | "tinyblob" => "blob",
+        "blob" | "bytea" | "binary" | "varbinary" | "longblob" | "mediumblob" | "tinyblob" => {
+            "blob"
+        }
         "enum" | "set" => "enum",
         "text" | "mediumtext" | "longtext" | "tinytext" | "clob" => "text",
         "char" | "varchar" | "character" | "nchar" | "nvarchar" | "citext" => "string",
@@ -55,10 +57,16 @@ pub fn suggest_generator(col: &ColMeta, fk: Option<&FkMeta>) -> (String, Value) 
 
     let family = type_family(&col.data_type);
     if family == "enum" && !col.enum_values.is_empty() {
-        return ("enumValues".to_string(), json!({ "values": col.enum_values }));
+        return (
+            "enumValues".to_string(),
+            json!({ "values": col.enum_values }),
+        );
     }
     if !col.enum_values.is_empty() {
-        return ("enumValues".to_string(), json!({ "values": col.enum_values }));
+        return (
+            "enumValues".to_string(),
+            json!({ "values": col.enum_values }),
+        );
     }
 
     let name = col.name.to_lowercase();
@@ -76,12 +84,26 @@ pub fn suggest_generator(col: &ColMeta, fk: Option<&FkMeta>) -> (String, Value) 
         if has("first_name") || name == "firstname" || name == "fname" || has("given_name") {
             return ("firstName".to_string(), json!({}));
         }
-        if has("last_name") || name == "lastname" || name == "lname" || has("surname") || has("family_name") {
+        if has("last_name")
+            || name == "lastname"
+            || name == "lname"
+            || has("surname")
+            || has("family_name")
+        {
             return ("lastName".to_string(), json!({}));
         }
-        if has("full_name") || name == "name" || has("username") || name == "user" || has("display_name") {
+        if has("full_name")
+            || name == "name"
+            || has("username")
+            || name == "user"
+            || has("display_name")
+        {
             return (
-                if has("username") || name == "user" { "username".to_string() } else { "fullName".to_string() },
+                if has("username") || name == "user" {
+                    "username".to_string()
+                } else {
+                    "fullName".to_string()
+                },
                 json!({}),
             );
         }
@@ -145,8 +167,17 @@ pub fn suggest_generator(col: &ColMeta, fk: Option<&FkMeta>) -> (String, Value) 
         if has("status") || has("state") {
             return ("orderStatus".to_string(), json!({}));
         }
-        if has("description") || has("comment") || has("note") || has("content") || has("body") || has("bio") {
-            return ("paragraph".to_string(), json!({ "maxLength": max_len.min(2000) }));
+        if has("description")
+            || has("comment")
+            || has("note")
+            || has("content")
+            || has("body")
+            || has("bio")
+        {
+            return (
+                "paragraph".to_string(),
+                json!({ "maxLength": max_len.min(2000) }),
+            );
         }
         if has("title") || has("subject") || has("summary") {
             return ("sentence".to_string(), json!({}));
@@ -173,11 +204,24 @@ pub fn suggest_generator(col: &ColMeta, fk: Option<&FkMeta>) -> (String, Value) 
         }
         "decimal" | "float" => {
             let scale = col.scale.unwrap_or(2).clamp(0, 6);
-            let money = has("price") || has("amount") || has("total") || has("cost") || has("salary")
-                || has("balance") || has("fee") || has("rate");
-            let generator = if family == "float" && !money { "float" } else { "decimal" };
+            let money = has("price")
+                || has("amount")
+                || has("total")
+                || has("cost")
+                || has("salary")
+                || has("balance")
+                || has("fee")
+                || has("rate");
+            let generator = if family == "float" && !money {
+                "float"
+            } else {
+                "decimal"
+            };
             let max = if money { 5_000.0 } else { 1_000.0 };
-            return (generator.to_string(), json!({ "min": 0, "max": max, "scale": scale }));
+            return (
+                generator.to_string(),
+                json!({ "min": 0, "max": max, "scale": scale }),
+            );
         }
         "int" | "bigint" => {
             if name.starts_with("is_") || name.starts_with("has_") || name.starts_with("can_") {
@@ -195,7 +239,11 @@ pub fn suggest_generator(col: &ColMeta, fk: Option<&FkMeta>) -> (String, Value) 
             if col.is_pk {
                 return ("sequence".to_string(), json!({ "start": 1, "step": 1 }));
             }
-            let max = if family == "bigint" { 1_000_000_000 } else { 100_000 };
+            let max = if family == "bigint" {
+                1_000_000_000
+            } else {
+                100_000
+            };
             return ("integer".to_string(), json!({ "min": 1, "max": max }));
         }
         _ => {}

@@ -5,10 +5,10 @@
 //! different session than the INSERTs.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tauri::ipc::Channel;
 
 use crate::database::{DbConnection, Exec};
@@ -16,7 +16,7 @@ use crate::database::{DbConnection, Exec};
 use super::column::ColState;
 use super::ident::{qualified, quote_ident};
 use super::meta::query_rows;
-use super::spec::{o_str, opt_i64, Cell, GenSpec, GenTableSpec};
+use super::spec::{Cell, GenSpec, GenTableSpec, o_str, opt_i64};
 
 /// Rows per INSERT statement. 500 keeps the statement text far below MySQL's default
 /// `max_allowed_packet`, and is dropped further for very wide tables (see `pick_batch_size`).
@@ -171,7 +171,16 @@ pub(super) async fn prepare_table(
                 // Preview: the parent is still empty, but during the real run it will not be —
                 // it is generated first. Showing NULL here would make the feature look broken,
                 // so estimate the keys the parent is about to get and say so in a warning.
-                pool = estimate_fk_pool(conn, dialect, schema, seed, all_tables, &ref_table, &ref_column).await;
+                pool = estimate_fk_pool(
+                    conn,
+                    dialect,
+                    schema,
+                    seed,
+                    all_tables,
+                    &ref_table,
+                    &ref_column,
+                )
+                .await;
                 warnings.push(if pool.is_empty() {
                     format!(
                         "Bảng cha '{}.{}' không có dòng nào để lấy khóa ngoại cho cột '{}.{}'",
@@ -190,12 +199,21 @@ pub(super) async fn prepare_table(
         states.push(st);
     }
     if states.is_empty() {
-        return Err(format!("Bảng '{}' không có cột nào để sinh dữ liệu", tspec.table));
+        return Err(format!(
+            "Bảng '{}' không có cột nào để sinh dữ liệu",
+            tspec.table
+        ));
     }
     Ok(PreparedTable { columns, states })
 }
 
-pub(super) fn insert_sql(dialect: &str, schema: &Option<String>, table: &str, columns: &[String], rows: &[Vec<Cell>]) -> String {
+pub(super) fn insert_sql(
+    dialect: &str,
+    schema: &Option<String>,
+    table: &str,
+    columns: &[String],
+    rows: &[Vec<Cell>],
+) -> String {
     let cols = columns
         .iter()
         .map(|c| quote_ident(dialect, c))
@@ -265,7 +283,11 @@ pub(super) async fn run_generation(
             _ => exec.try_run("PRAGMA foreign_keys = OFF;").await,
         }
     }
-    let begin = if dialect == "mysql" { "START TRANSACTION;" } else { "BEGIN;" };
+    let begin = if dialect == "mysql" {
+        "START TRANSACTION;"
+    } else {
+        "BEGIN;"
+    };
     exec.try_run(begin).await;
     if disable_constraints && dialect == "postgres" {
         exec.try_run("SET CONSTRAINTS ALL DEFERRED;").await;
@@ -288,16 +310,29 @@ pub(super) async fn run_generation(
     }
 
     'tables: for table in order {
-        let Some(tspec) = spec.tables.iter().find(|t| &t.table == table) else { continue };
+        let Some(tspec) = spec.tables.iter().find(|t| &t.table == table) else {
+            continue;
+        };
         if tspec.rows == 0 {
             continue;
         }
 
-        let mut prepared =
-            match prepare_table(conn, dialect, schema, seed, tspec, &spec.tables, &generated, warnings, true).await {
-                Ok(p) => p,
-                Err(e) => bail!(e),
-            };
+        let mut prepared = match prepare_table(
+            conn,
+            dialect,
+            schema,
+            seed,
+            tspec,
+            &spec.tables,
+            &generated,
+            warnings,
+            true,
+        )
+        .await
+        {
+            Ok(p) => p,
+            Err(e) => bail!(e),
+        };
 
         if tspec.mode.as_deref() == Some("truncate") {
             // DELETE, not TRUNCATE: MySQL implicitly COMMITs on TRUNCATE (DDL), which would
@@ -325,7 +360,10 @@ pub(super) async fn run_generation(
             .collect();
 
         let batch_size = pick_batch_size(
-            spec.options.as_ref().and_then(|o| o.batch_size).unwrap_or(DEFAULT_BATCH),
+            spec.options
+                .as_ref()
+                .and_then(|o| o.batch_size)
+                .unwrap_or(DEFAULT_BATCH),
             prepared.columns.len(),
         );
 

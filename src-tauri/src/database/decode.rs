@@ -231,9 +231,9 @@ pub(crate) fn bind_mysql_params<'q>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
-    use rusqlite::types::Value as SV;
     use rusqlite::Connection as SqliteConnection;
+    use rusqlite::types::Value as SV;
+    use serde_json::json;
 
     #[test]
     fn test_json_to_sqlite_value_null() {
@@ -255,14 +255,23 @@ mod tests {
 
     #[test]
     fn test_json_to_sqlite_value_string() {
-        assert_eq!(json_to_sqlite_value(&json!("TableNova")), SV::Text("TableNova".into()));
+        assert_eq!(
+            json_to_sqlite_value(&json!("TableNova")),
+            SV::Text("TableNova".into())
+        );
     }
 
     #[test]
     fn test_sqlite_in_memory_query() -> Result<(), Box<dyn std::error::Error>> {
         let conn = SqliteConnection::open_in_memory()?;
-        conn.execute("CREATE TABLE test_users (id INTEGER PRIMARY KEY, name TEXT NOT NULL);", [])?;
-        conn.execute("INSERT INTO test_users (name) VALUES (?1), (?2);", ["Alice", "Bob"])?;
+        conn.execute(
+            "CREATE TABLE test_users (id INTEGER PRIMARY KEY, name TEXT NOT NULL);",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO test_users (name) VALUES (?1), (?2);",
+            ["Alice", "Bob"],
+        )?;
 
         let mut stmt = conn.prepare("SELECT id, name FROM test_users ORDER BY id ASC;")?;
         let rows = stmt.query_map([], |row| {

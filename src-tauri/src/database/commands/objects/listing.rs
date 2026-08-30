@@ -1,10 +1,10 @@
 //! Listing EVERY kind of database object, and reading the DDL of one of them by `kind`.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sqlx::Row;
 
 use crate::database::{
-    all_string_values, execute_raw_sql_generic, result_rows, row_str, sql_str, DbKind,
+    DbKind, all_string_values, execute_raw_sql_generic, result_rows, row_str, sql_str,
 };
 
 // List the database objects of the current connection: tables, views, functions, procedures
@@ -127,7 +127,11 @@ pub async fn get_database_objects(conn_id: String) -> Result<Value, String> {
 
 // Read the definition (source) of a view / function / procedure
 #[tauri::command]
-pub async fn get_object_definition(conn_id: String, name: String, kind: String) -> Result<Value, String> {
+pub async fn get_object_definition(
+    conn_id: String,
+    name: String,
+    kind: String,
+) -> Result<Value, String> {
     Box::pin(async move {
     let state = crate::state::require_state()?;
     let (conn_type, schema) = {

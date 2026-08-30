@@ -1,12 +1,12 @@
 //! The database and schema level: listing, opening, creating, dropping, renaming — and a database's character set.
 
 use crate::database::introspect::list_databases_inner;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sqlx::{MySqlPool, PgPool, Row};
 
 use crate::database::{
-    all_string_values, apply_ssh_tunnel, build_mysql_url, build_pg_url, execute_raw_sql_generic,
-    rows_of, sql_str, DbConnection, DbKind,
+    DbConnection, DbKind, all_string_values, apply_ssh_tunnel, build_mysql_url, build_pg_url,
+    execute_raw_sql_generic, rows_of, sql_str,
 };
 
 use super::connection::probe_pg_schema;
@@ -45,9 +45,9 @@ fn is_unknown_database_err(err: &str) -> bool {
 pub async fn get_databases_list(config: Value) -> Result<Value, String> {
     Box::pin(async move {
     let db_type = config.get("dbType").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    
+
     let mut databases = Vec::new();
-    
+
     match db_type.as_str() {
         "postgres" => {
             // Keep the tunnel alive for the whole listing operation (when SSH is on)
@@ -90,7 +90,7 @@ pub async fn get_databases_list(config: Value) -> Result<Value, String> {
                 .fetch_all(&pool)
                 .await
                 .map_err(|e| e.to_string())?;
-                
+
             for r in rows {
                 if let Ok(name) = r.try_get::<String, _>(0) {
                     databases.push(name);
@@ -99,7 +99,7 @@ pub async fn get_databases_list(config: Value) -> Result<Value, String> {
         }
         _ => return Err("Hệ quản trị CSDL không được hỗ trợ".to_string()),
     }
-    
+
     databases.sort();
     Ok(json!({ "success": true, "databases": databases }))
 }).await
@@ -109,9 +109,10 @@ pub async fn get_databases_list(config: Value) -> Result<Value, String> {
 #[tauri::command]
 pub async fn list_databases(conn_id: String) -> Result<Value, String> {
     Box::pin(async move {
-    let state = crate::state::require_state()?;
-    list_databases_inner(&state, conn_id).await
-}).await
+        let state = crate::state::require_state()?;
+        list_databases_inner(&state, conn_id).await
+    })
+    .await
 }
 
 /// The body, reachable without a `tauri::State`.
@@ -134,75 +135,73 @@ pub async fn list_databases(conn_id: String) -> Result<Value, String> {
 /// Idempotent: asking for a database that is already open hands back the connection that has it,
 /// rather than minting a second pool for the same place.
 #[tauri::command]
-pub async fn open_database(
-    conn_id: String,
-    name: String,
-) -> Result<Value, String> {
+pub async fn open_database(conn_id: String, name: String) -> Result<Value, String> {
     Box::pin(async move {
-    let state = crate::state::require_state()?;
-    let (server, db_type, tunnel_port, inherit_read_only) = {
-        let ctx = state.connections.acquire(&conn_id)?;
-        (
-            ctx.server_arc(),
-            ctx.server().db_type.clone(),
-            ctx.server().ssh_tunnel.as_ref().map(|t| t.local_port),
-            state.connections.is_read_only(&conn_id),
-        )
-    };
+        let state = crate::state::require_state()?;
+        let (server, db_type, tunnel_port, inherit_read_only) = {
+            let ctx = state.connections.acquire(&conn_id)?;
+            (
+                ctx.server_arc(),
+                ctx.server().db_type.clone(),
+                ctx.server().ssh_tunnel.as_ref().map(|t| t.local_port),
+                state.connections.is_read_only(&conn_id),
+            )
+        };
 
-    if db_type == "sqlite" {
-        return Err("SQLite không hỗ trợ nhiều database trên một kết nối".to_string());
-    }
-
-    if let Some(existing) = state.connections.find(&server.id, &name)? {
-        let ctx = state.connections.acquire(&existing)?;
-        return Ok(json!({
-            "success": true, "database": name,
-            "schema": ctx.raw_schema(), "connId": &*existing,
-        }));
-    }
-
-    // The config used to build the URL: with a tunnel it points at 127.0.0.1:<local_port>
-    let mut url_conf = server.config();
-    if let Some(port) = tunnel_port {
-        if let Some(obj) = url_conf.as_object_mut() {
-            obj.insert("host".to_string(), json!("127.0.0.1"));
-            obj.insert("port".to_string(), json!(port));
+        if db_type == "sqlite" {
+            return Err("SQLite không hỗ trợ nhiều database trên một kết nối".to_string());
         }
-    }
 
-    let new_id = crate::state::mint_id();
-    let kind = match db_type.as_str() {
-        "postgres" => {
-            let url = build_pg_url(&url_conf, Some(name.as_str()));
-            DbKind::Postgres(PgPool::connect(&url).await.map_err(|e| e.to_string())?)
+        if let Some(existing) = state.connections.find(&server.id, &name)? {
+            let ctx = state.connections.acquire(&existing)?;
+            return Ok(json!({
+                "success": true, "database": name,
+                "schema": ctx.raw_schema(), "connId": &*existing,
+            }));
         }
-        "mysql" => {
-            let url = build_mysql_url(&url_conf, Some(name.as_str()));
-            DbKind::Mysql(MySqlPool::connect(&url).await.map_err(|e| e.to_string())?)
-        }
-        _ => return Err("Hệ quản trị CSDL không được hỗ trợ".to_string()),
-    };
-    let conn = DbConnection::session(new_id.clone(), kind);
 
-    // Each database has its own schemas, so probe rather than inherit the one selected elsewhere.
-    let schema = probe_pg_schema(&conn).await;
-    state.connections.insert(
-        new_id.clone(),
-        // Inherits the read-only flag of the connection it was opened FROM: those two are the same
-        // server, and someone who marked production read-only means every database on it.
-        crate::state::ConnEntry {
-            read_only: inherit_read_only,
-            // Deliberately NOT inherited - see `ConnEntry::mcp_exposed`.
-            mcp_exposed: false,
-            server,
-            db: name.clone(),
-            conn: crate::state::LiveConn::Sql(conn),
-            current_schema: schema.clone(),
-        },
-    )?;
-    Ok(json!({ "success": true, "database": name, "schema": schema, "connId": &*new_id }))
-}).await
+        // The config used to build the URL: with a tunnel it points at 127.0.0.1:<local_port>
+        let mut url_conf = server.config();
+        if let Some(port) = tunnel_port {
+            if let Some(obj) = url_conf.as_object_mut() {
+                obj.insert("host".to_string(), json!("127.0.0.1"));
+                obj.insert("port".to_string(), json!(port));
+            }
+        }
+
+        let new_id = crate::state::mint_id();
+        let kind = match db_type.as_str() {
+            "postgres" => {
+                let url = build_pg_url(&url_conf, Some(name.as_str()));
+                DbKind::Postgres(PgPool::connect(&url).await.map_err(|e| e.to_string())?)
+            }
+            "mysql" => {
+                let url = build_mysql_url(&url_conf, Some(name.as_str()));
+                DbKind::Mysql(MySqlPool::connect(&url).await.map_err(|e| e.to_string())?)
+            }
+            _ => return Err("Hệ quản trị CSDL không được hỗ trợ".to_string()),
+        };
+        let conn = DbConnection::session(new_id.clone(), kind);
+
+        // Each database has its own schemas, so probe rather than inherit the one selected elsewhere.
+        let schema = probe_pg_schema(&conn).await;
+        state.connections.insert(
+            new_id.clone(),
+            // Inherits the read-only flag of the connection it was opened FROM: those two are the same
+            // server, and someone who marked production read-only means every database on it.
+            crate::state::ConnEntry {
+                read_only: inherit_read_only,
+                // Deliberately NOT inherited - see `ConnEntry::mcp_exposed`.
+                mcp_exposed: false,
+                server,
+                db: name.clone(),
+                conn: crate::state::LiveConn::Sql(conn),
+                current_schema: schema.clone(),
+            },
+        )?;
+        Ok(json!({ "success": true, "database": name, "schema": schema, "connId": &*new_id }))
+    })
+    .await
 }
 
 // `switch_database` has been deleted.
@@ -222,25 +221,28 @@ pub async fn open_database(
 #[tauri::command]
 pub async fn list_schemas(conn_id: String) -> Result<Value, String> {
     Box::pin(async move {
-    let state = crate::state::require_state()?;
-    let (conn_type, current) = {
-        let ctx = state.connections.acquire(&conn_id)?;
-        let ct = ctx.conn().clone();
-        (ct, ctx.raw_schema().map(str::to_string))
-    };
+        let state = crate::state::require_state()?;
+        let (conn_type, current) = {
+            let ctx = state.connections.acquire(&conn_id)?;
+            let ct = ctx.conn().clone();
+            (ct, ctx.raw_schema().map(str::to_string))
+        };
 
-    if !matches!(conn_type.kind, DbKind::Postgres(_)) {
-        return Ok(json!({ "success": true, "schemas": [], "current": Value::Null }));
-    }
+        if !matches!(conn_type.kind, DbKind::Postgres(_)) {
+            return Ok(json!({ "success": true, "schemas": [], "current": Value::Null }));
+        }
 
-    let results = execute_raw_sql_generic(
-        &conn_type,
-        "SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg_%' \
-         AND nspname <> 'information_schema' ORDER BY nspname".to_string(),
-    ).await?;
-    let schemas = all_string_values(&results);
-    Ok(json!({ "success": true, "schemas": schemas, "current": current }))
-}).await
+        let results = execute_raw_sql_generic(
+            &conn_type,
+            "SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg_%' \
+         AND nspname <> 'information_schema' ORDER BY nspname"
+                .to_string(),
+        )
+        .await?;
+        let schemas = all_string_values(&results);
+        Ok(json!({ "success": true, "schemas": schemas, "current": current }))
+    })
+    .await
 }
 
 /// Selects the schema every later command works in. The Sidebar picker's backing command.
@@ -251,34 +253,39 @@ pub async fn list_schemas(conn_id: String) -> Result<Value, String> {
 #[tauri::command]
 pub async fn set_current_schema(conn_id: String, name: String) -> Result<Value, String> {
     Box::pin(async move {
-    let state = crate::state::require_state()?;
-    let conn_type = {
-        let ctx = state.connections.acquire(&conn_id)?;
-        ctx.conn().clone()
-    };
-    if !matches!(conn_type.kind, DbKind::Postgres(_)) {
-        return Err("Chỉ PostgreSQL mới hỗ trợ chọn schema".to_string());
-    }
+        let state = crate::state::require_state()?;
+        let conn_type = {
+            let ctx = state.connections.acquire(&conn_id)?;
+            ctx.conn().clone()
+        };
+        if !matches!(conn_type.kind, DbKind::Postgres(_)) {
+            return Err("Chỉ PostgreSQL mới hỗ trợ chọn schema".to_string());
+        }
 
-    let schema = name.trim().to_string();
-    if schema.is_empty() {
-        return Err("Thiếu tên schema".to_string());
-    }
+        let schema = name.trim().to_string();
+        if schema.is_empty() {
+            return Err("Thiếu tên schema".to_string());
+        }
 
-    let found = execute_raw_sql_generic(
-        &conn_type,
-        format!("SELECT nspname FROM pg_namespace WHERE nspname = '{}' LIMIT 1", sql_str(&schema)),
-    ).await?;
-    if rows_of(&found).is_empty() {
-        return Err(format!("Schema '{}' không tồn tại", schema));
-    }
+        let found = execute_raw_sql_generic(
+            &conn_type,
+            format!(
+                "SELECT nspname FROM pg_namespace WHERE nspname = '{}' LIMIT 1",
+                sql_str(&schema)
+            ),
+        )
+        .await?;
+        if rows_of(&found).is_empty() {
+            return Err(format!("Schema '{}' không tồn tại", schema));
+        }
 
-    {
-        let id = state.connections.acquire(&conn_id)?.id().clone();
-        state.connections.set_schema(&id, Some(schema.clone()))?;
-    }
-    Ok(json!({ "success": true, "schema": schema }))
-}).await
+        {
+            let id = state.connections.acquire(&conn_id)?.id().clone();
+            state.connections.set_schema(&id, Some(schema.clone()))?;
+        }
+        Ok(json!({ "success": true, "schema": schema }))
+    })
+    .await
 }
 
 // Create a new database (using the current connection). encoding/collation are optional.
@@ -325,41 +332,49 @@ pub async fn create_database(conn_id: String, payload: Value) -> Result<Value, S
 #[tauri::command]
 pub async fn drop_database(conn_id: String, name: String) -> Result<Value, String> {
     Box::pin(async move {
-    let state = crate::state::require_state()?;
-    let conn_type = {
-        let ctx = state.connections.acquire(&conn_id)?;
-        ctx.conn().clone()
-    };
+        let state = crate::state::require_state()?;
+        let conn_type = {
+            let ctx = state.connections.acquire(&conn_id)?;
+            ctx.conn().clone()
+        };
 
-    let sql = match &conn_type.kind {
-        DbKind::Mysql(_) => format!("DROP DATABASE `{}`", name),
-        DbKind::Postgres(_) => format!("DROP DATABASE \"{}\"", name),
-        DbKind::Sqlite(_) => return Err("SQLite không hỗ trợ xóa database".to_string()),
-    };
-    execute_raw_sql_generic(&conn_type, sql).await?;
-    Ok(json!({ "success": true }))
-}).await
+        let sql = match &conn_type.kind {
+            DbKind::Mysql(_) => format!("DROP DATABASE `{}`", name),
+            DbKind::Postgres(_) => format!("DROP DATABASE \"{}\"", name),
+            DbKind::Sqlite(_) => return Err("SQLite không hỗ trợ xóa database".to_string()),
+        };
+        execute_raw_sql_generic(&conn_type, sql).await?;
+        Ok(json!({ "success": true }))
+    })
+    .await
 }
 
 // Rename a database. PostgreSQL only (and the currently connected DB cannot be renamed).
 #[tauri::command]
-pub async fn rename_database(conn_id: String, old_name: String, new_name: String) -> Result<Value, String> {
+pub async fn rename_database(
+    conn_id: String,
+    old_name: String,
+    new_name: String,
+) -> Result<Value, String> {
     Box::pin(async move {
-    let state = crate::state::require_state()?;
-    let conn_type = {
-        let ctx = state.connections.acquire(&conn_id)?;
-        ctx.conn().clone()
-    };
+        let state = crate::state::require_state()?;
+        let conn_type = {
+            let ctx = state.connections.acquire(&conn_id)?;
+            ctx.conn().clone()
+        };
 
-    let sql = match &conn_type.kind {
-        // PG has a direct rename statement (the currently connected DB cannot be renamed)
-        DbKind::Postgres(_) => format!("ALTER DATABASE \"{}\" RENAME TO \"{}\"", old_name, new_name),
-        DbKind::Mysql(_) => return Err("MySQL không hỗ trợ đổi tên database.".to_string()),
-        DbKind::Sqlite(_) => return Err("SQLite không hỗ trợ đổi tên database.".to_string()),
-    };
-    execute_raw_sql_generic(&conn_type, sql).await?;
-    Ok(json!({ "success": true }))
-}).await
+        let sql = match &conn_type.kind {
+            // PG has a direct rename statement (the currently connected DB cannot be renamed)
+            DbKind::Postgres(_) => {
+                format!("ALTER DATABASE \"{}\" RENAME TO \"{}\"", old_name, new_name)
+            }
+            DbKind::Mysql(_) => return Err("MySQL không hỗ trợ đổi tên database.".to_string()),
+            DbKind::Sqlite(_) => return Err("SQLite không hỗ trợ đổi tên database.".to_string()),
+        };
+        execute_raw_sql_generic(&conn_type, sql).await?;
+        Ok(json!({ "success": true }))
+    })
+    .await
 }
 
 // The supported encodings/collations per DBMS (used by the create-database dialog)

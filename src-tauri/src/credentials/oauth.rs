@@ -1,7 +1,7 @@
-use tokio::net::TcpListener;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use std::time::Duration;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
 
 /// Fallback Google OAuth client id, baked in at **compile time** from `GOOGLE_CLIENT_ID`.
 ///
@@ -82,7 +82,7 @@ pub async fn start_google_oauth_flow(
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .map_err(|e| format!("Không thể mở cổng OAuth loopback: {}", e))?;
-    
+
     let port = listener
         .local_addr()
         .map_err(|e| e.to_string())?

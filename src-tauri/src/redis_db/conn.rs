@@ -5,7 +5,10 @@ use serde_json::Value;
 
 use crate::redis_db::config::make_client;
 
-pub(crate) async fn make_conn(config: &Value, db_index: i64) -> Result<MultiplexedConnection, String> {
+pub(crate) async fn make_conn(
+    config: &Value,
+    db_index: i64,
+) -> Result<MultiplexedConnection, String> {
     let client = make_client(config, db_index)?;
     client
         .get_multiplexed_async_connection()
@@ -14,7 +17,10 @@ pub(crate) async fn make_conn(config: &Value, db_index: i64) -> Result<Multiplex
 }
 
 // Take a cloned connection handle (drop the lock before awaiting).
-pub(crate) fn take_conn(state: &crate::AppState, conn_id: &str) -> Result<MultiplexedConnection, String> {
+pub(crate) fn take_conn(
+    state: &crate::AppState,
+    conn_id: &str,
+) -> Result<MultiplexedConnection, String> {
     Ok(state.connections.acquire_redis(conn_id)?.conn())
 }
 
@@ -35,7 +41,10 @@ pub(crate) fn ensure_writable(state: &crate::AppState, conn_id: &str) -> Result<
 // Each session is stopped through the existing `cancel_query(query_id)` path.
 
 /// Opens a second connection to the same server/database as the active one.
-pub(crate) async fn dedicated_client(state: &crate::AppState, conn_id: &str) -> Result<redis::Client, String> {
+pub(crate) async fn dedicated_client(
+    state: &crate::AppState,
+    conn_id: &str,
+) -> Result<redis::Client, String> {
     let ctx = state.connections.acquire_redis(conn_id)?;
     // The config + db index of THIS connection, not of some global state: Pub/Sub and the
     // Profiler open their own socket, and that socket has to sit on the db its tab is looking at.

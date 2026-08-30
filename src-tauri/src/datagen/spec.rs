@@ -2,7 +2,7 @@
 
 use chrono::{NaiveDate, NaiveDateTime, Timelike};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 // ===================== Generated cell =====================
 
@@ -171,7 +171,10 @@ pub(super) fn opt_i64(row: &Value, key: &str) -> Option<i64> {
 }
 
 pub(super) fn o_val<'a>(options: &'a Option<Value>, key: &str) -> Option<&'a Value> {
-    options.as_ref().and_then(|o| o.get(key)).filter(|v| !v.is_null())
+    options
+        .as_ref()
+        .and_then(|o| o.get(key))
+        .filter(|v| !v.is_null())
 }
 
 pub(super) fn o_str(options: &Option<Value>, key: &str) -> Option<String> {
@@ -208,7 +211,10 @@ pub(super) fn o_arr(options: &Option<Value>, key: &str) -> Vec<Value> {
 }
 
 pub(super) fn charset_of(opts: &Option<Value>) -> Vec<char> {
-    match o_str(opts, "charset").unwrap_or_else(|| "alnum".to_string()).as_str() {
+    match o_str(opts, "charset")
+        .unwrap_or_else(|| "alnum".to_string())
+        .as_str()
+    {
         "alpha" => "abcdefghijklmnopqrstuvwxyz".chars().collect(),
         "ALPHA" => "ABCDEFGHIJKLMNOPQRSTUVWXYZ".chars().collect(),
         "digits" => "0123456789".chars().collect(),
@@ -221,16 +227,22 @@ pub(super) fn charset_of(opts: &Option<Value>) -> Vec<char> {
 
 pub(super) fn parse_date_opt(text: &str) -> Option<NaiveDate> {
     let t = text.trim();
-    NaiveDate::parse_from_str(t, "%Y-%m-%d")
-        .ok()
-        .or_else(|| NaiveDateTime::parse_from_str(t, "%Y-%m-%d %H:%M:%S").ok().map(|d| d.date()))
+    NaiveDate::parse_from_str(t, "%Y-%m-%d").ok().or_else(|| {
+        NaiveDateTime::parse_from_str(t, "%Y-%m-%d %H:%M:%S")
+            .ok()
+            .map(|d| d.date())
+    })
 }
 
 pub(super) fn date_bounds(opts: &Option<Value>) -> (NaiveDate, NaiveDate) {
     let default_min = NaiveDate::from_ymd_opt(2000, 1, 1).unwrap();
     let default_max = NaiveDate::from_ymd_opt(2030, 12, 31).unwrap();
-    let min = o_str(opts, "min").and_then(|v| parse_date_opt(&v)).unwrap_or(default_min);
-    let max = o_str(opts, "max").and_then(|v| parse_date_opt(&v)).unwrap_or(default_max);
+    let min = o_str(opts, "min")
+        .and_then(|v| parse_date_opt(&v))
+        .unwrap_or(default_min);
+    let max = o_str(opts, "max")
+        .and_then(|v| parse_date_opt(&v))
+        .unwrap_or(default_max);
     if min <= max { (min, max) } else { (max, min) }
 }
 
@@ -244,9 +256,17 @@ pub(super) fn datetime_bounds(opts: &Option<Value>) -> (NaiveDateTime, NaiveDate
             .or_else(|| parse_date_opt(t).map(to_dt))
     };
     let (dmin, dmax) = date_bounds(&None);
-    let min = o_str(opts, "min").and_then(|v| parse(&v)).unwrap_or_else(|| to_dt(dmin));
+    let min = o_str(opts, "min")
+        .and_then(|v| parse(&v))
+        .unwrap_or_else(|| to_dt(dmin));
     let max = o_str(opts, "max")
         .and_then(|v| parse(&v))
-        .unwrap_or_else(|| to_dt(dmax).with_hour(23).and_then(|d| d.with_minute(59)).and_then(|d| d.with_second(59)).unwrap_or_else(|| to_dt(dmax)));
+        .unwrap_or_else(|| {
+            to_dt(dmax)
+                .with_hour(23)
+                .and_then(|d| d.with_minute(59))
+                .and_then(|d| d.with_second(59))
+                .unwrap_or_else(|| to_dt(dmax))
+        });
     if min <= max { (min, max) } else { (max, min) }
 }

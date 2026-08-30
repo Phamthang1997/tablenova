@@ -1,10 +1,10 @@
 //! `get_table_data` — reads one page of a table's data for the grid.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::database::{
-    execute_raw_sql_generic, qualified, sql_str, stmt_timeout, uniquify_columns, with_timeout,
-    DbKind,
+    DbKind, execute_raw_sql_generic, qualified, sql_str, stmt_timeout, uniquify_columns,
+    with_timeout,
 };
 
 use super::catalog::{estimate_row_count, exact_row_count};

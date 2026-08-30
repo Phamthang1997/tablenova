@@ -10,7 +10,13 @@ use crate::compare::side::Resolved;
 pub(super) fn sql_value(v: &Value) -> String {
     match v {
         Value::Null => "NULL".to_string(),
-        Value::Bool(b) => if *b { "1".to_string() } else { "0".to_string() },
+        Value::Bool(b) => {
+            if *b {
+                "1".to_string()
+            } else {
+                "0".to_string()
+            }
+        }
         Value::Number(n) => n.to_string(),
         Value::String(s) => q_lit(s),
         // A BLOB comes back as a byte array -> a hex literal (X'..' works in all 3 dialects).
@@ -59,7 +65,13 @@ pub(super) fn where_key(tgt: &Resolved, row: &Value, keys: &[String]) -> String 
         .join(" AND ")
 }
 
-pub(super) fn update_sql(tgt: &Resolved, table: &str, row: &Value, changed: &[String], keys: &[String]) -> String {
+pub(super) fn update_sql(
+    tgt: &Resolved,
+    table: &str,
+    row: &Value,
+    changed: &[String],
+    keys: &[String],
+) -> String {
     let sets: Vec<String> = changed
         .iter()
         .map(|c| {

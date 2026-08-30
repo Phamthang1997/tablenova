@@ -11,10 +11,10 @@ use tauri::ipc::Channel;
 
 use crate::database::{self, DbConnection, DbKind};
 
-use super::effect::{begin_statements, dialect_of, is_write_stmt, tx_effect, TxEffect};
+use super::effect::{TxEffect, begin_statements, dialect_of, is_write_stmt, tx_effect};
 use super::session::{
-    apply_effect, check_not_aborted, emit_state, get_session, is_open, release_if_closed,
-    session_for, conn_scope_id, tx_registry, Pinned,
+    Pinned, apply_effect, check_not_aborted, conn_scope_id, emit_state, get_session, is_open,
+    release_if_closed, session_for, tx_registry,
 };
 
 // `reject_if_pending` was deleted along with `switch_database` — it existed only to guard swapping the pool
@@ -72,9 +72,7 @@ pub(super) async fn lock_pinned(
             DbKind::Postgres(pool) => {
                 Pinned::Postgres(pool.acquire().await.map_err(|e| e.to_string())?)
             }
-            DbKind::Mysql(pool) => {
-                Pinned::Mysql(pool.acquire().await.map_err(|e| e.to_string())?)
-            }
+            DbKind::Mysql(pool) => Pinned::Mysql(pool.acquire().await.map_err(|e| e.to_string())?),
         });
     }
     Ok(guard)

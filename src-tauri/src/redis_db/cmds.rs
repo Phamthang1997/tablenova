@@ -17,38 +17,127 @@
 const RO_SIMPLE: &[&str] = &[
     // connection / server introspection. DEBUG is deliberately absent: DEBUG SLEEP/SEGFAULT
     // are anything but read-only.
-    "PING", "ECHO", "TIME", "LOLWUT", "INFO", "DBSIZE", "LASTSAVE",
+    "PING",
+    "ECHO",
+    "TIME",
+    "LOLWUT",
+    "INFO",
+    "DBSIZE",
+    "LASTSAVE",
     // keyspace. TOUCH is absent too — it updates the key's LRU/LFU metadata.
-    "TYPE", "TTL", "PTTL", "EXPIRETIME", "PEXPIRETIME", "EXISTS", "RANDOMKEY", "KEYS", "SCAN",
+    "TYPE",
+    "TTL",
+    "PTTL",
+    "EXPIRETIME",
+    "PEXPIRETIME",
+    "EXISTS",
+    "RANDOMKEY",
+    "KEYS",
+    "SCAN",
     "DUMP",
     // string / bitmap
-    "GET", "GETRANGE", "SUBSTR", "STRLEN", "MGET", "BITCOUNT", "BITPOS", "GETBIT",
+    "GET",
+    "GETRANGE",
+    "SUBSTR",
+    "STRLEN",
+    "MGET",
+    "BITCOUNT",
+    "BITPOS",
+    "GETBIT",
     // hash
-    "HGET", "HMGET", "HGETALL", "HKEYS", "HVALS", "HLEN", "HSTRLEN", "HEXISTS", "HSCAN",
-    "HRANDFIELD", "HTTL", "HPTTL", "HEXPIRETIME", "HPEXPIRETIME",
+    "HGET",
+    "HMGET",
+    "HGETALL",
+    "HKEYS",
+    "HVALS",
+    "HLEN",
+    "HSTRLEN",
+    "HEXISTS",
+    "HSCAN",
+    "HRANDFIELD",
+    "HTTL",
+    "HPTTL",
+    "HEXPIRETIME",
+    "HPEXPIRETIME",
     // list
-    "LRANGE", "LLEN", "LINDEX", "LPOS",
+    "LRANGE",
+    "LLEN",
+    "LINDEX",
+    "LPOS",
     // set
-    "SMEMBERS", "SCARD", "SISMEMBER", "SMISMEMBER", "SRANDMEMBER", "SSCAN", "SINTER", "SUNION",
-    "SDIFF", "SINTERCARD",
+    "SMEMBERS",
+    "SCARD",
+    "SISMEMBER",
+    "SMISMEMBER",
+    "SRANDMEMBER",
+    "SSCAN",
+    "SINTER",
+    "SUNION",
+    "SDIFF",
+    "SINTERCARD",
     // sorted set
-    "ZRANGE", "ZRANGEBYSCORE", "ZREVRANGE", "ZREVRANGEBYSCORE", "ZRANGEBYLEX", "ZREVRANGEBYLEX",
-    "ZRANK", "ZREVRANK", "ZSCORE", "ZMSCORE", "ZCARD", "ZCOUNT", "ZLEXCOUNT", "ZSCAN",
-    "ZRANDMEMBER", "ZDIFF", "ZINTER", "ZUNION", "ZINTERCARD",
+    "ZRANGE",
+    "ZRANGEBYSCORE",
+    "ZREVRANGE",
+    "ZREVRANGEBYSCORE",
+    "ZRANGEBYLEX",
+    "ZREVRANGEBYLEX",
+    "ZRANK",
+    "ZREVRANK",
+    "ZSCORE",
+    "ZMSCORE",
+    "ZCARD",
+    "ZCOUNT",
+    "ZLEXCOUNT",
+    "ZSCAN",
+    "ZRANDMEMBER",
+    "ZDIFF",
+    "ZINTER",
+    "ZUNION",
+    "ZINTERCARD",
     // stream (XAUTOCLAIM/XACK/XADD/XGROUP are writes and deliberately absent)
-    "XRANGE", "XREVRANGE", "XLEN",
+    "XRANGE",
+    "XREVRANGE",
+    "XLEN",
     // geo (GEOSEARCHSTORE / GEOADD are writes)
-    "GEOPOS", "GEODIST", "GEOHASH", "GEOSEARCH",
+    "GEOPOS",
+    "GEODIST",
+    "GEOHASH",
+    "GEOSEARCH",
     // scripting, read-only variants only
-    "EVAL_RO", "EVALSHA_RO", "FCALL_RO",
+    "EVAL_RO",
+    "EVALSHA_RO",
+    "FCALL_RO",
     // RedisJSON reads
-    "JSON.GET", "JSON.MGET", "JSON.TYPE", "JSON.STRLEN", "JSON.ARRLEN", "JSON.ARRINDEX",
-    "JSON.OBJLEN", "JSON.OBJKEYS", "JSON.RESP", "JSON.DEBUG",
+    "JSON.GET",
+    "JSON.MGET",
+    "JSON.TYPE",
+    "JSON.STRLEN",
+    "JSON.ARRLEN",
+    "JSON.ARRINDEX",
+    "JSON.OBJLEN",
+    "JSON.OBJKEYS",
+    "JSON.RESP",
+    "JSON.DEBUG",
     // RediSearch reads
-    "FT.SEARCH", "FT.AGGREGATE", "FT.INFO", "FT._LIST", "FT.EXPLAIN", "FT.EXPLAINCLI",
-    "FT.PROFILE", "FT.SPELLCHECK", "FT.TAGVALS", "FT.SUGLEN",
+    "FT.SEARCH",
+    "FT.AGGREGATE",
+    "FT.INFO",
+    "FT._LIST",
+    "FT.EXPLAIN",
+    "FT.EXPLAINCLI",
+    "FT.PROFILE",
+    "FT.SPELLCHECK",
+    "FT.TAGVALS",
+    "FT.SUGLEN",
     // TimeSeries reads
-    "TS.RANGE", "TS.REVRANGE", "TS.GET", "TS.INFO", "TS.MRANGE", "TS.MREVRANGE", "TS.MGET",
+    "TS.RANGE",
+    "TS.REVRANGE",
+    "TS.GET",
+    "TS.INFO",
+    "TS.MRANGE",
+    "TS.MREVRANGE",
+    "TS.MGET",
     "TS.QUERYINDEX",
 ];
 
@@ -60,22 +149,63 @@ const RO_SIMPLE: &[&str] = &[
 /// rewrite the HyperLogLog's cached cardinality.
 const RO_SUB: &[(&str, &[&str])] = &[
     ("CONFIG", &["GET", "HELP"]),
-    ("CLIENT", &["LIST", "INFO", "GETNAME", "ID", "NO-TOUCH", "HELP"]),
+    (
+        "CLIENT",
+        &["LIST", "INFO", "GETNAME", "ID", "NO-TOUCH", "HELP"],
+    ),
     ("SLOWLOG", &["GET", "LEN", "HELP"]),
     ("MEMORY", &["USAGE", "STATS", "DOCTOR", "HELP"]),
-    ("OBJECT", &["ENCODING", "FREQ", "IDLETIME", "REFCOUNT", "HELP"]),
-    ("ACL", &["LIST", "GETUSER", "CAT", "WHOAMI", "USERS", "HELP"]),
-    ("CLUSTER", &[
-        "INFO", "NODES", "SLOTS", "SHARDS", "MYID", "COUNTKEYSINSLOT", "GETKEYSINSLOT",
-        "LINKS", "KEYSLOT", "HELP",
-    ]),
+    (
+        "OBJECT",
+        &["ENCODING", "FREQ", "IDLETIME", "REFCOUNT", "HELP"],
+    ),
+    (
+        "ACL",
+        &["LIST", "GETUSER", "CAT", "WHOAMI", "USERS", "HELP"],
+    ),
+    (
+        "CLUSTER",
+        &[
+            "INFO",
+            "NODES",
+            "SLOTS",
+            "SHARDS",
+            "MYID",
+            "COUNTKEYSINSLOT",
+            "GETKEYSINSLOT",
+            "LINKS",
+            "KEYSLOT",
+            "HELP",
+        ],
+    ),
     ("FUNCTION", &["LIST", "DUMP", "STATS", "HELP"]),
     // SCRIPT LOAD/FLUSH mutate the server-side script cache, so only EXISTS is read-only.
     ("SCRIPT", &["EXISTS", "HELP"]),
     ("LATENCY", &["HISTORY", "LATEST", "DOCTOR", "GRAPH", "HELP"]),
     ("XINFO", &["STREAM", "GROUPS", "CONSUMERS", "HELP"]),
-    ("COMMAND", &["COUNT", "DOCS", "GETKEYS", "GETKEYSANDFLAGS", "INFO", "LIST", "HELP"]),
-    ("PUBSUB", &["CHANNELS", "NUMSUB", "NUMPAT", "SHARDCHANNELS", "SHARDNUMSUB", "HELP"]),
+    (
+        "COMMAND",
+        &[
+            "COUNT",
+            "DOCS",
+            "GETKEYS",
+            "GETKEYSANDFLAGS",
+            "INFO",
+            "LIST",
+            "HELP",
+        ],
+    ),
+    (
+        "PUBSUB",
+        &[
+            "CHANNELS",
+            "NUMSUB",
+            "NUMPAT",
+            "SHARDCHANNELS",
+            "SHARDNUMSUB",
+            "HELP",
+        ],
+    ),
 ];
 
 /// Commands that put a shared connection into a state where no other command can be sent.
@@ -83,9 +213,28 @@ const RO_SUB: &[(&str, &[&str])] = &[
 /// reach it — refused regardless of read-only mode, with the UI pointing at the Pub/Sub or
 /// Profiler tab (which each open their own dedicated connection).
 const BLOCKING: &[&str] = &[
-    "SUBSCRIBE", "UNSUBSCRIBE", "PSUBSCRIBE", "PUNSUBSCRIBE", "SSUBSCRIBE", "SUNSUBSCRIBE",
-    "MONITOR", "WAIT", "WAITAOF", "BLPOP", "BRPOP", "BLMOVE", "BRPOPLPUSH", "BLMPOP",
-    "BZPOPMIN", "BZPOPMAX", "BZMPOP", "SHUTDOWN", "RESET", "HELLO", "SYNC", "PSYNC",
+    "SUBSCRIBE",
+    "UNSUBSCRIBE",
+    "PSUBSCRIBE",
+    "PUNSUBSCRIBE",
+    "SSUBSCRIBE",
+    "SUNSUBSCRIBE",
+    "MONITOR",
+    "WAIT",
+    "WAITAOF",
+    "BLPOP",
+    "BRPOP",
+    "BLMOVE",
+    "BRPOPLPUSH",
+    "BLMPOP",
+    "BZPOPMIN",
+    "BZPOPMAX",
+    "BZMPOP",
+    "SHUTDOWN",
+    "RESET",
+    "HELLO",
+    "SYNC",
+    "PSYNC",
 ];
 
 /// Uppercased ASCII view of a token, for comparing against the tables above. Lossy on
@@ -211,10 +360,14 @@ fn hex_val(b: u8) -> Option<u8> {
 /// True only for commands known not to modify anything. Unknown commands return **false**
 /// (see the whitelist rationale at the top of the file).
 pub fn is_read_only_cmd(tokens: &[Vec<u8>]) -> bool {
-    let Some(first) = tokens.first() else { return false };
+    let Some(first) = tokens.first() else {
+        return false;
+    };
     let cmd = token_name(first);
     if let Some((_, subs)) = RO_SUB.iter().find(|(c, _)| *c == cmd) {
-        let Some(sub) = tokens.get(1) else { return false };
+        let Some(sub) = tokens.get(1) else {
+            return false;
+        };
         return subs.contains(&token_name(sub).as_str());
     }
     RO_SIMPLE.contains(&cmd.as_str())
@@ -223,7 +376,9 @@ pub fn is_read_only_cmd(tokens: &[Vec<u8>]) -> bool {
 /// True for commands that would hang or hijack the shared multiplexed connection.
 /// `XREAD`/`XREADGROUP` only qualify when they carry `BLOCK`.
 pub fn is_blocking_cmd(tokens: &[Vec<u8>]) -> bool {
-    let Some(first) = tokens.first() else { return false };
+    let Some(first) = tokens.first() else {
+        return false;
+    };
     let cmd = token_name(first);
     if BLOCKING.contains(&cmd.as_str()) {
         return true;
@@ -241,7 +396,10 @@ pub fn select_db_arg(tokens: &[Vec<u8>]) -> Option<i64> {
     if tokens.len() != 2 || token_name(&tokens[0]) != "SELECT" {
         return None;
     }
-    String::from_utf8_lossy(&tokens[1]).trim().parse::<i64>().ok()
+    String::from_utf8_lossy(&tokens[1])
+        .trim()
+        .parse::<i64>()
+        .ok()
 }
 
 /// `redis_version` ("7.4.1", "6.0.16", "255.255.255" on some forks) -> (major, minor).
@@ -269,11 +427,20 @@ mod tests {
     #[test]
     fn tokenize_splits_on_whitespace_and_honours_quotes() {
         assert_eq!(t("GET  foo"), vec![b"GET".to_vec(), b"foo".to_vec()]);
-        assert_eq!(t(r#"SET k "a b""#), vec![b"SET".to_vec(), b"k".to_vec(), b"a b".to_vec()]);
-        assert_eq!(t("SET k 'a b'"), vec![b"SET".to_vec(), b"k".to_vec(), b"a b".to_vec()]);
+        assert_eq!(
+            t(r#"SET k "a b""#),
+            vec![b"SET".to_vec(), b"k".to_vec(), b"a b".to_vec()]
+        );
+        assert_eq!(
+            t("SET k 'a b'"),
+            vec![b"SET".to_vec(), b"k".to_vec(), b"a b".to_vec()]
+        );
         assert!(t("").is_empty());
         // An empty quoted argument is a real argument, not nothing.
-        assert_eq!(t(r#"SET k """#), vec![b"SET".to_vec(), b"k".to_vec(), Vec::new()]);
+        assert_eq!(
+            t(r#"SET k """#),
+            vec![b"SET".to_vec(), b"k".to_vec(), Vec::new()]
+        );
     }
 
     /// Arguments are bytes, not `String`: a Redis value may be arbitrary binary and forcing it
@@ -305,7 +472,13 @@ mod tests {
     /// commands and whatever a future server version adds. A blacklist could not stay correct.
     #[test]
     fn an_unknown_command_is_treated_as_a_write() {
-        for cmd in ["JSON.SET k $ 1", "FT.DROPINDEX idx", "SOMETHING.NEW x", "FLUSHALL", "DEL k"] {
+        for cmd in [
+            "JSON.SET k $ 1",
+            "FT.DROPINDEX idx",
+            "SOMETHING.NEW x",
+            "FLUSHALL",
+            "DEL k",
+        ] {
             assert!(!is_read_only_cmd(&t(cmd)), "{cmd}");
         }
         assert!(!is_read_only_cmd(&[]));
@@ -332,7 +505,13 @@ mod tests {
 
     #[test]
     fn blocking_commands_are_recognised() {
-        for cmd in ["SUBSCRIBE ch", "MONITOR", "BLPOP k 0", "SHUTDOWN", "HELLO 3"] {
+        for cmd in [
+            "SUBSCRIBE ch",
+            "MONITOR",
+            "BLPOP k 0",
+            "SHUTDOWN",
+            "HELLO 3",
+        ] {
             assert!(is_blocking_cmd(&t(cmd)), "{cmd}");
         }
         assert!(!is_blocking_cmd(&t("GET foo")));
@@ -343,7 +522,9 @@ mod tests {
     #[test]
     fn xread_blocks_only_with_the_block_option() {
         assert!(is_blocking_cmd(&t("XREAD BLOCK 0 STREAMS s $")));
-        assert!(is_blocking_cmd(&t("XREADGROUP GROUP g c BLOCK 0 STREAMS s >")));
+        assert!(is_blocking_cmd(&t(
+            "XREADGROUP GROUP g c BLOCK 0 STREAMS s >"
+        )));
         assert!(!is_blocking_cmd(&t("XREAD COUNT 10 STREAMS s 0")));
     }
 

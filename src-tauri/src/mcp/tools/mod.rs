@@ -128,7 +128,9 @@ pub struct TableNovaMcp {
 #[tool_router]
 impl TableNovaMcp {
     pub fn new() -> Self {
-        Self { tool_router: Self::tool_router() }
+        Self {
+            tool_router: Self::tool_router(),
+        }
     }
 
     #[tool(
@@ -140,7 +142,13 @@ impl TableNovaMcp {
                        connection_id back verbatim."
     )]
     async fn tablenova_list_connections(&self) -> Result<CallToolResult, McpError> {
-        audited("tablenova_list_connections", None, None, catalog::list_connections()).await
+        audited(
+            "tablenova_list_connections",
+            None,
+            None,
+            catalog::list_connections(),
+        )
+        .await
     }
 
     // "(or schemas)" was wrong: `list_databases_inner` reads `pg_database` on Postgres and
@@ -340,9 +348,8 @@ async fn audited(
 /// A tool that runs before setup finished is a client that connected during startup - rare, and
 /// answerable, which is better than a panic in an axum task nobody is watching.
 pub(super) fn app_state() -> Result<crate::AppState, Refusal> {
-    crate::state::parked_state().ok_or_else(|| {
-        passthrough("TableNova is still starting up".to_string())
-    })
+    crate::state::parked_state()
+        .ok_or_else(|| passthrough("TableNova is still starting up".to_string()))
 }
 
 /// Wraps an error string from shared TableNova code.

@@ -3,9 +3,9 @@
 // The SigV4 presign is implemented here (hmac + sha2) so the whole AWS SDK does NOT have to be pulled in.
 // Credentials: an Access Key (typed in) or a Profile (read from ~/.aws/credentials). SSO is not supported yet.
 
-use hmac::{Hmac, Mac, KeyInit};
-use sha2::{Digest, Sha256};
+use hmac::{Hmac, KeyInit, Mac};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -61,15 +61,19 @@ pub fn detect_region(host: &str) -> Option<String> {
 }
 
 fn home_dir() -> Option<String> {
-    std::env::var("USERPROFILE").ok().or_else(|| std::env::var("HOME").ok())
+    std::env::var("USERPROFILE")
+        .ok()
+        .or_else(|| std::env::var("HOME").ok())
 }
 
 // Read the access key/secret/token of one profile in ~/.aws/credentials (a simple INI).
 fn read_profile_creds(profile: &str) -> Result<AwsCreds, String> {
-    let path = std::env::var("AWS_SHARED_CREDENTIALS_FILE").ok().unwrap_or_else(|| {
-        let home = home_dir().unwrap_or_default();
-        format!("{}/.aws/credentials", home)
-    });
+    let path = std::env::var("AWS_SHARED_CREDENTIALS_FILE")
+        .ok()
+        .unwrap_or_else(|| {
+            let home = home_dir().unwrap_or_default();
+            format!("{}/.aws/credentials", home)
+        });
     let content = std::fs::read_to_string(&path)
         .map_err(|e| format!("Không đọc được file credentials '{}': {}", path, e))?;
 
@@ -100,37 +104,74 @@ fn read_profile_creds(profile: &str) -> Result<AwsCreds, String> {
         }
     }
     if ak.is_empty() || sk.is_empty() {
-        return Err(format!("Profile '{}' thiếu aws_access_key_id/aws_secret_access_key", profile));
+        return Err(format!(
+            "Profile '{}' thiếu aws_access_key_id/aws_secret_access_key",
+            profile
+        ));
     }
-    Ok(AwsCreds { access_key: ak, secret_key: sk, session_token: token })
+    Ok(AwsCreds {
+        access_key: ak,
+        secret_key: sk,
+        session_token: token,
+    })
 }
 
 fn resolve_creds(config: &Value) -> Result<AwsCreds, String> {
-    let auth = config.get("awsAuthType").and_then(|v| v.as_str()).unwrap_or("access_key");
+    let auth = config
+        .get("awsAuthType")
+        .and_then(|v| v.as_str())
+        .unwrap_or("access_key");
     if auth == "profile" {
-        let profile = config.get("awsProfile").and_then(|v| v.as_str())
+        let profile = config
+            .get("awsProfile")
+            .and_then(|v| v.as_str())
             .filter(|s| !s.trim().is_empty())
             .ok_or("Thiếu tên AWS profile")?;
         return read_profile_creds(profile);
     }
-    let ak = config.get("awsAccessKeyId").and_then(|v| v.as_str())
-        .filter(|s| !s.trim().is_empty()).ok_or("Thiếu AWS Access Key ID")?;
-    let sk = config.get("awsSecretAccessKey").and_then(|v| v.as_str())
-        .filter(|s| !s.trim().is_empty()).ok_or("Thiếu AWS Secret Access Key")?;
-    let token = config.get("awsSessionToken").and_then(|v| v.as_str())
-        .filter(|s| !s.trim().is_empty()).map(|s| s.to_string());
-    Ok(AwsCreds { access_key: ak.to_string(), secret_key: sk.to_string(), session_token: token })
+    let ak = config
+        .get("awsAccessKeyId")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .ok_or("Thiếu AWS Access Key ID")?;
+    let sk = config
+        .get("awsSecretAccessKey")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .ok_or("Thiếu AWS Secret Access Key")?;
+    let token = config
+        .get("awsSessionToken")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.to_string());
+    Ok(AwsCreds {
+        access_key: ak.to_string(),
+        secret_key: sk.to_string(),
+        session_token: token,
+    })
 }
 
 // Build the RDS IAM auth token = the SigV4-presigned URL (with the https:// scheme stripped). Used as the password.
 pub fn generate_rds_token(config: &Value, default_port: u16) -> Result<String, String> {
-    let host = config.get("host").and_then(|v| v.as_str())
-        .filter(|s| !s.trim().is_empty()).ok_or("Thiếu host RDS")?;
-    let port = config.get("port").and_then(|v| v.as_u64()).unwrap_or(default_port as u64) as u16;
-    let user = config.get("user").and_then(|v| v.as_str())
-        .filter(|s| !s.trim().is_empty()).ok_or("Thiếu DB user cho IAM")?;
-    let region = config.get("awsRegion").and_then(|v| v.as_str())
-        .filter(|s| !s.trim().is_empty()).map(|s| s.to_string())
+    let host = config
+        .get("host")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .ok_or("Thiếu host RDS")?;
+    let port = config
+        .get("port")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(default_port as u64) as u16;
+    let user = config
+        .get("user")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .ok_or("Thiếu DB user cho IAM")?;
+    let region = config
+        .get("awsRegion")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.to_string())
         .or_else(|| detect_region(host))
         .ok_or("Không xác định được AWS region (điền thủ công)")?;
     let creds = resolve_creds(config)?;
@@ -149,7 +190,10 @@ pub fn generate_rds_token(config: &Value, default_port: u16) -> Result<String, S
         ("Action".into(), "connect".into()),
         ("DBUser".into(), user.to_string()),
         ("X-Amz-Algorithm".into(), algorithm.into()),
-        ("X-Amz-Credential".into(), format!("{}/{}", creds.access_key, credential_scope)),
+        (
+            "X-Amz-Credential".into(),
+            format!("{}/{}", creds.access_key, credential_scope),
+        ),
         ("X-Amz-Date".into(), amz_date.clone()),
         ("X-Amz-Expires".into(), "900".into()),
         ("X-Amz-SignedHeaders".into(), "host".into()),
@@ -187,12 +231,18 @@ pub fn generate_rds_token(config: &Value, default_port: u16) -> Result<String, S
     );
 
     // SigV4 signing key
-    let k_date = hmac_sha256(format!("AWS4{}", creds.secret_key).as_bytes(), datestamp.as_bytes());
+    let k_date = hmac_sha256(
+        format!("AWS4{}", creds.secret_key).as_bytes(),
+        datestamp.as_bytes(),
+    );
     let k_region = hmac_sha256(&k_date, region.as_bytes());
     let k_service = hmac_sha256(&k_region, service.as_bytes());
     let k_signing = hmac_sha256(&k_service, b"aws4_request");
     let signature = hex(&hmac_sha256(&k_signing, string_to_sign.as_bytes()));
 
     // Token = host:port/?<canonical_query>&X-Amz-Signature=<sig>
-    Ok(format!("{}/?{}&X-Amz-Signature={}", host_header, canonical_query, signature))
+    Ok(format!(
+        "{}/?{}&X-Amz-Signature={}",
+        host_header, canonical_query, signature
+    ))
 }

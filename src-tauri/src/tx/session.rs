@@ -5,11 +5,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::database::DbConnection;
 
-use super::effect::{is_aborted_error, same_savepoint, TxEffect};
+use super::effect::{TxEffect, is_aborted_error, same_savepoint};
 
 // ---------------------------------------------------------------------------
 // State
@@ -133,11 +133,11 @@ impl Session {
     }
 }
 
-static TX_REGISTRY: OnceLock<Mutex<HashMap<crate::state::ConnScopeId, Arc<Session>>>> = OnceLock::new();
+static TX_REGISTRY: OnceLock<Mutex<HashMap<crate::state::ConnScopeId, Arc<Session>>>> =
+    OnceLock::new();
 pub(super) fn tx_registry() -> &'static Mutex<HashMap<crate::state::ConnScopeId, Arc<Session>>> {
     TX_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
-
 
 /// The session of a connection, **without creating one**.
 ///
@@ -193,7 +193,6 @@ pub(super) fn conn_scope_id(conn: &DbConnection) -> Option<&str> {
         crate::state::ConnId::Adhoc => None,
     }
 }
-
 
 /// The status of one connection's session. A connection with no session reports the default —
 /// auto-commit on, nothing open — which is exactly its state.
@@ -325,7 +324,13 @@ pub fn reject_if_manual_or_open(conn_id: &str, action: &str) -> Result<(), Strin
 /// Fold the statement's outcome into the transaction state.
 ///
 /// `is_write` decides whether the pending counter moves — see `is_write_stmt`.
-pub(super) fn apply_effect(conn_id: &str, effect: &TxEffect, is_write: bool, sql: &str, failed_with: Option<&str>) {
+pub(super) fn apply_effect(
+    conn_id: &str,
+    effect: &TxEffect,
+    is_write: bool,
+    sql: &str,
+    failed_with: Option<&str>,
+) {
     let session = session_for(conn_id);
     let mut m = match session.meta.lock() {
         Ok(m) => m,
@@ -368,7 +373,11 @@ pub(super) fn apply_effect(conn_id: &str, effect: &TxEffect, is_write: bool, sql
             // Rolling back to a savepoint clears the abort flag: that is exactly what it is for on
             // Postgres. Savepoints created after it are gone, and so are the statements they cover
             // — the mark recorded with each savepoint is what makes that exact rather than a guess.
-            if let Some(pos) = m.savepoints.iter().position(|(s, _)| same_savepoint(s, name)) {
+            if let Some(pos) = m
+                .savepoints
+                .iter()
+                .position(|(s, _)| same_savepoint(s, name))
+            {
                 let mark = m.savepoints[pos].1;
                 m.savepoints.truncate(pos + 1);
                 m.rewind_to(mark);
@@ -376,7 +385,11 @@ pub(super) fn apply_effect(conn_id: &str, effect: &TxEffect, is_write: bool, sql
             m.aborted = false;
         }
         TxEffect::Release(name) => {
-            if let Some(pos) = m.savepoints.iter().position(|(s, _)| same_savepoint(s, name)) {
+            if let Some(pos) = m
+                .savepoints
+                .iter()
+                .position(|(s, _)| same_savepoint(s, name))
+            {
                 m.savepoints.truncate(pos);
             }
         }

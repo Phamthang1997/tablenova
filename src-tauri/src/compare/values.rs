@@ -9,7 +9,13 @@ use serde_json::Value;
 pub(super) fn norm_scalar(v: &Value) -> String {
     match v {
         Value::Null => "\u{0}null".to_string(),
-        Value::Bool(b) => if *b { "1".to_string() } else { "0".to_string() },
+        Value::Bool(b) => {
+            if *b {
+                "1".to_string()
+            } else {
+                "0".to_string()
+            }
+        }
         Value::Number(n) => norm_number(&n.to_string()),
         Value::String(s) => s.clone(),
         other => other.to_string(),

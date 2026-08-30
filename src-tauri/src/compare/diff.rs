@@ -14,7 +14,14 @@ pub(super) fn norm_type(raw: &str) -> String {
     let mut t = raw.trim().to_ascii_lowercase();
     t = t.split_whitespace().collect::<Vec<_>>().join(" ");
 
-    for base in ["tinyint", "smallint", "mediumint", "bigint", "int", "integer"] {
+    for base in [
+        "tinyint",
+        "smallint",
+        "mediumint",
+        "bigint",
+        "int",
+        "integer",
+    ] {
         if let Some(rest) = t.strip_prefix(base) {
             if rest.starts_with('(') {
                 if let Some(close) = rest.find(')') {
@@ -227,7 +234,10 @@ mod tests {
         assert_eq!(norm_type("int8"), norm_type("bigint"));
         assert_eq!(norm_type("bool"), norm_type("BOOLEAN"));
         assert_eq!(norm_type("double precision"), norm_type("double"));
-        assert_eq!(norm_type("timestamp without time zone"), norm_type("TIMESTAMP"));
+        assert_eq!(
+            norm_type("timestamp without time zone"),
+            norm_type("TIMESTAMP")
+        );
         assert_eq!(norm_type("numeric(10,2)"), norm_type("DECIMAL(10,2)"));
         assert_eq!(norm_type("bytea"), norm_type("BLOB"));
         assert_eq!(norm_type("longtext"), norm_type("TEXT"));

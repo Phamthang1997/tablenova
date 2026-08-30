@@ -50,13 +50,25 @@ pub(crate) fn qualified(conn: &DbConnection, schema: &Option<String>, table: &st
 pub(crate) fn fk_checks_sql(conn: &DbConnection, on: bool) -> &'static str {
     match &conn.kind {
         DbKind::Mysql(_) => {
-            if on { "SET FOREIGN_KEY_CHECKS = 1" } else { "SET FOREIGN_KEY_CHECKS = 0" }
+            if on {
+                "SET FOREIGN_KEY_CHECKS = 1"
+            } else {
+                "SET FOREIGN_KEY_CHECKS = 0"
+            }
         }
         DbKind::Postgres(_) => {
-            if on { "SET session_replication_role = 'origin'" } else { "SET session_replication_role = 'replica'" }
+            if on {
+                "SET session_replication_role = 'origin'"
+            } else {
+                "SET session_replication_role = 'replica'"
+            }
         }
         DbKind::Sqlite(_) => {
-            if on { "PRAGMA foreign_keys = ON" } else { "PRAGMA foreign_keys = OFF" }
+            if on {
+                "PRAGMA foreign_keys = ON"
+            } else {
+                "PRAGMA foreign_keys = OFF"
+            }
         }
     }
 }
@@ -125,7 +137,10 @@ mod tests {
         assert_eq!(qualified(&sqlite(), &s, "film"), "\"film\"");
         // No schema, or an empty one, leaves the bare quoted name on Postgres too.
         assert_eq!(qualified(&postgres(), &None, "film"), "\"film\"");
-        assert_eq!(qualified(&postgres(), &Some(String::new()), "film"), "\"film\"");
+        assert_eq!(
+            qualified(&postgres(), &Some(String::new()), "film"),
+            "\"film\""
+        );
     }
 
     #[test]
@@ -144,8 +159,14 @@ mod tests {
     async fn fk_checks_sql_is_per_dialect_and_reversible() {
         assert_eq!(fk_checks_sql(&mysql(), false), "SET FOREIGN_KEY_CHECKS = 0");
         assert_eq!(fk_checks_sql(&mysql(), true), "SET FOREIGN_KEY_CHECKS = 1");
-        assert_eq!(fk_checks_sql(&postgres(), false), "SET session_replication_role = 'replica'");
-        assert_eq!(fk_checks_sql(&postgres(), true), "SET session_replication_role = 'origin'");
+        assert_eq!(
+            fk_checks_sql(&postgres(), false),
+            "SET session_replication_role = 'replica'"
+        );
+        assert_eq!(
+            fk_checks_sql(&postgres(), true),
+            "SET session_replication_role = 'origin'"
+        );
         assert_eq!(fk_checks_sql(&sqlite(), false), "PRAGMA foreign_keys = OFF");
         assert_eq!(fk_checks_sql(&sqlite(), true), "PRAGMA foreign_keys = ON");
     }

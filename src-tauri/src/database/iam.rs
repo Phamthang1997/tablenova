@@ -1,6 +1,6 @@
 //! AWS IAM authentication: generating a token in place of the password, and refreshing it before it expires.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sqlx::{MySqlPool, PgPool};
 use tauri::Manager;
 
@@ -16,14 +16,21 @@ pub(crate) fn is_iam(config: &Value) -> bool {
 
 // When AWS IAM is used: generate a token, set it as conn_config's password and force SSL (IAM requires SSL).
 // The token is signed from the ORIGINAL config (the real host/region), so call this before using the tunneled conn_config.
-pub(crate) fn apply_iam_password(orig_config: &Value, conn_config: &mut Value, default_port: u16) -> Result<(), String> {
+pub(crate) fn apply_iam_password(
+    orig_config: &Value,
+    conn_config: &mut Value,
+    default_port: u16,
+) -> Result<(), String> {
     if !is_iam(orig_config) {
         return Ok(());
     }
     let token = crate::credentials::aws_iam::generate_rds_token(orig_config, default_port)?;
     if let Some(obj) = conn_config.as_object_mut() {
         obj.insert("password".to_string(), json!(token));
-        let mode = obj.get("sslMode").and_then(|v| v.as_str()).unwrap_or("DISABLED");
+        let mode = obj
+            .get("sslMode")
+            .and_then(|v| v.as_str())
+            .unwrap_or("DISABLED");
         if mode == "DISABLED" || mode == "PREFERRED" {
             obj.insert("sslMode".to_string(), json!("REQUIRED"));
         }
@@ -42,10 +49,14 @@ pub(crate) async fn build_iam_conn(db_type: &str, orig_config: &Value) -> Result
     apply_iam_password(orig_config, &mut conn_config, default_port)?;
     match db_type {
         "postgres" => Ok(DbKind::Postgres(
-            PgPool::connect(&build_pg_url(&conn_config, None)).await.map_err(|e| e.to_string())?,
+            PgPool::connect(&build_pg_url(&conn_config, None))
+                .await
+                .map_err(|e| e.to_string())?,
         )),
         "mysql" => Ok(DbKind::Mysql(
-            MySqlPool::connect(&build_mysql_url(&conn_config, None)).await.map_err(|e| e.to_string())?,
+            MySqlPool::connect(&build_mysql_url(&conn_config, None))
+                .await
+                .map_err(|e| e.to_string())?,
         )),
         _ => Err("IAM chỉ hỗ trợ postgres/mysql".to_string()),
     }

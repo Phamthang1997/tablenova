@@ -1,8 +1,10 @@
 //! INFO and the CLI console.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::redis_db::cmds::{is_blocking_cmd, is_read_only_cmd, select_db_arg, token_name, tokenize};
+use crate::redis_db::cmds::{
+    is_blocking_cmd, is_read_only_cmd, select_db_arg, token_name, tokenize,
+};
 use crate::redis_db::conn::take_conn;
 use crate::redis_db::session::select_db_inner;
 use crate::redis_db::value::{parse_info, redis_value_to_json};
@@ -10,11 +12,15 @@ use crate::redis_db::value::{parse_info, redis_value_to_json};
 #[tauri::command]
 pub async fn redis_info(conn_id: String) -> Result<Value, String> {
     Box::pin(async move {
-    let state = crate::state::require_state()?;
-    let mut c = take_conn(&state, &conn_id)?;
-    let text: String = redis::cmd("INFO").query_async(&mut c).await.map_err(|e| e.to_string())?;
-    Ok(json!({ "success": true, "info": parse_info(&text), "raw": text }))
-}).await
+        let state = crate::state::require_state()?;
+        let mut c = take_conn(&state, &conn_id)?;
+        let text: String = redis::cmd("INFO")
+            .query_async(&mut c)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(json!({ "success": true, "info": parse_info(&text), "raw": text }))
+    })
+    .await
 }
 
 #[tauri::command]

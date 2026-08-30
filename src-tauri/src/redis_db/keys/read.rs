@@ -1,9 +1,9 @@
 //! Reading one key: its type, its TTL, and its elements page by page.
 
 use redis::aio::MultiplexedConnection;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::redis_db::caps::{caps_of, RedisCaps};
+use crate::redis_db::caps::{RedisCaps, caps_of};
 use crate::redis_db::cmds::version_at_least;
 use crate::redis_db::conn::take_conn;
 use crate::redis_db::value::{is_binary, lossy_text, redis_value_to_json};
@@ -21,7 +21,11 @@ pub(crate) const STRING_PREVIEW_MAX: usize = 1024 * 1024;
 
 /// Number of elements in a collection, so the UI can show "200 of 1,048,576" instead of
 /// pretending the page is the whole key. `None` for types with no cheap count.
-pub(crate) async fn element_count(c: &mut MultiplexedConnection, key: &str, kind: &str) -> Option<i64> {
+pub(crate) async fn element_count(
+    c: &mut MultiplexedConnection,
+    key: &str,
+    kind: &str,
+) -> Option<i64> {
     let cmd = match kind {
         "hash" => "HLEN",
         "list" => "LLEN",
@@ -170,7 +174,11 @@ pub(crate) async fn fetch_elements(
             } else {
                 cursor.to_string()
             };
-            let fetch = if first_page || exclusive { count } else { count + 1 };
+            let fetch = if first_page || exclusive {
+                count
+            } else {
+                count + 1
+            };
             let reply: redis::streams::StreamRangeReply = redis::cmd("XRANGE")
                 .arg(key)
                 .arg(&start_arg)
@@ -185,7 +193,10 @@ pub(crate) async fn fetch_elements(
                 ids.remove(0);
             }
             let n = ids.len();
-            let last = ids.last().map(|e| e.id.clone()).unwrap_or_else(|| cursor.to_string());
+            let last = ids
+                .last()
+                .map(|e| e.id.clone())
+                .unwrap_or_else(|| cursor.to_string());
             let out = ids
                 .into_iter()
                 .map(|entry| {
@@ -206,59 +217,86 @@ pub(crate) async fn fetch_elements(
 #[tauri::command]
 pub async fn redis_get_key(conn_id: String, key: String) -> Result<Value, String> {
     Box::pin(async move {
-    let state = crate::state::require_state()?;
-    let caps = caps_of(&state, &conn_id);
-    let mut c = take_conn(&state, &conn_id)?;
-    let t: String = redis::cmd("TYPE").arg(&key).query_async(&mut c).await.map_err(|e| e.to_string())?;
-    if t == "none" {
-        return Err(format!("Key \"{}\" không tồn tại.", key));
-    }
-    let ttl: i64 = redis::cmd("TTL").arg(&key).query_async(&mut c).await.map_err(|e| e.to_string())?;
-    let memory: Option<i64> = redis::cmd("MEMORY").arg("USAGE").arg(&key).query_async(&mut c).await.unwrap_or(None);
-    let length = element_count(&mut c, &key, &t).await;
-
-    let value: Value = match t.as_str() {
-        "string" => {
-            let total: i64 = redis::cmd("STRLEN").arg(&key).query_async(&mut c).await.unwrap_or(0);
-            let truncated = total > STRING_PREVIEW_MAX as i64;
-            let bytes: Option<Vec<u8>> = if truncated {
-                redis::cmd("GETRANGE").arg(&key).arg(0).arg(STRING_PREVIEW_MAX as i64 - 1)
-                    .query_async(&mut c).await.map_err(|e| e.to_string())?
-            } else {
-                redis::cmd("GET").arg(&key).query_async(&mut c).await.map_err(|e| e.to_string())?
-            };
-            let bytes = bytes.unwrap_or_default();
-            let text = std::str::from_utf8(&bytes).ok().map(|s| s.to_string());
-            json!({
-                "kind": "string",
-                "bytes": bytes,
-                "text": text,
-                "truncated": truncated,
-                "totalLength": total,
-            })
+        let state = crate::state::require_state()?;
+        let caps = caps_of(&state, &conn_id);
+        let mut c = take_conn(&state, &conn_id)?;
+        let t: String = redis::cmd("TYPE")
+            .arg(&key)
+            .query_async(&mut c)
+            .await
+            .map_err(|e| e.to_string())?;
+        if t == "none" {
+            return Err(format!("Key \"{}\" không tồn tại.", key));
         }
-        // Every collection ships the *first page* and the cursor to continue from. One shape
-        // for all four (`elements`) so the UI has a single paging path.
-        "hash" | "list" | "set" | "zset" | "stream" => {
-            let (elements, next_cursor, done) =
-                fetch_elements(&mut c, &key, &t, "", ELEMENT_PAGE, None, &caps).await?;
-            json!({ "kind": t, "elements": elements, "nextCursor": next_cursor, "done": done })
-        }
-        // ReJSON-RL, TSDB-TYPE, vectorset, MBbloom--… Returning `{ kind: other }` used to make
-        // the panel render nothing at all, with no hint that the type is simply not handled.
-        other => json!({ "kind": "unsupported", "redisType": other }),
-    };
+        let ttl: i64 = redis::cmd("TTL")
+            .arg(&key)
+            .query_async(&mut c)
+            .await
+            .map_err(|e| e.to_string())?;
+        let memory: Option<i64> = redis::cmd("MEMORY")
+            .arg("USAGE")
+            .arg(&key)
+            .query_async(&mut c)
+            .await
+            .unwrap_or(None);
+        let length = element_count(&mut c, &key, &t).await;
 
-    Ok(json!({
-        "success": true,
-        "key": key,
-        "type": t,
-        "ttl": ttl,
-        "memory": memory,
-        "length": length,
-        "value": value,
-    }))
-}).await
+        let value: Value = match t.as_str() {
+            "string" => {
+                let total: i64 = redis::cmd("STRLEN")
+                    .arg(&key)
+                    .query_async(&mut c)
+                    .await
+                    .unwrap_or(0);
+                let truncated = total > STRING_PREVIEW_MAX as i64;
+                let bytes: Option<Vec<u8>> = if truncated {
+                    redis::cmd("GETRANGE")
+                        .arg(&key)
+                        .arg(0)
+                        .arg(STRING_PREVIEW_MAX as i64 - 1)
+                        .query_async(&mut c)
+                        .await
+                        .map_err(|e| e.to_string())?
+                } else {
+                    redis::cmd("GET")
+                        .arg(&key)
+                        .query_async(&mut c)
+                        .await
+                        .map_err(|e| e.to_string())?
+                };
+                let bytes = bytes.unwrap_or_default();
+                let text = std::str::from_utf8(&bytes).ok().map(|s| s.to_string());
+                json!({
+                    "kind": "string",
+                    "bytes": bytes,
+                    "text": text,
+                    "truncated": truncated,
+                    "totalLength": total,
+                })
+            }
+            // Every collection ships the *first page* and the cursor to continue from. One shape
+            // for all four (`elements`) so the UI has a single paging path.
+            "hash" | "list" | "set" | "zset" | "stream" => {
+                let (elements, next_cursor, done) =
+                    fetch_elements(&mut c, &key, &t, "", ELEMENT_PAGE, None, &caps).await?;
+                json!({ "kind": t, "elements": elements, "nextCursor": next_cursor, "done": done })
+            }
+            // ReJSON-RL, TSDB-TYPE, vectorset, MBbloom--… Returning `{ kind: other }` used to make
+            // the panel render nothing at all, with no hint that the type is simply not handled.
+            other => json!({ "kind": "unsupported", "redisType": other }),
+        };
+
+        Ok(json!({
+            "success": true,
+            "key": key,
+            "type": t,
+            "ttl": ttl,
+            "memory": memory,
+            "length": length,
+            "value": value,
+        }))
+    })
+    .await
 }
 
 /// Next page of a collection. `cursor` comes back from the previous call (or `redis_get_key`).
@@ -272,25 +310,26 @@ pub async fn redis_get_elements(
     filter: Option<String>,
 ) -> Result<Value, String> {
     Box::pin(async move {
-    let state = crate::state::require_state()?;
-    let caps = caps_of(&state, &conn_id);
-    let mut c = take_conn(&state, &conn_id)?;
-    let (elements, next_cursor, done) = fetch_elements(
-        &mut c,
-        &key,
-        &kind,
-        &cursor,
-        count.unwrap_or(ELEMENT_PAGE),
-        filter.as_deref(),
-        &caps,
-    )
-    .await?;
-    Ok(json!({
-        "success": true,
-        "kind": kind,
-        "elements": elements,
-        "nextCursor": next_cursor,
-        "done": done,
-    }))
-}).await
+        let state = crate::state::require_state()?;
+        let caps = caps_of(&state, &conn_id);
+        let mut c = take_conn(&state, &conn_id)?;
+        let (elements, next_cursor, done) = fetch_elements(
+            &mut c,
+            &key,
+            &kind,
+            &cursor,
+            count.unwrap_or(ELEMENT_PAGE),
+            filter.as_deref(),
+            &caps,
+        )
+        .await?;
+        Ok(json!({
+            "success": true,
+            "kind": kind,
+            "elements": elements,
+            "nextCursor": next_cursor,
+            "done": done,
+        }))
+    })
+    .await
 }

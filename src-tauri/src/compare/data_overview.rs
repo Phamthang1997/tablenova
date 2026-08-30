@@ -3,11 +3,11 @@
 
 use std::collections::BTreeSet;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::compare::ident::qualified;
 use crate::compare::read::read_schema;
-use crate::compare::side::{query_rows, resolve_side, side_json, CompareSide, Resolved};
+use crate::compare::side::{CompareSide, Resolved, query_rows, resolve_side, side_json};
 
 // ===================== Command: data overview (row counts) =====================
 
@@ -19,21 +19,22 @@ pub async fn compare_data_overview(
     tables: Option<Vec<String>>,
 ) -> Result<Value, String> {
     Box::pin(async move {
-    let state = crate::state::require_state()?;
-    let src = resolve_side(&state, &source, &conn_id).await?;
-    let tgt = match resolve_side(&state, &target, &conn_id).await {
-        Ok(t) => t,
-        Err(e) => {
-            src.close().await;
-            return Err(e);
-        }
-    };
+        let state = crate::state::require_state()?;
+        let src = resolve_side(&state, &source, &conn_id).await?;
+        let tgt = match resolve_side(&state, &target, &conn_id).await {
+            Ok(t) => t,
+            Err(e) => {
+                src.close().await;
+                return Err(e);
+            }
+        };
 
-    let out = data_overview_inner(&src, &tgt, tables).await;
-    src.close().await;
-    tgt.close().await;
-    out
-}).await
+        let out = data_overview_inner(&src, &tgt, tables).await;
+        src.close().await;
+        tgt.close().await;
+        out
+    })
+    .await
 }
 
 pub(super) async fn count_rows(r: &Resolved, table: &str) -> Result<i64, String> {
@@ -42,7 +43,11 @@ pub(super) async fn count_rows(r: &Resolved, table: &str) -> Result<i64, String>
         qualified(&r.dialect, &r.schema, table)
     );
     let rows = query_rows(&r.conn, sql).await?;
-    let v = rows.first().and_then(|row| row.get("n")).cloned().unwrap_or(Value::Null);
+    let v = rows
+        .first()
+        .and_then(|row| row.get("n"))
+        .cloned()
+        .unwrap_or(Value::Null);
     Ok(match v {
         Value::Number(n) => n.as_i64().unwrap_or(0),
         Value::String(s) => s.parse::<i64>().unwrap_or(0),

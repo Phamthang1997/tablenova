@@ -70,7 +70,10 @@ pub fn secret_delete(profile_id: String, field: String) -> Result<(), String> {
     match r.entry()?.delete_credential() {
         Ok(()) => Ok(()),
         Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(format!("Không xoá được '{}' khỏi kho bí mật: {}", r.field, e)),
+        Err(e) => Err(format!(
+            "Không xoá được '{}' khỏi kho bí mật: {}",
+            r.field, e
+        )),
     }
 }
 

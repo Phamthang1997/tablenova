@@ -192,7 +192,11 @@ mod tests {
         for file in &files {
             let text = std::fs::read_to_string(file).expect("read");
             let lines: Vec<&str> = text.lines().collect();
-            let shown = file.strip_prefix(&root).unwrap_or(file).display().to_string();
+            let shown = file
+                .strip_prefix(&root)
+                .unwrap_or(file)
+                .display()
+                .to_string();
 
             for (i, line) in lines.iter().enumerate() {
                 // Anchored at the start of a line so the attribute NAMED in a doc comment (this

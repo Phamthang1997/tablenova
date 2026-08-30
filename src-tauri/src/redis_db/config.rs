@@ -15,7 +15,9 @@ pub(crate) fn url_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
         match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
             _ => out.push_str(&format!("%{:02X}", b)),
         }
     }
@@ -30,11 +32,27 @@ pub(crate) fn url_encode(s: &str) -> String {
 /// is no STARTTLS-style negotiation: a port either speaks TLS or it does not) but is mapped
 /// defensively in case a profile switched type and kept the field.
 pub(crate) fn redis_ssl_mode(config: &Value) -> String {
-    let enabled = config.get("sslEnabled").and_then(|v| v.as_bool()).unwrap_or(false)
-        || config.get("useSsl").and_then(|v| v.as_bool()).unwrap_or(false);
-    let mode = config.get("sslMode").and_then(|v| v.as_str()).unwrap_or("").trim();
+    let enabled = config
+        .get("sslEnabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+        || config
+            .get("useSsl")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+    let mode = config
+        .get("sslMode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
     match mode {
-        "" | "DISABLED" => if enabled { "VERIFY_IDENTITY" } else { "DISABLED" },
+        "" | "DISABLED" => {
+            if enabled {
+                "VERIFY_IDENTITY"
+            } else {
+                "DISABLED"
+            }
+        }
         "PREFERRED" => "VERIFY_IDENTITY",
         other => other,
     }
@@ -42,12 +60,22 @@ pub(crate) fn redis_ssl_mode(config: &Value) -> String {
 }
 
 pub(crate) fn build_redis_url(config: &Value, db_index: i64) -> String {
-    let host = config.get("host").and_then(|v| v.as_str()).unwrap_or("127.0.0.1");
+    let host = config
+        .get("host")
+        .and_then(|v| v.as_str())
+        .unwrap_or("127.0.0.1");
     let port = config.get("port").and_then(|v| v.as_u64()).unwrap_or(6379);
     let user = config.get("user").and_then(|v| v.as_str()).unwrap_or("");
-    let password = config.get("password").and_then(|v| v.as_str()).unwrap_or("");
+    let password = config
+        .get("password")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let mode = redis_ssl_mode(config);
-    let scheme = if mode == "DISABLED" { "redis" } else { "rediss" };
+    let scheme = if mode == "DISABLED" {
+        "redis"
+    } else {
+        "rediss"
+    };
 
     let auth = if !password.is_empty() {
         format!("{}:{}@", url_encode(user), url_encode(password))
@@ -110,7 +138,10 @@ pub(crate) fn redis_tls_certs(config: &Value) -> Result<Option<redis::TlsCertifi
         Some(p) => Some(read_ca_pem(&p)?),
         None => None,
     };
-    Ok(Some(redis::TlsCertificates { client_tls, root_cert }))
+    Ok(Some(redis::TlsCertificates {
+        client_tls,
+        root_cert,
+    }))
 }
 
 /// Builds the client for `config`. Shared by connect, the db-index switch and the dedicated
@@ -118,12 +149,18 @@ pub(crate) fn redis_tls_certs(config: &Value) -> Result<Option<redis::TlsCertifi
 pub(crate) fn make_client(config: &Value, db_index: i64) -> Result<redis::Client, String> {
     let mode = redis_ssl_mode(config);
     let url = build_redis_url(config, db_index);
-    let certs = if mode == "DISABLED" { None } else { redis_tls_certs(config)? };
+    let certs = if mode == "DISABLED" {
+        None
+    } else {
+        redis_tls_certs(config)?
+    };
 
     let client = match certs {
         Some(c) => redis::Client::build_with_tls(url, c)
             .map_err(|e| format!("Cấu hình TLS không hợp lệ: {}", e))?,
-        None => redis::Client::open(url).map_err(|e| format!("Cấu hình TLS không hợp lệ: {}", e))?,
+        None => {
+            redis::Client::open(url).map_err(|e| format!("Cấu hình TLS không hợp lệ: {}", e))?
+        }
     };
 
     // VERIFY_CA = verify the certificate chain but skip the hostname. It must be set AFTER build_with_tls:

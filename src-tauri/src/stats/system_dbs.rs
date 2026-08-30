@@ -1,6 +1,7 @@
 //! Recognising each dialect's system databases (the ones the dashboard hides by default).
 
-pub(super) const MYSQL_SYSTEM_DBS: &[&str] = &["information_schema", "mysql", "performance_schema", "sys"];
+pub(super) const MYSQL_SYSTEM_DBS: &[&str] =
+    &["information_schema", "mysql", "performance_schema", "sys"];
 pub(super) const PG_SYSTEM_DBS: &[&str] = &["postgres", "template0", "template1"];
 
 pub(super) fn is_system_db(db_type: &str, name: &str) -> bool {
@@ -11,7 +12,6 @@ pub(super) fn is_system_db(db_type: &str, name: &str) -> bool {
         _ => false,
     }
 }
-
 
 // System schema names as SQL literals, for a single `NOT IN (...)` clause.
 pub(super) fn system_db_sql_list(db_type: &str) -> String {

@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::database::{execute_raw_sql_pooled, rows_of, DbConnection};
+use crate::database::{DbConnection, execute_raw_sql_pooled, rows_of};
 
 /// Single session or connection activity entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,23 +86,24 @@ fn extract_i64(row: &Value, key: &str) -> i64 {
 /// Uses `execute_raw_sql_pooled` to bypass transaction router and avoid
 /// creating artificial transactions or interfering with active user workloads.
 #[tauri::command]
-pub async fn get_process_list(
-    conn_id: String,
-) -> Result<ProcessListSummary, String> {
+pub async fn get_process_list(conn_id: String) -> Result<ProcessListSummary, String> {
     Box::pin(async move {
-    let state = crate::state::require_state()?;
-    let (conn, dialect) = {
-        let ctx = state.connections.acquire(&conn_id)?;
-        (ctx.conn().clone(), ctx.dialect().to_string())
-    };
+        let state = crate::state::require_state()?;
+        let (conn, dialect) = {
+            let ctx = state.connections.acquire(&conn_id)?;
+            (ctx.conn().clone(), ctx.dialect().to_string())
+        };
 
-    match dialect.as_str() {
-        "postgres" => fetch_postgres_process_list(&conn).await,
-        "mysql" => fetch_mysql_process_list(&conn).await,
-        "sqlite" => fetch_sqlite_process_list(&conn).await,
-        other => Err(format!("Process monitor is not supported for dialect: {other}")),
-    }
-}).await
+        match dialect.as_str() {
+            "postgres" => fetch_postgres_process_list(&conn).await,
+            "mysql" => fetch_mysql_process_list(&conn).await,
+            "sqlite" => fetch_sqlite_process_list(&conn).await,
+            other => Err(format!(
+                "Process monitor is not supported for dialect: {other}"
+            )),
+        }
+    })
+    .await
 }
 
 /// PostgreSQL processlist using `pg_stat_activity` and `pg_blocking_pids`.
@@ -146,7 +147,11 @@ async fn fetch_postgres_process_list(conn: &DbConnection) -> Result<ProcessListS
         let state = extract_str(&row, "state_str");
         let info = extract_str(&row, "query_text");
         let wait_raw = extract_str(&row, "wait_info");
-        let wait_event = if wait_raw.is_empty() { None } else { Some(wait_raw) };
+        let wait_event = if wait_raw.is_empty() {
+            None
+        } else {
+            Some(wait_raw)
+        };
         let blockers = extract_str(&row, "blockers");
         let is_blocked = !blockers.is_empty();
         let blocked_by = if is_blocked { Some(blockers) } else { None };
@@ -238,8 +243,12 @@ async fn fetch_mysql_process_list(conn: &DbConnection) -> Result<ProcessListSumm
 
         let is_sleep = cmd_lower == "sleep";
         let has_query = !info.trim().is_empty() && info.trim() != "--";
-        let is_blocked = state_lower.contains("lock") || state_lower.contains("waiting for table") || state_lower.contains("waiting for lock");
-        let is_active = !is_daemon && !is_sleep && (cmd_lower == "query" || cmd_lower == "execute" || has_query);
+        let is_blocked = state_lower.contains("lock")
+            || state_lower.contains("waiting for table")
+            || state_lower.contains("waiting for lock");
+        let is_active = !is_daemon
+            && !is_sleep
+            && (cmd_lower == "query" || cmd_lower == "execute" || has_query);
 
         if is_active {
             active_count += 1;
@@ -322,10 +331,7 @@ async fn fetch_sqlite_process_list(conn: &DbConnection) -> Result<ProcessListSum
 
 /// Safely cancel a running query without terminating the client connection session.
 #[tauri::command]
-pub async fn kill_process_query(
-    conn_id: String,
-    process_id: String,
-) -> Result<KillResult, String> {
+pub async fn kill_process_query(conn_id: String, process_id: String) -> Result<KillResult, String> {
     Box::pin(async move {
     let state = crate::state::require_state()?;
     let (conn, dialect) = {
@@ -383,50 +389,56 @@ pub async fn kill_process_connection(
     process_id: String,
 ) -> Result<KillResult, String> {
     Box::pin(async move {
-    let state = crate::state::require_state()?;
-    let (conn, dialect) = {
-        let ctx = state.connections.acquire(&conn_id)?;
-        (ctx.conn().clone(), ctx.dialect().to_string())
-    };
+        let state = crate::state::require_state()?;
+        let (conn, dialect) = {
+            let ctx = state.connections.acquire(&conn_id)?;
+            (ctx.conn().clone(), ctx.dialect().to_string())
+        };
 
-    let pid_num = process_id
-        .trim()
-        .parse::<i64>()
-        .map_err(|_| format!("Invalid process ID format: '{process_id}'"))?;
+        let pid_num = process_id
+            .trim()
+            .parse::<i64>()
+            .map_err(|_| format!("Invalid process ID format: '{process_id}'"))?;
 
-    match dialect.as_str() {
-        "postgres" => {
-            let sql = format!("SELECT pg_terminate_backend({pid_num}) AS terminated;");
-            let raw_res = execute_raw_sql_pooled(&conn, sql).await?;
-            let rows = rows_of(&raw_res);
-            let terminated = rows
-                .first()
-                .map(|r| extract_str(r, "terminated") == "true")
-                .unwrap_or(false);
+        match dialect.as_str() {
+            "postgres" => {
+                let sql = format!("SELECT pg_terminate_backend({pid_num}) AS terminated;");
+                let raw_res = execute_raw_sql_pooled(&conn, sql).await?;
+                let rows = rows_of(&raw_res);
+                let terminated = rows
+                    .first()
+                    .map(|r| extract_str(r, "terminated") == "true")
+                    .unwrap_or(false);
 
-            if terminated {
+                if terminated {
+                    Ok(KillResult {
+                        success: true,
+                        target_id: process_id,
+                        action: "kill_connection".to_string(),
+                        message: format!("Session {pid_num} terminated successfully."),
+                    })
+                } else {
+                    Err(format!(
+                        "Could not terminate PID {pid_num}. It may have already exited."
+                    ))
+                }
+            }
+            "mysql" => {
+                let sql = format!("KILL CONNECTION {pid_num};");
+                execute_raw_sql_pooled(&conn, sql).await?;
                 Ok(KillResult {
                     success: true,
                     target_id: process_id,
                     action: "kill_connection".to_string(),
-                    message: format!("Session {pid_num} terminated successfully."),
+                    message: format!("Connection {pid_num} terminated successfully."),
                 })
-            } else {
-                Err(format!("Could not terminate PID {pid_num}. It may have already exited."))
             }
+            "sqlite" => Err(
+                "Terminating connections is not supported on embedded SQLite instances."
+                    .to_string(),
+            ),
+            other => Err(format!("Unsupported database dialect: {other}")),
         }
-        "mysql" => {
-            let sql = format!("KILL CONNECTION {pid_num};");
-            execute_raw_sql_pooled(&conn, sql).await?;
-            Ok(KillResult {
-                success: true,
-                target_id: process_id,
-                action: "kill_connection".to_string(),
-                message: format!("Connection {pid_num} terminated successfully."),
-            })
-        }
-        "sqlite" => Err("Terminating connections is not supported on embedded SQLite instances.".to_string()),
-        other => Err(format!("Unsupported database dialect: {other}")),
-    }
-}).await
+    })
+    .await
 }

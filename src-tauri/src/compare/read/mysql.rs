@@ -21,10 +21,16 @@ pub(super) async fn read_mysql(conn: &DbConnection, schema: &str) -> Result<Sche
         if name.is_empty() {
             continue;
         }
-        let is_view = f_str(&row, "table_type").to_ascii_uppercase().contains("VIEW");
+        let is_view = f_str(&row, "table_type")
+            .to_ascii_uppercase()
+            .contains("VIEW");
         out.insert(
             name.clone(),
-            TableMeta { name, is_view, ..Default::default() },
+            TableMeta {
+                name,
+                is_view,
+                ..Default::default()
+            },
         );
     }
 
@@ -44,7 +50,9 @@ pub(super) async fn read_mysql(conn: &DbConnection, schema: &str) -> Result<Sche
                 data_type: f_str(&row, "data_type"),
                 nullable: f_bool(&row, "is_nullable"),
                 default: f_opt_str(&row, "column_default"),
-                auto_increment: f_str(&row, "extra").to_ascii_lowercase().contains("auto_increment"),
+                auto_increment: f_str(&row, "extra")
+                    .to_ascii_lowercase()
+                    .contains("auto_increment"),
                 comment: f_opt_str(&row, "column_comment").filter(|c| !c.is_empty()),
                 position,
             });
@@ -70,7 +78,11 @@ pub(super) async fn read_mysql(conn: &DbConnection, schema: &str) -> Result<Sche
             let unique = !f_bool(&row, "non_unique");
             match t.indexes.iter_mut().find(|i| i.name == idx_name) {
                 Some(i) => i.columns.push(col),
-                None => t.indexes.push(IdxMeta { name: idx_name, columns: vec![col], unique }),
+                None => t.indexes.push(IdxMeta {
+                    name: idx_name,
+                    columns: vec![col],
+                    unique,
+                }),
             }
         }
     }

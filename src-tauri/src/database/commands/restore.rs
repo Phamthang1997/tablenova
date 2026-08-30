@@ -1,12 +1,12 @@
 //! `restore_backup` — replays a multi-statement `.sql` dump, filtered to the tables the user selected.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sqlx::{MySqlPool, PgPool};
 use tauri::ipc::Channel;
 
 use crate::database::{
-    build_mysql_url, build_pg_url, execute_raw_sql_generic, reject_conn_read_only,
-    split_sql_statements, strip_leading_comments, DbConnection, DbKind,
+    DbConnection, DbKind, build_mysql_url, build_pg_url, execute_raw_sql_generic,
+    reject_conn_read_only, split_sql_statements, strip_leading_comments,
 };
 
 /// The head of a statement, upper-cased — enough to classify it with `is_skipped_stmt`/`is_session_level_stmt`.
@@ -97,7 +97,10 @@ pub(crate) struct TableMatcher {
 impl TableMatcher {
     pub(crate) fn new(tables: &[String]) -> Self {
         if tables.is_empty() {
-            return Self { re: None, lowered: Vec::new() };
+            return Self {
+                re: None,
+                lowered: Vec::new(),
+            };
         }
         let alts: Vec<String> = tables.iter().map(|t| regex::escape(t)).collect();
         // (?i) instead of lower-casing each statement: `to_lowercase()` allocates a copy

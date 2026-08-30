@@ -1,6 +1,6 @@
 //! The time limit for ONE statement the user asked to run — a client-side fence.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// The time limit for ONE statement the user runs, read from the connection's config
 /// (`statementTimeoutSecs`, 0/absent = off).
@@ -14,7 +14,10 @@ use serde_json::{json, Value};
 /// at the right moment. Here no exception is needed: the limit only exists inside the four commands the user
 /// presses Run on, and the long-running work takes another path.
 pub(crate) fn stmt_timeout(config: &Value) -> Option<std::time::Duration> {
-    let secs = config.get("statementTimeoutSecs").and_then(|v| v.as_u64()).unwrap_or(0);
+    let secs = config
+        .get("statementTimeoutSecs")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
     (secs > 0).then(|| std::time::Duration::from_secs(secs))
 }
 
@@ -28,16 +31,15 @@ pub(crate) fn stmt_timeout(config: &Value) -> Option<std::time::Duration> {
 /// The scope is the **server**, not the individual connection: databases opened on the same server share one
 /// `ServerHandle`, exactly the scope the frontend stores (`connKey`).
 #[tauri::command]
-pub async fn set_statement_timeout(
-    conn_id: String,
-    secs: u64,
-) -> Result<Value, String> {
+pub async fn set_statement_timeout(conn_id: String, secs: u64) -> Result<Value, String> {
     Box::pin(async move {
-    let state = crate::state::require_state()?;
-    let ctx = state.connections.acquire(&conn_id)?;
-    ctx.server().set_config_field("statementTimeoutSecs", json!(secs));
-    Ok(json!({ "success": true, "secs": secs }))
-}).await
+        let state = crate::state::require_state()?;
+        let ctx = state.connections.acquire(&conn_id)?;
+        ctx.server()
+            .set_config_field("statementTimeoutSecs", json!(secs));
+        Ok(json!({ "success": true, "secs": secs }))
+    })
+    .await
 }
 
 /// The timeout message. It is a Vietnamese literal, so it has a twin in `backendErrors.ts`.
@@ -46,7 +48,10 @@ pub(crate) fn timeout_msg(limit: std::time::Duration) -> String {
 }
 
 /// Run a future under the connection's limit. `None` = run as before, adding no layer.
-pub(crate) async fn with_timeout<T, F>(limit: Option<std::time::Duration>, fut: F) -> Result<T, String>
+pub(crate) async fn with_timeout<T, F>(
+    limit: Option<std::time::Duration>,
+    fut: F,
+) -> Result<T, String>
 where
     F: std::future::Future<Output = Result<T, String>>,
 {

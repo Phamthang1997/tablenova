@@ -7,10 +7,10 @@
 //! pins it as the user's transaction session.
 
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::database::{
-    build_mysql_url, build_pg_url, execute_raw_sql_generic, DbConnection, DbKind,
+    DbConnection, DbKind, build_mysql_url, build_pg_url, execute_raw_sql_generic,
 };
 use crate::ssh::SshTunnel;
 
@@ -163,7 +163,9 @@ pub(super) async fn resolve_side(
         return Ok(Resolved {
             // `adhoc`: this pool is opened by the module itself, so it must never become the user's
             // transaction session — see `ConnId::Adhoc` and §0 of the plan.
-            conn: DbConnection::adhoc(DbKind::Sqlite(std::sync::Arc::new(std::sync::Mutex::new(conn)))),
+            conn: DbConnection::adhoc(DbKind::Sqlite(std::sync::Arc::new(std::sync::Mutex::new(
+                conn,
+            )))),
             dialect,
             schema: "main".to_string(),
             label: path.clone(),

@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
+use super::server::ServerHandle;
 use crate::database::DbConnection;
 use crate::redis_db::RedisCaps;
-use super::server::ServerHandle;
 
 /// A Redis connection, as one registry entry holds it.
 ///

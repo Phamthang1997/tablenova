@@ -27,12 +27,18 @@ pub struct DbConnection {
 impl DbConnection {
     /// A handle on a registry entry — the only kind a transaction session may pin.
     pub fn session(id: crate::state::ConnScopeId, kind: DbKind) -> Self {
-        DbConnection { id: crate::state::ConnId::Session(id), kind }
+        DbConnection {
+            id: crate::state::ConnId::Session(id),
+            kind,
+        }
     }
 
     /// A handle on a pool this process opened for itself. See `ConnId::Adhoc`.
     pub fn adhoc(kind: DbKind) -> Self {
-        DbConnection { id: crate::state::ConnId::Adhoc, kind }
+        DbConnection {
+            id: crate::state::ConnId::Adhoc,
+            kind,
+        }
     }
 }
 
@@ -56,9 +62,7 @@ impl Exec {
             DbKind::Postgres(pool) => {
                 Exec::Postgres(pool.acquire().await.map_err(|e| e.to_string())?)
             }
-            DbKind::Mysql(pool) => {
-                Exec::Mysql(pool.acquire().await.map_err(|e| e.to_string())?)
-            }
+            DbKind::Mysql(pool) => Exec::Mysql(pool.acquire().await.map_err(|e| e.to_string())?),
         })
     }
 

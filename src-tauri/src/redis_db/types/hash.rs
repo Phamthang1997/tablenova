@@ -1,6 +1,6 @@
 //! Hash: writing and deleting one field.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::redis_db::conn::{ensure_writable, take_conn};
 
@@ -23,27 +23,42 @@ pub async fn redis_hash_set(
     old_field: Option<String>,
 ) -> Result<Value, String> {
     Box::pin(async move {
-    let state = crate::state::require_state()?;
-    ensure_writable(&state, &conn_id)?;
-    let mut c = take_conn(&state, &conn_id)?;
-    let _: i64 = redis::cmd("HSET").arg(&key).arg(&field).arg(&value)
-        .query_async(&mut c).await.map_err(|e| e.to_string())?;
-    if let Some(old) = old_field.filter(|o| *o != field) {
-        let _: i64 = redis::cmd("HDEL").arg(&key).arg(&old)
-            .query_async(&mut c).await.map_err(|e| e.to_string())?;
-    }
-    Ok(json!({ "success": true }))
-}).await
+        let state = crate::state::require_state()?;
+        ensure_writable(&state, &conn_id)?;
+        let mut c = take_conn(&state, &conn_id)?;
+        let _: i64 = redis::cmd("HSET")
+            .arg(&key)
+            .arg(&field)
+            .arg(&value)
+            .query_async(&mut c)
+            .await
+            .map_err(|e| e.to_string())?;
+        if let Some(old) = old_field.filter(|o| *o != field) {
+            let _: i64 = redis::cmd("HDEL")
+                .arg(&key)
+                .arg(&old)
+                .query_async(&mut c)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(json!({ "success": true }))
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn redis_hash_del(conn_id: String, key: String, field: String) -> Result<Value, String> {
     Box::pin(async move {
-    let state = crate::state::require_state()?;
-    ensure_writable(&state, &conn_id)?;
-    let mut c = take_conn(&state, &conn_id)?;
-    let removed: i64 = redis::cmd("HDEL").arg(&key).arg(&field)
-        .query_async(&mut c).await.map_err(|e| e.to_string())?;
-    Ok(json!({ "success": true, "removed": removed }))
-}).await
+        let state = crate::state::require_state()?;
+        ensure_writable(&state, &conn_id)?;
+        let mut c = take_conn(&state, &conn_id)?;
+        let removed: i64 = redis::cmd("HDEL")
+            .arg(&key)
+            .arg(&field)
+            .query_async(&mut c)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(json!({ "success": true, "removed": removed }))
+    })
+    .await
 }

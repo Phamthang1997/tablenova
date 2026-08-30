@@ -1,6 +1,6 @@
 //! Connection status: the ping latency of every connection, and the full description of one connection.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sqlx::Row;
 
 use crate::database::DbKind;
@@ -44,9 +44,9 @@ pub struct ConnectionStatusInfo {
 #[tauri::command]
 pub async fn ping_connections() -> Result<Value, String> {
     Box::pin(async move {
-    let state = crate::state::require_state()?;
-    let handles = state.connections.handles()?;
-    let pings = futures_util::future::join_all(handles.into_iter().map(|(id, conn)| async move {
+        let state = crate::state::require_state()?;
+        let handles = state.connections.handles()?;
+        let pings = futures_util::future::join_all(handles.into_iter().map(|(id, conn)| async move {
         let started = std::time::Instant::now();
         let ok = match &conn.kind {
             // SQLite is a shared handle behind a `Mutex`: one `SELECT 1` takes microseconds, but when the lock is
@@ -62,8 +62,9 @@ pub async fn ping_connections() -> Result<Value, String> {
         json!({ "connId": &*id, "ok": ok, "latencyMs": started.elapsed().as_millis() as u64 })
     }))
     .await;
-    Ok(json!({ "success": true, "pings": pings }))
-}).await
+        Ok(json!({ "success": true, "pings": pings }))
+    })
+    .await
 }
 
 impl ConnectionStatusInfo {

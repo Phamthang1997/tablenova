@@ -1,8 +1,8 @@
 //! `get_database_stats` — the overview numbers of the database currently open (Database Info).
 
-use serde_json::{json, Value};
-use crate::database::DbKind;
 use super::cells::{get_mysql_i64_cell, get_pg_i64_cell};
+use crate::database::DbKind;
+use serde_json::{Value, json};
 
 #[tauri::command]
 pub async fn get_database_stats(conn_id: String) -> Result<Value, String> {

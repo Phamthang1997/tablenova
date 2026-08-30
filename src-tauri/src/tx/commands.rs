@@ -1,6 +1,6 @@
 //! The seven `#[tauri::command]`s of manual commit mode (`TxControl.tsx` on the title bar).
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::database::DbConnection;
 
@@ -14,18 +14,13 @@ use super::session::{
 // Commands
 // ---------------------------------------------------------------------------
 
-fn current_conn(
-    state: &crate::AppState,
-    conn_id: &str,
-) -> Result<DbConnection, String> {
+fn current_conn(state: &crate::AppState, conn_id: &str) -> Result<DbConnection, String> {
     Ok(state.connections.acquire(conn_id)?.conn().clone())
 }
 
 #[tauri::command]
 pub async fn tx_status(conn_id: String) -> Result<Value, String> {
-    Box::pin(async move {
-    Ok(status_json(&conn_id))
-}).await
+    Box::pin(async move { Ok(status_json(&conn_id)) }).await
 }
 
 /// Is **any** connection holding uncommitted changes?
@@ -35,49 +30,48 @@ pub async fn tx_status(conn_id: String) -> Result<Value, String> {
 /// would silently throw away another tab's transaction.
 #[tauri::command]
 pub async fn tx_any_pending() -> Result<Value, String> {
-    Box::pin(async move {
-    Ok(json!({ "anyPending": any_pending() }))
-}).await
+    Box::pin(async move { Ok(json!({ "anyPending": any_pending() })) }).await
 }
 
 /// Turn auto-commit on or off. Turning it ON while a transaction is open is rejected rather than
 /// resolved for the user — committing and rolling back are both destructive in one direction, and
 /// guessing which one was meant is not ours to do.
 #[tauri::command]
-pub async fn tx_set_autocommit(
-    conn_id: String,
-    enabled: bool,
-) -> Result<Value, String> {
+pub async fn tx_set_autocommit(conn_id: String, enabled: bool) -> Result<Value, String> {
     Box::pin(async move {
-    let state = crate::state::require_state()?;
-    if enabled && has_pending(&conn_id) {
-        return Err("Transaction đang mở — hãy commit hoặc rollback trước khi bật lại auto-commit".to_string());
-    }
-    // An open-but-empty transaction has nothing to lose, so close it quietly.
-    if enabled && is_open(&conn_id) {
-        let conn = current_conn(&state, &conn_id).ok();
-        if let Some(c) = &conn {
-            let mut guard = lock_pinned(c).await?;
-            if let Some(pinned) = guard.as_mut() {
-                let _ = raw_on_pinned(pinned, c, "ROLLBACK").await;
-            }
-            *guard = None;
+        let state = crate::state::require_state()?;
+        if enabled && has_pending(&conn_id) {
+            return Err(
+                "Transaction đang mở — hãy commit hoặc rollback trước khi bật lại auto-commit"
+                    .to_string(),
+            );
         }
-        let session = session_for(&conn_id);
-        let mut m = session.meta.lock().map_err(|e| e.to_string())?;
-        m.close();
-    }
-    {
-        let session = session_for(&conn_id);
-        let mut m = session.meta.lock().map_err(|e| e.to_string())?;
-        m.autocommit = enabled;
-    }
-    if enabled {
-        release_if_closed(&conn_id).await;
-    }
-    emit_state(&conn_id);
-    Ok(status_json(&conn_id))
-}).await
+        // An open-but-empty transaction has nothing to lose, so close it quietly.
+        if enabled && is_open(&conn_id) {
+            let conn = current_conn(&state, &conn_id).ok();
+            if let Some(c) = &conn {
+                let mut guard = lock_pinned(c).await?;
+                if let Some(pinned) = guard.as_mut() {
+                    let _ = raw_on_pinned(pinned, c, "ROLLBACK").await;
+                }
+                *guard = None;
+            }
+            let session = session_for(&conn_id);
+            let mut m = session.meta.lock().map_err(|e| e.to_string())?;
+            m.close();
+        }
+        {
+            let session = session_for(&conn_id);
+            let mut m = session.meta.lock().map_err(|e| e.to_string())?;
+            m.autocommit = enabled;
+        }
+        if enabled {
+            release_if_closed(&conn_id).await;
+        }
+        emit_state(&conn_id);
+        Ok(status_json(&conn_id))
+    })
+    .await
 }
 
 #[tauri::command]
@@ -87,32 +81,29 @@ pub async fn tx_set_isolation(
     read_only: Option<bool>,
 ) -> Result<Value, String> {
     Box::pin(async move {
-    let state = crate::state::require_state()?;
-    let conn = current_conn(&state, &conn_id)?;
-    let dialect = dialect_of(&conn);
-    if let Some(l) = &level {
-        if !isolation_allowed(dialect, l) {
-            return Err("Mức cô lập không hợp lệ cho hệ quản trị này".to_string());
+        let state = crate::state::require_state()?;
+        let conn = current_conn(&state, &conn_id)?;
+        let dialect = dialect_of(&conn);
+        if let Some(l) = &level {
+            if !isolation_allowed(dialect, l) {
+                return Err("Mức cô lập không hợp lệ cho hệ quản trị này".to_string());
+            }
         }
-    }
-    {
-        let session = session_for(&conn_id);
-        let mut m = session.meta.lock().map_err(|e| e.to_string())?;
-        m.isolation = level.map(|l| l.to_uppercase());
-        if let Some(ro) = read_only {
-            m.read_only = ro;
+        {
+            let session = session_for(&conn_id);
+            let mut m = session.meta.lock().map_err(|e| e.to_string())?;
+            m.isolation = level.map(|l| l.to_uppercase());
+            if let Some(ro) = read_only {
+                m.read_only = ro;
+            }
         }
-    }
-    emit_state(&conn_id);
-    Ok(status_json(&conn_id))
-}).await
+        emit_state(&conn_id);
+        Ok(status_json(&conn_id))
+    })
+    .await
 }
 
-async fn end_tx(
-    state: crate::AppState,
-    conn_id: &str,
-    sql: &str,
-) -> Result<Value, String> {
+async fn end_tx(state: crate::AppState, conn_id: &str, sql: &str) -> Result<Value, String> {
     if !is_open(conn_id) {
         return Err("Không có transaction nào đang mở".to_string());
     }
@@ -137,49 +128,43 @@ async fn end_tx(
 }
 
 #[tauri::command]
-pub async fn tx_commit(
-    conn_id: String,
-) -> Result<Value, String> {
+pub async fn tx_commit(conn_id: String) -> Result<Value, String> {
     Box::pin(async move {
-    let state = crate::state::require_state()?;
-    end_tx(state, &conn_id, "COMMIT").await
-}).await
+        let state = crate::state::require_state()?;
+        end_tx(state, &conn_id, "COMMIT").await
+    })
+    .await
 }
 
 #[tauri::command]
-pub async fn tx_rollback(
-    conn_id: String,
-) -> Result<Value, String> {
+pub async fn tx_rollback(conn_id: String) -> Result<Value, String> {
     Box::pin(async move {
-    let state = crate::state::require_state()?;
-    end_tx(state, &conn_id, "ROLLBACK").await
-}).await
+        let state = crate::state::require_state()?;
+        end_tx(state, &conn_id, "ROLLBACK").await
+    })
+    .await
 }
 
 #[tauri::command]
-pub async fn tx_savepoint(
-    conn_id: String,
-    name: String,
-) -> Result<Value, String> {
+pub async fn tx_savepoint(conn_id: String, name: String) -> Result<Value, String> {
     Box::pin(async move {
-    let state = crate::state::require_state()?;
-    let clean = sanitize_savepoint(&name)?;
-    let conn = current_conn(&state, &conn_id)?;
-    run_raw(&conn, format!("SAVEPOINT {}", clean)).await?;
-    Ok(status_json(&conn_id))
-}).await
+        let state = crate::state::require_state()?;
+        let clean = sanitize_savepoint(&name)?;
+        let conn = current_conn(&state, &conn_id)?;
+        run_raw(&conn, format!("SAVEPOINT {}", clean)).await?;
+        Ok(status_json(&conn_id))
+    })
+    .await
 }
 
 #[tauri::command]
-pub async fn tx_rollback_to(
-    conn_id: String,
-    name: String,
-) -> Result<Value, String> {
+pub async fn tx_rollback_to(conn_id: String, name: String) -> Result<Value, String> {
     Box::pin(async move {
-    let state = crate::state::require_state()?;
-    let clean = sanitize_savepoint(&name)?;
-    let conn = current_conn(&state, &conn_id)?;
-    run_raw(&conn, format!("ROLLBACK TO SAVEPOINT {}", clean)).await?;
-    Ok(status_json(&conn_id))
-}).await
+        let state = crate::state::require_state()?;
+        let clean = sanitize_savepoint(&name)?;
+        let conn = current_conn(&state, &conn_id)?;
+        run_raw(&conn, format!("ROLLBACK TO SAVEPOINT {}", clean)).await?;
+        Ok(status_json(&conn_id))
+    })
+    .await
 }

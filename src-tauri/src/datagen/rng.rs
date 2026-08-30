@@ -4,7 +4,6 @@
 //! Each column draws from its OWN SUBSTREAM (`mix_seed`). One shared stream would make editing column 3
 //! change the values of every column after it, and the preview would jump on every keystroke.
 
-
 // ===================== Seeded PRNG =====================
 
 /// xoshiro256** — 4x u64 state, period 2^256-1, seeded through SplitMix64.
@@ -146,7 +145,11 @@ mod tests {
     fn each_column_gets_its_own_substream() {
         let s = 42u64;
         let a = mix_seed(s, "film", "title");
-        assert_eq!(a, mix_seed(s, "film", "title"), "must be stable for the same inputs");
+        assert_eq!(
+            a,
+            mix_seed(s, "film", "title"),
+            "must be stable for the same inputs"
+        );
         assert_ne!(a, mix_seed(s, "film", "description"));
         assert_ne!(a, mix_seed(s, "actor", "title"));
         assert_ne!(a, mix_seed(s + 1, "film", "title"));

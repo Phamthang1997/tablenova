@@ -1,8 +1,8 @@
 //! A table's CHECK constraints.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::database::{execute_raw_sql_generic, result_rows, row_str, sql_str, DbKind};
+use crate::database::{DbKind, execute_raw_sql_generic, result_rows, row_str, sql_str};
 
 #[tauri::command]
 pub async fn get_check_constraints(conn_id: String, table_name: String) -> Result<Value, String> {

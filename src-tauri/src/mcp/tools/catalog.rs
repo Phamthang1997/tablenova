@@ -12,7 +12,6 @@
 use crate::mcp::audit::Refusal;
 use rmcp::model::CallToolResult;
 
-
 use super::{app_state, json_result, passthrough};
 use crate::database::with_timeout;
 use crate::mcp::policy;

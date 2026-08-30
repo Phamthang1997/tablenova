@@ -2,12 +2,12 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::compare::ident::{q_ident, qualified};
 use crate::compare::read::read_schema;
 use crate::compare::script::{delete_sql, insert_sql, update_sql};
-use crate::compare::side::{query_rows, resolve_side, side_json, CompareSide, Resolved};
+use crate::compare::side::{CompareSide, Resolved, query_rows, resolve_side, side_json};
 use crate::compare::sync_sql::SqlOut;
 use crate::compare::values::{norm_scalar, values_equal};
 
@@ -42,33 +42,34 @@ pub async fn compare_table_data(
     include_drops: Option<bool>,
 ) -> Result<Value, String> {
     Box::pin(async move {
-    let state = crate::state::require_state()?;
-    if table.trim().is_empty() {
-        return Err("Thiếu tên bảng".to_string());
-    }
-    let src = resolve_side(&state, &source, &conn_id).await?;
-    let tgt = match resolve_side(&state, &target, &conn_id).await {
-        Ok(t) => t,
-        Err(e) => {
-            src.close().await;
-            return Err(e);
+        let state = crate::state::require_state()?;
+        if table.trim().is_empty() {
+            return Err("Thiếu tên bảng".to_string());
         }
-    };
+        let src = resolve_side(&state, &source, &conn_id).await?;
+        let tgt = match resolve_side(&state, &target, &conn_id).await {
+            Ok(t) => t,
+            Err(e) => {
+                src.close().await;
+                return Err(e);
+            }
+        };
 
-    let out = compare_table_data_inner(
-        &src,
-        &tgt,
-        &table,
-        key_columns,
-        limit.unwrap_or(DEFAULT_DATA_LIMIT).max(1),
-        max_diff_rows.unwrap_or(DEFAULT_MAX_DIFF_ROWS).max(1),
-        include_drops.unwrap_or(false),
-    )
-    .await;
-    src.close().await;
-    tgt.close().await;
-    out
-}).await
+        let out = compare_table_data_inner(
+            &src,
+            &tgt,
+            &table,
+            key_columns,
+            limit.unwrap_or(DEFAULT_DATA_LIMIT).max(1),
+            max_diff_rows.unwrap_or(DEFAULT_MAX_DIFF_ROWS).max(1),
+            include_drops.unwrap_or(false),
+        )
+        .await;
+        src.close().await;
+        tgt.close().await;
+        out
+    })
+    .await
 }
 
 pub(super) async fn fetch_rows(
@@ -117,7 +118,10 @@ pub(super) async fn compare_table_data_inner(
         .map(|c| c.name.clone())
         .collect();
     if common.is_empty() {
-        return Err(format!("Bảng '{}' không có cột nào chung giữa hai bên", table));
+        return Err(format!(
+            "Bảng '{}' không có cột nào chung giữa hai bên",
+            table
+        ));
     }
     let only_src_cols: Vec<String> = s_tbl
         .columns

@@ -28,8 +28,8 @@
 // that table.
 
 mod column;
-pub mod datasets;
 mod commands;
+pub mod datasets;
 mod ident;
 mod meta;
 mod regex;

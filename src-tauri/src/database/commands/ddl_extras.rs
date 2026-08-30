@@ -1,11 +1,9 @@
 //! `get_table_ddl_extras` — the DDL a hand-built `CREATE TABLE` is missing (indexes, FKs, CHECKs,
 //! comments, sequences). The dump export calls this per table.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::database::{
-    all_string_values, execute_raw_sql_generic, sql_str, DbConnection, DbKind,
-};
+use crate::database::{DbConnection, DbKind, all_string_values, execute_raw_sql_generic, sql_str};
 
 /// Everything that belongs to a table but does NOT live inside that dialect's CREATE TABLE.
 ///
@@ -21,10 +19,7 @@ use crate::database::{
 ///   - `constraints`  after EVERY table (a foreign key points at another table),
 ///   - `sequence_values`  after the data (setval reads MAX() of the rows just inserted).
 #[tauri::command]
-pub async fn get_table_ddl_extras(
-    conn_id: String,
-    table_name: String,
-) -> Result<Value, String> {
+pub async fn get_table_ddl_extras(conn_id: String, table_name: String) -> Result<Value, String> {
     Box::pin(async move {
     let state = crate::state::require_state()?;
     let (conn_type, schema) = {

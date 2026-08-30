@@ -40,7 +40,12 @@ pub struct McpStatus {
 
 impl McpStatus {
     fn stopped(port: u16) -> Self {
-        McpStatus { running: false, port, url: String::new(), exe_path: exe_path() }
+        McpStatus {
+            running: false,
+            port,
+            url: String::new(),
+            exe_path: exe_path(),
+        }
     }
 
     fn running(port: u16) -> Self {

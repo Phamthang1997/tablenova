@@ -1,12 +1,11 @@
 //! Reading the current database's metadata: the table list, the catalog for autocomplete,
 //! row counts (exact or estimated) and primary keys.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::database::introspect::{get_primary_key_columns, get_tables_inner};
 use crate::database::{
-    cell, execute_raw_sql_generic, first_i64, pg_schema_of, rows_of, sql_str,
-    DbConnection, DbKind,
+    DbConnection, DbKind, cell, execute_raw_sql_generic, first_i64, pg_schema_of, rows_of, sql_str,
 };
 
 // Fetch the whole catalog (tables + columns/types/PK + FKs) in FEW queries so smart completion loads once
@@ -93,9 +92,10 @@ pub async fn get_full_catalog(conn_id: String) -> Result<Value, String> {
 #[tauri::command]
 pub async fn get_tables(conn_id: String) -> Result<Value, String> {
     Box::pin(async move {
-    let state = crate::state::require_state()?;
-    get_tables_inner(&state, conn_id).await
-}).await
+        let state = crate::state::require_state()?;
+        get_tables_inner(&state, conn_id).await
+    })
+    .await
 }
 
 /// Below this, an exact `COUNT(*)` is cheap enough that the estimate is not worth its inaccuracy.
@@ -113,7 +113,11 @@ pub(super) async fn exact_row_count(conn: &DbConnection, count_sql: &str) -> Opt
             let c = conn_arc.lock().ok()?;
             c.query_row(count_sql, [], |r| r.get::<_, i64>(0)).ok()
         }
-        _ => first_i64(execute_raw_sql_generic(conn, count_sql.to_string()).await.ok()?),
+        _ => first_i64(
+            execute_raw_sql_generic(conn, count_sql.to_string())
+                .await
+                .ok()?,
+        ),
     }
 }
 
@@ -129,7 +133,11 @@ pub(super) async fn exact_row_count(conn: &DbConnection, count_sql: &str) -> Opt
 /// SQLite has no such statistic at all, and its `COUNT(*)` is local file I/O, so it returns `None`.
 ///
 /// The caller must only reach this with **no WHERE clause** — an estimate cannot answer a filter.
-pub(super) async fn estimate_row_count(conn: &DbConnection, schema: &Option<String>, table: &str) -> Option<i64> {
+pub(super) async fn estimate_row_count(
+    conn: &DbConnection,
+    schema: &Option<String>,
+    table: &str,
+) -> Option<i64> {
     let sql = match &conn.kind {
         DbKind::Postgres(_) => format!(
             "SELECT c.reltuples::bigint AS n FROM pg_class c \
@@ -153,6 +161,13 @@ pub(super) async fn estimate_row_count(conn: &DbConnection, schema: &Option<Stri
 //
 
 // Auto-detect the primary-key column name (taking the first one). Returns None when it cannot be determined.
-pub(super) async fn detect_primary_key(conn: &DbConnection, schema: &Option<String>, table: &str) -> Option<String> {
-    get_primary_key_columns(conn, schema, table).await.into_iter().next()
+pub(super) async fn detect_primary_key(
+    conn: &DbConnection,
+    schema: &Option<String>,
+    table: &str,
+) -> Option<String> {
+    get_primary_key_columns(conn, schema, table)
+        .await
+        .into_iter()
+        .next()
 }
