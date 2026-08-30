@@ -38,9 +38,11 @@ pub async fn set_connection_read_only(
     conn_id: String,
     enabled: bool,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     state.connections.set_read_only(&conn_id, enabled)?;
     Ok(json!({ "success": true, "readOnly": enabled }))
+}).await
 }
 
 /// Show one connection to the built-in MCP server, or hide it again.
@@ -54,9 +56,11 @@ pub async fn set_connection_mcp_exposed(
     conn_id: String,
     enabled: bool,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     state.connections.set_mcp_exposed(&conn_id, enabled)?;
     Ok(json!({ "success": true, "mcpExposed": enabled }))
+}).await
 }
 
 /// Every connection currently open, for the left rail (§4.2c).
@@ -65,8 +69,10 @@ pub async fn set_connection_mcp_exposed(
 /// the same exception `tx_any_pending` is.
 #[tauri::command]
 pub async fn list_connections() -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     Ok(json!({ "connections": state.connections.list()? }))
+}).await
 }
 
 /// The command that found the rule the other 110 now follow: it reads the state through
@@ -78,6 +84,7 @@ pub async fn list_connections() -> Result<Value, String> {
 /// and `'static`, so it costs the future nothing.
 #[tauri::command]
 pub async fn connect_db(app: tauri::AppHandle, config: Value) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let db_type = config.get("dbType").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
@@ -184,12 +191,14 @@ pub async fn connect_db(app: tauri::AppHandle, config: Value) -> Result<Value, S
     // never derived from the config (multi-connection-plan §4.3). Phase 1d is what starts sending it
     // back down as a command argument.
     Ok(json!({ "success": true, "schema": schema, "connId": &*conn_id }))
+}).await
 }
 
 #[tauri::command]
 pub async fn disconnect_db(
     conn_id: String,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
 
     // Take the entry out first, then roll back its manual transaction while its pool is still alive:
@@ -204,4 +213,5 @@ pub async fn disconnect_db(
     crate::tx::reset(entry.as_ref().and_then(|e| e.conn.sql())).await;
     drop(entry);
     Ok(json!({ "success": true }))
+}).await
 }

@@ -180,6 +180,7 @@ pub async fn drop_table(
     cascade: Option<bool>,
     ignore_fk: Option<bool>,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -208,6 +209,7 @@ pub async fn drop_table(
     run_fk_wrapped(&conn_type, ignore_fk, sql, None).await?;
 
     Ok(json!({ "success": true }))
+}).await
 }
 
 // The next AUTO_INCREMENT value of a MySQL table, None when the table has no auto-increment column.
@@ -234,6 +236,7 @@ pub async fn truncate_table(
     disable_fk: Option<bool>,
     cascade: Option<bool>,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -295,11 +298,13 @@ pub async fn truncate_table(
     run_fk_wrapped(&conn_type, disable_fk, sql, optional).await?;
 
     Ok(json!({ "success": true }))
+}).await
 }
 
 // Returns the table's CREATE TABLE statement (its definition) per dialect
 #[tauri::command]
 pub async fn get_table_definition(conn_id: String, name: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -411,10 +416,12 @@ pub async fn get_table_definition(conn_id: String, name: String) -> Result<Value
     };
 
     Ok(json!({ "success": true, "sql": ddl }))
+}).await
 }
 
 #[tauri::command]
 pub async fn rename_table(conn_id: String, old_name: String, new_name: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -435,4 +442,5 @@ pub async fn rename_table(conn_id: String, old_name: String, new_name: String) -
     execute_raw_sql_generic(&conn_type, sql.clone()).await?;
     
     Ok(json!({ "success": true }))
+}).await
 }

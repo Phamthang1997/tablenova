@@ -10,6 +10,7 @@ use crate::database::{
 // List the database objects of the current connection: tables, views, functions, procedures
 #[tauri::command]
 pub async fn get_database_objects(conn_id: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -121,11 +122,13 @@ pub async fn get_database_objects(conn_id: String) -> Result<Value, String> {
         "procedures": procedures,
         "events": events
     }))
+}).await
 }
 
 // Read the definition (source) of a view / function / procedure
 #[tauri::command]
 pub async fn get_object_definition(conn_id: String, name: String, kind: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -182,4 +185,5 @@ pub async fn get_object_definition(conn_id: String, name: String, kind: String) 
     };
 
     Ok(json!({ "success": true, "sql": ddl }))
+}).await
 }

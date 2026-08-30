@@ -23,7 +23,9 @@ fn current_conn(
 
 #[tauri::command]
 pub async fn tx_status(conn_id: String) -> Result<Value, String> {
+    Box::pin(async move {
     Ok(status_json(&conn_id))
+}).await
 }
 
 /// Is **any** connection holding uncommitted changes?
@@ -33,7 +35,9 @@ pub async fn tx_status(conn_id: String) -> Result<Value, String> {
 /// would silently throw away another tab's transaction.
 #[tauri::command]
 pub async fn tx_any_pending() -> Result<Value, String> {
+    Box::pin(async move {
     Ok(json!({ "anyPending": any_pending() }))
+}).await
 }
 
 /// Turn auto-commit on or off. Turning it ON while a transaction is open is rejected rather than
@@ -44,6 +48,7 @@ pub async fn tx_set_autocommit(
     conn_id: String,
     enabled: bool,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     if enabled && has_pending(&conn_id) {
         return Err("Transaction đang mở — hãy commit hoặc rollback trước khi bật lại auto-commit".to_string());
@@ -72,6 +77,7 @@ pub async fn tx_set_autocommit(
     }
     emit_state(&conn_id);
     Ok(status_json(&conn_id))
+}).await
 }
 
 #[tauri::command]
@@ -80,6 +86,7 @@ pub async fn tx_set_isolation(
     level: Option<String>,
     read_only: Option<bool>,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let conn = current_conn(&state, &conn_id)?;
     let dialect = dialect_of(&conn);
@@ -98,6 +105,7 @@ pub async fn tx_set_isolation(
     }
     emit_state(&conn_id);
     Ok(status_json(&conn_id))
+}).await
 }
 
 async fn end_tx(
@@ -132,16 +140,20 @@ async fn end_tx(
 pub async fn tx_commit(
     conn_id: String,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     end_tx(state, &conn_id, "COMMIT").await
+}).await
 }
 
 #[tauri::command]
 pub async fn tx_rollback(
     conn_id: String,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     end_tx(state, &conn_id, "ROLLBACK").await
+}).await
 }
 
 #[tauri::command]
@@ -149,11 +161,13 @@ pub async fn tx_savepoint(
     conn_id: String,
     name: String,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let clean = sanitize_savepoint(&name)?;
     let conn = current_conn(&state, &conn_id)?;
     run_raw(&conn, format!("SAVEPOINT {}", clean)).await?;
     Ok(status_json(&conn_id))
+}).await
 }
 
 #[tauri::command]
@@ -161,9 +175,11 @@ pub async fn tx_rollback_to(
     conn_id: String,
     name: String,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let clean = sanitize_savepoint(&name)?;
     let conn = current_conn(&state, &conn_id)?;
     run_raw(&conn, format!("ROLLBACK TO SAVEPOINT {}", clean)).await?;
     Ok(status_json(&conn_id))
+}).await
 }

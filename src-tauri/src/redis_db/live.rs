@@ -36,6 +36,7 @@ pub async fn redis_pubsub_start(
     query_id: String,
     channel: Channel<Value>,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     if channels.is_empty() && patterns.is_empty() {
         return Err("Chưa chọn channel để nghe".to_string());
@@ -86,6 +87,7 @@ pub async fn redis_pubsub_start(
     });
 
     Ok(json!({ "success": true }))
+}).await
 }
 
 /// PUBLISH is a side effect other clients observe, so it counts as a write.
@@ -95,6 +97,7 @@ pub async fn redis_publish(
     channel_name: String,
     payload: String,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     let mut c = take_conn(&state, &conn_id)?;
@@ -105,6 +108,7 @@ pub async fn redis_publish(
         .await
         .map_err(|e| e.to_string())?;
     Ok(json!({ "success": true, "receivers": receivers }))
+}).await
 }
 
 // MONITOR makes the server echo every command it executes — on a busy instance that is both
@@ -121,6 +125,7 @@ pub async fn redis_monitor_start(
     query_id: String,
     channel: Channel<Value>,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let client = dedicated_client(&state, &conn_id).await?;
     let monitor = client
@@ -163,4 +168,5 @@ pub async fn redis_monitor_start(
     });
 
     Ok(json!({ "success": true, "maxLines": MONITOR_MAX_LINES, "maxSecs": MONITOR_MAX_SECS }))
+}).await
 }

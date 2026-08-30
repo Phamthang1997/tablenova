@@ -6,6 +6,7 @@ use crate::database::{execute_raw_sql_generic, result_rows, row_str, sql_str, Db
 
 #[tauri::command]
 pub async fn get_check_constraints(conn_id: String, table_name: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -37,4 +38,5 @@ pub async fn get_check_constraints(conn_id: String, table_name: String) -> Resul
     }
 
     Ok(json!({ "success": true, "constraints": constraints }))
+}).await
 }

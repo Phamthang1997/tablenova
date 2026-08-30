@@ -46,6 +46,7 @@ pub async fn open_ssh_terminal(
     rows: u32,
     channel: Channel<Value>,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     // If session_id already exists (reopened), close the old session first
     {
@@ -115,6 +116,7 @@ pub async fn open_ssh_terminal(
     }
 
     Ok(json!({ "success": true }))
+}).await
 }
 
 #[tauri::command]
@@ -122,6 +124,7 @@ pub async fn send_ssh_input(
     session_id: String,
     data: String,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let map = state.ssh_terminals.lock().map_err(|e| e.to_string())?;
     if let Some(sess) = map.get(&session_id) {
@@ -130,6 +133,7 @@ pub async fn send_ssh_input(
             .map_err(|_| "Phiên terminal đã đóng".to_string())?;
     }
     Ok(json!({ "success": true }))
+}).await
 }
 
 #[tauri::command]
@@ -138,24 +142,28 @@ pub async fn resize_ssh_terminal(
     cols: u32,
     rows: u32,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let map = state.ssh_terminals.lock().map_err(|e| e.to_string())?;
     if let Some(sess) = map.get(&session_id) {
         let _ = sess.tx.send(TermCmd::Resize(cols, rows));
     }
     Ok(json!({ "success": true }))
+}).await
 }
 
 #[tauri::command]
 pub async fn close_ssh_terminal(
     session_id: String,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let mut map = state.ssh_terminals.lock().map_err(|e| e.to_string())?;
     if let Some(sess) = map.remove(&session_id) {
         sess.shutdown();
     }
     Ok(json!({ "success": true }))
+}).await
 }
 
 // The state type held in AppState.

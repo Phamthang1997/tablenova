@@ -13,6 +13,7 @@ use crate::database::{
 
 #[tauri::command]
 pub async fn execute_query(conn_id: String, sql: String, params: Option<Vec<Value>>) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let (conn_type, limit) = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -27,11 +28,13 @@ pub async fn execute_query(conn_id: String, sql: String, params: Option<Vec<Valu
         with_timeout(limit, run_bound_query(&conn_type, sql.clone(), &params)).await?
     };
     Ok(json!({ "success": true, "results": results }))
+}).await
 }
 
 // Run several SQL statements, each returning its own result set (feeding SqlEditor's multiple result tabs)
 #[tauri::command]
 pub async fn execute_multi_query(conn_id: String, sql: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let (conn_type, limit) = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -65,6 +68,7 @@ pub async fn execute_multi_query(conn_id: String, sql: String) -> Result<Value, 
     }
 
     Ok(json!({ "success": true, "results": results }))
+}).await
 }
 
 // ---- Streaming SQL cho SQL Editor ----
@@ -83,6 +87,7 @@ pub async fn execute_query_stream(
     channel: Channel<Value>,
     params: Option<Vec<Value>>,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let (conn_type, limit) = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -141,15 +146,18 @@ pub async fn execute_query_stream(
             Ok(json!({ "success": false }))
         }
     }
+}).await
 }
 
 // Mark a streaming query as needing to stop. Not an error when query_id no longer exists.
 #[tauri::command]
 pub async fn cancel_query(query_id: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let flags = state.cancel_flags.lock().map_err(|e| e.to_string())?;
     if let Some(flag) = flags.get(&query_id) {
         flag.store(true, Ordering::Relaxed);
     }
     Ok(json!({ "success": true }))
+}).await
 }

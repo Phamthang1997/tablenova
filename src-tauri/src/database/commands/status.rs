@@ -43,6 +43,7 @@ pub struct ConnectionStatusInfo {
 /// is *information* the UI needs to show, not an error that hides the other N-1 connections as well.
 #[tauri::command]
 pub async fn ping_connections() -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let handles = state.connections.handles()?;
     let pings = futures_util::future::join_all(handles.into_iter().map(|(id, conn)| async move {
@@ -62,6 +63,7 @@ pub async fn ping_connections() -> Result<Value, String> {
     }))
     .await;
     Ok(json!({ "success": true, "pings": pings }))
+}).await
 }
 
 impl ConnectionStatusInfo {
@@ -108,6 +110,7 @@ pub async fn get_connection_status(
     // the full path, and that convention is kept.
     conn_id: String,
 ) -> Result<ConnectionStatusInfo, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let start = std::time::Instant::now();
     let (conn, db_type, config, has_ssh) = {
@@ -370,4 +373,5 @@ pub async fn get_connection_status(
         cipher,
         tls_version,
     })
+}).await
 }

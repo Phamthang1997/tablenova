@@ -6,6 +6,7 @@ use crate::database::execute_raw_sql_generic;
 
 #[tauri::command]
 pub async fn save_view_definition(conn_id: String, view_sql: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let conn_type = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -14,4 +15,5 @@ pub async fn save_view_definition(conn_id: String, view_sql: String) -> Result<V
 
     execute_raw_sql_generic(&conn_type, view_sql).await?;
     Ok(json!({ "success": true, "message": "Đã lưu View thành công" }))
+}).await
 }

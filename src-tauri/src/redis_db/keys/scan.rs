@@ -17,6 +17,7 @@ pub async fn redis_scan_keys(
     count: usize,
     type_filter: Option<String>,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     // TYPE is not passed to SCAN: that argument only exists in Redis 6.0+ and many compatible servers
     // (KeyDB/Dragonfly) do not support it -> "syntax error". Filtering by type is done client-side.
@@ -42,6 +43,7 @@ pub async fn redis_scan_keys(
     }
 
     Ok(json!({ "success": true, "cursor": next, "keys": items }))
+}).await
 }
 
 // Stream every key over a Channel: SCAN and push each batch (with type/ttl) until the cursor returns to 0.
@@ -55,6 +57,7 @@ pub async fn redis_scan_stream(
     channel: Channel<Value>,
     start_cursor: Option<u64>,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let cancel = Arc::new(AtomicBool::new(false));
     {
@@ -119,4 +122,5 @@ pub async fn redis_scan_stream(
             Ok(json!({ "success": false }))
         }
     }
+}).await
 }

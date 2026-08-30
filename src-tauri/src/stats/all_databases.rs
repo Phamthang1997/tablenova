@@ -19,6 +19,7 @@ use super::system_dbs::is_system_db;
 // The frontend draws the list from phase 1 and fills in phase 2's numbers as they land.
 #[tauri::command]
 pub async fn get_all_databases_stats(conn_id: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let conn_clone = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -231,4 +232,5 @@ pub async fn get_all_databases_stats(conn_id: String) -> Result<Value, String> {
             }))
         }
     }
+}).await
 }

@@ -7,8 +7,10 @@ use serde_json::{json, Value};
 
 #[tauri::command]
 pub async fn ai_chat(message: String) -> Result<Value, String> {
+    Box::pin(async move {
     Ok(json!({
         "success": true,
         "reply": format!("AI: Bạn vừa gửi: '{}'. Tính năng Copilot đang hoạt động offline thông qua Tauri Rust backend.", message)
     }))
+}).await
 }

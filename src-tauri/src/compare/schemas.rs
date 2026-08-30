@@ -25,6 +25,7 @@ pub async fn compare_schemas(
     target: CompareSide,
     include_drops: Option<bool>,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let src = resolve_side(&state, &source, &conn_id).await?;
     let tgt = match resolve_side(&state, &target, &conn_id).await {
@@ -39,6 +40,7 @@ pub async fn compare_schemas(
     src.close().await;
     tgt.close().await;
     out
+}).await
 }
 
 pub(super) async fn compare_schemas_inner(

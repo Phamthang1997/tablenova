@@ -43,6 +43,7 @@ pub async fn open_local_terminal(
     rows: u16,
     channel: Channel<Value>,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     // Close an existing session with the same id, if any
     {
@@ -102,6 +103,7 @@ pub async fn open_local_terminal(
     }
 
     Ok(json!({ "success": true }))
+}).await
 }
 
 #[tauri::command]
@@ -109,6 +111,7 @@ pub async fn send_local_input(
     session_id: String,
     data: String,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let map = state.local_terminals.lock().map_err(|e| e.to_string())?;
     if let Some(sess) = map.get(&session_id) {
@@ -118,6 +121,7 @@ pub async fn send_local_input(
         }
     }
     Ok(json!({ "success": true }))
+}).await
 }
 
 #[tauri::command]
@@ -126,6 +130,7 @@ pub async fn resize_local_terminal(
     cols: u16,
     rows: u16,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let map = state.local_terminals.lock().map_err(|e| e.to_string())?;
     if let Some(sess) = map.get(&session_id) {
@@ -134,18 +139,21 @@ pub async fn resize_local_terminal(
         }
     }
     Ok(json!({ "success": true }))
+}).await
 }
 
 #[tauri::command]
 pub async fn close_local_terminal(
     session_id: String,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let mut map = state.local_terminals.lock().map_err(|e| e.to_string())?;
     if let Some(sess) = map.remove(&session_id) {
         sess.shutdown();
     }
     Ok(json!({ "success": true }))
+}).await
 }
 
 // The state type held in AppState.

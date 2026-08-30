@@ -14,6 +14,7 @@ pub async fn get_all_databases_sizes(
     conn_id: String,
     include_system: Option<bool>,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let include_system = include_system.unwrap_or(false);
 
@@ -205,4 +206,5 @@ pub async fn get_all_databases_sizes(
             Ok(json!({ "databases": databases }))
         }
     }
+}).await
 }

@@ -6,6 +6,17 @@
 /// `generate_handler!` expands to a closure; wrapping it in a function keeps `lib.rs` from carrying
 /// 150 lines of paths.
 pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
+    let dispatch = commands();
+    // TEMPORARY, paired with `boot_trace` in run.rs — remove with it. Logs the name and thread of
+    // every command as it is dispatched, so the last line before a crash names what was running.
+    move |invoke| {
+        let cmd = invoke.message.command().to_string();
+        super::run::boot_trace(&format!("invoke:{cmd}"));
+        dispatch(invoke)
+    }
+}
+
+fn commands() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
         crate::database::connect_db,
         crate::database::disconnect_db,

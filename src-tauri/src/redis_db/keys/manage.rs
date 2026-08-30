@@ -10,6 +10,7 @@ use crate::redis_db::conn::{ensure_writable, take_conn};
 
 #[tauri::command]
 pub async fn redis_delete_keys(conn_id: String, keys: Vec<String>) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     if keys.is_empty() {
         return Ok(json!({ "success": true, "deleted": 0 }));
@@ -18,10 +19,12 @@ pub async fn redis_delete_keys(conn_id: String, keys: Vec<String>) -> Result<Val
     let mut c = take_conn(&state, &conn_id)?;
     let deleted: i64 = redis::cmd("UNLINK").arg(&keys).query_async(&mut c).await.map_err(|e| e.to_string())?;
     Ok(json!({ "success": true, "deleted": deleted }))
+}).await
 }
 
 #[tauri::command]
 pub async fn redis_set_ttl(conn_id: String, key: String, ttl: i64) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     let mut c = take_conn(&state, &conn_id)?;
@@ -31,24 +34,29 @@ pub async fn redis_set_ttl(conn_id: String, key: String, ttl: i64) -> Result<Val
         let _: i64 = redis::cmd("EXPIRE").arg(&key).arg(ttl).query_async(&mut c).await.map_err(|e| e.to_string())?;
     }
     Ok(json!({ "success": true }))
+}).await
 }
 
 #[tauri::command]
 pub async fn redis_rename_key(conn_id: String, old_key: String, new_key: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     let mut c = take_conn(&state, &conn_id)?;
     let _: String = redis::cmd("RENAME").arg(&old_key).arg(&new_key).query_async(&mut c).await.map_err(|e| e.to_string())?;
     Ok(json!({ "success": true }))
+}).await
 }
 
 #[tauri::command]
 pub async fn redis_flush_db(conn_id: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     let mut c = take_conn(&state, &conn_id)?;
     let _: String = redis::cmd("FLUSHDB").query_async(&mut c).await.map_err(|e| e.to_string())?;
     Ok(json!({ "success": true }))
+}).await
 }
 
 // ---- Bulk delete ----
@@ -68,6 +76,7 @@ pub async fn redis_delete_by_pattern(
     query_id: String,
     channel: Channel<Value>,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     let pattern = pattern.trim().to_string();
@@ -156,4 +165,5 @@ pub async fn redis_delete_by_pattern(
             Ok(json!({ "success": false }))
         }
     }
+}).await
 }

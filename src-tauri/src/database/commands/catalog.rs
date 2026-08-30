@@ -15,6 +15,7 @@ use crate::database::{
 // SQLite returns empty -> the frontend falls back to lazy per-table loading.
 #[tauri::command]
 pub async fn get_full_catalog(conn_id: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let (conn_type, db_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -86,12 +87,15 @@ pub async fn get_full_catalog(conn_id: String) -> Result<Value, String> {
     // SQLite: return empty -> the frontend does its own lazy per-table loading
 
     Ok(json!({ "columns": columns_map, "foreignKeys": fk_map }))
+}).await
 }
 
 #[tauri::command]
 pub async fn get_tables(conn_id: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     get_tables_inner(&state, conn_id).await
+}).await
 }
 
 /// Below this, an exact `COUNT(*)` is cheap enough that the estimate is not worth its inaccuracy.

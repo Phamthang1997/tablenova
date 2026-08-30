@@ -215,6 +215,7 @@ pub(super) fn generate_alter_sqls(table_name: &str, payload: &Value, db_type: &s
 
 #[tauri::command]
 pub async fn alter_table_schema(conn_id: String, name: String, payload: Value) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -234,10 +235,12 @@ pub async fn alter_table_schema(conn_id: String, name: String, payload: Value) -
     }
 
     Ok(json!({ "success": true }))
+}).await
 }
 
 #[tauri::command]
 pub async fn preview_alter_schema(conn_id: String, name: String, payload: Value) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -254,4 +257,5 @@ pub async fn preview_alter_schema(conn_id: String, name: String, payload: Value)
     // The same SQL as alter_table_schema — the user previews exactly the statements that will run.
     let sqls = generate_alter_sqls(&name, &payload, db_type, &schema);
     Ok(json!({ "success": true, "sql": sqls.join(";\n") }))
+}).await
 }

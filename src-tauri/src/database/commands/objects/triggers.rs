@@ -6,6 +6,7 @@ use crate::database::{execute_raw_sql_generic, result_rows, row_str, sql_str, Db
 
 #[tauri::command]
 pub async fn get_table_triggers(conn_id: String, table_name: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -41,6 +42,7 @@ pub async fn get_table_triggers(conn_id: String, table_name: String) -> Result<V
     }
 
     Ok(json!({ "success": true, "triggers": triggers }))
+}).await
 }
 
 // Rebuild a runnable CREATE TRIGGER from what MySQL's information_schema exposes.
@@ -69,6 +71,7 @@ fn mysql_trigger_ddl(name: &str, table: &str, timing: &str, event: &str, body: &
 /// trigger without `ON <table>`).
 #[tauri::command]
 pub async fn get_all_triggers(conn_id: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -109,10 +112,12 @@ pub async fn get_all_triggers(conn_id: String) -> Result<Value, String> {
     }
 
     Ok(json!({ "success": true, "triggers": triggers }))
+}).await
 }
 
 #[tauri::command]
 pub async fn save_trigger(conn_id: String, statement_sql: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let conn_type = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -121,10 +126,12 @@ pub async fn save_trigger(conn_id: String, statement_sql: String) -> Result<Valu
 
     execute_raw_sql_generic(&conn_type, statement_sql).await?;
     Ok(json!({ "success": true, "message": "Đã lưu Trigger thành công" }))
+}).await
 }
 
 #[tauri::command]
 pub async fn drop_trigger(conn_id: String, trigger_name: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let conn_type = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -138,4 +145,5 @@ pub async fn drop_trigger(conn_id: String, trigger_name: String) -> Result<Value
 
     execute_raw_sql_generic(&conn_type, sql).await?;
     Ok(json!({ "success": true, "message": "Đã xóa Trigger thành công" }))
+}).await
 }

@@ -22,6 +22,7 @@ pub async fn redis_hash_set(
     value: String,
     old_field: Option<String>,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     let mut c = take_conn(&state, &conn_id)?;
@@ -32,14 +33,17 @@ pub async fn redis_hash_set(
             .query_async(&mut c).await.map_err(|e| e.to_string())?;
     }
     Ok(json!({ "success": true }))
+}).await
 }
 
 #[tauri::command]
 pub async fn redis_hash_del(conn_id: String, key: String, field: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     let mut c = take_conn(&state, &conn_id)?;
     let removed: i64 = redis::cmd("HDEL").arg(&key).arg(&field)
         .query_async(&mut c).await.map_err(|e| e.to_string())?;
     Ok(json!({ "success": true, "removed": removed }))
+}).await
 }

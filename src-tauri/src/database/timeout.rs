@@ -32,10 +32,12 @@ pub async fn set_statement_timeout(
     conn_id: String,
     secs: u64,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let ctx = state.connections.acquire(&conn_id)?;
     ctx.server().set_config_field("statementTimeoutSecs", json!(secs));
     Ok(json!({ "success": true, "secs": secs }))
+}).await
 }
 
 /// The timeout message. It is a Vietnamese literal, so it has a twin in `backendErrors.ts`.

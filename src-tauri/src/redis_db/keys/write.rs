@@ -9,6 +9,7 @@ use crate::redis_db::conn::{ensure_writable, take_conn};
 // Create/overwrite one key per type. REPLACE semantics: delete the old key, then rebuild it from the payload.
 #[tauri::command]
 pub async fn redis_set_key(conn_id: String, payload: Value) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     let caps = caps_of(&state, &conn_id);
@@ -90,6 +91,7 @@ pub async fn redis_set_key(conn_id: String, payload: Value) -> Result<Value, Str
     }
 
     Ok(json!({ "success": true }))
+}).await
 }
 
 // ---- Binary-safe string write ----
@@ -105,6 +107,7 @@ pub async fn redis_set_key_bytes(
     key: String,
     bytes: Vec<u8>,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     let caps = caps_of(&state, &conn_id);
@@ -116,4 +119,5 @@ pub async fn redis_set_key_bytes(
     }
     let _: redis::Value = cmd.query_async(&mut c).await.map_err(|e| e.to_string())?;
     Ok(json!({ "success": true, "length": bytes.len() }))
+}).await
 }

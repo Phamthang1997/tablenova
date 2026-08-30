@@ -14,6 +14,7 @@ pub async fn redis_stream_add(
     id: String,
     fields: Vec<Value>,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     if fields.is_empty() {
         return Err("Stream cần ít nhất một field".to_string());
@@ -29,16 +30,19 @@ pub async fn redis_stream_add(
     }
     let new_id: String = cmd.query_async(&mut c).await.map_err(|e| e.to_string())?;
     Ok(json!({ "success": true, "id": new_id }))
+}).await
 }
 
 #[tauri::command]
 pub async fn redis_stream_del(conn_id: String, key: String, id: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     let mut c = take_conn(&state, &conn_id)?;
     let removed: i64 = redis::cmd("XDEL").arg(&key).arg(&id)
         .query_async(&mut c).await.map_err(|e| e.to_string())?;
     Ok(json!({ "success": true, "removed": removed }))
+}).await
 }
 
 #[tauri::command]
@@ -46,6 +50,7 @@ pub async fn redis_stream_groups(
     conn_id: String,
     key: String,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let mut c = take_conn(&state, &conn_id)?;
     let reply: redis::Value = redis::cmd("XINFO")
@@ -59,6 +64,7 @@ pub async fn redis_stream_groups(
         _ => Vec::new(),
     };
     Ok(json!({ "success": true, "groups": groups }))
+}).await
 }
 
 #[tauri::command]
@@ -67,6 +73,7 @@ pub async fn redis_stream_consumers(
     key: String,
     group: String,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let mut c = take_conn(&state, &conn_id)?;
     let reply: redis::Value = redis::cmd("XINFO")
@@ -81,6 +88,7 @@ pub async fn redis_stream_consumers(
         _ => Vec::new(),
     };
     Ok(json!({ "success": true, "consumers": consumers }))
+}).await
 }
 
 #[tauri::command]
@@ -90,6 +98,7 @@ pub async fn redis_stream_pending(
     group: String,
     count: Option<usize>,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let mut c = take_conn(&state, &conn_id)?;
     // Extended form: [[id, consumer, idle-ms, delivery-count], …]
@@ -121,6 +130,7 @@ pub async fn redis_stream_pending(
         _ => Vec::new(),
     };
     Ok(json!({ "success": true, "pending": pending }))
+}).await
 }
 
 #[tauri::command]
@@ -130,6 +140,7 @@ pub async fn redis_stream_ack(
     group: String,
     ids: Vec<String>,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     if ids.is_empty() {
@@ -144,6 +155,7 @@ pub async fn redis_stream_ack(
         .await
         .map_err(|e| e.to_string())?;
     Ok(json!({ "success": true, "acked": acked }))
+}).await
 }
 
 #[tauri::command]
@@ -155,6 +167,7 @@ pub async fn redis_stream_claim(
     min_idle_ms: i64,
     ids: Vec<String>,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     if ids.is_empty() {
@@ -176,4 +189,5 @@ pub async fn redis_stream_claim(
         _ => 0,
     };
     Ok(json!({ "success": true, "claimed": claimed }))
+}).await
 }

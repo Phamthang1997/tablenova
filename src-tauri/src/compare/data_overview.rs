@@ -18,6 +18,7 @@ pub async fn compare_data_overview(
     target: CompareSide,
     tables: Option<Vec<String>>,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let src = resolve_side(&state, &source, &conn_id).await?;
     let tgt = match resolve_side(&state, &target, &conn_id).await {
@@ -32,6 +33,7 @@ pub async fn compare_data_overview(
     src.close().await;
     tgt.close().await;
     out
+}).await
 }
 
 pub(super) async fn count_rows(r: &Resolved, table: &str) -> Result<i64, String> {

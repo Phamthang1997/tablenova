@@ -25,6 +25,7 @@ pub async fn get_table_ddl_extras(
     conn_id: String,
     table_name: String,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -125,4 +126,5 @@ pub async fn get_table_ddl_extras(
         "comments": comments,
         "sequenceValues": sequence_values,
     }))
+}).await
 }

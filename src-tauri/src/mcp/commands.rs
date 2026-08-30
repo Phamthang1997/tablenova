@@ -11,27 +11,35 @@ use super::server::{DEFAULT_PORT, McpStatus};
 
 #[tauri::command]
 pub async fn mcp_status() -> Result<McpStatus, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     Ok(state.mcp.status())
+}).await
 }
 
 #[tauri::command]
 pub async fn mcp_start(
     port: Option<u16>,
 ) -> Result<McpStatus, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     state.mcp.start(port.unwrap_or(DEFAULT_PORT)).await
+}).await
 }
 
 #[tauri::command]
 pub async fn mcp_stop() -> Result<McpStatus, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     Ok(state.mcp.stop().await)
+}).await
 }
 
 #[tauri::command]
 pub async fn mcp_get_token() -> Result<String, String> {
+    Box::pin(async move {
     auth::load_or_create()
+}).await
 }
 
 /// Mints a new token, and restarts the server if it was running.
@@ -42,6 +50,7 @@ pub async fn mcp_get_token() -> Result<String, String> {
 /// way, which is why the UI has to say so before calling this.
 #[tauri::command]
 pub async fn mcp_regenerate_token() -> Result<String, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let was = state.mcp.status();
     let token = auth::regenerate()?;
@@ -50,6 +59,7 @@ pub async fn mcp_regenerate_token() -> Result<String, String> {
         state.mcp.start(was.port).await?;
     }
     Ok(token)
+}).await
 }
 
 /// The requests AI clients have made this run, newest first.
@@ -59,13 +69,17 @@ pub async fn mcp_regenerate_token() -> Result<String, String> {
 #[tauri::command]
 pub async fn mcp_audit_log(
     ) -> Result<Vec<serde_json::Value>, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     Ok(state.mcp.audit.snapshot())
+}).await
 }
 
 #[tauri::command]
 pub async fn mcp_audit_clear() -> Result<(), String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     state.mcp.audit.clear();
     Ok(())
+}).await
 }

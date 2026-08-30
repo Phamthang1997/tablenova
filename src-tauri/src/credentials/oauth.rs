@@ -67,6 +67,7 @@ pub async fn start_google_oauth_flow(
     client_id: Option<String>,
     code_challenge: Option<String>,
 ) -> Result<OAuthCallbackResult, String> {
+    Box::pin(async move {
     // The two revoked client ids that used to be excluded here are gone with the literals: an id
     // Google has deleted now fails the same way any wrong id does, and the caller no longer has a
     // baked-in one to be silently redirected onto.
@@ -207,4 +208,5 @@ pub async fn start_google_oauth_flow(
         Ok(Err(e)) => Err(format!("Lỗi kết nối OAuth: {}", e)),
         Err(_) => Err("Quá thời gian xác thực (120s). Vui lòng thử lại.".to_string()),
     }
+}).await
 }

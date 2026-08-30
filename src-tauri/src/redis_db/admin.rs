@@ -9,14 +9,17 @@ use crate::redis_db::value::{parse_info, redis_value_to_json};
 
 #[tauri::command]
 pub async fn redis_info(conn_id: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let mut c = take_conn(&state, &conn_id)?;
     let text: String = redis::cmd("INFO").query_async(&mut c).await.map_err(|e| e.to_string())?;
     Ok(json!({ "success": true, "info": parse_info(&text), "raw": text }))
+}).await
 }
 
 #[tauri::command]
 pub async fn redis_execute_cmd(conn_id: String, command: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let tokens = tokenize(&command)?;
     if tokens.is_empty() {
@@ -65,4 +68,5 @@ pub async fn redis_execute_cmd(conn_id: String, command: String) -> Result<Value
         Ok(val) => Ok(json!({ "success": true, "result": redis_value_to_json(&val) })),
         Err(e) => Ok(json!({ "success": false, "message": e.to_string() })),
     }
+}).await
 }

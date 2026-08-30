@@ -55,6 +55,7 @@ pub(super) fn active_conn(
 /// FK-safe insertion order.
 #[tauri::command]
 pub async fn get_generation_targets(conn_id: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let (conn, dialect, schema) = active_conn(&state, &conn_id)?;
     let metas = collect_meta(&conn, &dialect, &schema, None).await?;
@@ -104,6 +105,7 @@ pub async fn get_generation_targets(conn_id: String) -> Result<Value, String> {
         "order": order,
         "warnings": warnings,
     }))
+}).await
 }
 
 /// Preview rows for ONE table — same code path as the real run, no writes.
@@ -114,6 +116,7 @@ pub async fn preview_generated_data(
     table: String,
     limit: Option<usize>,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let (conn, dialect, schema) = active_conn(&state, &conn_id)?;
     let tspec = spec
@@ -145,6 +148,7 @@ pub async fn preview_generated_data(
         "data": data,
         "warnings": warnings,
     }))
+}).await
 }
 
 /// Marks the running generation as cancelled. Safe to call when nothing is running.
@@ -152,12 +156,14 @@ pub async fn preview_generated_data(
 pub async fn cancel_data_generation(
     conn_id: String,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let flags = state.cancel_flags.lock().map_err(|e| e.to_string())?;
     if let Some(flag) = flags.get(&cancel_key(&conn_id)) {
         flag.store(true, Ordering::Relaxed);
     }
     Ok(json!({ "success": true }))
+}).await
 }
 
 /// Generates and inserts the data. Reports progress through `on_progress`:
@@ -170,6 +176,7 @@ pub async fn generate_data(
     // does not satisfy CommandArg — and the frontend always creates the channel.
     on_progress: Channel<Value>,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     // Same reason as restore_backup: this runs on its own connection and would block on the locks
     // an open manual transaction holds. See tx::reject_if_manual_or_open.
@@ -279,4 +286,5 @@ pub async fn generate_data(
             Err(msg)
         }
     }
+}).await
 }

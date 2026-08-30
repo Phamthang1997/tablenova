@@ -89,6 +89,7 @@ fn extract_i64(row: &Value, key: &str) -> i64 {
 pub async fn get_process_list(
     conn_id: String,
 ) -> Result<ProcessListSummary, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let (conn, dialect) = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -101,6 +102,7 @@ pub async fn get_process_list(
         "sqlite" => fetch_sqlite_process_list(&conn).await,
         other => Err(format!("Process monitor is not supported for dialect: {other}")),
     }
+}).await
 }
 
 /// PostgreSQL processlist using `pg_stat_activity` and `pg_blocking_pids`.
@@ -324,6 +326,7 @@ pub async fn kill_process_query(
     conn_id: String,
     process_id: String,
 ) -> Result<KillResult, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let (conn, dialect) = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -370,6 +373,7 @@ pub async fn kill_process_query(
         "sqlite" => Err("Cancel query is not supported on embedded SQLite instances.".to_string()),
         other => Err(format!("Unsupported database dialect: {other}")),
     }
+}).await
 }
 
 /// Terminate the entire connection session (disconnect client).
@@ -378,6 +382,7 @@ pub async fn kill_process_connection(
     conn_id: String,
     process_id: String,
 ) -> Result<KillResult, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let (conn, dialect) = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -423,4 +428,5 @@ pub async fn kill_process_connection(
         "sqlite" => Err("Terminating connections is not supported on embedded SQLite instances.".to_string()),
         other => Err(format!("Unsupported database dialect: {other}")),
     }
+}).await
 }

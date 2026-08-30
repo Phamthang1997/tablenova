@@ -11,6 +11,7 @@ use super::catalog::detect_primary_key;
 
 #[tauri::command]
 pub async fn commit_changes(conn_id: String, payload: Value) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -150,10 +151,12 @@ pub async fn commit_changes(conn_id: String, payload: Value) -> Result<Value, St
     exec.run("COMMIT;".to_string()).await?;
 
     Ok(json!({ "success": true }))
+}).await
 }
 
 #[tauri::command]
 pub async fn import_new_table(conn_id: String, table_name: String, rows: Vec<Value>) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -216,6 +219,7 @@ pub async fn import_new_table(conn_id: String, table_name: String, rows: Vec<Val
 
     let inserted = bulk_insert(&conn_type, &schema, &table_name, &rows).await?;
     Ok(json!({ "success": true, "inserted": inserted }))
+}).await
 }
 
 // Bulk-insert rows into an existing table. Every BATCH rows are folded into one multi-VALUES INSERT.
@@ -267,6 +271,7 @@ async fn bulk_insert(conn: &DbConnection, schema: &Option<String>, table: &str, 
 
 #[tauri::command]
 pub async fn import_table_data(conn_id: String, name: String, rows: Vec<Value>) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -275,4 +280,5 @@ pub async fn import_table_data(conn_id: String, name: String, rows: Vec<Value>) 
     };
     let inserted = bulk_insert(&conn_type, &schema, &name, &rows).await?;
     Ok(json!({ "success": true, "inserted": inserted }))
+}).await
 }

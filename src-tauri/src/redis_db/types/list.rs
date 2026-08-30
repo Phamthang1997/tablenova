@@ -6,22 +6,26 @@ use crate::redis_db::conn::{ensure_writable, take_conn};
 
 #[tauri::command]
 pub async fn redis_list_set(conn_id: String, key: String, index: i64, value: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     let mut c = take_conn(&state, &conn_id)?;
     let _: String = redis::cmd("LSET").arg(&key).arg(index).arg(&value)
         .query_async(&mut c).await.map_err(|e| e.to_string())?;
     Ok(json!({ "success": true }))
+}).await
 }
 
 #[tauri::command]
 pub async fn redis_list_push(conn_id: String, key: String, value: String, at_head: bool) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     let mut c = take_conn(&state, &conn_id)?;
     let len: i64 = redis::cmd(if at_head { "LPUSH" } else { "RPUSH" }).arg(&key).arg(&value)
         .query_async(&mut c).await.map_err(|e| e.to_string())?;
     Ok(json!({ "success": true, "length": len }))
+}).await
 }
 
 // Redis has no "delete by index": overwrite the slot with a sentinel nobody else can hold,
@@ -29,6 +33,7 @@ pub async fn redis_list_push(conn_id: String, key: String, value: String, at_hea
 // concurrent delete on the same list cannot remove the wrong element.
 #[tauri::command]
 pub async fn redis_list_del(conn_id: String, key: String, index: i64) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     let mut c = take_conn(&state, &conn_id)?;
@@ -42,4 +47,5 @@ pub async fn redis_list_del(conn_id: String, key: String, index: i64) -> Result<
     let removed: i64 = redis::cmd("LREM").arg(&key).arg(1).arg(&sentinel)
         .query_async(&mut c).await.map_err(|e| e.to_string())?;
     Ok(json!({ "success": true, "removed": removed }))
+}).await
 }

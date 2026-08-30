@@ -6,6 +6,7 @@ use crate::database::{execute_raw_sql_generic, result_rows, row_str, sql_str, Db
 
 #[tauri::command]
 pub async fn get_sequences(conn_id: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -35,10 +36,12 @@ pub async fn get_sequences(conn_id: String) -> Result<Value, String> {
     }
 
     Ok(json!({ "success": true, "sequences": sequences }))
+}).await
 }
 
 #[tauri::command]
 pub async fn alter_sequence(conn_id: String, sequence_sql: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let conn_type = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -47,10 +50,12 @@ pub async fn alter_sequence(conn_id: String, sequence_sql: String) -> Result<Val
 
     execute_raw_sql_generic(&conn_type, sequence_sql).await?;
     Ok(json!({ "success": true, "message": "Đã cập nhật Sequence thành công" }))
+}).await
 }
 
 #[tauri::command]
 pub async fn drop_sequence(conn_id: String, sequence_name: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let conn_type = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -64,4 +69,5 @@ pub async fn drop_sequence(conn_id: String, sequence_name: String) -> Result<Val
 
     execute_raw_sql_generic(&conn_type, sql).await?;
     Ok(json!({ "success": true, "message": "Đã xóa Sequence thành công" }))
+}).await
 }

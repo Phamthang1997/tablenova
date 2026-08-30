@@ -41,6 +41,7 @@ pub async fn compare_table_data(
     max_diff_rows: Option<usize>,
     include_drops: Option<bool>,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     if table.trim().is_empty() {
         return Err("Thiếu tên bảng".to_string());
@@ -67,6 +68,7 @@ pub async fn compare_table_data(
     src.close().await;
     tgt.close().await;
     out
+}).await
 }
 
 pub(super) async fn fetch_rows(

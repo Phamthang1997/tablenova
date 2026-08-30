@@ -33,6 +33,7 @@ pub async fn redis_analyze_db(
     query_id: String,
     channel: Channel<Value>,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let cancel = register_cancel(&state, &query_id)?;
     let limit = sample.unwrap_or(ANALYZE_SAMPLE_MAX).clamp(100, 200_000);
@@ -164,4 +165,5 @@ pub async fn redis_analyze_db(
     });
     let _ = channel.send(json!({ "type": "done" }));
     Ok(result)
+}).await
 }

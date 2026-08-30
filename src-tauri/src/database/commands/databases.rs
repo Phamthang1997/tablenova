@@ -43,6 +43,10 @@ fn is_unknown_database_err(err: &str) -> bool {
 
 #[tauri::command]
 pub async fn get_databases_list(config: Value) -> Result<Value, String> {
+    Box::pin(async move {
+    // TEMPORARY, with boot_trace in app/run.rs. This command is where the release build dies, and
+    // these lines say how far into it execution gets and on which thread.
+    crate::app::run::boot_trace("gdl:body-entered");
     let db_type = config.get("dbType").and_then(|v| v.as_str()).unwrap_or("").to_string();
     
     let mut databases = Vec::new();
@@ -50,7 +54,9 @@ pub async fn get_databases_list(config: Value) -> Result<Value, String> {
     match db_type.as_str() {
         "postgres" => {
             // Keep the tunnel alive for the whole listing operation (when SSH is on)
+            crate::app::run::boot_trace("gdl:pg-before-tunnel");
             let (conn_config, _tunnel) = apply_ssh_tunnel(&config, 5432).await?;
+            crate::app::run::boot_trace("gdl:pg-after-tunnel");
             // Prefer the database currently typed in (a user with restricted privileges — a managed
             // cloud Postgres, say — usually only has access to their own DB). If that name
             // does not exist (half-typed), fall back to the "postgres" system DB.
@@ -75,7 +81,9 @@ pub async fn get_databases_list(config: Value) -> Result<Value, String> {
             }
         }
         "mysql" => {
+            crate::app::run::boot_trace("gdl:mysql-before-tunnel");
             let (conn_config, _tunnel) = apply_ssh_tunnel(&config, 3306).await?;
+            crate::app::run::boot_trace("gdl:mysql-after-tunnel");
             let pool = match open_list_pool_mysql(&build_mysql_url(&conn_config, None)).await {
                 Ok(p) => p,
                 Err(first) if is_unknown_database_err(&first) => {
@@ -85,6 +93,7 @@ pub async fn get_databases_list(config: Value) -> Result<Value, String> {
                 }
                 Err(first) => return Err(first),
             };
+            crate::app::run::boot_trace("gdl:mysql-pool-open");
             let rows = sqlx::query("SHOW DATABASES")
                 .fetch_all(&pool)
                 .await
@@ -101,13 +110,16 @@ pub async fn get_databases_list(config: Value) -> Result<Value, String> {
     
     databases.sort();
     Ok(json!({ "success": true, "databases": databases }))
+}).await
 }
 
 // List the databases using the CURRENT CONNECTION (for the switcher inside the workspace)
 #[tauri::command]
 pub async fn list_databases(conn_id: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     list_databases_inner(&state, conn_id).await
+}).await
 }
 
 /// The body, reachable without a `tauri::State`.
@@ -134,6 +146,7 @@ pub async fn open_database(
     conn_id: String,
     name: String,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let (server, db_type, tunnel_port, inherit_read_only) = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -197,6 +210,7 @@ pub async fn open_database(
         },
     )?;
     Ok(json!({ "success": true, "database": name, "schema": schema, "connId": &*new_id }))
+}).await
 }
 
 // `switch_database` has been deleted.
@@ -215,6 +229,7 @@ pub async fn open_database(
 /// SQLite, which is how the frontend decides whether to show the picker at all.
 #[tauri::command]
 pub async fn list_schemas(conn_id: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let (conn_type, current) = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -233,6 +248,7 @@ pub async fn list_schemas(conn_id: String) -> Result<Value, String> {
     ).await?;
     let schemas = all_string_values(&results);
     Ok(json!({ "success": true, "schemas": schemas, "current": current }))
+}).await
 }
 
 /// Selects the schema every later command works in. The Sidebar picker's backing command.
@@ -242,6 +258,7 @@ pub async fn list_schemas(conn_id: String) -> Result<Value, String> {
 /// feature exists to fix, with nothing on screen to explain it.
 #[tauri::command]
 pub async fn set_current_schema(conn_id: String, name: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let conn_type = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -269,11 +286,13 @@ pub async fn set_current_schema(conn_id: String, name: String) -> Result<Value, 
         state.connections.set_schema(&id, Some(schema.clone()))?;
     }
     Ok(json!({ "success": true, "schema": schema }))
+}).await
 }
 
 // Create a new database (using the current connection). encoding/collation are optional.
 #[tauri::command]
 pub async fn create_database(conn_id: String, payload: Value) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let conn_type = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -307,11 +326,13 @@ pub async fn create_database(conn_id: String, payload: Value) -> Result<Value, S
 
     execute_raw_sql_generic(&conn_type, sql).await?;
     Ok(json!({ "success": true }))
+}).await
 }
 
 // Drop a database (using the current connection). The connected database cannot be dropped.
 #[tauri::command]
 pub async fn drop_database(conn_id: String, name: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let conn_type = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -325,11 +346,13 @@ pub async fn drop_database(conn_id: String, name: String) -> Result<Value, Strin
     };
     execute_raw_sql_generic(&conn_type, sql).await?;
     Ok(json!({ "success": true }))
+}).await
 }
 
 // Rename a database. PostgreSQL only (and the currently connected DB cannot be renamed).
 #[tauri::command]
 pub async fn rename_database(conn_id: String, old_name: String, new_name: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let conn_type = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -344,11 +367,13 @@ pub async fn rename_database(conn_id: String, old_name: String, new_name: String
     };
     execute_raw_sql_generic(&conn_type, sql).await?;
     Ok(json!({ "success": true }))
+}).await
 }
 
 // The supported encodings/collations per DBMS (used by the create-database dialog)
 #[tauri::command]
 pub async fn get_db_charsets(conn_id: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let conn_type = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -406,4 +431,5 @@ pub async fn get_db_charsets(conn_id: String) -> Result<Value, String> {
             Ok(json!({ "success": true, "encodings": [], "collations": [] }))
         }
     }
+}).await
 }

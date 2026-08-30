@@ -11,6 +11,7 @@ pub async fn redis_json_get(
     key: String,
     path: Option<String>,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     ensure_json_module(&state, &conn_id)?;
     let mut c = take_conn(&state, &conn_id)?;
@@ -26,6 +27,7 @@ pub async fn redis_json_get(
         .await
         .map_err(|e| e.to_string())?;
     Ok(json!({ "success": true, "path": path, "json": text }))
+}).await
 }
 
 #[tauri::command]
@@ -35,6 +37,7 @@ pub async fn redis_json_set(
     path: String,
     value: String,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     ensure_json_module(&state, &conn_id)?;
@@ -48,6 +51,7 @@ pub async fn redis_json_set(
         .await
         .map_err(|e| e.to_string())?;
     Ok(json!({ "success": true }))
+}).await
 }
 
 #[tauri::command]
@@ -56,6 +60,7 @@ pub async fn redis_json_del(
     key: String,
     path: String,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     ensure_json_module(&state, &conn_id)?;
@@ -67,4 +72,5 @@ pub async fn redis_json_del(
         .await
         .map_err(|e| e.to_string())?;
     Ok(json!({ "success": true, "removed": removed }))
+}).await
 }

@@ -36,6 +36,7 @@ pub async fn redis_dump_keys(
     conn_id: String,
     keys: Vec<String>,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     if keys.is_empty() {
         return Ok(json!({ "success": true, "entries": [], "missing": [] }));
@@ -79,6 +80,7 @@ pub async fn redis_dump_keys(
     }
 
     Ok(json!({ "success": true, "entries": entries, "missing": missing }))
+}).await
 }
 
 /// RESTORE a batch of exported records. `replace` = overwrite an existing key (RESTORE … REPLACE).
@@ -94,6 +96,7 @@ pub async fn redis_restore_keys(
     entries: Vec<Value>,
     replace: bool,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     if entries.len() > TRANSFER_BATCH_MAX {
@@ -150,4 +153,5 @@ pub async fn redis_restore_keys(
         "skipped": skipped,
         "failed": failed,
     }))
+}).await
 }

@@ -6,6 +6,7 @@ use crate::database::{execute_raw_sql_generic, result_rows, row_i64, row_str, Db
 
 #[tauri::command]
 pub async fn get_table_partitions(conn_id: String, table_name: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let conn_type = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -38,4 +39,5 @@ pub async fn get_table_partitions(conn_id: String, table_name: String) -> Result
     }
 
     Ok(json!({ "success": true, "partitions": partitions }))
+}).await
 }

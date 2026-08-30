@@ -20,6 +20,7 @@ pub(crate) fn redis_db_name(index: i64) -> String {
 
 #[tauri::command]
 pub async fn redis_connect(config: Value) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let db_index = config.get("dbIndex").and_then(|v| v.as_i64()).unwrap_or(0);
     // Open the SSH tunnel first: conn_config then points at 127.0.0.1:<forwarded port>, and that very conn_config
@@ -71,6 +72,7 @@ pub async fn redis_connect(config: Value) -> Result<Value, String> {
         "caps": caps.to_json(),
         "readOnly": read_only,
     }))
+}).await
 }
 
 /// Mirrors the app's read-only toggle into the backend. The toggle can be flipped after
@@ -83,15 +85,18 @@ pub async fn redis_set_read_only(
     conn_id: String,
     flag: bool,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     state.connections.set_read_only(&conn_id, flag)?;
     Ok(json!({ "success": true, "readOnly": flag }))
+}).await
 }
 
 #[tauri::command]
 pub async fn redis_disconnect(
     conn_id: String,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     // Dropping the entry releases its `Arc<ServerHandle>`; the SSH tunnel closes with the LAST
     // entry of that server, not with this one — which is the point of putting it there. Disconnecting `db3`
@@ -99,6 +104,7 @@ pub async fn redis_disconnect(
     let entry = state.connections.remove(&conn_id)?;
     drop(entry);
     Ok(json!({ "success": true }))
+}).await
 }
 
 /// Change the database index (0-15).
@@ -111,8 +117,10 @@ pub async fn redis_select_db(
     conn_id: String,
     index: i64,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     select_db_inner(&state, &conn_id, index).await
+}).await
 }
 
 // Shared by the command above and by the `SELECT n` interception in `redis_execute_cmd`, so

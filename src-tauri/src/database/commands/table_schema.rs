@@ -9,6 +9,8 @@ use crate::database::introspect::get_table_schema_inner;
 
 #[tauri::command]
 pub async fn get_table_schema(conn_id: String, name: String) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     get_table_schema_inner(&state, conn_id, name).await
+}).await
 }

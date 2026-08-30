@@ -149,6 +149,7 @@ pub async fn restore_backup(
     // This mode rescues the part that can run, at the cost of atomicity.
     continue_on_error: Option<bool>,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let continue_on_error = continue_on_error.unwrap_or(false);
     // Failing statements that were skipped: all of them are counted, but only the first few are kept to show the user.
@@ -447,4 +448,5 @@ pub async fn restore_backup(
         "failedCount": failed_count,
         "failedSamples": failed_samples
     }))
+}).await
 }
