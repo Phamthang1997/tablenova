@@ -250,7 +250,11 @@ mod tests {
     #[test]
     fn test_json_to_sqlite_value_number() {
         assert_eq!(json_to_sqlite_value(&json!(100)), SV::Integer(100));
-        assert_eq!(json_to_sqlite_value(&json!(3.14159)), SV::Real(3.14159));
+        // Not 3.14159: clippy's `approx_constant` is deny-by-default and reads any float near PI as
+        // a botched `std::f64::consts::PI`, which fails `cargo clippy --all-targets` outright. The
+        // test only needs a number with a fractional part, so it may as well be one nothing
+        // recognises.
+        assert_eq!(json_to_sqlite_value(&json!(12.625)), SV::Real(12.625));
     }
 
     #[test]
