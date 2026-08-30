@@ -48,6 +48,7 @@ pub async fn get_table_data(
     seek_column: Option<String>,
     cursor: Option<String>,
 ) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let (conn_type, schema, limit_dur) = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -241,4 +242,5 @@ pub async fn get_table_data(
         // page, or the key is neither a number nor a string) and the frontend goes back to page numbers.
         "nextCursor": next_cursor
     }))
+}).await
 }

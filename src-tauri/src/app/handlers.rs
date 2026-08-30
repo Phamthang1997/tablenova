@@ -151,3 +151,139 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         crate::redis_db::redis_restore_keys
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).expect("read_dir") {
+            let path = entry.expect("entry").path();
+            if path.is_dir() {
+                rust_files(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(path);
+            }
+        }
+    }
+
+    /// Everything an `async` command must do to survive a release build, checked against the source
+    /// rather than trusted to reviewers — because the failure is invisible in `tauri dev` and shows
+    /// up as `STATUS_STACK_OVERFLOW` on `thread 'main'` in the packaged app, with no console to
+    /// print it. See CLAUDE.md for the mechanism; both halves cost a long investigation to find.
+    ///
+    /// This reads the text instead of using the type system because neither rule is expressible as a
+    /// type: `State<'_, _>` is a perfectly good parameter that merely happens to make the future
+    /// non-`'static`, and "the body starts with `Box::pin`" is a statement about a body.
+    ///
+    /// Sync commands are exempt from both: no future is built, so there is no state machine to place
+    /// and nothing to spawn.
+    #[test]
+    fn every_async_command_is_boxed_and_reads_state_globally() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = Vec::new();
+        rust_files(&root, &mut files);
+        files.sort();
+
+        let mut borrows_state = Vec::new();
+        let mut not_boxed = Vec::new();
+        let mut checked = 0usize;
+
+        for file in &files {
+            let text = std::fs::read_to_string(file).expect("read");
+            let lines: Vec<&str> = text.lines().collect();
+            let shown = file.strip_prefix(&root).unwrap_or(file).display().to_string();
+
+            for (i, line) in lines.iter().enumerate() {
+                // Anchored at the start of a line so the attribute NAMED in a doc comment (this
+                // module's own header does exactly that) is not mistaken for one applied to a fn.
+                if !line.trim_start().starts_with("#[tauri::command]") {
+                    continue;
+                }
+
+                // Gather the signature: from the `fn` line up to the `{` that opens the body.
+                //
+                // Comments are stripped first, and that is not tidiness — `restore_backup` documents
+                // its progress channel as `{type:'start'|...}` INSIDE its parameter list, and taking
+                // that brace for the body's made this test report a correctly-wrapped command.
+                // Stripping also keeps a `State<'_` mentioned in prose from being read as a
+                // parameter. A return type cannot contain a brace, so the first surviving one opens
+                // the body.
+                let code_of = |l: &str| l.split("//").next().unwrap_or("").to_string();
+                let mut signature = String::new();
+                let mut body_line = None;
+                for (j, l) in lines.iter().enumerate().skip(i + 1) {
+                    let code = code_of(l);
+                    signature.push_str(&code);
+                    signature.push(' ');
+                    if code.contains('{') {
+                        body_line = Some(j);
+                        break;
+                    }
+                }
+                let Some(body_line) = body_line else { continue };
+                if !signature.contains("async fn") {
+                    continue; // sync command
+                }
+                checked += 1;
+
+                let name = signature
+                    .split("fn ")
+                    .nth(1)
+                    .and_then(|s| s.split('(').next())
+                    .unwrap_or("?")
+                    .trim()
+                    .to_string();
+
+                if signature.contains("State<'_") {
+                    borrows_state.push(format!("{shown}: {name}"));
+                }
+
+                // First real statement of the body: the rest of the opening line if it carries one,
+                // otherwise the next line that is neither blank nor a comment.
+                let opening = code_of(lines[body_line]);
+                let after_brace = opening
+                    .split_once('{')
+                    .map(|(_, rest)| rest.trim().to_string())
+                    .unwrap_or_default();
+                let first_stmt = if !after_brace.is_empty() {
+                    after_brace.to_string()
+                } else {
+                    lines
+                        .iter()
+                        .skip(body_line + 1)
+                        .map(|l| l.trim())
+                        .find(|l| !l.is_empty() && !l.starts_with("//"))
+                        .unwrap_or("")
+                        .to_string()
+                };
+                if !first_stmt.starts_with("Box::pin(") {
+                    not_boxed.push(format!("{shown}: {name}"));
+                }
+            }
+        }
+
+        // A source-scanning test whose parser silently matches nothing passes for the wrong reason
+        // and guards nothing. The floor is well below the ~132 commands that exist, so it survives
+        // ordinary churn while still failing loudly if the scan itself breaks.
+        assert!(
+            checked >= 100,
+            "only {checked} async commands were found — the scan is broken, not the code"
+        );
+
+        assert!(
+            borrows_state.is_empty(),
+            "These async commands take `State<'_, _>`, which makes their future non-'static so \
+             Tauri runs it on the MAIN thread (1MB of stack on Windows) instead of spawning it. \
+             Use `crate::state::require_state()?` in the body instead:\n  {}",
+            borrows_state.join("\n  ")
+        );
+        assert!(
+            not_boxed.is_empty(),
+            "These async command bodies are not wrapped in `Box::pin(async move {{ .. }}).await`, \
+             so the command's whole state machine is a field of the block `#[tauri::command]` \
+             generates and is allocated on the caller's stack:\n  {}",
+            not_boxed.join("\n  ")
+        );
+    }
+}

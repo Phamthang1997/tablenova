@@ -13,6 +13,7 @@ use super::table_alter::generate_alter_sqls;
 
 #[tauri::command]
 pub async fn create_table(conn_id: String, payload: Value) -> Result<Value, String> {
+    Box::pin(async move {
     let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
@@ -111,6 +112,7 @@ pub async fn create_table(conn_id: String, payload: Value) -> Result<Value, Stri
     }
 
     Ok(json!({ "success": true }))
+}).await
 }
 
 /// Runs a short sequence on ONE connection, optionally with foreign-key checks turned off around it.
