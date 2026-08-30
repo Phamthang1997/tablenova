@@ -68,8 +68,33 @@ pub async fn list_connections(state: tauri::State<'_, crate::AppState>) -> Resul
     Ok(json!({ "connections": state.connections.list()? }))
 }
 
+/// Takes the `AppHandle` and NOT `State<'_, _>`, and does nothing but await a boxed inner future.
+/// Both halves of that are load-bearing, and both were measured rather than guessed — a boot trace
+/// showed the release binary dying between the invoke wrapper and this body's first line, i.e. while
+/// Tauri was still building the future on the main thread.
+///
+/// 1. Borrowing `State<'_, _>` makes a command's future NON-`'static`, which Tauri cannot spawn onto
+///    the async runtime — it has to run it on the calling thread, and that is the main thread with
+///    a 1MB stack on Windows. Taking the owned `AppHandle` instead and reading the state out of it
+///    inside the body keeps the future `'static`, so it is spawned like every other command. (The
+///    same trace showed `get_databases_list`, which borrows nothing, running on `tokio-rt-worker`.)
+///
+/// 2. An `async fn` body does not run until the future is first POLLED, so with the body reduced to
+///    `Box::pin(impl(..)).await` the future built on the calling thread holds only its arguments and
+///    a pointer. The real state machine — this function is the largest in the app, nesting SSH
+///    tunnelling, rustls handshakes, pool creation and schema probing, and a future's size includes
+///    the largest future it awaits — is allocated on the HEAP at first poll, on the worker.
+///
+/// Neither change alters what the frontend sends: `app` and `state` are injected by Tauri, never
+/// part of the `invoke` payload.
 #[tauri::command]
-pub async fn connect_db(app: tauri::AppHandle, state: tauri::State<'_, crate::AppState>, config: Value) -> Result<Value, String> {
+pub async fn connect_db(app: tauri::AppHandle, config: Value) -> Result<Value, String> {
+    Box::pin(connect_db_impl(app, config)).await
+}
+
+async fn connect_db_impl(app: tauri::AppHandle, config: Value) -> Result<Value, String> {
+    use tauri::Manager;
+    let state = app.state::<crate::AppState>();
     let db_type = config.get("dbType").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
     // Opening the same SQLite file twice would be two `rusqlite::Connection`s on one file, i.e.
@@ -164,7 +189,8 @@ pub async fn connect_db(app: tauri::AppHandle, state: tauri::State<'_, crate::Ap
 
     // An IAM connection: run the periodic token refresh task (a token only lives 15 minutes)
     if is_iam(&config) && (db_type == "postgres" || db_type == "mysql") {
-        spawn_iam_refresh(app, db_type, config, conn_id.clone());
+        // `app.clone()`: `state` above borrows `app`, so the handle cannot be moved out from under it.
+        spawn_iam_refresh(app.clone(), db_type, config, conn_id.clone());
     }
 
     // The frontend keys its per-connection localStorage on the effective schema, so it has to

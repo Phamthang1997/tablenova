@@ -1,49 +1,16 @@
-# Windows / MSVC — the target this repo actually builds. `rustc -vV` reports
-# `host: x86_64-pc-windows-msvc`, and package.json's `build:win` names the same triple explicitly.
-[target.x86_64-pc-windows-msvc]
-rustflags = [
-    # 32MB of stack for the main thread. WITHOUT THIS the release build dies at startup with
-    # STATUS_STACK_OVERFLOW (0xc00000fd) — the crash lands between "Running tablenova.exe" and the
-    # first window — while debug runs fine. That asymmetry points at `[profile.release]` in
-    # Cargo.toml: `lto = "fat"` + `codegen-units = 1` let LLVM inline across the whole crate graph,
-    # and `generate_handler!` in app/handlers.rs expands 142 commands into one dispatch whose arms
-    # each deserialize that command's arguments with serde-generated code. A frame is allocated once
-    # at entry, sized for the worst case over the WHOLE function, so inlining 142 of those into one
-    # function makes their requirements add up where separate functions would have taken turns —
-    # LLVM overlaps slots it can prove disjoint, but not reliably across inlined serde temporaries.
-    # Debug never inlines them, so it never reaches the ceiling. The MSVC default reserve is 1MB —
-    # verified by reading SizeOfStackReserve out of the built PE header — which is little room.
-    #
-    # Inferred, not measured: the asymmetry (debug fine, fat-LTO release dead on the main thread
-    # before the first window) and the shape of `generate_handler!` point here, but the frame itself
-    # was never measured, and the Builder chain in app/run.rs inlining into `main` is a second
-    # candidate. What WOULD settle it, and also answer whether the macOS build needs the same
-    # treatment against its 8MB default: bisect this number down (16, 8, 4, 2) until it crashes
-    # again. Nobody has needed the answer enough to spend the builds.
-    #
-    # Raising the reserve rather than weakening LTO: a stack reserve is address space, not memory.
-    # Windows commits pages on demand, so this costs nothing at runtime and only lifts the ceiling.
-    # It applies to the MAIN thread alone, since Rust gives every thread it spawns an explicit stack
-    # size of its own.
-    #
-    # Verified both ways: SizeOfStackReserve read out of the linked PE header goes 1MB -> 32MB, and
-    # the release binary that would not reach its first window now starts. If it ever regresses,
-    # read the header before reading anything else — that tells you whether the flag arrived at all,
-    # without waiting for the app to launch:
-    #   node -e "const b=require('fs').readFileSync('target/release/tablenova.exe').subarray(0,4096);
-    #            const o=b.readUInt32LE(0x3C)+24;
-    #            console.log(Number(b.readBigUInt64LE(o+72))/1048576+' MB')"
-    "-C", "link-arg=/STACK:33554432",
-]
-
 # DEAD CONFIG on every machine that builds this repo today, kept only because it is someone's
 # working MinGW setup and the absolute path below cannot be reconstructed if it is lost.
 #
 # Cargo applies a `[target.<triple>]` section only when that triple is the one being built, and
-# nothing here builds `x86_64-pc-windows-gnu`: the host is MSVC and `build:win` passes the MSVC
-# triple. So neither the linker line nor anything added to these rustflags has any effect — a stack
-# flag was put here first and vanished without a trace or an error, which is exactly how this
-# section wastes the next person's time. Add build flags to the MSVC section above.
+# nothing here builds `x86_64-pc-windows-gnu`: `rustc -vV` reports an MSVC host, and package.json's
+# `build:win` names the MSVC triple explicitly. So neither the linker line nor anything added to
+# these rustflags has any effect — and cargo reports no error for it. A `/STACK` flag was added here
+# while chasing a release-only stack overflow, an entire build was spent testing it, and it had
+# never reached the binary. Put build flags in a `[target.x86_64-pc-windows-msvc]` section instead.
+#
+# (That overflow turned out to need no build flag at all: see `connect_db` in
+# database/commands/connection.rs. A command borrowing `State<'_, _>` has a non-`'static` future,
+# which Tauri cannot spawn, so it built and ran on the main thread's 1MB stack.)
 [target.x86_64-pc-windows-gnu]
 linker = "x86_64-w64-mingw32-gcc"
 rustflags = [
