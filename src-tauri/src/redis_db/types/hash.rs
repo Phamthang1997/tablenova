@@ -16,13 +16,13 @@ use crate::redis_db::conn::{ensure_writable, take_conn};
 
 #[tauri::command]
 pub async fn redis_hash_set(
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
     key: String,
     field: String,
     value: String,
     old_field: Option<String>,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     let mut c = take_conn(&state, &conn_id)?;
     let _: i64 = redis::cmd("HSET").arg(&key).arg(&field).arg(&value)
@@ -35,7 +35,8 @@ pub async fn redis_hash_set(
 }
 
 #[tauri::command]
-pub async fn redis_hash_del(state: tauri::State<'_, crate::AppState>, conn_id: String, key: String, field: String) -> Result<Value, String> {
+pub async fn redis_hash_del(conn_id: String, key: String, field: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     let mut c = take_conn(&state, &conn_id)?;
     let removed: i64 = redis::cmd("HDEL").arg(&key).arg(&field)

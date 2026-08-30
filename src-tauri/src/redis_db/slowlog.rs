@@ -28,10 +28,10 @@ pub(crate) fn parse_slowlog_entry(v: &redis::Value) -> Option<Value> {
 
 #[tauri::command]
 pub async fn redis_slowlog_get(
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
     count: Option<usize>,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let mut c = take_conn(&state, &conn_id)?;
     let n = count.unwrap_or(128).clamp(1, 1024);
     let reply: redis::Value = redis::cmd("SLOWLOG")
@@ -70,7 +70,8 @@ pub async fn redis_slowlog_get(
 
 /// `SLOWLOG RESET` discards the server's log — a mutation, so it obeys read-only mode.
 #[tauri::command]
-pub async fn redis_slowlog_reset(state: tauri::State<'_, crate::AppState>, conn_id: String) -> Result<Value, String> {
+pub async fn redis_slowlog_reset(conn_id: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     let mut c = take_conn(&state, &conn_id)?;
     let _: String = redis::cmd("SLOWLOG").arg("RESET").query_async(&mut c).await.map_err(|e| e.to_string())?;
@@ -79,11 +80,11 @@ pub async fn redis_slowlog_reset(state: tauri::State<'_, crate::AppState>, conn_
 
 #[tauri::command]
 pub async fn redis_slowlog_config(
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
     threshold_us: Option<i64>,
     max_len: Option<i64>,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     let mut c = take_conn(&state, &conn_id)?;
     if let Some(t) = threshold_us {

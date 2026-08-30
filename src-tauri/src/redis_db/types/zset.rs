@@ -6,13 +6,13 @@ use crate::redis_db::conn::{ensure_writable, take_conn};
 
 #[tauri::command]
 pub async fn redis_zset_add(
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
     key: String,
     member: String,
     score: f64,
     old_member: Option<String>,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     let mut c = take_conn(&state, &conn_id)?;
     // ZADD upserts, so changing only the score of an existing member needs nothing else.
@@ -26,7 +26,8 @@ pub async fn redis_zset_add(
 }
 
 #[tauri::command]
-pub async fn redis_zset_del(state: tauri::State<'_, crate::AppState>, conn_id: String, key: String, member: String) -> Result<Value, String> {
+pub async fn redis_zset_del(conn_id: String, key: String, member: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     let mut c = take_conn(&state, &conn_id)?;
     let removed: i64 = redis::cmd("ZREM").arg(&key).arg(&member)

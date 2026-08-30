@@ -5,7 +5,8 @@ use serde_json::{json, Value};
 use crate::redis_db::conn::{ensure_writable, take_conn};
 
 #[tauri::command]
-pub async fn redis_list_set(state: tauri::State<'_, crate::AppState>, conn_id: String, key: String, index: i64, value: String) -> Result<Value, String> {
+pub async fn redis_list_set(conn_id: String, key: String, index: i64, value: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     let mut c = take_conn(&state, &conn_id)?;
     let _: String = redis::cmd("LSET").arg(&key).arg(index).arg(&value)
@@ -14,7 +15,8 @@ pub async fn redis_list_set(state: tauri::State<'_, crate::AppState>, conn_id: S
 }
 
 #[tauri::command]
-pub async fn redis_list_push(state: tauri::State<'_, crate::AppState>, conn_id: String, key: String, value: String, at_head: bool) -> Result<Value, String> {
+pub async fn redis_list_push(conn_id: String, key: String, value: String, at_head: bool) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     let mut c = take_conn(&state, &conn_id)?;
     let len: i64 = redis::cmd(if at_head { "LPUSH" } else { "RPUSH" }).arg(&key).arg(&value)
@@ -26,7 +28,8 @@ pub async fn redis_list_push(state: tauri::State<'_, crate::AppState>, conn_id: 
 // then LREM exactly that one occurrence. The timestamp keeps the sentinel unique so a
 // concurrent delete on the same list cannot remove the wrong element.
 #[tauri::command]
-pub async fn redis_list_del(state: tauri::State<'_, crate::AppState>, conn_id: String, key: String, index: i64) -> Result<Value, String> {
+pub async fn redis_list_del(conn_id: String, key: String, index: i64) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     let mut c = take_conn(&state, &conn_id)?;
     let nanos = std::time::SystemTime::now()

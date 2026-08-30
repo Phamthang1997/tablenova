@@ -105,7 +105,8 @@ pub async fn get_databases_list(config: Value) -> Result<Value, String> {
 
 // List the databases using the CURRENT CONNECTION (for the switcher inside the workspace)
 #[tauri::command]
-pub async fn list_databases(state: tauri::State<'_, crate::AppState>, conn_id: String) -> Result<Value, String> {
+pub async fn list_databases(conn_id: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     list_databases_inner(&state, conn_id).await
 }
 
@@ -130,10 +131,10 @@ pub async fn list_databases(state: tauri::State<'_, crate::AppState>, conn_id: S
 /// rather than minting a second pool for the same place.
 #[tauri::command]
 pub async fn open_database(
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
     name: String,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let (server, db_type, tunnel_port, inherit_read_only) = {
         let ctx = state.connections.acquire(&conn_id)?;
         (
@@ -213,7 +214,8 @@ pub async fn open_database(
 /// Empty on MySQL (its schema *is* the database — `list_databases` already covers that) and on
 /// SQLite, which is how the frontend decides whether to show the picker at all.
 #[tauri::command]
-pub async fn list_schemas(state: tauri::State<'_, crate::AppState>, conn_id: String) -> Result<Value, String> {
+pub async fn list_schemas(conn_id: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let (conn_type, current) = {
         let ctx = state.connections.acquire(&conn_id)?;
         let ct = ctx.conn().clone();
@@ -239,7 +241,8 @@ pub async fn list_schemas(state: tauri::State<'_, crate::AppState>, conn_id: Str
 /// leave every query filtering on a schema that is not there, i.e. the same empty sidebar this
 /// feature exists to fix, with nothing on screen to explain it.
 #[tauri::command]
-pub async fn set_current_schema(state: tauri::State<'_, crate::AppState>, conn_id: String, name: String) -> Result<Value, String> {
+pub async fn set_current_schema(conn_id: String, name: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let conn_type = {
         let ctx = state.connections.acquire(&conn_id)?;
         ctx.conn().clone()
@@ -270,7 +273,8 @@ pub async fn set_current_schema(state: tauri::State<'_, crate::AppState>, conn_i
 
 // Create a new database (using the current connection). encoding/collation are optional.
 #[tauri::command]
-pub async fn create_database(state: tauri::State<'_, crate::AppState>, conn_id: String, payload: Value) -> Result<Value, String> {
+pub async fn create_database(conn_id: String, payload: Value) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let conn_type = {
         let ctx = state.connections.acquire(&conn_id)?;
         ctx.conn().clone()
@@ -307,7 +311,8 @@ pub async fn create_database(state: tauri::State<'_, crate::AppState>, conn_id: 
 
 // Drop a database (using the current connection). The connected database cannot be dropped.
 #[tauri::command]
-pub async fn drop_database(state: tauri::State<'_, crate::AppState>, conn_id: String, name: String) -> Result<Value, String> {
+pub async fn drop_database(conn_id: String, name: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let conn_type = {
         let ctx = state.connections.acquire(&conn_id)?;
         ctx.conn().clone()
@@ -324,7 +329,8 @@ pub async fn drop_database(state: tauri::State<'_, crate::AppState>, conn_id: St
 
 // Rename a database. PostgreSQL only (and the currently connected DB cannot be renamed).
 #[tauri::command]
-pub async fn rename_database(state: tauri::State<'_, crate::AppState>, conn_id: String, old_name: String, new_name: String) -> Result<Value, String> {
+pub async fn rename_database(conn_id: String, old_name: String, new_name: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let conn_type = {
         let ctx = state.connections.acquire(&conn_id)?;
         ctx.conn().clone()
@@ -342,7 +348,8 @@ pub async fn rename_database(state: tauri::State<'_, crate::AppState>, conn_id: 
 
 // The supported encodings/collations per DBMS (used by the create-database dialog)
 #[tauri::command]
-pub async fn get_db_charsets(state: tauri::State<'_, crate::AppState>, conn_id: String) -> Result<Value, String> {
+pub async fn get_db_charsets(conn_id: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let conn_type = {
         let ctx = state.connections.acquire(&conn_id)?;
         ctx.conn().clone()

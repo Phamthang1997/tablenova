@@ -29,10 +29,10 @@ pub(crate) fn stmt_timeout(config: &Value) -> Option<std::time::Duration> {
 /// `ServerHandle`, exactly the scope the frontend stores (`connKey`).
 #[tauri::command]
 pub async fn set_statement_timeout(
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
     secs: u64,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let ctx = state.connections.acquire(&conn_id)?;
     ctx.server().set_config_field("statementTimeoutSecs", json!(secs));
     Ok(json!({ "success": true, "secs": secs }))

@@ -5,7 +5,8 @@ use serde_json::{json, Value};
 use crate::database::{execute_raw_sql_generic, result_rows, row_i64, row_str, DbKind};
 
 #[tauri::command]
-pub async fn get_table_partitions(state: tauri::State<'_, crate::AppState>, conn_id: String, table_name: String) -> Result<Value, String> {
+pub async fn get_table_partitions(conn_id: String, table_name: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let conn_type = {
         let ctx = state.connections.acquire(&conn_id)?;
         ctx.conn().clone()

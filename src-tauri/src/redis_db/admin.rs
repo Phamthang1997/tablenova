@@ -8,14 +8,16 @@ use crate::redis_db::session::select_db_inner;
 use crate::redis_db::value::{parse_info, redis_value_to_json};
 
 #[tauri::command]
-pub async fn redis_info(state: tauri::State<'_, crate::AppState>, conn_id: String) -> Result<Value, String> {
+pub async fn redis_info(conn_id: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let mut c = take_conn(&state, &conn_id)?;
     let text: String = redis::cmd("INFO").query_async(&mut c).await.map_err(|e| e.to_string())?;
     Ok(json!({ "success": true, "info": parse_info(&text), "raw": text }))
 }
 
 #[tauri::command]
-pub async fn redis_execute_cmd(state: tauri::State<'_, crate::AppState>, conn_id: String, command: String) -> Result<Value, String> {
+pub async fn redis_execute_cmd(conn_id: String, command: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let tokens = tokenize(&command)?;
     if tokens.is_empty() {
         return Err("Lệnh rỗng".to_string());

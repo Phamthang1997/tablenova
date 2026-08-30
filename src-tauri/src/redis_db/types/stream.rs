@@ -9,12 +9,12 @@ use crate::redis_db::value::{as_i64, as_text, pairs_to_json};
 // An empty `id` means "*" (let the server assign the next id).
 #[tauri::command]
 pub async fn redis_stream_add(
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
     key: String,
     id: String,
     fields: Vec<Value>,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     if fields.is_empty() {
         return Err("Stream cần ít nhất một field".to_string());
     }
@@ -32,7 +32,8 @@ pub async fn redis_stream_add(
 }
 
 #[tauri::command]
-pub async fn redis_stream_del(state: tauri::State<'_, crate::AppState>, conn_id: String, key: String, id: String) -> Result<Value, String> {
+pub async fn redis_stream_del(conn_id: String, key: String, id: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     let mut c = take_conn(&state, &conn_id)?;
     let removed: i64 = redis::cmd("XDEL").arg(&key).arg(&id)
@@ -42,10 +43,10 @@ pub async fn redis_stream_del(state: tauri::State<'_, crate::AppState>, conn_id:
 
 #[tauri::command]
 pub async fn redis_stream_groups(
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
     key: String,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let mut c = take_conn(&state, &conn_id)?;
     let reply: redis::Value = redis::cmd("XINFO")
         .arg("GROUPS")
@@ -62,11 +63,11 @@ pub async fn redis_stream_groups(
 
 #[tauri::command]
 pub async fn redis_stream_consumers(
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
     key: String,
     group: String,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let mut c = take_conn(&state, &conn_id)?;
     let reply: redis::Value = redis::cmd("XINFO")
         .arg("CONSUMERS")
@@ -84,12 +85,12 @@ pub async fn redis_stream_consumers(
 
 #[tauri::command]
 pub async fn redis_stream_pending(
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
     key: String,
     group: String,
     count: Option<usize>,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let mut c = take_conn(&state, &conn_id)?;
     // Extended form: [[id, consumer, idle-ms, delivery-count], …]
     let reply: redis::Value = redis::cmd("XPENDING")
@@ -124,12 +125,12 @@ pub async fn redis_stream_pending(
 
 #[tauri::command]
 pub async fn redis_stream_ack(
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
     key: String,
     group: String,
     ids: Vec<String>,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     if ids.is_empty() {
         return Ok(json!({ "success": true, "acked": 0 }));
@@ -147,7 +148,6 @@ pub async fn redis_stream_ack(
 
 #[tauri::command]
 pub async fn redis_stream_claim(
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
     key: String,
     group: String,
@@ -155,6 +155,7 @@ pub async fn redis_stream_claim(
     min_idle_ms: i64,
     ids: Vec<String>,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     if ids.is_empty() {
         return Ok(json!({ "success": true, "claimed": 0 }));

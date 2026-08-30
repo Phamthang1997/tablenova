@@ -42,7 +42,8 @@ pub struct ConnectionStatusInfo {
 /// connection. A failure on one connection returns `ok: false` rather than failing the whole command — a server that has gone away
 /// is *information* the UI needs to show, not an error that hides the other N-1 connections as well.
 #[tauri::command]
-pub async fn ping_connections(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
+pub async fn ping_connections() -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let handles = state.connections.handles()?;
     let pings = futures_util::future::join_all(handles.into_iter().map(|(id, conn)| async move {
         let started = std::time::Instant::now();
@@ -105,8 +106,9 @@ async fn mysql_status_var(pool: &sqlx::MySqlPool, sql: &'static str) -> String {
 pub async fn get_connection_status(
     // `State`/`AppState` is not imported at the top of the file — every other command in this file writes
     // the full path, and that convention is kept.
-    state: tauri::State<'_, crate::AppState>, conn_id: String,
+    conn_id: String,
 ) -> Result<ConnectionStatusInfo, String> {
+    let state = crate::state::require_state()?;
     let start = std::time::Instant::now();
     let (conn, db_type, config, has_ssh) = {
         // `.ok()`, not `?`: having no SQL connection is a TOLERATED state here — the Redis

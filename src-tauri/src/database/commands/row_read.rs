@@ -37,7 +37,7 @@ fn scalar_to_cursor(v: &Value) -> Option<String> {
 /// can afford a `~`, opts into the other two modes.
 #[tauri::command]
 pub async fn get_table_data(
-    state: tauri::State<'_, crate::AppState>, conn_id: String,
+    conn_id: String,
     name: String,
     page: u32,
     limit: u32,
@@ -48,6 +48,7 @@ pub async fn get_table_data(
     seek_column: Option<String>,
     cursor: Option<String>,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let (conn_type, schema, limit_dur) = {
         let ctx = state.connections.acquire(&conn_id)?;
         let ct = ctx.conn().clone();

@@ -22,9 +22,10 @@ use crate::database::{
 ///   - `sequence_values`  after the data (setval reads MAX() of the rows just inserted).
 #[tauri::command]
 pub async fn get_table_ddl_extras(
-    state: tauri::State<'_, crate::AppState>, conn_id: String,
+    conn_id: String,
     table_name: String,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
         let ct = ctx.conn().clone();

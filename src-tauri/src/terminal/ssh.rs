@@ -40,13 +40,13 @@ impl TerminalSession {
 
 #[tauri::command]
 pub async fn open_ssh_terminal(
-    state: tauri::State<'_, crate::AppState>,
     profile_config: Value,
     session_id: String,
     cols: u32,
     rows: u32,
     channel: Channel<Value>,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     // If session_id already exists (reopened), close the old session first
     {
         let mut map = state.ssh_terminals.lock().map_err(|e| e.to_string())?;
@@ -119,10 +119,10 @@ pub async fn open_ssh_terminal(
 
 #[tauri::command]
 pub async fn send_ssh_input(
-    state: tauri::State<'_, crate::AppState>,
     session_id: String,
     data: String,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let map = state.ssh_terminals.lock().map_err(|e| e.to_string())?;
     if let Some(sess) = map.get(&session_id) {
         sess.tx
@@ -134,11 +134,11 @@ pub async fn send_ssh_input(
 
 #[tauri::command]
 pub async fn resize_ssh_terminal(
-    state: tauri::State<'_, crate::AppState>,
     session_id: String,
     cols: u32,
     rows: u32,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let map = state.ssh_terminals.lock().map_err(|e| e.to_string())?;
     if let Some(sess) = map.get(&session_id) {
         let _ = sess.tx.send(TermCmd::Resize(cols, rows));
@@ -148,9 +148,9 @@ pub async fn resize_ssh_terminal(
 
 #[tauri::command]
 pub async fn close_ssh_terminal(
-    state: tauri::State<'_, crate::AppState>,
     session_id: String,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let mut map = state.ssh_terminals.lock().map_err(|e| e.to_string())?;
     if let Some(sess) = map.remove(&session_id) {
         sess.shutdown();

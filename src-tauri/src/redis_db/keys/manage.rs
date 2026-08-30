@@ -9,7 +9,8 @@ use tauri::ipc::Channel;
 use crate::redis_db::conn::{ensure_writable, take_conn};
 
 #[tauri::command]
-pub async fn redis_delete_keys(state: tauri::State<'_, crate::AppState>, conn_id: String, keys: Vec<String>) -> Result<Value, String> {
+pub async fn redis_delete_keys(conn_id: String, keys: Vec<String>) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     if keys.is_empty() {
         return Ok(json!({ "success": true, "deleted": 0 }));
     }
@@ -20,7 +21,8 @@ pub async fn redis_delete_keys(state: tauri::State<'_, crate::AppState>, conn_id
 }
 
 #[tauri::command]
-pub async fn redis_set_ttl(state: tauri::State<'_, crate::AppState>, conn_id: String, key: String, ttl: i64) -> Result<Value, String> {
+pub async fn redis_set_ttl(conn_id: String, key: String, ttl: i64) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     let mut c = take_conn(&state, &conn_id)?;
     if ttl < 0 {
@@ -32,7 +34,8 @@ pub async fn redis_set_ttl(state: tauri::State<'_, crate::AppState>, conn_id: St
 }
 
 #[tauri::command]
-pub async fn redis_rename_key(state: tauri::State<'_, crate::AppState>, conn_id: String, old_key: String, new_key: String) -> Result<Value, String> {
+pub async fn redis_rename_key(conn_id: String, old_key: String, new_key: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     let mut c = take_conn(&state, &conn_id)?;
     let _: String = redis::cmd("RENAME").arg(&old_key).arg(&new_key).query_async(&mut c).await.map_err(|e| e.to_string())?;
@@ -40,7 +43,8 @@ pub async fn redis_rename_key(state: tauri::State<'_, crate::AppState>, conn_id:
 }
 
 #[tauri::command]
-pub async fn redis_flush_db(state: tauri::State<'_, crate::AppState>, conn_id: String) -> Result<Value, String> {
+pub async fn redis_flush_db(conn_id: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     let mut c = take_conn(&state, &conn_id)?;
     let _: String = redis::cmd("FLUSHDB").query_async(&mut c).await.map_err(|e| e.to_string())?;
@@ -58,13 +62,13 @@ pub(crate) const BULK_BATCH: usize = 500;
 /// `UNLINK` rather than `DEL` so freeing memory happens off the main thread.
 #[tauri::command]
 pub async fn redis_delete_by_pattern(
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
     pattern: String,
     type_filter: Option<String>,
     query_id: String,
     channel: Channel<Value>,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     let pattern = pattern.trim().to_string();
     if pattern.is_empty() {

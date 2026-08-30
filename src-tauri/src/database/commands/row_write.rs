@@ -10,7 +10,8 @@ use crate::database::{
 use super::catalog::detect_primary_key;
 
 #[tauri::command]
-pub async fn commit_changes(state: tauri::State<'_, crate::AppState>, conn_id: String, payload: Value) -> Result<Value, String> {
+pub async fn commit_changes(conn_id: String, payload: Value) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
         let ct = ctx.conn().clone();
@@ -152,7 +153,8 @@ pub async fn commit_changes(state: tauri::State<'_, crate::AppState>, conn_id: S
 }
 
 #[tauri::command]
-pub async fn import_new_table(state: tauri::State<'_, crate::AppState>, conn_id: String, table_name: String, rows: Vec<Value>) -> Result<Value, String> {
+pub async fn import_new_table(conn_id: String, table_name: String, rows: Vec<Value>) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
         let ct = ctx.conn().clone();
@@ -264,7 +266,8 @@ async fn bulk_insert(conn: &DbConnection, schema: &Option<String>, table: &str, 
 }
 
 #[tauri::command]
-pub async fn import_table_data(state: tauri::State<'_, crate::AppState>, conn_id: String, name: String, rows: Vec<Value>) -> Result<Value, String> {
+pub async fn import_table_data(conn_id: String, name: String, rows: Vec<Value>) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
         let ct = ctx.conn().clone();

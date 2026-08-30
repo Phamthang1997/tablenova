@@ -19,7 +19,8 @@ pub(crate) fn redis_db_name(index: i64) -> String {
 }
 
 #[tauri::command]
-pub async fn redis_connect(state: tauri::State<'_, crate::AppState>, config: Value) -> Result<Value, String> {
+pub async fn redis_connect(config: Value) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let db_index = config.get("dbIndex").and_then(|v| v.as_i64()).unwrap_or(0);
     // Open the SSH tunnel first: conn_config then points at 127.0.0.1:<forwarded port>, and that very conn_config
     // is the one stored, so every later reconnect (changing db index, Pub/Sub, Profiler) reuses this same
@@ -79,19 +80,19 @@ pub async fn redis_connect(state: tauri::State<'_, crate::AppState>, config: Val
 /// SQL guard and the Redis guard can no longer disagree about one connection.
 #[tauri::command]
 pub async fn redis_set_read_only(
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
     flag: bool,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     state.connections.set_read_only(&conn_id, flag)?;
     Ok(json!({ "success": true, "readOnly": flag }))
 }
 
 #[tauri::command]
 pub async fn redis_disconnect(
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     // Dropping the entry releases its `Arc<ServerHandle>`; the SSH tunnel closes with the LAST
     // entry of that server, not with this one — which is the point of putting it there. Disconnecting `db3`
     // while `db0` of the same server is still open must leave the forwarded port alive.
@@ -107,10 +108,10 @@ pub async fn redis_disconnect(
 /// second database of a Postgres server. Idempotent — clicking `db3` twice returns the same `conn_id`.
 #[tauri::command]
 pub async fn redis_select_db(
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
     index: i64,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     select_db_inner(&state, &conn_id, index).await
 }
 

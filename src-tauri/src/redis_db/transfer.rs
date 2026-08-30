@@ -33,10 +33,10 @@ pub(crate) const TRANSFER_BATCH_MAX: usize = 5_000;
 /// uses for `bytes`): same content, ~3× smaller over IPC, and it can be written straight into the NDJSON file.
 #[tauri::command]
 pub async fn redis_dump_keys(
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
     keys: Vec<String>,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     if keys.is_empty() {
         return Ok(json!({ "success": true, "entries": [], "missing": [] }));
     }
@@ -90,11 +90,11 @@ pub async fn redis_dump_keys(
 /// small, so the progress bar still moves steadily.
 #[tauri::command]
 pub async fn redis_restore_keys(
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
     entries: Vec<Value>,
     replace: bool,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     if entries.len() > TRANSFER_BATCH_MAX {
         return Err(format!("Mỗi lượt chỉ nhận tối đa {} key", TRANSFER_BATCH_MAX));

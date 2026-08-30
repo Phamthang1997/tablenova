@@ -5,7 +5,8 @@ use serde_json::{json, Value};
 use crate::database::{execute_raw_sql_generic, result_rows, row_str, sql_str, DbKind};
 
 #[tauri::command]
-pub async fn get_check_constraints(state: tauri::State<'_, crate::AppState>, conn_id: String, table_name: String) -> Result<Value, String> {
+pub async fn get_check_constraints(conn_id: String, table_name: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
         let ct = ctx.conn().clone();

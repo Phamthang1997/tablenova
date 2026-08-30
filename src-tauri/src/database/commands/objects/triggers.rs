@@ -5,7 +5,8 @@ use serde_json::{json, Value};
 use crate::database::{execute_raw_sql_generic, result_rows, row_str, sql_str, DbKind};
 
 #[tauri::command]
-pub async fn get_table_triggers(state: tauri::State<'_, crate::AppState>, conn_id: String, table_name: String) -> Result<Value, String> {
+pub async fn get_table_triggers(conn_id: String, table_name: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
         let ct = ctx.conn().clone();
@@ -67,7 +68,8 @@ fn mysql_trigger_ddl(name: &str, table: &str, timing: &str, event: &str, body: &
 /// needs the whole database in one call, plus the owning table name (Postgres cannot drop a
 /// trigger without `ON <table>`).
 #[tauri::command]
-pub async fn get_all_triggers(state: tauri::State<'_, crate::AppState>, conn_id: String) -> Result<Value, String> {
+pub async fn get_all_triggers(conn_id: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
         let ct = ctx.conn().clone();
@@ -110,7 +112,8 @@ pub async fn get_all_triggers(state: tauri::State<'_, crate::AppState>, conn_id:
 }
 
 #[tauri::command]
-pub async fn save_trigger(state: tauri::State<'_, crate::AppState>, conn_id: String, statement_sql: String) -> Result<Value, String> {
+pub async fn save_trigger(conn_id: String, statement_sql: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let conn_type = {
         let ctx = state.connections.acquire(&conn_id)?;
         ctx.conn().clone()
@@ -121,7 +124,8 @@ pub async fn save_trigger(state: tauri::State<'_, crate::AppState>, conn_id: Str
 }
 
 #[tauri::command]
-pub async fn drop_trigger(state: tauri::State<'_, crate::AppState>, conn_id: String, trigger_name: String) -> Result<Value, String> {
+pub async fn drop_trigger(conn_id: String, trigger_name: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let conn_type = {
         let ctx = state.connections.acquire(&conn_id)?;
         ctx.conn().clone()

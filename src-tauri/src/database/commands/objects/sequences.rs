@@ -5,7 +5,8 @@ use serde_json::{json, Value};
 use crate::database::{execute_raw_sql_generic, result_rows, row_str, sql_str, DbKind};
 
 #[tauri::command]
-pub async fn get_sequences(state: tauri::State<'_, crate::AppState>, conn_id: String) -> Result<Value, String> {
+pub async fn get_sequences(conn_id: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
         let ct = ctx.conn().clone();
@@ -37,7 +38,8 @@ pub async fn get_sequences(state: tauri::State<'_, crate::AppState>, conn_id: St
 }
 
 #[tauri::command]
-pub async fn alter_sequence(state: tauri::State<'_, crate::AppState>, conn_id: String, sequence_sql: String) -> Result<Value, String> {
+pub async fn alter_sequence(conn_id: String, sequence_sql: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let conn_type = {
         let ctx = state.connections.acquire(&conn_id)?;
         ctx.conn().clone()
@@ -48,7 +50,8 @@ pub async fn alter_sequence(state: tauri::State<'_, crate::AppState>, conn_id: S
 }
 
 #[tauri::command]
-pub async fn drop_sequence(state: tauri::State<'_, crate::AppState>, conn_id: String, sequence_name: String) -> Result<Value, String> {
+pub async fn drop_sequence(conn_id: String, sequence_name: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let conn_type = {
         let ctx = state.connections.acquire(&conn_id)?;
         ctx.conn().clone()

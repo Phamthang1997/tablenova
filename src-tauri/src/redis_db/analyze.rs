@@ -28,12 +28,12 @@ pub(crate) fn namespace_of(key: &str) -> String {
 
 #[tauri::command]
 pub async fn redis_analyze_db(
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
     sample: Option<usize>,
     query_id: String,
     channel: Channel<Value>,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let cancel = register_cancel(&state, &query_id)?;
     let limit = sample.unwrap_or(ANALYZE_SAMPLE_MAX).clamp(100, 200_000);
     let mut c = take_conn(&state, &conn_id)?;

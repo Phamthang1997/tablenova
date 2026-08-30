@@ -132,7 +132,7 @@ fn use_db_name(stmt: &str) -> Option<String> {
 
 #[tauri::command]
 pub async fn restore_backup(
-    state: tauri::State<'_, crate::AppState>, conn_id: String,
+    conn_id: String,
     sql_content: String,
     tables: Vec<String>,
     // The progress channel back to the UI: {type:'start'|'progress'|'done', done, total}. A restore is one
@@ -149,6 +149,7 @@ pub async fn restore_backup(
     // This mode rescues the part that can run, at the cost of atomicity.
     continue_on_error: Option<bool>,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let continue_on_error = continue_on_error.unwrap_or(false);
     // Failing statements that were skipped: all of them are counted, but only the first few are kept to show the user.
     let mut failed_count: usize = 0;

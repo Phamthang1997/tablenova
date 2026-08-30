@@ -11,13 +11,13 @@ use crate::redis_db::conn::take_conn;
 // Scan keys with SCAN (non-blocking) + TYPE + TTL per key through a pipeline.
 #[tauri::command]
 pub async fn redis_scan_keys(
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
     pattern: String,
     cursor: u64,
     count: usize,
     type_filter: Option<String>,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     // TYPE is not passed to SCAN: that argument only exists in Redis 6.0+ and many compatible servers
     // (KeyDB/Dragonfly) do not support it -> "syntax error". Filtering by type is done client-side.
     let _ = &type_filter;
@@ -48,7 +48,6 @@ pub async fn redis_scan_keys(
 // Stop it midway with cancel_query(query_id) (reusing AppState's cancel_flags).
 #[tauri::command]
 pub async fn redis_scan_stream(
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
     pattern: String,
     count: usize,
@@ -56,6 +55,7 @@ pub async fn redis_scan_stream(
     channel: Channel<Value>,
     start_cursor: Option<u64>,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let cancel = Arc::new(AtomicBool::new(false));
     {
         let mut flags = state.cancel_flags.lock().map_err(|e| e.to_string())?;

@@ -8,7 +8,8 @@ use crate::redis_db::conn::{ensure_writable, take_conn};
 
 // Create/overwrite one key per type. REPLACE semantics: delete the old key, then rebuild it from the payload.
 #[tauri::command]
-pub async fn redis_set_key(state: tauri::State<'_, crate::AppState>, conn_id: String, payload: Value) -> Result<Value, String> {
+pub async fn redis_set_key(conn_id: String, payload: Value) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     let caps = caps_of(&state, &conn_id);
     let mut c = take_conn(&state, &conn_id)?;
@@ -100,11 +101,11 @@ pub async fn redis_set_key(state: tauri::State<'_, crate::AppState>, conn_id: St
 /// the key's expiry, which plain `SET` does.
 #[tauri::command]
 pub async fn redis_set_key_bytes(
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
     key: String,
     bytes: Vec<u8>,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     let caps = caps_of(&state, &conn_id);
     let mut c = take_conn(&state, &conn_id)?;

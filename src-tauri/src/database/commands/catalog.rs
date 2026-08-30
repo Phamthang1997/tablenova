@@ -14,7 +14,8 @@ use crate::database::{
 
 // SQLite returns empty -> the frontend falls back to lazy per-table loading.
 #[tauri::command]
-pub async fn get_full_catalog(state: tauri::State<'_, crate::AppState>, conn_id: String) -> Result<Value, String> {
+pub async fn get_full_catalog(conn_id: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let (conn_type, db_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
         let ct = ctx.conn().clone();
@@ -88,7 +89,8 @@ pub async fn get_full_catalog(state: tauri::State<'_, crate::AppState>, conn_id:
 }
 
 #[tauri::command]
-pub async fn get_tables(state: tauri::State<'_, crate::AppState>, conn_id: String) -> Result<Value, String> {
+pub async fn get_tables(conn_id: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     get_tables_inner(&state, conn_id).await
 }
 

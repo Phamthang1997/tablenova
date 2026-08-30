@@ -12,7 +12,8 @@ use crate::database::introspect::get_primary_key_columns;
 use super::table_alter::generate_alter_sqls;
 
 #[tauri::command]
-pub async fn create_table(state: tauri::State<'_, crate::AppState>, conn_id: String, payload: Value) -> Result<Value, String> {
+pub async fn create_table(conn_id: String, payload: Value) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
         let ct = ctx.conn().clone();
@@ -173,12 +174,13 @@ async fn run_fk_wrapped(
 // Drop a table/view. `cascade` and `ignore_fk` are the 2 options of the sidebar's Delete dialog.
 #[tauri::command]
 pub async fn drop_table(
-    state: tauri::State<'_, crate::AppState>, conn_id: String,
+    conn_id: String,
     name: String,
     is_view: Option<bool>,
     cascade: Option<bool>,
     ignore_fk: Option<bool>,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
         let ct = ctx.conn().clone();
@@ -226,12 +228,13 @@ async fn mysql_next_auto_increment(conn: &DbConnection, name: &str) -> Option<u6
 // `restart_identity` / `disable_fk` / `cascade` are the 3 options of the sidebar's Truncate dialog.
 #[tauri::command]
 pub async fn truncate_table(
-    state: tauri::State<'_, crate::AppState>, conn_id: String,
+    conn_id: String,
     name: String,
     restart_identity: Option<bool>,
     disable_fk: Option<bool>,
     cascade: Option<bool>,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
         let ct = ctx.conn().clone();
@@ -296,7 +299,8 @@ pub async fn truncate_table(
 
 // Returns the table's CREATE TABLE statement (its definition) per dialect
 #[tauri::command]
-pub async fn get_table_definition(state: tauri::State<'_, crate::AppState>, conn_id: String, name: String) -> Result<Value, String> {
+pub async fn get_table_definition(conn_id: String, name: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
         let ct = ctx.conn().clone();
@@ -410,7 +414,8 @@ pub async fn get_table_definition(state: tauri::State<'_, crate::AppState>, conn
 }
 
 #[tauri::command]
-pub async fn rename_table(state: tauri::State<'_, crate::AppState>, conn_id: String, old_name: String, new_name: String) -> Result<Value, String> {
+pub async fn rename_table(conn_id: String, old_name: String, new_name: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
         let ct = ctx.conn().clone();

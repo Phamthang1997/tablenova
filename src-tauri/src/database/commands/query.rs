@@ -12,7 +12,8 @@ use crate::database::{
 };
 
 #[tauri::command]
-pub async fn execute_query(state: tauri::State<'_, crate::AppState>, conn_id: String, sql: String, params: Option<Vec<Value>>) -> Result<Value, String> {
+pub async fn execute_query(conn_id: String, sql: String, params: Option<Vec<Value>>) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let (conn_type, limit) = {
         let ctx = state.connections.acquire(&conn_id)?;
         (ctx.conn().clone(), stmt_timeout(&ctx.server().config()))
@@ -30,7 +31,8 @@ pub async fn execute_query(state: tauri::State<'_, crate::AppState>, conn_id: St
 
 // Run several SQL statements, each returning its own result set (feeding SqlEditor's multiple result tabs)
 #[tauri::command]
-pub async fn execute_multi_query(state: tauri::State<'_, crate::AppState>, conn_id: String, sql: String) -> Result<Value, String> {
+pub async fn execute_multi_query(conn_id: String, sql: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let (conn_type, limit) = {
         let ctx = state.connections.acquire(&conn_id)?;
         (ctx.conn().clone(), stmt_timeout(&ctx.server().config()))
@@ -75,12 +77,13 @@ pub async fn execute_multi_query(state: tauri::State<'_, crate::AppState>, conn_
 //   { type:"error",   stmtIndex, message }                  -> an error, the stream stops
 #[tauri::command]
 pub async fn execute_query_stream(
-    state: tauri::State<'_, crate::AppState>, conn_id: String,
+    conn_id: String,
     sql: String,
     query_id: String,
     channel: Channel<Value>,
     params: Option<Vec<Value>>,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let (conn_type, limit) = {
         let ctx = state.connections.acquire(&conn_id)?;
         (ctx.conn().clone(), stmt_timeout(&ctx.server().config()))
@@ -142,7 +145,8 @@ pub async fn execute_query_stream(
 
 // Mark a streaming query as needing to stop. Not an error when query_id no longer exists.
 #[tauri::command]
-pub async fn cancel_query(state: tauri::State<'_, crate::AppState>, query_id: String) -> Result<Value, String> {
+pub async fn cancel_query(query_id: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let flags = state.cancel_flags.lock().map_err(|e| e.to_string())?;
     if let Some(flag) = flags.get(&query_id) {
         flag.store(true, Ordering::Relaxed);

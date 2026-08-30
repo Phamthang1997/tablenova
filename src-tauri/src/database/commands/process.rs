@@ -87,9 +87,9 @@ fn extract_i64(row: &Value, key: &str) -> i64 {
 /// creating artificial transactions or interfering with active user workloads.
 #[tauri::command]
 pub async fn get_process_list(
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
 ) -> Result<ProcessListSummary, String> {
+    let state = crate::state::require_state()?;
     let (conn, dialect) = {
         let ctx = state.connections.acquire(&conn_id)?;
         (ctx.conn().clone(), ctx.dialect().to_string())
@@ -321,10 +321,10 @@ async fn fetch_sqlite_process_list(conn: &DbConnection) -> Result<ProcessListSum
 /// Safely cancel a running query without terminating the client connection session.
 #[tauri::command]
 pub async fn kill_process_query(
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
     process_id: String,
 ) -> Result<KillResult, String> {
+    let state = crate::state::require_state()?;
     let (conn, dialect) = {
         let ctx = state.connections.acquire(&conn_id)?;
         (ctx.conn().clone(), ctx.dialect().to_string())
@@ -375,10 +375,10 @@ pub async fn kill_process_query(
 /// Terminate the entire connection session (disconnect client).
 #[tauri::command]
 pub async fn kill_process_connection(
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
     process_id: String,
 ) -> Result<KillResult, String> {
+    let state = crate::state::require_state()?;
     let (conn, dialect) = {
         let ctx = state.connections.acquire(&conn_id)?;
         (ctx.conn().clone(), ctx.dialect().to_string())

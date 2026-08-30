@@ -9,7 +9,8 @@ use crate::database::{
 
 // List the database objects of the current connection: tables, views, functions, procedures
 #[tauri::command]
-pub async fn get_database_objects(state: tauri::State<'_, crate::AppState>, conn_id: String) -> Result<Value, String> {
+pub async fn get_database_objects(conn_id: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
         let ct = ctx.conn().clone();
@@ -124,7 +125,8 @@ pub async fn get_database_objects(state: tauri::State<'_, crate::AppState>, conn
 
 // Read the definition (source) of a view / function / procedure
 #[tauri::command]
-pub async fn get_object_definition(state: tauri::State<'_, crate::AppState>, conn_id: String, name: String, kind: String) -> Result<Value, String> {
+pub async fn get_object_definition(conn_id: String, name: String, kind: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
         let ct = ctx.conn().clone();

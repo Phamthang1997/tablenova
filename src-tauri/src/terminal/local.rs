@@ -38,12 +38,12 @@ fn default_shell() -> String {
 
 #[tauri::command]
 pub async fn open_local_terminal(
-    state: tauri::State<'_, crate::AppState>,
     session_id: String,
     cols: u16,
     rows: u16,
     channel: Channel<Value>,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     // Close an existing session with the same id, if any
     {
         let mut map = state.local_terminals.lock().map_err(|e| e.to_string())?;
@@ -106,10 +106,10 @@ pub async fn open_local_terminal(
 
 #[tauri::command]
 pub async fn send_local_input(
-    state: tauri::State<'_, crate::AppState>,
     session_id: String,
     data: String,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let map = state.local_terminals.lock().map_err(|e| e.to_string())?;
     if let Some(sess) = map.get(&session_id) {
         if let Ok(mut w) = sess.writer.lock() {
@@ -122,11 +122,11 @@ pub async fn send_local_input(
 
 #[tauri::command]
 pub async fn resize_local_terminal(
-    state: tauri::State<'_, crate::AppState>,
     session_id: String,
     cols: u16,
     rows: u16,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let map = state.local_terminals.lock().map_err(|e| e.to_string())?;
     if let Some(sess) = map.get(&session_id) {
         if let Ok(master) = sess.master.lock() {
@@ -138,9 +138,9 @@ pub async fn resize_local_terminal(
 
 #[tauri::command]
 pub async fn close_local_terminal(
-    state: tauri::State<'_, crate::AppState>,
     session_id: String,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let mut map = state.local_terminals.lock().map_err(|e| e.to_string())?;
     if let Some(sess) = map.remove(&session_id) {
         sess.shutdown();

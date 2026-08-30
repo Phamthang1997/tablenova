@@ -30,13 +30,13 @@ pub(crate) fn drop_cancel(app: &tauri::AppHandle, query_id: &str) {
 #[tauri::command]
 pub async fn redis_pubsub_start(
     app: tauri::AppHandle,
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
     channels: Vec<String>,
     patterns: Vec<String>,
     query_id: String,
     channel: Channel<Value>,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     if channels.is_empty() && patterns.is_empty() {
         return Err("Chưa chọn channel để nghe".to_string());
     }
@@ -91,11 +91,11 @@ pub async fn redis_pubsub_start(
 /// PUBLISH is a side effect other clients observe, so it counts as a write.
 #[tauri::command]
 pub async fn redis_publish(
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
     channel_name: String,
     payload: String,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     let mut c = take_conn(&state, &conn_id)?;
     let receivers: i64 = redis::cmd("PUBLISH")
@@ -117,11 +117,11 @@ pub(crate) const MONITOR_MAX_SECS: u64 = 60;
 #[tauri::command]
 pub async fn redis_monitor_start(
     app: tauri::AppHandle,
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
     query_id: String,
     channel: Channel<Value>,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let client = dedicated_client(&state, &conn_id).await?;
     let monitor = client
         .get_async_monitor()

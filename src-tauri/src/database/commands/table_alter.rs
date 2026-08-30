@@ -214,7 +214,8 @@ pub(super) fn generate_alter_sqls(table_name: &str, payload: &Value, db_type: &s
 }
 
 #[tauri::command]
-pub async fn alter_table_schema(state: tauri::State<'_, crate::AppState>, conn_id: String, name: String, payload: Value) -> Result<Value, String> {
+pub async fn alter_table_schema(conn_id: String, name: String, payload: Value) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
         let ct = ctx.conn().clone();
@@ -236,7 +237,8 @@ pub async fn alter_table_schema(state: tauri::State<'_, crate::AppState>, conn_i
 }
 
 #[tauri::command]
-pub async fn preview_alter_schema(state: tauri::State<'_, crate::AppState>, conn_id: String, name: String, payload: Value) -> Result<Value, String> {
+pub async fn preview_alter_schema(conn_id: String, name: String, payload: Value) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
         let ct = ctx.conn().clone();

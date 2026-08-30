@@ -15,7 +15,7 @@ use super::session::{
 // ---------------------------------------------------------------------------
 
 fn current_conn(
-    state: &tauri::State<'_, crate::AppState>,
+    state: &crate::AppState,
     conn_id: &str,
 ) -> Result<DbConnection, String> {
     Ok(state.connections.acquire(conn_id)?.conn().clone())
@@ -41,9 +41,10 @@ pub async fn tx_any_pending() -> Result<Value, String> {
 /// guessing which one was meant is not ours to do.
 #[tauri::command]
 pub async fn tx_set_autocommit(
-    state: tauri::State<'_, crate::AppState>, conn_id: String,
+    conn_id: String,
     enabled: bool,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     if enabled && has_pending(&conn_id) {
         return Err("Transaction đang mở — hãy commit hoặc rollback trước khi bật lại auto-commit".to_string());
     }
@@ -75,10 +76,11 @@ pub async fn tx_set_autocommit(
 
 #[tauri::command]
 pub async fn tx_set_isolation(
-    state: tauri::State<'_, crate::AppState>, conn_id: String,
+    conn_id: String,
     level: Option<String>,
     read_only: Option<bool>,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let conn = current_conn(&state, &conn_id)?;
     let dialect = dialect_of(&conn);
     if let Some(l) = &level {
@@ -99,7 +101,7 @@ pub async fn tx_set_isolation(
 }
 
 async fn end_tx(
-    state: tauri::State<'_, crate::AppState>,
+    state: crate::AppState,
     conn_id: &str,
     sql: &str,
 ) -> Result<Value, String> {
@@ -128,25 +130,26 @@ async fn end_tx(
 
 #[tauri::command]
 pub async fn tx_commit(
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     end_tx(state, &conn_id, "COMMIT").await
 }
 
 #[tauri::command]
 pub async fn tx_rollback(
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     end_tx(state, &conn_id, "ROLLBACK").await
 }
 
 #[tauri::command]
 pub async fn tx_savepoint(
-    state: tauri::State<'_, crate::AppState>, conn_id: String,
+    conn_id: String,
     name: String,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let clean = sanitize_savepoint(&name)?;
     let conn = current_conn(&state, &conn_id)?;
     run_raw(&conn, format!("SAVEPOINT {}", clean)).await?;
@@ -155,9 +158,10 @@ pub async fn tx_savepoint(
 
 #[tauri::command]
 pub async fn tx_rollback_to(
-    state: tauri::State<'_, crate::AppState>, conn_id: String,
+    conn_id: String,
     name: String,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let clean = sanitize_savepoint(&name)?;
     let conn = current_conn(&state, &conn_id)?;
     run_raw(&conn, format!("ROLLBACK TO SAVEPOINT {}", clean)).await?;

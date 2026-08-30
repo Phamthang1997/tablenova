@@ -7,11 +7,11 @@ use crate::redis_db::conn::{ensure_writable, take_conn};
 
 #[tauri::command]
 pub async fn redis_json_get(
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
     key: String,
     path: Option<String>,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     ensure_json_module(&state, &conn_id)?;
     let mut c = take_conn(&state, &conn_id)?;
     let path = path.filter(|p| !p.trim().is_empty()).unwrap_or_else(|| "$".to_string());
@@ -30,12 +30,12 @@ pub async fn redis_json_get(
 
 #[tauri::command]
 pub async fn redis_json_set(
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
     key: String,
     path: String,
     value: String,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     ensure_json_module(&state, &conn_id)?;
     let mut c = take_conn(&state, &conn_id)?;
@@ -52,11 +52,11 @@ pub async fn redis_json_set(
 
 #[tauri::command]
 pub async fn redis_json_del(
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
     key: String,
     path: String,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     ensure_writable(&state, &conn_id)?;
     ensure_json_module(&state, &conn_id)?;
     let mut c = take_conn(&state, &conn_id)?;

@@ -204,7 +204,8 @@ pub(crate) async fn fetch_elements(
 }
 
 #[tauri::command]
-pub async fn redis_get_key(state: tauri::State<'_, crate::AppState>, conn_id: String, key: String) -> Result<Value, String> {
+pub async fn redis_get_key(conn_id: String, key: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let caps = caps_of(&state, &conn_id);
     let mut c = take_conn(&state, &conn_id)?;
     let t: String = redis::cmd("TYPE").arg(&key).query_async(&mut c).await.map_err(|e| e.to_string())?;
@@ -261,7 +262,6 @@ pub async fn redis_get_key(state: tauri::State<'_, crate::AppState>, conn_id: St
 /// Next page of a collection. `cursor` comes back from the previous call (or `redis_get_key`).
 #[tauri::command]
 pub async fn redis_get_elements(
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
     key: String,
     kind: String,
@@ -269,6 +269,7 @@ pub async fn redis_get_elements(
     count: Option<usize>,
     filter: Option<String>,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let caps = caps_of(&state, &conn_id);
     let mut c = take_conn(&state, &conn_id)?;
     let (elements, next_cursor, done) = fetch_elements(
