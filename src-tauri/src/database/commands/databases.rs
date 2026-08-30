@@ -44,9 +44,6 @@ fn is_unknown_database_err(err: &str) -> bool {
 #[tauri::command]
 pub async fn get_databases_list(config: Value) -> Result<Value, String> {
     Box::pin(async move {
-    // TEMPORARY, with boot_trace in app/run.rs. This command is where the release build dies, and
-    // these lines say how far into it execution gets and on which thread.
-    crate::app::run::boot_trace("gdl:body-entered");
     let db_type = config.get("dbType").and_then(|v| v.as_str()).unwrap_or("").to_string();
     
     let mut databases = Vec::new();
@@ -54,9 +51,7 @@ pub async fn get_databases_list(config: Value) -> Result<Value, String> {
     match db_type.as_str() {
         "postgres" => {
             // Keep the tunnel alive for the whole listing operation (when SSH is on)
-            crate::app::run::boot_trace("gdl:pg-before-tunnel");
             let (conn_config, _tunnel) = apply_ssh_tunnel(&config, 5432).await?;
-            crate::app::run::boot_trace("gdl:pg-after-tunnel");
             // Prefer the database currently typed in (a user with restricted privileges — a managed
             // cloud Postgres, say — usually only has access to their own DB). If that name
             // does not exist (half-typed), fall back to the "postgres" system DB.
@@ -81,9 +76,7 @@ pub async fn get_databases_list(config: Value) -> Result<Value, String> {
             }
         }
         "mysql" => {
-            crate::app::run::boot_trace("gdl:mysql-before-tunnel");
             let (conn_config, _tunnel) = apply_ssh_tunnel(&config, 3306).await?;
-            crate::app::run::boot_trace("gdl:mysql-after-tunnel");
             let pool = match open_list_pool_mysql(&build_mysql_url(&conn_config, None)).await {
                 Ok(p) => p,
                 Err(first) if is_unknown_database_err(&first) => {
@@ -93,7 +86,6 @@ pub async fn get_databases_list(config: Value) -> Result<Value, String> {
                 }
                 Err(first) => return Err(first),
             };
-            crate::app::run::boot_trace("gdl:mysql-pool-open");
             let rows = sqlx::query("SHOW DATABASES")
                 .fetch_all(&pool)
                 .await

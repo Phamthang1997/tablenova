@@ -47,6 +47,15 @@ Development requires a native toolchain on Windows: Rust (cargo), a MinGW64 GCC 
 
 The frontend never talks to a database directly — `src/utils/dbHelper.ts` is the single wrapper around every `invoke()` call and is the de facto contract between the two sides. When adding a new backend capability, add the `#[tauri::command]` in the right `database/commands/*.rs`, register it in the `generate_handler!` list in `app/handlers.rs`, then add a corresponding method to `dbHelper`.
 
+**Every `#[tauri::command] async fn` obeys two rules, and breaking either one crashes the RELEASE build at the first call while `tauri dev` stays perfectly happy.** All 132 of them follow both; a new one must too.
+
+1. **Never take `tauri::State<'_, AppState>`.** Read the state with `crate::state::require_state()?` instead. That parameter carries a lifetime, so the command's future is not `'static`; Tauri can only `spawn` a `'static` future onto the async runtime, and anything else it builds *and runs* on the calling thread — the main thread, whose stack Windows reserves at **1MB** (Linux and macOS give 8MB, which is why this is invisible on those). `AppState` is `Clone` over an `Arc`, so `require_state()` costs one refcount bump.
+2. **Wrap the body in `Box::pin(async move { … }).await`.** `#[tauri::command]` expands to `async move { let result = $path(args); … kind.future(result).await }`, and `result` lives across an `.await`, so the command's whole future is a *field* of that block's state machine. Creating the block allocates the struct — **not running yet is not the same as not occupying space**. Boxing puts the state machine on the heap and leaves the command's own future holding its arguments and a pointer.
+
+The two compose and neither replaces the other: rule 1 decides *which thread* runs the body, rule 2 decides *whose stack* the state machine lands on. `connect_db` broke rule 1 and `get_databases_list` broke rule 2, and each produced the same symptom — `STATUS_STACK_OVERFLOW` (0xc00000fd) on `thread 'main'`, at launch or on the first connection, with no console to print it in a packaged build.
+
+Debug never inlines the way `lto = "fat"` + `codegen-units = 1` does, which is why this is a release-only failure and why `tauri dev` cannot catch it. Reproduce with `npx tauri dev --release` — the same profile, but run from a terminal so the crash line is visible. Do not diagnose it by reasoning about which function looks big: five hypotheses were wrong before a trace (thread name + address of a local, appended to a file per line, since a windowed build has no stderr) named the real one in a single run.
+
 ### Backend (`src-tauri/src/`)
 
 **Bản đồ module** (chi tiết từng phần ở các mục ngay bên dưới). Mỗi tệp làm **một** nhiệm vụ; tệp lớn đã được tách thành thư mục cùng tên, và `mod.rs` của thư mục chỉ chứa `mod` + `pub use` (không logic). Kế hoạch và lý do từng quyết định: `docs/backend-module-split-plan.md`.
