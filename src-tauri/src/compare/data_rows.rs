@@ -3,9 +3,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use serde_json::{json, Value};
-use tauri::State;
 
-use crate::AppState;
 use crate::compare::ident::{q_ident, qualified};
 use crate::compare::read::read_schema;
 use crate::compare::script::{delete_sql, insert_sql, update_sql};
@@ -34,7 +32,7 @@ pub(super) fn key_of(row: &Value, keys: &[String]) -> String {
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn compare_table_data(
-    state: State<'_, AppState>, conn_id: String,
+    conn_id: String,
     source: CompareSide,
     target: CompareSide,
     table: String,
@@ -43,6 +41,7 @@ pub async fn compare_table_data(
     max_diff_rows: Option<usize>,
     include_drops: Option<bool>,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     if table.trim().is_empty() {
         return Err("Thiếu tên bảng".to_string());
     }

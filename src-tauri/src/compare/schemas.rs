@@ -3,9 +3,7 @@
 use std::collections::BTreeSet;
 
 use serde_json::{json, Value};
-use tauri::State;
 
-use crate::AppState;
 use crate::compare::diff::{
     column_changes, fk_changes, index_changes, view_def_differs,
 };
@@ -22,11 +20,12 @@ use crate::compare::sync_sql::{
 
 #[tauri::command]
 pub async fn compare_schemas(
-    state: State<'_, AppState>, conn_id: String,
+    conn_id: String,
     source: CompareSide,
     target: CompareSide,
     include_drops: Option<bool>,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let src = resolve_side(&state, &source, &conn_id).await?;
     let tgt = match resolve_side(&state, &target, &conn_id).await {
         Ok(t) => t,

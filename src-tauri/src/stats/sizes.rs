@@ -1,9 +1,7 @@
 //! `get_all_databases_sizes` — phase 2 of the dashboard: the expensive part (scanning every table).
 
-use tauri::State;
 use serde_json::{json, Value};
 use crate::database::DbKind;
-use crate::AppState;
 use super::cells::get_mysql_i64_cell;
 use super::probe::{pg_count_tables_rows, pg_count_tables_rows_remote, sqlite_table_names};
 use super::system_dbs::{is_system_db, system_db_sql_list};
@@ -13,10 +11,10 @@ use super::system_dbs::{is_system_db, system_db_sql_list};
 // the rest are null, so the frontend can merge onto phase 1 without erasing what it has.
 #[tauri::command]
 pub async fn get_all_databases_sizes(
-    state: State<'_, AppState>,
     conn_id: String,
     include_system: Option<bool>,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let include_system = include_system.unwrap_or(false);
 
     let (conn_clone, config, tunnel_port) = {

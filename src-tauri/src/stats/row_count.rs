@@ -1,13 +1,12 @@
 //! `get_exact_table_row_count` — a real COUNT(*) of one table, for when the estimate is not enough.
 
-use tauri::State;
 use serde_json::{json, Value};
 use crate::database::DbKind;
-use crate::AppState;
 use super::cells::{get_mysql_i64_cell, get_pg_i64_cell};
 
 #[tauri::command]
-pub async fn get_exact_table_row_count(state: State<'_, AppState>, conn_id: String, table_name: String) -> Result<Value, String> {
+pub async fn get_exact_table_row_count(conn_id: String, table_name: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let (conn_clone, _db_type) = {
         // `acquire` returns `"Chưa kết nối CSDL"` where it used to be `"Chưa kết nối database"`; both
         // literals already mapped to `backend.notConnected` in `backendErrors.ts`, so the UI is unchanged.

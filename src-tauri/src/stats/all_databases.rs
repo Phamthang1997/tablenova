@@ -1,10 +1,8 @@
 //! `get_all_databases_stats` — phase 1 of the dashboard: reads the data dictionary, returns almost instantly.
 
 use std::collections::HashMap;
-use tauri::State;
 use serde_json::{json, Value};
 use crate::database::DbKind;
-use crate::AppState;
 use super::cells::{get_mysql_i64_cell, get_pg_i64_cell};
 use super::probe::{pg_count_tables_rows, sqlite_table_names};
 use super::system_dbs::is_system_db;
@@ -20,7 +18,8 @@ use super::system_dbs::is_system_db;
 //    has to open a connection to each database.
 // The frontend draws the list from phase 1 and fills in phase 2's numbers as they land.
 #[tauri::command]
-pub async fn get_all_databases_stats(state: State<'_, AppState>, conn_id: String) -> Result<Value, String> {
+pub async fn get_all_databases_stats(conn_id: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let conn_clone = {
         let ctx = state.connections.acquire(&conn_id)?;
         ctx.conn().clone()

@@ -6,10 +6,8 @@ use std::sync::Arc;
 
 use serde_json::{json, Map, Value};
 use tauri::ipc::Channel;
-use tauri::State;
 
 use crate::database::DbConnection;
-use crate::AppState;
 
 use super::meta::{collect_meta, topo_order, FkMeta};
 use super::spec::{o_str, Cell, GenSpec};
@@ -37,7 +35,7 @@ pub(super) const DEFAULT_SEED: u64 = 20_260_806;
 /// functions that need it (`collect_meta`, `fetch_fk_pool`, `estimate_fk_pool`, `insert_sql`,
 /// `run_generation`) are internal, not commands — see the plan §5.0.
 pub(super) fn active_conn(
-    state: &State<'_, AppState>,
+    state: &crate::AppState,
     conn_id: &str,
 ) -> Result<(DbConnection, String, Option<String>), String> {
     // Same tuple as before so none of the five internal callers changes.
@@ -56,7 +54,8 @@ pub(super) fn active_conn(
 /// Tables/columns available for generation, with a suggested generator per column and the
 /// FK-safe insertion order.
 #[tauri::command]
-pub async fn get_generation_targets(state: State<'_, AppState>, conn_id: String) -> Result<Value, String> {
+pub async fn get_generation_targets(conn_id: String) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let (conn, dialect, schema) = active_conn(&state, &conn_id)?;
     let metas = collect_meta(&conn, &dialect, &schema, None).await?;
 
@@ -110,11 +109,12 @@ pub async fn get_generation_targets(state: State<'_, AppState>, conn_id: String)
 /// Preview rows for ONE table — same code path as the real run, no writes.
 #[tauri::command]
 pub async fn preview_generated_data(
-    state: State<'_, AppState>, conn_id: String,
+    conn_id: String,
     spec: GenSpec,
     table: String,
     limit: Option<usize>,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let (conn, dialect, schema) = active_conn(&state, &conn_id)?;
     let tspec = spec
         .tables
@@ -150,9 +150,9 @@ pub async fn preview_generated_data(
 /// Marks the running generation as cancelled. Safe to call when nothing is running.
 #[tauri::command]
 pub async fn cancel_data_generation(
-    state: State<'_, AppState>,
     conn_id: String,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     let flags = state.cancel_flags.lock().map_err(|e| e.to_string())?;
     if let Some(flag) = flags.get(&cancel_key(&conn_id)) {
         flag.store(true, Ordering::Relaxed);
@@ -164,12 +164,13 @@ pub async fn cancel_data_generation(
 /// `{type:'start'|'table'|'progress'|'done'|'error', ...}`.
 #[tauri::command]
 pub async fn generate_data(
-    state: State<'_, AppState>, conn_id: String,
+    conn_id: String,
     spec: GenSpec,
     // Mandatory (not an Option): Channel does not implement Deserialize, so `Option<Channel<_>>`
     // does not satisfy CommandArg — and the frontend always creates the channel.
     on_progress: Channel<Value>,
 ) -> Result<Value, String> {
+    let state = crate::state::require_state()?;
     // Same reason as restore_backup: this runs on its own connection and would block on the locks
     // an open manual transaction holds. See tx::reject_if_manual_or_open.
     crate::tx::reject_if_manual_or_open(&conn_id, "sinh dữ liệu")?;

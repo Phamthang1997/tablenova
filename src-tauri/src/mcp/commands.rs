@@ -8,23 +8,24 @@
 
 use super::auth;
 use super::server::{DEFAULT_PORT, McpStatus};
-use crate::state::AppState;
 
 #[tauri::command]
-pub async fn mcp_status(state: tauri::State<'_, AppState>) -> Result<McpStatus, String> {
+pub async fn mcp_status() -> Result<McpStatus, String> {
+    let state = crate::state::require_state()?;
     Ok(state.mcp.status())
 }
 
 #[tauri::command]
 pub async fn mcp_start(
-    state: tauri::State<'_, AppState>,
     port: Option<u16>,
 ) -> Result<McpStatus, String> {
+    let state = crate::state::require_state()?;
     state.mcp.start(port.unwrap_or(DEFAULT_PORT)).await
 }
 
 #[tauri::command]
-pub async fn mcp_stop(state: tauri::State<'_, AppState>) -> Result<McpStatus, String> {
+pub async fn mcp_stop() -> Result<McpStatus, String> {
+    let state = crate::state::require_state()?;
     Ok(state.mcp.stop().await)
 }
 
@@ -40,7 +41,8 @@ pub async fn mcp_get_token() -> Result<String, String> {
 /// opposite of what the button promises. Clients configured with the old token are cut off either
 /// way, which is why the UI has to say so before calling this.
 #[tauri::command]
-pub async fn mcp_regenerate_token(state: tauri::State<'_, AppState>) -> Result<String, String> {
+pub async fn mcp_regenerate_token() -> Result<String, String> {
+    let state = crate::state::require_state()?;
     let was = state.mcp.status();
     let token = auth::regenerate()?;
     if was.running {
@@ -56,13 +58,14 @@ pub async fn mcp_regenerate_token(state: tauri::State<'_, AppState>) -> Result<S
 /// and then follows the `mcp-request` event, rather than polling.
 #[tauri::command]
 pub async fn mcp_audit_log(
-    state: tauri::State<'_, AppState>,
-) -> Result<Vec<serde_json::Value>, String> {
+    ) -> Result<Vec<serde_json::Value>, String> {
+    let state = crate::state::require_state()?;
     Ok(state.mcp.audit.snapshot())
 }
 
 #[tauri::command]
-pub async fn mcp_audit_clear(state: tauri::State<'_, AppState>) -> Result<(), String> {
+pub async fn mcp_audit_clear() -> Result<(), String> {
+    let state = crate::state::require_state()?;
     state.mcp.audit.clear();
     Ok(())
 }

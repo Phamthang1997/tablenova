@@ -8,13 +8,11 @@
 
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tauri::State;
 
 use crate::database::{
     build_mysql_url, build_pg_url, execute_raw_sql_generic, DbConnection, DbKind,
 };
 use crate::ssh::SshTunnel;
-use crate::AppState;
 
 // ===================== Parameters from the frontend =====================
 
@@ -96,7 +94,7 @@ pub(super) async fn current_db_name(conn: &DbConnection, dialect: &str) -> Optio
 }
 
 pub(super) async fn resolve_side(
-    state: &State<'_, AppState>,
+    state: &crate::AppState,
     side: &CompareSide,
     conn_id: &str,
 ) -> Result<Resolved, String> {
