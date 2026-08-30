@@ -6,11 +6,20 @@ rustflags = [
     # STATUS_STACK_OVERFLOW (0xc00000fd) — the crash lands between "Running tablenova.exe" and the
     # first window — while debug runs fine. That asymmetry points at `[profile.release]` in
     # Cargo.toml: `lto = "fat"` + `codegen-units = 1` let LLVM inline across the whole crate graph,
-    # and `generate_handler!` in app/handlers.rs expands 142 commands into one dispatch, each arm
-    # carrying its own locals for deserializing that command's arguments (`DbConnectionConfig` among
-    # them, which is not small). Inlined together they make one enormous frame; debug never inlines
-    # them, so it never reaches the ceiling. The MSVC default reserve is 1MB — verified by reading
-    # SizeOfStackReserve out of the built PE header — which is little room for that frame.
+    # and `generate_handler!` in app/handlers.rs expands 142 commands into one dispatch whose arms
+    # each deserialize that command's arguments with serde-generated code. A frame is allocated once
+    # at entry, sized for the worst case over the WHOLE function, so inlining 142 of those into one
+    # function makes their requirements add up where separate functions would have taken turns —
+    # LLVM overlaps slots it can prove disjoint, but not reliably across inlined serde temporaries.
+    # Debug never inlines them, so it never reaches the ceiling. The MSVC default reserve is 1MB —
+    # verified by reading SizeOfStackReserve out of the built PE header — which is little room.
+    #
+    # Inferred, not measured: the asymmetry (debug fine, fat-LTO release dead on the main thread
+    # before the first window) and the shape of `generate_handler!` point here, but the frame itself
+    # was never measured, and the Builder chain in app/run.rs inlining into `main` is a second
+    # candidate. What WOULD settle it, and also answer whether the macOS build needs the same
+    # treatment against its 8MB default: bisect this number down (16, 8, 4, 2) until it crashes
+    # again. Nobody has needed the answer enough to spend the builds.
     #
     # Raising the reserve rather than weakening LTO: a stack reserve is address space, not memory.
     # Windows commits pages on demand, so this costs nothing at runtime and only lifts the ceiling.
