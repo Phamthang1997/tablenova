@@ -43,51 +43,51 @@ macro_rules! decode_pg_cell {
             Err(_) => false,
         };
         'cell: {
-        if !text_like {
-        if let Ok(v) = row.try_get::<Option<i16>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
-        else if let Ok(v) = row.try_get::<Option<i32>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
-        else if let Ok(v) = row.try_get::<Option<i64>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
-        else if let Ok(v) = row.try_get::<Option<f32>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
-        else if let Ok(v) = row.try_get::<Option<f64>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
-        else if let Ok(v) = row.try_get::<Option<bool>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
-        else if let Ok(v) = row.try_get::<Option<bigdecimal::BigDecimal>, _>(col) { break 'cell v.map(|x| json!(x.to_string())).unwrap_or(Value::Null); }
-        else if let Ok(v) = row.try_get::<Option<chrono::NaiveDateTime>, _>(col) { break 'cell v.map(|x| json!(x.to_string())).unwrap_or(Value::Null); }
-        else if let Ok(v) = row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(col) { break 'cell v.map(|x| json!(x.to_rfc3339())).unwrap_or(Value::Null); }
-        else if let Ok(v) = row.try_get::<Option<chrono::NaiveDate>, _>(col) { break 'cell v.map(|x| json!(x.to_string())).unwrap_or(Value::Null); }
-        else if let Ok(v) = row.try_get::<Option<chrono::NaiveTime>, _>(col) { break 'cell v.map(|x| json!(x.to_string())).unwrap_or(Value::Null); }
-        else if let Ok(v) = row.try_get::<Option<uuid::Uuid>, _>(col) { break 'cell v.map(|x| json!(x.to_string())).unwrap_or(Value::Null); }
-        else if let Ok(v) = row.try_get::<Option<serde_json::Value>, _>(col) { break 'cell v.map(|x| json!(x.to_string())).unwrap_or(Value::Null); }
-        }
-        if let Ok(v) = row.try_get::<Option<String>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<Vec<u8>>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
-        // Last resort: hand back the raw bytes the server sent.
-        //
-        // Every branch above asks sqlx to decode into a Rust type, and sqlx first checks that
-        // the column's type id is compatible — so a type it has no mapping for (MySQL GEOMETRY
-        // is the one that bit us: sakila's `address.location`) failed every branch and fell
-        // into `Value::Null`. The cell then exported as NULL, and re-importing that dump died
-        // on `location` being NOT NULL — silent data loss that only surfaced on the way back.
-        // `try_get` is what enforces that check; calling Decode directly on the raw value skips
-        // it, so anything the server sent survives as bytes. (`MySqlValueRef::as_bytes` is
-        // pub(crate) in sqlx 0.9, hence going through Decode rather than reading it off.)
-        else {
-            match row.try_get_raw(col) {
-                Ok(raw) if !raw.is_null() => {
-                    match <Vec<u8> as sqlx::Decode<'_, sqlx::Postgres>>::decode(raw) {
-                        // Postgres sends most of what lands here as text: an ENUM arrives as its
-                        // label, and so do inet/interval/tsvector. Handing those back as an array
-                        // of byte numbers would trade one wrong answer for another, so valid
-                        // UTF-8 becomes a string and only genuinely binary payloads stay bytes.
-                        Ok(b) => match std::str::from_utf8(&b) {
-                            Ok(s) => json!(s),
-                            Err(_) => json!(b),
-                        },
-                        Err(_) => Value::Null,
-                    }
-                }
-                _ => Value::Null,
+            if !text_like {
+                if let Ok(v) = row.try_get::<Option<i16>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<i32>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<i64>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<f32>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<f64>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<bool>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<bigdecimal::BigDecimal>, _>(col) { break 'cell v.map(|x| json!(x.to_string())).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<chrono::NaiveDateTime>, _>(col) { break 'cell v.map(|x| json!(x.to_string())).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(col) { break 'cell v.map(|x| json!(x.to_rfc3339())).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<chrono::NaiveDate>, _>(col) { break 'cell v.map(|x| json!(x.to_string())).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<chrono::NaiveTime>, _>(col) { break 'cell v.map(|x| json!(x.to_string())).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<uuid::Uuid>, _>(col) { break 'cell v.map(|x| json!(x.to_string())).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<serde_json::Value>, _>(col) { break 'cell v.map(|x| json!(x.to_string())).unwrap_or(Value::Null); }
             }
-        }
+            if let Ok(v) = row.try_get::<Option<String>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
+            else if let Ok(v) = row.try_get::<Option<Vec<u8>>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
+            // Last resort: hand back the raw bytes the server sent.
+            //
+            // Every branch above asks sqlx to decode into a Rust type, and sqlx first checks that
+            // the column's type id is compatible — so a type it has no mapping for (MySQL GEOMETRY
+            // is the one that bit us: sakila's `address.location`) failed every branch and fell
+            // into `Value::Null`. The cell then exported as NULL, and re-importing that dump died
+            // on `location` being NOT NULL — silent data loss that only surfaced on the way back.
+            // `try_get` is what enforces that check; calling Decode directly on the raw value skips
+            // it, so anything the server sent survives as bytes. (`MySqlValueRef::as_bytes` is
+            // pub(crate) in sqlx 0.9, hence going through Decode rather than reading it off.)
+            else {
+                match row.try_get_raw(col) {
+                    Ok(raw) if !raw.is_null() => {
+                        match <Vec<u8> as sqlx::Decode<'_, sqlx::Postgres>>::decode(raw) {
+                            // Postgres sends most of what lands here as text: an ENUM arrives as its
+                            // label, and so do inet/interval/tsvector. Handing those back as an array
+                            // of byte numbers would trade one wrong answer for another, so valid
+                            // UTF-8 becomes a string and only genuinely binary payloads stay bytes.
+                            Ok(b) => match std::str::from_utf8(&b) {
+                                Ok(s) => json!(s),
+                                Err(_) => json!(b),
+                            },
+                            Err(_) => Value::Null,
+                        }
+                    }
+                    _ => Value::Null,
+                }
+            }
         }
     }};
 }
@@ -127,48 +127,48 @@ macro_rules! decode_mysql_cell {
             Err(_) => false,
         };
         'cell: {
-        if !text_like {
-        if let Ok(v) = row.try_get::<Option<i8>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
-        else if let Ok(v) = row.try_get::<Option<i16>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
-        else if let Ok(v) = row.try_get::<Option<i32>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
-        else if let Ok(v) = row.try_get::<Option<i64>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
-        else if let Ok(v) = row.try_get::<Option<u8>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
-        else if let Ok(v) = row.try_get::<Option<u16>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
-        else if let Ok(v) = row.try_get::<Option<u32>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
-        else if let Ok(v) = row.try_get::<Option<u64>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
-        else if let Ok(v) = row.try_get::<Option<f32>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
-        else if let Ok(v) = row.try_get::<Option<f64>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
-        else if let Ok(v) = row.try_get::<Option<bool>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
-        else if let Ok(v) = row.try_get::<Option<bigdecimal::BigDecimal>, _>(col) { break 'cell v.map(|x| json!(x.to_string())).unwrap_or(Value::Null); }
-        else if let Ok(v) = row.try_get::<Option<chrono::NaiveDateTime>, _>(col) { break 'cell v.map(|x| json!(x.to_string())).unwrap_or(Value::Null); }
-        else if let Ok(v) = row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(col) { break 'cell v.map(|x| json!(x.to_rfc3339())).unwrap_or(Value::Null); }
-        else if let Ok(v) = row.try_get::<Option<chrono::NaiveDate>, _>(col) { break 'cell v.map(|x| json!(x.to_string())).unwrap_or(Value::Null); }
-        else if let Ok(v) = row.try_get::<Option<chrono::NaiveTime>, _>(col) { break 'cell v.map(|x| json!(x.to_string())).unwrap_or(Value::Null); }
-        }
-        if let Ok(v) = row.try_get::<Option<serde_json::Value>, _>(col) { v.map(|x| json!(x.to_string())).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<String>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<Vec<u8>>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
-        // Last resort: hand back the raw bytes the server sent.
-        //
-        // Every branch above asks sqlx to decode into a Rust type, and sqlx first checks that
-        // the column's type id is compatible — so a type it has no mapping for (MySQL GEOMETRY
-        // is the one that bit us: sakila's `address.location`) failed every branch and fell
-        // into `Value::Null`. The cell then exported as NULL, and re-importing that dump died
-        // on `location` being NOT NULL — silent data loss that only surfaced on the way back.
-        // `try_get` is what enforces that check; calling Decode directly on the raw value skips
-        // it, so anything the server sent survives as bytes. (`MySqlValueRef::as_bytes` is
-        // pub(crate) in sqlx 0.9, hence going through Decode rather than reading it off.)
-        else {
-            match row.try_get_raw(col) {
-                Ok(raw) if !raw.is_null() => {
-                    match <Vec<u8> as sqlx::Decode<'_, sqlx::MySql>>::decode(raw) {
-                        Ok(b) => json!(b),
-                        Err(_) => Value::Null,
-                    }
-                }
-                _ => Value::Null,
+            if !text_like {
+                if let Ok(v) = row.try_get::<Option<i8>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<i16>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<i32>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<i64>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<u8>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<u16>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<u32>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<u64>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<f32>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<f64>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<bool>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<bigdecimal::BigDecimal>, _>(col) { break 'cell v.map(|x| json!(x.to_string())).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<chrono::NaiveDateTime>, _>(col) { break 'cell v.map(|x| json!(x.to_string())).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(col) { break 'cell v.map(|x| json!(x.to_rfc3339())).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<chrono::NaiveDate>, _>(col) { break 'cell v.map(|x| json!(x.to_string())).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<chrono::NaiveTime>, _>(col) { break 'cell v.map(|x| json!(x.to_string())).unwrap_or(Value::Null); }
             }
-        }
+            if let Ok(v) = row.try_get::<Option<serde_json::Value>, _>(col) { v.map(|x| json!(x.to_string())).unwrap_or(Value::Null) }
+            else if let Ok(v) = row.try_get::<Option<String>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
+            else if let Ok(v) = row.try_get::<Option<Vec<u8>>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
+            // Last resort: hand back the raw bytes the server sent.
+            //
+            // Every branch above asks sqlx to decode into a Rust type, and sqlx first checks that
+            // the column's type id is compatible — so a type it has no mapping for (MySQL GEOMETRY
+            // is the one that bit us: sakila's `address.location`) failed every branch and fell
+            // into `Value::Null`. The cell then exported as NULL, and re-importing that dump died
+            // on `location` being NOT NULL — silent data loss that only surfaced on the way back.
+            // `try_get` is what enforces that check; calling Decode directly on the raw value skips
+            // it, so anything the server sent survives as bytes. (`MySqlValueRef::as_bytes` is
+            // pub(crate) in sqlx 0.9, hence going through Decode rather than reading it off.)
+            else {
+                match row.try_get_raw(col) {
+                    Ok(raw) if !raw.is_null() => {
+                        match <Vec<u8> as sqlx::Decode<'_, sqlx::MySql>>::decode(raw) {
+                            Ok(b) => json!(b),
+                            Err(_) => Value::Null,
+                        }
+                    }
+                    _ => Value::Null,
+                }
+            }
         }
     }};
 }
