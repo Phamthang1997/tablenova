@@ -1,3 +1,40 @@
+# Windows / MSVC — the target this repo actually builds. `rustc -vV` reports
+# `host: x86_64-pc-windows-msvc`, and package.json's `build:win` names the same triple explicitly.
+[target.x86_64-pc-windows-msvc]
+rustflags = [
+    # 32MB of stack for the main thread. WITHOUT THIS the release build dies at startup with
+    # STATUS_STACK_OVERFLOW (0xc00000fd) — the crash lands between "Running tablenova.exe" and the
+    # first window — while debug runs fine. That asymmetry points at `[profile.release]` in
+    # Cargo.toml: `lto = "fat"` + `codegen-units = 1` let LLVM inline across the whole crate graph,
+    # and `generate_handler!` in app/handlers.rs expands 142 commands into one dispatch, each arm
+    # carrying its own locals for deserializing that command's arguments (`DbConnectionConfig` among
+    # them, which is not small). Inlined together they make one enormous frame; debug never inlines
+    # them, so it never reaches the ceiling. The MSVC default reserve is 1MB — verified by reading
+    # SizeOfStackReserve out of the built PE header — which is little room for that frame.
+    #
+    # Raising the reserve rather than weakening LTO: a stack reserve is address space, not memory.
+    # Windows commits pages on demand, so this costs nothing at runtime and only lifts the ceiling.
+    # It applies to the MAIN thread alone, since Rust gives every thread it spawns an explicit stack
+    # size of its own.
+    #
+    # Verified both ways: SizeOfStackReserve read out of the linked PE header goes 1MB -> 32MB, and
+    # the release binary that would not reach its first window now starts. If it ever regresses,
+    # read the header before reading anything else — that tells you whether the flag arrived at all,
+    # without waiting for the app to launch:
+    #   node -e "const b=require('fs').readFileSync('target/release/tablenova.exe').subarray(0,4096);
+    #            const o=b.readUInt32LE(0x3C)+24;
+    #            console.log(Number(b.readBigUInt64LE(o+72))/1048576+' MB')"
+    "-C", "link-arg=/STACK:33554432",
+]
+
+# DEAD CONFIG on every machine that builds this repo today, kept only because it is someone's
+# working MinGW setup and the absolute path below cannot be reconstructed if it is lost.
+#
+# Cargo applies a `[target.<triple>]` section only when that triple is the one being built, and
+# nothing here builds `x86_64-pc-windows-gnu`: the host is MSVC and `build:win` passes the MSVC
+# triple. So neither the linker line nor anything added to these rustflags has any effect — a stack
+# flag was put here first and vanished without a trace or an error, which is exactly how this
+# section wastes the next person's time. Add build flags to the MSVC section above.
 [target.x86_64-pc-windows-gnu]
 linker = "x86_64-w64-mingw32-gcc"
 rustflags = [
