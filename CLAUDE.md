@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-TableNova is a desktop database GUI client (Tauri 2 + React 19) similar in spirit to DBeaver/TablePlus. It connects to SQLite, PostgreSQL, and MySQL, and lets the user browse/edit table data, alter schemas, run raw SQL, and backup/restore databases. The window uses a custom title bar (`decorations: false` in `src-tauri/tauri.conf.json`) with its own drag/min/max/close controls in `TitleBar.tsx`.
+TableGrid is a desktop database GUI client (Tauri 2 + React 19) similar in spirit to DBeaver/TablePlus. It connects to SQLite, PostgreSQL, and MySQL, and lets the user browse/edit table data, alter schemas, run raw SQL, and backup/restore databases. The window uses a custom title bar (`decorations: false` in `src-tauri/tauri.conf.json`) with its own drag/min/max/close controls in `TitleBar.tsx`.
 
 Many user-facing strings, backend error messages, and Rust comments are written in Vietnamese — preserve this convention when touching existing strings/comments.
 

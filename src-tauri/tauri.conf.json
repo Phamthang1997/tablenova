@@ -1,7 +1,7 @@
 {
-  "productName": "TableNova",
+  "productName": "TableGrid",
   "version": "0.1.1",
-  "identifier": "com.tablenova.desktop",
+  "identifier": "com.tablegrid.desktop",
   "build": {
     "beforeDevCommand": "npm run vite-dev",
     "beforeBuildCommand": "npm run build-frontend",
@@ -11,7 +11,7 @@
   "app": {
     "windows": [
       {
-        "title": "TableNova",
+        "title": "TableGrid",
         "width": 1060,
         "height": 680,
         "resizable": true,
@@ -31,11 +31,11 @@
   "bundle": {
     "active": true,
     "targets": ["nsis", "app", "dmg"],
-    "publisher": "TableNova Team",
-    "copyright": "Copyright © 2026 TableNova. All rights reserved.",
+    "publisher": "TableGrid Team",
+    "copyright": "Copyright © 2026 TableGrid. All rights reserved.",
     "licenseFile": "installer/LICENSE.txt",
-    "shortDescription": "TableNova - Modern Database Management Tool",
-    "longDescription": "TableNova is a high-speed database management application supporting SQLite, MySQL, and PostgreSQL with integrated AI assistant and SSH tunneling.",
+    "shortDescription": "TableGrid - Modern Database Management Tool",
+    "longDescription": "TableGrid is a high-speed database management application supporting SQLite, MySQL, and PostgreSQL with integrated AI assistant and SSH tunneling.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

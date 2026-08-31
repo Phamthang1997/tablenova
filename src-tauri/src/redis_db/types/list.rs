@@ -62,7 +62,7 @@ pub async fn redis_list_del(conn_id: String, key: String, index: i64) -> Result<
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        let sentinel = format!("__tablenova_deleted__{}__{}", index, nanos);
+        let sentinel = format!("__tablegrid_deleted__{}__{}", index, nanos);
         let _: String = redis::cmd("LSET")
             .arg(&key)
             .arg(index)

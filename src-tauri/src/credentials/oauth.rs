@@ -145,7 +145,7 @@ pub async fn start_google_oauth_flow(
 <html lang="vi">
 <head>
   <meta charset="utf-8">
-  <title>TableNova - Xác thực thành công</title>
+  <title>TableGrid - Xác thực thành công</title>
   <style>
     body { font-family: system-ui, -apple-system, sans-serif; background: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
     .card { background: #1e293b; padding: 36px 48px; border-radius: 16px; border: 1px solid #334155; text-align: center; box-shadow: 0 16px 36px rgba(0,0,0,0.5); max-width: 440px; }
@@ -158,7 +158,7 @@ pub async fn start_google_oauth_flow(
   <div class="card">
     <div class="icon">✨</div>
     <h2>Đăng nhập thành công!</h2>
-    <p>Xác thực tài khoản Google qua Web Browser đã hoàn tất. Bạn có thể đóng tab này và quay lại ứng dụng <strong>TableNova</strong>.</p>
+    <p>Xác thực tài khoản Google qua Web Browser đã hoàn tất. Bạn có thể đóng tab này và quay lại ứng dụng <strong>TableGrid</strong>.</p>
   </div>
 </body>
 </html>"#;

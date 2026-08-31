@@ -1,5 +1,5 @@
 [package]
-name = "tablenova"
+name = "tablegrid"
 version = "0.1.1"
 edition = "2024"
 license = "AGPL-3.0-or-later"

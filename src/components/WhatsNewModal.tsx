@@ -453,7 +453,7 @@ export const WhatsNewModal: React.FC<WhatsNewModalProps> = ({ isOpen, onClose })
 
   return (
     <Modal
-      title={t('whatsNew.modalHeader', { defaultValue: "What's New in TableNova 17" })}
+      title={t('whatsNew.modalHeader', { defaultValue: "What's New in TableGrid 17" })}
       icon={<Sparkles size={16} style={{ color: '#0284c7' }} />}
       onClose={handleClose}
       width="780px"

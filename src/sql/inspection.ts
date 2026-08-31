@@ -382,7 +382,7 @@ export function runMonacoInspection(
     startColumn: issue.startColumn,
     endLineNumber: issue.endLine,
     endColumn: issue.endColumn,
-    source: 'TableNova SQL Inspection',
+    source: 'TableGrid SQL Inspection',
   }));
 
   monacoInstance.editor.setModelMarkers(model, 'sql-inspector', markers);

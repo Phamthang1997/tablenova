@@ -19,7 +19,7 @@ use rmcp::transport::streamable_http_server::{
 use tokio_util::sync::CancellationToken;
 
 use super::audit::{self, Denial};
-use super::tools::TableNovaMcp;
+use super::tools::TableGridMcp;
 
 /// The path AI clients point at: `http://127.0.0.1:<port>/mcp`.
 pub const MOUNT_PATH: &str = "/mcp";
@@ -57,7 +57,7 @@ pub fn router(port: u16, token: Arc<str>, cancel: CancellationToken) -> Router {
     // failure for one of the two clients this build is actually tested against. Anyone tempted to
     // flip this again should read `docs/mcp-server-plan.md` §6 Bước 3 first.
     let service = StreamableHttpService::new(
-        || Ok(TableNovaMcp::new()),
+        || Ok(TableGridMcp::new()),
         LocalSessionManager::default().into(),
         StreamableHttpServerConfig::default().with_cancellation_token(cancel),
     );
@@ -484,8 +484,8 @@ mod handshake_tests {
         )
         .await;
         assert!(init.contains(" 200 "), "initialize failed: {init}");
-        // The server has to introduce itself as this app, not as the SDK - see `tablenova_identity`.
-        assert!(init.contains("tablenova"), "wrong server identity: {init}");
+        // The server has to introduce itself as this app, not as the SDK - see `tablegrid_identity`.
+        assert!(init.contains("tablegrid"), "wrong server identity: {init}");
 
         let listed = exchange(
             port,
@@ -501,12 +501,12 @@ mod handshake_tests {
         .await;
 
         for tool in [
-            "tablenova_list_connections",
-            "tablenova_list_databases",
-            "tablenova_list_tables",
-            "tablenova_describe_table",
-            "tablenova_preview_table",
-            "tablenova_query",
+            "tablegrid_list_connections",
+            "tablegrid_list_databases",
+            "tablegrid_list_tables",
+            "tablegrid_describe_table",
+            "tablegrid_preview_table",
+            "tablegrid_query",
         ] {
             assert!(
                 listed.contains(tool),

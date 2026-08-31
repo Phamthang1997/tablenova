@@ -1,4 +1,4 @@
-# Project Rules & Guidelines for TableNova
+# Project Rules & Guidelines for TableGrid
 
 ## CSS & Styling Rules
 - **No Inline CSS Allowed** (`style={{ ... }}`).
@@ -6,7 +6,7 @@
 - **Sole Exception**: Inline styles are only permitted when property values are dynamically calculated at runtime (such as mouse coordinates, progress percentages, dynamic colors chosen from a user picker).
 
 ## UI & Button Design Rules
-- **Always match TableNova's existing button design**: Each option or action must be an independent button with its own border (`1px solid var(--win-border)`), `border-radius: 6px`, transparent background, and hover/active transition effects changing border and color to `var(--win-accent)`.
+- **Always match TableGrid's existing button design**: Each option or action must be an independent button with its own border (`1px solid var(--win-border)`), `border-radius: 6px`, transparent background, and hover/active transition effects changing border and color to `var(--win-accent)`.
 - **Never group buttons into a fused pill container (iOS-style segmented control)**: Do not wrap option buttons into a shared continuous capsule container.
 
 ## Rust Module Structure & Features (`src-tauri`)

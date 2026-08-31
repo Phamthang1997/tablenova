@@ -1,4 +1,4 @@
-# 🚀 TABLENOVA
+# 🚀 TABLEGRID
 
 <div align="center">
 
@@ -15,7 +15,7 @@
 
 ---
 
-**TABLENOVA** is a high-performance, cross-platform desktop application built with **Tauri v2 + Rust** on the backend and **React 19 + TypeScript + Vite + Monaco Editor** on the frontend. It provides a fluid, intuitive, and feature-packed experience designed for developers, data engineers, and database administrators.
+**TABLEGRID** is a high-performance, cross-platform desktop application built with **Tauri v2 + Rust** on the backend and **React 19 + TypeScript + Vite + Monaco Editor** on the frontend. It provides a fluid, intuitive, and feature-packed experience designed for developers, data engineers, and database administrators.
 
 ---
 
@@ -179,6 +179,6 @@ table/
 - **Author & Creator**: **Pham Thang**
   - 📧 **Email**: [pthang888@gmail.com](mailto:pthang888@gmail.com)
   - 💼 **LinkedIn**: [thangpx](https://www.linkedin.com/in/thangpx/)
-- **Copyright**: © 2026 Pham Thang and TableNova Contributors
+- **Copyright**: © 2026 Pham Thang and TableGrid Contributors
 - **License**: Released under the [GNU Affero General Public License v3.0 (AGPL-3.0)](LICENSE).
 - **Code of Conduct**: Please follow our [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md).

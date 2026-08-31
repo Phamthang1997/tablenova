@@ -3,7 +3,7 @@ set MINGW64=C:\Users\MeoMeo\AppData\Local\Microsoft\WinGet\Packages\BrechtSander
 set PATH=C:\Users\MeoMeo\.cargo\bin;%MINGW64%;C:\Program Files\nodejs;%PATH%
 
 REM Target directory outside workspace to prevent rust-analyzer from indexing/watching it
-set CARGO_TARGET_DIR=C:\cargo-targets\tablenova
+set CARGO_TARGET_DIR=C:\cargo-targets\tablegrid
 
 echo === Rust: cargo --version ===
 cargo --version

@@ -59,7 +59,7 @@ pub fn serve(port: u16) -> ! {
     let token = match super::auth::load_or_create() {
         Ok(t) => t,
         Err(e) => {
-            eprintln!("[tablenova --mcp-stdio] cannot read the access token: {e}");
+            eprintln!("[tablegrid --mcp-stdio] cannot read the access token: {e}");
             std::process::exit(1);
         }
     };
@@ -70,7 +70,7 @@ pub fn serve(port: u16) -> ! {
     {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("[tablenova --mcp-stdio] cannot start: {e}");
+            eprintln!("[tablegrid --mcp-stdio] cannot start: {e}");
             std::process::exit(1);
         }
     };
@@ -95,7 +95,7 @@ async fn pump(port: u16, token: String) {
         let line = match line {
             Ok(l) => l,
             Err(e) => {
-                eprintln!("[tablenova --mcp-stdio] stdin: {e}");
+                eprintln!("[tablegrid --mcp-stdio] stdin: {e}");
                 return;
             }
         };
@@ -119,7 +119,7 @@ async fn pump(port: u16, token: String) {
         let res = match req.body(line).send().await {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[tablenova --mcp-stdio] {e}");
+                eprintln!("[tablegrid --mcp-stdio] {e}");
                 continue;
             }
         };
@@ -135,7 +135,7 @@ async fn pump(port: u16, token: String) {
         let body = match res.text().await {
             Ok(b) => b,
             Err(e) => {
-                eprintln!("[tablenova --mcp-stdio] reading response: {e}");
+                eprintln!("[tablegrid --mcp-stdio] reading response: {e}");
                 continue;
             }
         };
@@ -193,29 +193,29 @@ mod tests {
         let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
 
         assert_eq!(
-            requested_port(&args(&["tablenova.exe"])),
+            requested_port(&args(&["tablegrid.exe"])),
             None,
             "no flag, normal launch"
         );
         assert_eq!(
-            requested_port(&args(&["tablenova.exe", FLAG])),
+            requested_port(&args(&["tablegrid.exe", FLAG])),
             Some(DEFAULT_PORT)
         );
         assert_eq!(
-            requested_port(&args(&["tablenova.exe", FLAG, PORT_FLAG, "45999"])),
+            requested_port(&args(&["tablegrid.exe", FLAG, PORT_FLAG, "45999"])),
             Some(45999)
         );
         // A typo must not leave the client with no server: fall back rather than refuse.
         assert_eq!(
-            requested_port(&args(&["tablenova.exe", FLAG, PORT_FLAG, "nope"])),
+            requested_port(&args(&["tablegrid.exe", FLAG, PORT_FLAG, "nope"])),
             Some(DEFAULT_PORT)
         );
         assert_eq!(
-            requested_port(&args(&["tablenova.exe", FLAG, PORT_FLAG, "0"])),
+            requested_port(&args(&["tablegrid.exe", FLAG, PORT_FLAG, "0"])),
             Some(DEFAULT_PORT)
         );
         assert_eq!(
-            requested_port(&args(&["tablenova.exe", FLAG, PORT_FLAG])),
+            requested_port(&args(&["tablegrid.exe", FLAG, PORT_FLAG])),
             Some(DEFAULT_PORT)
         );
     }

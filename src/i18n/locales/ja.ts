@@ -81,8 +81,8 @@ const ja: typeof en = {
     toggleTheme: 'ライト / ダークテーマの切替',
     reload: 'アプリを再読み込み',
     shortcuts: 'キーボードショートカット...',
-    about: 'TableNova について...',
-    whatsNew: 'TableNova の新機能...',
+    about: 'TableGrid について...',
+    whatsNew: 'TableGrid の新機能...',
     minimize: '最小化',
     maximize: '最大化 / 元に戻す',
     closeWindow: '閉じる',
@@ -94,7 +94,7 @@ const ja: typeof en = {
   },
 
   whatsNew: {
-    modalHeader: 'TableNova の新機能',
+    modalHeader: 'TableGrid の新機能',
     showOnStartup: '起動時に表示する',
     prevSlide: '前のスライド',
     nextSlide: '次のスライド',
@@ -111,7 +111,7 @@ const ja: typeof en = {
   },
 
   connInfo: {
-    notConnected: 'TableNova | 未接続',
+    notConnected: 'TableGrid | 未接続',
     openTitle: '接続の詳細',
     namePlaceholder: '接続名',
     colorNone: '色なし',
@@ -449,7 +449,7 @@ const ja: typeof en = {
     sqliteDesc: 'SQLite はデータベース全体をローカルの 1 ファイルに保存します。',
     sqlitePathLabel: 'ファイルパス (.db, .sqlite)',
     sqlitePathPlaceholder: 'my_database.db',
-    sqliteHint: 'ファイルが存在しない場合、接続時に TableNova が新規作成します。',
+    sqliteHint: 'ファイルが存在しない場合、接続時に TableGrid が新規作成します。',
     pickSqliteTitle: 'SQLite データベースファイルを選択',
 
     redisSection: 'Redis サーバー',
@@ -477,7 +477,7 @@ const ja: typeof en = {
     username: 'ユーザー名',
     awsHeading: 'AWS IAM authentication',
     awsHint:
-      'TableNova はパスワードの代わりに IAM トークン (有効期限 15 分) を生成し、SSL を <strong>REQUIRED</strong> に強制します。',
+      'TableGrid はパスワードの代わりに IAM トークン (有効期限 15 分) を生成し、SSL を <strong>REQUIRED</strong> に強制します。',
     awsAccessKeySeg: 'Access Key',
     awsProfileSeg: 'Profile (~/.aws)',
     awsAccessKeyId: 'Access Key ID',
@@ -957,7 +957,7 @@ const ja: typeof en = {
     noTablesFound: 'テーブルが見つかりません',
     settingsTitle: 'AI アシスタント＆API設定',
     greeting:
-      'こんにちは。TableNova の SQL アシスタントです。自然な言葉の質問を SQL クエリに変換できます。\n\n例:「users テーブルのアクティブな管理者を一覧表示」「全注文の売上合計」',
+      'こんにちは。TableGrid の SQL アシスタントです。自然な言葉の質問を SQL クエリに変換できます。\n\n例:「users テーブルのアクティブな管理者を一覧表示」「全注文の売上合計」',
     schemaCurrentTable: '現在のテーブル: {{table}}',
     insertIntoEditor: 'エディタに挿入',
     thinking: 'スキーマを分析して SQL を生成中...',
@@ -1353,6 +1353,7 @@ const ja: typeof en = {
     importProcessing: '処理中...',
     importConfirm: '作成してインポート',
 
+    appName: 'TableGrid',
     aboutVersion: 'バージョン {{version}}',
     aboutDesc:
       '軽量で高速、見やすいデータベースクライアント — 接続、データ閲覧、スキーマ編集、クエリ実行を 1 つの画面で。',
@@ -2216,7 +2217,7 @@ const ja: typeof en = {
     transferFile: "ファイル",
     transferPickFile: "ファイルを選択…",
     transferFileNone: "ファイル未選択",
-    transferFileBad: "これは TableNova のキースペースエクスポートではありません。",
+    transferFileBad: "これは TableGrid のキースペースエクスポートではありません。",
     transferFileSummary: "{{n}} 件のキー（db{{db}}、プレフィックス {{pattern}} からエクスポート）",
     transferFileTruncated: "終了マーカーがありません。エクスポートが停止・上限到達したか、ファイルが途中で切れています。含まれている分はインポートできます。",
     transferDeclaredMismatch: "ファイルには {{declared}} 件と記録されていますが、読み取れたのは {{n}} 件です。",
@@ -2751,7 +2752,7 @@ const ja: typeof en = {
     start: '開始',
     stop: '停止',
     port: 'ポート',
-    autoStart: 'TableNova の起動時に自動で開始',
+    autoStart: 'TableGrid の起動時に自動で開始',
     portHint: '変更した場合は、AI クライアントに貼り付けた設定も更新してください。',
     token: 'アクセストークン',
     copyToken: 'コピー',
@@ -2785,8 +2786,8 @@ const ja: typeof en = {
     targetClaudeCode:
       'ターミナルで実行してください。最初の 2 行は再登録のときだけ必要です。スコープは project ではなく user です — project スコープの登録は CLI からは見えてもセッションからは見えないことがあります。settings.json に貼らないこと: Claude Code はそこから MCP サーバーを読まず、警告も出しません。',
     targetAntigravity:
-      '~/.gemini/config/mcp_config.json に保存するか、Manage MCP Servers → View raw config を使ってください。これは URL ではなく stdio で TableNova を起動します — Antigravity の HTTP クライアントはサーバーに到達する前に失敗することがあり、この方式ならトークンをファイルに書く必要もありません。',
-    targetClaudeCodeStdio: 'ターミナルで実行してください。スコープは project ではなく user です — project スコープの登録は CLI からは見えてもセッションからは見えないことがあります。これは stdio で TableNova を起動するため、トークンはどこにも保存されません。',
+      '~/.gemini/config/mcp_config.json に保存するか、Manage MCP Servers → View raw config を使ってください。これは URL ではなく stdio で TableGrid を起動します — Antigravity の HTTP クライアントはサーバーに到達する前に失敗することがあり、この方式ならトークンをファイルに書く必要もありません。',
+    targetClaudeCodeStdio: 'ターミナルで実行してください。スコープは project ではなく user です — project スコープの登録は CLI からは見えてもセッションからは見えないことがあります。これは stdio で TableGrid を起動するため、トークンはどこにも保存されません。',
     targetAntigravityHttp: '~/.gemini/config/mcp_config.json に保存してください。Antigravity は serverUrl を要求します — url と httpUrl は無視されます。subscriptions/listen エラーで 0 tools と表示される場合、その環境の HTTP クライアントが壊れています: stdio に切り替えてください。',
     targetGenericStdio: 'クライアントの MCP 設定ファイルに保存してください。この形式は stdio を話すすべてのクライアントで動作し、トークンを保存しません。',
     targetGeneric:
@@ -2797,7 +2798,7 @@ const ja: typeof en = {
     copyCommand: 'コマンドをコピー',
     log: 'リクエスト',
     logEmpty: 'まだリクエストはありません。',
-    logMemoryOnly: 'メモリ上のみ — TableNova を閉じると消えます。',
+    logMemoryOnly: 'メモリ上のみ — TableGrid を閉じると消えます。',
     logClear: 'クリア',
     logDenied: 'レイヤー {{n}} で拒否',
     logFailed: '失敗',
@@ -2806,7 +2807,7 @@ const ja: typeof en = {
     denialBadToken: 'トークンが不正または未指定',
     denialNotShared: '共有されていない接続',
     denialNotReadOnly: '読み取り文ではありません',
-    denialManualTransaction: 'TableNova でトランザクションが開いています',
+    denialManualTransaction: 'TableGrid でトランザクションが開いています',
     denialFailed: 'クエリが失敗しました',
   },
 

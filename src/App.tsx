@@ -2800,7 +2800,7 @@ export const App: React.FC = () => {
             </button>
 
             <img className="about-logo" src={appIcon} alt="" />
-            <div className="about-name">TableNova</div>
+            <div className="about-name">{t('app.appName')}</div>
             <div className="about-version">
               {t('app.aboutVersion', { version: appVersion })} (Build 2608)
             </div>

@@ -40,7 +40,7 @@ pub enum Denial {
     NotShared,
     /// Layer 4: not a single read statement.
     NotReadOnly,
-    /// The connection is mid-transaction in TableNova.
+    /// The connection is mid-transaction in TableGrid.
     ManualTransaction,
     /// The database itself refused, or the query failed.
     Failed,
@@ -215,12 +215,12 @@ mod tests {
 
     #[test]
     fn a_denial_records_which_layer_refused() {
-        let e = entry("tablenova_query", Some("c1"), Some("DROP TABLE t"), 3)
+        let e = entry("tablegrid_query", Some("c1"), Some("DROP TABLE t"), 3)
             .denied(Denial::NotReadOnly, "writes are refused".to_string());
         assert!(!e.ok);
         assert_eq!(e.layer, Some(4));
         // The database's own failures are not a defence layer, and must not read as one.
-        let f = entry("tablenova_query", Some("c1"), Some("SELECT 1"), 3)
+        let f = entry("tablegrid_query", Some("c1"), Some("SELECT 1"), 3)
             .denied(Denial::Failed, "syntax error".to_string());
         assert_eq!(f.layer, Some(0));
     }

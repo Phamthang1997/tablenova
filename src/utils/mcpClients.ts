@@ -3,7 +3,7 @@
  *
  * **Two transports, and they are not equivalent.**
  *
- * - **stdio** (`tablenova --mcp-stdio`) has exactly ONE shape - `{ command, args }` - and every client
+ * - **stdio** (`tablegrid --mcp-stdio`) has exactly ONE shape - `{ command, args }` - and every client
  *   here accepts it. It carries **no token**, because the spawned process reads the keyring itself,
  *   which is the only way this app closes the "token sits in a plaintext client config" risk
  *   (`docs/mcp-server-plan.md` §8). Its cost is a child process per client session.
@@ -25,7 +25,7 @@
  */
 
 /** The server name every client registers us under. */
-const SERVER_NAME = 'tablenova';
+const SERVER_NAME = 'tablegrid';
 
 export type McpTransport = 'http' | 'stdio';
 

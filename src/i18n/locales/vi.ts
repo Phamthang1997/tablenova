@@ -82,8 +82,8 @@ const vi: typeof en = {
     toggleTheme: 'Đổi giao diện sáng/tối',
     reload: 'Tải lại ứng dụng',
     shortcuts: 'Phím tắt bàn phím...',
-    about: 'Về TableNova...',
-    whatsNew: 'Có gì mới trong TableNova...',
+    about: 'Về TableGrid...',
+    whatsNew: 'Có gì mới trong TableGrid...',
     minimize: 'Thu nhỏ',
     maximize: 'Phóng to / thu về',
     closeWindow: 'Đóng',
@@ -95,7 +95,7 @@ const vi: typeof en = {
   },
 
   whatsNew: {
-    modalHeader: 'Có gì mới trong TableNova',
+    modalHeader: 'Có gì mới trong TableGrid',
     showOnStartup: 'Hiển thị khi khởi động',
     prevSlide: 'Slide trước',
     nextSlide: 'Slide tiếp theo',
@@ -112,7 +112,7 @@ const vi: typeof en = {
   },
 
   connInfo: {
-    notConnected: 'TableNova | Chưa kết nối',
+    notConnected: 'TableGrid | Chưa kết nối',
     openTitle: 'Chi tiết kết nối',
     namePlaceholder: 'Tên kết nối',
     colorNone: 'Không màu',
@@ -450,7 +450,7 @@ const vi: typeof en = {
     sqliteDesc: 'SQLite lưu toàn bộ dữ liệu trong một tệp duy nhất trên máy bạn.',
     sqlitePathLabel: 'Đường dẫn tệp (.db, .sqlite)',
     sqlitePathPlaceholder: 'my_database.db',
-    sqliteHint: 'Nếu tệp chưa tồn tại, TableNova sẽ tự tạo tệp mới khi kết nối.',
+    sqliteHint: 'Nếu tệp chưa tồn tại, TableGrid sẽ tự tạo tệp mới khi kết nối.',
     pickSqliteTitle: 'Chọn tệp cơ sở dữ liệu SQLite',
 
     redisSection: 'Máy chủ Redis',
@@ -478,7 +478,7 @@ const vi: typeof en = {
     username: 'Tên đăng nhập',
     awsHeading: 'AWS IAM authentication',
     awsHint:
-      'TableNova sinh token IAM (hiệu lực 15 phút) thay cho mật khẩu và tự ép SSL <strong>REQUIRED</strong>.',
+      'TableGrid sinh token IAM (hiệu lực 15 phút) thay cho mật khẩu và tự ép SSL <strong>REQUIRED</strong>.',
     awsAccessKeySeg: 'Access Key',
     awsProfileSeg: 'Profile (~/.aws)',
     awsAccessKeyId: 'Access Key ID',
@@ -960,7 +960,7 @@ const vi: typeof en = {
     noTablesFound: 'Không tìm thấy bảng nào',
     settingsTitle: 'Cấu hình Trợ lý AI & API',
     greeting:
-      'Xin chào! Tôi là Trợ lý AI hỗ trợ SQL của TableNova. Tôi có thể dịch câu hỏi tiếng Việt của bạn thành truy vấn SQL tương ứng.\n\nHãy thử hỏi tôi: *"lấy danh sách admin hoạt động trong bảng users"* hoặc *"tổng doanh thu của tất cả đơn hàng"*!',
+      'Xin chào! Tôi là Trợ lý AI hỗ trợ SQL của TableGrid. Tôi có thể dịch câu hỏi tiếng Việt của bạn thành truy vấn SQL tương ứng.\n\nHãy thử hỏi tôi: *"lấy danh sách admin hoạt động trong bảng users"* hoặc *"tổng doanh thu của tất cả đơn hàng"*!',
     schemaCurrentTable: 'Bảng hiện tại: {{table}}',
     insertIntoEditor: 'Nạp vào editor',
     thinking: 'Đang phân tích schema & viết SQL...',
@@ -1356,6 +1356,7 @@ const vi: typeof en = {
     importProcessing: 'Đang xử lý...',
     importConfirm: 'Xác nhận Tạo & Nhập',
 
+    appName: 'TableGrid',
     aboutVersion: 'Phiên bản {{version}}',
     aboutDesc:
       'Công cụ quản lý cơ sở dữ liệu nhẹ, nhanh và trực quan — kết nối, duyệt dữ liệu, chỉnh sửa cấu trúc và chạy truy vấn trong cùng một giao diện.',
@@ -2221,7 +2222,7 @@ const vi: typeof en = {
     transferFile: "Tệp",
     transferPickFile: "Chọn tệp…",
     transferFileNone: "Chưa chọn tệp",
-    transferFileBad: "Đây không phải tệp xuất keyspace của TableNova.",
+    transferFileBad: "Đây không phải tệp xuất keyspace của TableGrid.",
     transferFileSummary: "{{n}} key, xuất từ db{{db}} với prefix {{pattern}}",
     transferFileTruncated: "Tệp không có dấu kết thúc: bản xuất đã bị dừng, chạm trần, hoặc tệp bị cắt. Phần đang có vẫn nhập được.",
     transferDeclaredMismatch: "Tệp khai báo {{declared}} key nhưng chỉ đọc được {{n}}.",
@@ -2757,7 +2758,7 @@ const vi: typeof en = {
     start: 'Bật',
     stop: 'Dừng',
     port: 'Cổng',
-    autoStart: 'Tự bật khi mở TableNova',
+    autoStart: 'Tự bật khi mở TableGrid',
     portHint: 'Đổi cổng thì phải sửa lại cấu hình bạn đã dán vào AI client.',
     token: 'Mã truy cập',
     copyToken: 'Chép',
@@ -2791,8 +2792,8 @@ const vi: typeof en = {
     targetClaudeCode:
       'Chạy trong terminal — hai dòng đầu chỉ cần khi đăng ký lại. Scope là user, không phải project: một entry theo project có thể CLI thấy mà session lại không. Đừng dán vào settings.json: Claude Code không đọc MCP server ở đó và cũng không báo lỗi.',
     targetAntigravity:
-      'Lưu vào ~/.gemini/config/mcp_config.json, hoặc dùng Manage MCP Servers → View raw config. Bản này gọi TableNova qua stdio thay vì dùng URL, vì HTTP client của Antigravity có thể lỗi trước khi tới server — và nó không cần token trong tệp.',
-    targetClaudeCodeStdio: 'Chạy trong terminal. Scope là user, không phải project — entry theo project có thể CLI thấy mà session lại không. Bản này gọi TableNova qua stdio, nên không có token nào được lưu ở đâu cả.',
+      'Lưu vào ~/.gemini/config/mcp_config.json, hoặc dùng Manage MCP Servers → View raw config. Bản này gọi TableGrid qua stdio thay vì dùng URL, vì HTTP client của Antigravity có thể lỗi trước khi tới server — và nó không cần token trong tệp.',
+    targetClaudeCodeStdio: 'Chạy trong terminal. Scope là user, không phải project — entry theo project có thể CLI thấy mà session lại không. Bản này gọi TableGrid qua stdio, nên không có token nào được lưu ở đâu cả.',
     targetAntigravityHttp: 'Lưu vào ~/.gemini/config/mcp_config.json. Antigravity đòi serverUrl — url và httpUrl bị bỏ qua. Nếu nó hiện 0 tools kèm lỗi subscriptions/listen thì HTTP client của bản cài đó hỏng: chuyển sang stdio.',
     targetGenericStdio: 'Lưu vào tệp cấu hình MCP của client. Dáng này chạy được ở mọi client nói stdio, và không lưu token nào.',
     targetGeneric: 'Lưu vào tệp cấu hình MCP của client — với Cursor là .cursor/mcp.json.',
@@ -2802,7 +2803,7 @@ const vi: typeof en = {
     copyCommand: 'Chép câu lệnh',
     log: 'Lượt gọi',
     logEmpty: 'Chưa có lượt gọi nào.',
-    logMemoryOnly: 'Chỉ giữ trong bộ nhớ — đóng TableNova là mất.',
+    logMemoryOnly: 'Chỉ giữ trong bộ nhớ — đóng TableGrid là mất.',
     logClear: 'Xoá',
     logDenied: 'Bị chặn ở lớp {{n}}',
     logFailed: 'Thất bại',
@@ -2811,7 +2812,7 @@ const vi: typeof en = {
     denialBadToken: 'Token sai hoặc thiếu',
     denialNotShared: 'Kết nối chưa được chia sẻ',
     denialNotReadOnly: 'Không phải câu lệnh đọc',
-    denialManualTransaction: 'TableNova đang mở transaction',
+    denialManualTransaction: 'TableGrid đang mở transaction',
     denialFailed: 'Truy vấn lỗi',
   },
 

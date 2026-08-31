@@ -153,7 +153,7 @@ export async function buildMigrationSql(
   const q = dbType === 'mysql' ? '`' : '"';
   const qi = (n: string) => `${q}${n}${q}`;
   const lines: string[] = [];
-  lines.push(`-- Migration sinh bởi TableNova`);
+  lines.push(`-- Migration sinh bởi TableGrid`);
   lines.push(`-- Baseline: "${baseline.name}" (${baseline.createdAt}) -> Hiện tại (${current.createdAt})`);
   lines.push('');
 

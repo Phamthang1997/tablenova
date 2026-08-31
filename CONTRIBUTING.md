@@ -1,6 +1,6 @@
-# Contributing to TABLENOVA
+# Contributing to TABLEGRID
 
-Thank you for your interest in contributing to **TABLENOVA**! We welcome contributions from the community to help make TABLENOVA the best modern cross-platform database management tool.
+Thank you for your interest in contributing to **TABLEGRID**! We welcome contributions from the community to help make TABLEGRID the best modern cross-platform database management tool.
 
 ---
 

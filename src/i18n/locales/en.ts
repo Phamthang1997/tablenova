@@ -89,8 +89,8 @@ const en = {
     toggleTheme: 'Toggle light/dark theme',
     reload: 'Reload application',
     shortcuts: 'Keyboard shortcuts...',
-    about: 'About TableNova...',
-    whatsNew: "What's New in TableNova...",
+    about: 'About TableGrid...',
+    whatsNew: "What's New in TableGrid...",
     minimize: 'Minimize',
     maximize: 'Maximize / restore',
     closeWindow: 'Close',
@@ -102,7 +102,7 @@ const en = {
   },
 
   whatsNew: {
-    modalHeader: "What's New in TableNova",
+    modalHeader: "What's New in TableGrid",
     showOnStartup: 'Show on startup',
     prevSlide: 'Previous slide',
     nextSlide: 'Next slide',
@@ -119,7 +119,7 @@ const en = {
   },
 
   connInfo: {
-    notConnected: 'TableNova | Not Connected',
+    notConnected: 'TableGrid | Not Connected',
     openTitle: 'Connection details',
     namePlaceholder: 'Connection name',
     colorNone: 'No colour',
@@ -270,7 +270,7 @@ const en = {
     viewNamePlaceholder: 'view_name',
     viewSelect: 'SELECT statement',
     viewHint:
-      'TableNova prepends <code>CREATE VIEW "{{name}}" AS</code> for you — enter the SELECT part only.',
+      'TableGrid prepends <code>CREATE VIEW "{{name}}" AS</code> for you — enter the SELECT part only.',
     createViewButton: 'Create view',
 
     createDbTitle: 'Create new database ({{dbType}})',
@@ -458,7 +458,7 @@ const en = {
     sqliteDesc: 'SQLite keeps the whole database in a single file on your machine.',
     sqlitePathLabel: 'File path (.db, .sqlite)',
     sqlitePathPlaceholder: 'my_database.db',
-    sqliteHint: 'If the file does not exist yet, TableNova creates it on connect.',
+    sqliteHint: 'If the file does not exist yet, TableGrid creates it on connect.',
     pickSqliteTitle: 'Choose SQLite database file',
 
     redisSection: 'Redis server',
@@ -486,7 +486,7 @@ const en = {
     username: 'Username',
     awsHeading: 'AWS IAM authentication',
     awsHint:
-      'TableNova generates an IAM token (valid 15 minutes) instead of a password and forces SSL <strong>REQUIRED</strong>.',
+      'TableGrid generates an IAM token (valid 15 minutes) instead of a password and forces SSL <strong>REQUIRED</strong>.',
     awsAccessKeySeg: 'Access Key',
     awsProfileSeg: 'Profile (~/.aws)',
     awsAccessKeyId: 'Access Key ID',
@@ -969,7 +969,7 @@ const en = {
     noTablesFound: 'No tables found',
     settingsTitle: 'AI Assistant & API Settings',
     greeting:
-      'Hi! I am TableNova\'s SQL assistant. I can turn a plain-language question into the matching SQL query.\n\nTry asking: *"list the active admins in the users table"* or *"total revenue across all orders"*.',
+      'Hi! I am TableGrid\'s SQL assistant. I can turn a plain-language question into the matching SQL query.\n\nTry asking: *"list the active admins in the users table"* or *"total revenue across all orders"*.',
     schemaCurrentTable: 'Current table: {{table}}',
     insertIntoEditor: 'Insert into the editor',
     thinking: 'Analyzing schema & generating SQL...',
@@ -1370,6 +1370,7 @@ const en = {
     importProcessing: 'Processing...',
     importConfirm: 'Create & import',
 
+    appName: 'TableGrid',
     aboutVersion: 'Version {{version}}',
     aboutDesc:
       'A light, fast and readable database client — connect, browse data, edit the schema and run queries in one place.',
@@ -2239,7 +2240,7 @@ const en = {
     transferFile: "File",
     transferPickFile: "Choose file…",
     transferFileNone: "No file chosen",
-    transferFileBad: "This is not a keyspace export from TableNova.",
+    transferFileBad: "This is not a keyspace export from TableGrid.",
     transferFileSummary: "{{n}} keys, exported from db{{db}} with prefix {{pattern}}",
     transferFileTruncated: "The file has no end marker: the export was stopped, hit its limit, or the file is truncated. What it does contain can still be imported.",
     transferDeclaredMismatch: "The file says it holds {{declared}} keys but {{n}} could be read.",
@@ -2784,7 +2785,7 @@ const en = {
     start: 'Start',
     stop: 'Stop',
     port: 'Port',
-    autoStart: 'Start automatically when TableNova opens',
+    autoStart: 'Start automatically when TableGrid opens',
     portHint: 'Changing this means updating the config you pasted into your AI client.',
     token: 'Access token',
     copyToken: 'Copy',
@@ -2818,8 +2819,8 @@ const en = {
     targetClaudeCode:
       'Run these in a terminal — the first two only matter when re-registering. Scope is user, not project: a project-scoped entry can be visible to the CLI and still invisible to the session. Do not paste into settings.json: Claude Code ignores MCP servers there and will not warn you.',
     targetAntigravity:
-      'Save into ~/.gemini/config/mcp_config.json, or use Manage MCP Servers → View raw config. This one spawns TableNova over stdio instead of using the URL, because Antigravity’s HTTP client can fail before reaching the server — and it needs no token in the file.',
-    targetClaudeCodeStdio: 'Run these in a terminal. Scope is user, not project — a project-scoped entry can be visible to the CLI and still invisible to the session. This one spawns TableNova over stdio, so no token is stored anywhere.',
+      'Save into ~/.gemini/config/mcp_config.json, or use Manage MCP Servers → View raw config. This one spawns TableGrid over stdio instead of using the URL, because Antigravity’s HTTP client can fail before reaching the server — and it needs no token in the file.',
+    targetClaudeCodeStdio: 'Run these in a terminal. Scope is user, not project — a project-scoped entry can be visible to the CLI and still invisible to the session. This one spawns TableGrid over stdio, so no token is stored anywhere.',
     targetAntigravityHttp: 'Save into ~/.gemini/config/mcp_config.json. Antigravity requires serverUrl — url and httpUrl are ignored. If it shows 0 tools with a subscriptions/listen error, its HTTP client is broken in that install: switch to stdio.',
     targetGenericStdio:
       "Save into your client's MCP config file. This shape works in every client that speaks stdio, and stores no token.",
@@ -2830,7 +2831,7 @@ const en = {
     copyCommand: 'Copy command',
     log: 'Requests',
     logEmpty: 'No request yet.',
-    logMemoryOnly: 'Kept in memory only — this list is gone when you close TableNova.',
+    logMemoryOnly: 'Kept in memory only — this list is gone when you close TableGrid.',
     logClear: 'Clear',
     logDenied: 'Refused at layer {{n}}',
     logFailed: 'Failed',
@@ -2839,7 +2840,7 @@ const en = {
     denialBadToken: 'Wrong or missing token',
     denialNotShared: 'Connection not shared',
     denialNotReadOnly: 'Not a read statement',
-    denialManualTransaction: 'Transaction open in TableNova',
+    denialManualTransaction: 'Transaction open in TableGrid',
     denialFailed: 'Query failed',
   },
 

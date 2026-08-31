@@ -326,9 +326,9 @@ export function parseRedisExport(text: string): ParsedExport {
 
     const obj = (parsed && typeof parsed === 'object' ? parsed : {}) as Record<string, unknown>;
 
-    if (obj.tablenova === TRANSFER_KIND) {
+    if (obj.tablenova === TRANSFER_KIND || obj.tablegrid === TRANSFER_KIND) {
       out.header = {
-        tablenova: String(obj.tablenova),
+        tablenova: String(obj.tablenova || obj.tablegrid),
         version: typeof obj.version === 'number' ? obj.version : 0,
         createdAt: typeof obj.createdAt === 'string' ? obj.createdAt : '',
         db: typeof obj.db === 'number' ? obj.db : 0,
@@ -336,7 +336,7 @@ export function parseRedisExport(text: string): ParsedExport {
       };
       continue;
     }
-    if (obj.tablenova === TRANSFER_END_KIND) {
+    if (obj.tablenova === TRANSFER_END_KIND || obj.tablegrid === TRANSFER_END_KIND) {
       out.truncated = false;
       out.declaredKeys = typeof obj.keys === 'number' ? obj.keys : null;
       continue;

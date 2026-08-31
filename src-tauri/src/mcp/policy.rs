@@ -126,7 +126,7 @@ fn choose_only(mut shared: Vec<String>) -> Result<String, Refusal> {
                 McpError::invalid_params(
                     format!(
                         "the user has shared {} connections, so connection_id is required. Call \
-                         tablenova_list_connections and pass one of: {}",
+                         tablegrid_list_connections and pass one of: {}",
                         shared.len(),
                         shared.join(", ")
                     ),
@@ -153,7 +153,7 @@ pub fn reject_if_manual(connection_id: &str) -> Result<(), Refusal> {
         return Err(Refusal::new(
             Denial::ManualTransaction,
             McpError::invalid_params(
-                "this connection is in manual-commit mode in TableNova. Ask the user to commit or \
+                "this connection is in manual-commit mode in TableGrid. Ask the user to commit or \
                  roll back and switch back to auto-commit before querying it."
                     .to_string(),
                 None,
@@ -165,12 +165,12 @@ pub fn reject_if_manual(connection_id: &str) -> Result<(), Refusal> {
 
 fn unknown_connection() -> Refusal {
     // English, and NOT routed through `backendErrors.ts`: this is read by an AI client, not shown in
-    // the TableNova UI. Same rule as the comments `compare/` writes into a generated SQL script.
+    // the TableGrid UI. Same rule as the comments `compare/` writes into a generated SQL script.
     Refusal::new(
         Denial::NotShared,
         McpError::invalid_params(
             "unknown connection_id, or it is not shared with MCP clients. Call \
-             tablenova_list_connections to see the connections the user shared."
+             tablegrid_list_connections to see the connections the user shared."
                 .to_string(),
             None,
         ),
@@ -207,7 +207,7 @@ pub fn ensure_single_read(sql: &str) -> Result<(), Refusal> {
     } else {
         Err(refuse_read(format!(
             "this build allows read statements only ({}); got `{}`. \
-             Ask the user to run writes from TableNova itself.",
+             Ask the user to run writes from TableGrid itself.",
             READ_HEADS.join(", "),
             if head.is_empty() { "?" } else { &head }
         )))

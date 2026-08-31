@@ -1,5 +1,5 @@
 //! Crate root. It holds ONLY what nothing else can: the module list, plus two re-exports that keep
-//! the old paths working (`tablenova::run` for `main.rs`, `crate::AppState` for 152 call sites).
+//! the old paths working (`tablegrid::run` for `main.rs`, `crate::AppState` for 152 call sites).
 
 pub mod app;
 pub mod compare;
