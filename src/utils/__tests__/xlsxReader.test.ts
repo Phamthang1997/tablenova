@@ -89,3 +89,39 @@ describe('buildXlsx: freeze pane', () => {
     expect(xml.indexOf('<sheetViews>')).toBeLessThan(xml.indexOf('<sheetData>'));
   });
 });
+
+describe('buildXlsx: styles', () => {
+  function part(bytes: Uint8Array, open: string, close: string): string {
+    const all = new TextDecoder().decode(bytes);
+    const start = all.indexOf(open);
+    return start < 0 ? '' : all.slice(start, all.indexOf(close, start) + close.length);
+  }
+
+  it('header dùng style đậm, ô dữ liệu thì không', () => {
+    const all = new TextDecoder().decode(buildXlsx('S', ['a'], [{ a: 'x' }]));
+    const sheet = all.slice(all.indexOf('<worksheet'), all.indexOf('</worksheet>'));
+    expect(sheet).toContain('<c r="A1" s="1"');
+    // A data cell carries no `s=` at all: style 0 is the default, and writing it out would be noise
+    // on every cell of every export.
+    expect(sheet).toMatch(/<c r="A2"(?! s=)/);
+  });
+
+  // Each of these is mandatory even though nothing refers to some of them; leaving one out makes
+  // Excel report the workbook as needing repair rather than falling back to a default.
+  it('styles.xml có đủ các phần bắt buộc', () => {
+    const styles = part(buildXlsx('S', ['a'], []), '<styleSheet', '</styleSheet>');
+    for (const tag of ['<fonts', '<fills', '<borders', '<cellStyleXfs', '<cellXfs']) {
+      expect(styles).toContain(tag);
+    }
+    expect(styles).toContain('<b/>');
+  });
+
+  // The part can be present and listed and still be invisible to Excel: it is reachable only
+  // through a relationship FROM the workbook.
+  it('styles.xml được khai trong content types và trong workbook rels', () => {
+    const all = new TextDecoder().decode(buildXlsx('S', ['a'], []));
+    expect(all).toContain('/xl/styles.xml');
+    expect(all).toContain('relationships/styles');
+    expect(all).toContain('Target="styles.xml"');
+  });
+});
