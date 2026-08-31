@@ -296,6 +296,67 @@ export const TX_ISOLATION_LEVELS: Record<string, string[]> = {
 export interface TableItem {
   name: string;
   type: 'table' | 'view';
+  /**
+   * The schema this object lives in, when it is NOT the connection's current one. Only
+   * `getTemporaryTables` fills it, and only on Postgres, where a session-temporary table sits in
+   * `pg_temp_N`: every read of such a table has to name that schema or the backend looks for it in
+   * `public` and reports a table the sidebar is showing as non-existent. Left undefined everywhere
+   * else, which is what keeps the ordinary path byte-identical.
+   */
+  schema?: string;
+  /** True only for a row that came from `getTemporaryTables`. Drives the badge and the drop verb. */
+  temporary?: boolean;
+}
+
+/**
+ * Everything the Properties tab shows about one table, from a single `get_table_properties` call.
+ *
+ * Almost every field is nullable because almost every field is dialect-specific: `engine` and
+ * `rowFormat` are MySQL's, `liveTuples`/`deadTuples`/`lastVacuum` are Postgres', `filePath` is
+ * SQLite's. A missing value renders as "-" rather than as 0 — "unknown" and "zero" are different
+ * answers, and a size card that reads 0 B for a table it simply could not measure is a bug report.
+ */
+export interface TableProperties {
+  tableName: string;
+  schemaName?: string | null;
+  dbType: string;
+  tableType: string;
+  isTemporary: boolean;
+  isView: boolean;
+  engine?: string | null;
+  rowFormat?: string | null;
+  collation?: string | null;
+  characterSet?: string | null;
+  comment?: string | null;
+  tablespace?: string | null;
+  /** MySQL's CREATE_OPTIONS (`partitioned`, `row_format=DYNAMIC`, …). Null on the other dialects. */
+  createOptions?: string | null;
+  filePath?: string | null;
+  estimatedRows: number;
+  /** Whether `estimatedRows` was counted rather than sampled — false hides nothing, it shows a `~`. */
+  rowsExact: boolean;
+  dataSizeBytes?: number | null;
+  indexSizeBytes?: number | null;
+  totalSizeBytes?: number | null;
+  freeSizeBytes?: number | null;
+  avgRowLengthBytes?: number | null;
+  autoIncrement?: number | null;
+  createTime?: string | null;
+  updateTime?: string | null;
+  checkTime?: string | null;
+  columnCount: number;
+  primaryKeys: string[];
+  indexCount?: number | null;
+  foreignKeyCount?: number | null;
+  /** Foreign keys pointing AT this table — the incoming half of the relationship count. */
+  referencedByCount?: number | null;
+  liveTuples?: number | null;
+  deadTuples?: number | null;
+  seqScans?: number | null;
+  indexScans?: number | null;
+  lastVacuum?: string | null;
+  lastAnalyze?: string | null;
+  ddl?: string | null;
 }
 
 export interface ColumnInfo {
@@ -620,6 +681,22 @@ export const dbHelper = {
     }
   },
 
+  /**
+   * The temp tables/views this session owns, for the sidebar's Temporary section.
+   *
+   * Returns `[]` — never throws — when the server has no way to answer (an InnoDB build without
+   * `INNODB_TEMP_TABLE_INFO`, a connection that just dropped): an empty section and an unanswerable
+   * question look the same to the user, and neither is worth an error toast on every refresh.
+   */
+  async getTemporaryTables(connId: string): Promise<TableItem[]> {
+    try {
+      const res: any = await invoke('get_temporary_tables', { connId });
+      return res.tables || [];
+    } catch {
+      return [];
+    }
+  },
+
   // Fetches the whole catalog (columns+types+PK, FKs per table) in few queries, to warm the completion cache.
   async getFullCatalog(connId: string, ): Promise<{ columns: Record<string, any[]>; foreignKeys: Record<string, any[]> }> {
     try {
@@ -660,6 +737,8 @@ export const dbHelper = {
       countMode?: 'exact' | 'auto' | 'skip';
       seekColumn?: string | null;
       cursor?: string | null;
+      /** `TableItem.schema` — set only for a Postgres session-temporary table. */
+      schema?: string | null;
     } = {}
   ): Promise<{
     rows: any[];
@@ -681,6 +760,7 @@ export const dbHelper = {
         countMode: opts.countMode || 'exact',
         seekColumn: opts.seekColumn || null,
         cursor: opts.cursor || null,
+        schemaOverride: opts.schema || null,
       });
       const rows = res.data || [];
       return {
@@ -887,9 +967,10 @@ export const dbHelper = {
     }
   },
 
-  async getTableSchema(connId: string, tableName: string): Promise<SchemaInfo> {
+  /** `schema` is `TableItem.schema` — see there; leave it out for an ordinary table. */
+  async getTableSchema(connId: string, tableName: string, schema?: string | null): Promise<SchemaInfo> {
     try {
-      const res: any = await invoke('get_table_schema', { connId, name: tableName });
+      const res: any = await invoke('get_table_schema', { connId, name: tableName, schemaOverride: schema || null });
       return {
         columns: res.columns || [],
         indexes: res.indexes || [],
@@ -1376,7 +1457,8 @@ export const dbHelper = {
   // yourself, because each executeQuery takes a different connection out of the pool.
   async dropTable(connId: string, 
     name: string,
-    opts?: { isView?: boolean; cascade?: boolean; ignoreFk?: boolean }
+    /** `schema` is `TableItem.schema` — set only for a Postgres session-temporary table. */
+    opts?: { isView?: boolean; cascade?: boolean; ignoreFk?: boolean; schema?: string | null }
   ): Promise<{ success: boolean; error?: string }> {
     try {
       const res: any = await invoke('drop_table', {
@@ -1385,6 +1467,7 @@ export const dbHelper = {
         isView: opts?.isView ?? false,
         cascade: opts?.cascade ?? false,
         ignoreFk: opts?.ignoreFk ?? false,
+        schemaOverride: opts?.schema ?? null,
       });
       return { success: !!res.success, error: res.message };
     } catch (err: any) {
@@ -2209,6 +2292,26 @@ export const dbHelper = {
     try {
       const res: any = await invoke('get_database_stats', { connId });
       return { success: true, stats: res };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+
+  /**
+   * Everything the Properties tab shows, in one round trip.
+   *
+   * `schema` is `TableItem.schema`: only the Temporary section has one, and only on Postgres.
+   * The error is returned rather than thrown because the panel renders it inline — a table dropped
+   * in another tab is an ordinary outcome here, not an exception.
+   */
+  async getTableProperties(
+    connId: string,
+    tableName: string,
+    schema?: string | null
+  ): Promise<{ success: boolean; properties?: TableProperties; error?: string }> {
+    try {
+      const res: any = await invoke('get_table_properties', { connId, tableName, schema: schema || null });
+      return { success: true, properties: res as TableProperties };
     } catch (err: any) {
       return { success: false, error: err.toString() };
     }

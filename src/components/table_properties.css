@@ -1,0 +1,494 @@
+/* ==========================================================================
+   TableGrid - Table Properties tab (TablePropertiesView)
+   Follows the TableGrid design system:
+   - Independent action buttons with their own 1px border and 6px radius.
+     No capsule / segmented-control grouping.
+   - Zero inline styles in the JSX; every colour is a --win-* token so both
+     themes are covered by one declaration.
+   - Scoped under .tp-* so nothing here can reach another panel.
+   ========================================================================== */
+
+.tp-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--win-bg-window, var(--win-bg-popover));
+  color: var(--win-text-primary);
+  font-family: var(--win-font-sans);
+}
+
+/* ---------------------------------------------------------------- Toolbar */
+
+.tp-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--win-border);
+  background: var(--win-bg-tab-bar, transparent);
+}
+
+.tp-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.tp-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.tp-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--win-text-primary);
+  min-width: 0;
+}
+
+.tp-title-icon {
+  color: var(--win-accent);
+  flex-shrink: 0;
+}
+
+.tp-title-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--win-font-mono);
+}
+
+/* ---------------------------------------------------------------- Buttons */
+
+.tp-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 5px 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  font-family: var(--win-font-sans);
+  color: var(--win-text-primary);
+  background: transparent;
+  border: 1px solid var(--win-border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.tp-btn:hover:not(:disabled) {
+  border-color: var(--win-accent);
+  color: var(--win-accent);
+  background: var(--win-bg-hover);
+}
+
+.tp-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.tp-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.tp-btn-primary {
+  border-color: var(--win-accent);
+  color: var(--win-accent);
+}
+
+.tp-btn-primary:hover:not(:disabled) {
+  background: var(--win-bg-active, var(--win-bg-hover));
+}
+
+/* ---------------------------------------------------------------- Content */
+
+.tp-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 16px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+
+.tp-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex: 1;
+  padding: 40px 16px;
+  font-size: 12px;
+  color: var(--win-text-secondary);
+}
+
+.tp-state-error {
+  color: var(--win-danger, #ef4444);
+  max-width: 480px;
+  text-align: center;
+  word-break: break-word;
+}
+
+/* --------------------------------------------------------- Metric strip */
+
+/* No frame and no dividers — the headline numbers sit straight on the page.
+   Both of the framed versions have been tried and both were wrong in the same way. Four separate
+   bordered tiles were four blocks. One bordered box with 1px dividers between the cells was still
+   read as four blocks, because a rule between two things is what says they are two things — and the
+   frame around them then had to be a mostly-empty 1900px container. With nothing but alignment
+   holding them together they read as one row of four figures, which is what they are.
+   Do not put the border or the dividers back; the whitespace is doing the grouping. */
+.tp-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  column-gap: 32px;
+  row-gap: 14px;
+  padding: 2px 2px 6px;
+}
+
+/* The `gap` is the line spacing of one figure, applied once between each of its three lines
+   (label / number / caption) — the single value to change if this ever feels tight again. At 2px the
+   three lines read as one clump; the number needs air on both sides to be the thing the eye lands
+   on, which is the entire job of this strip. */
+.tp-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  /* Centred within its track. `align-items` does the three lines (they are flex items sized to their
+     own content), `text-align` covers the case where one of them wraps. */
+  align-items: center;
+  text-align: center;
+}
+
+/* Icon and label on one line, centred together with the number below them. The icon used to be
+   pushed to the far edge of the tile, which on a 470px track left it stranded half a screen from the
+   words it belongs to — it read as a corner decoration rather than as part of the label. */
+.tp-metric-head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.tp-metric-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  line-height: 1.2;
+  text-transform: uppercase;
+  color: var(--win-text-secondary);
+}
+
+.tp-metric-icon {
+  color: var(--win-text-disabled);
+  flex-shrink: 0;
+}
+
+.tp-metric-val {
+  font-size: 21px;
+  font-weight: 700;
+  /* 1.15, not the 1.25 a body line wants: a single line of tabular digits carries no descender
+     worth the extra leading, and the `gap` above already separates it from its neighbours. */
+  line-height: 1.15;
+  color: var(--win-text-primary);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tp-metric-sub {
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--win-text-disabled);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ----------------------------------------------------------------- Cards */
+
+.tp-card {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--win-border);
+  border-radius: 6px;
+  background: var(--win-bg-card, transparent);
+  overflow: hidden;
+}
+
+.tp-card-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--win-text-secondary);
+  border-bottom: 1px solid var(--win-border);
+  background: var(--win-bg-tab-bar, transparent);
+}
+
+/* Pushed to the right of a card heading: the line count of the DDL, the row count of a list. */
+.tp-card-title-note {
+  margin-left: auto;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--win-text-disabled);
+}
+
+.tp-card-title-icon {
+  color: var(--win-accent);
+  flex-shrink: 0;
+}
+
+.tp-card-body {
+  display: flex;
+  flex-direction: column;
+  padding: 3px 0;
+}
+
+/* Groups side by side as COLUMNS, in one full-width card. A spec sheet, not a list.
+   Stacking the groups vertically was the mistake behind four separate complaints at once, and every
+   one of them dissolves here: 14 rows over four groups became 14 rows tall (plus four full-width
+   grey header bands, which striped a narrow column), which forced the card to be tall and narrow,
+   which forced the DDL beside it into a column too narrow for its own lines, and left every row
+   240px of dead space to the right of a value like `Dynamic`. As columns, the card is as tall as the
+   LARGEST group — five rows, not fourteen — the DDL goes back to full width where its long lines
+   fit, and each group's width is set by its own content.
+   `auto-fit` collapses the tracks it cannot fill, so five groups always share the width evenly
+   however wide the panel is, and wrap instead of shrinking below 270px. */
+.tp-details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+  /* The row gap is 20, not 4. With more groups than tracks a group wraps under another group's
+     column, and at 4px `MAINTENANCE` sat directly under `Character set` and read as a subsection of
+     GENERAL. The gap plus the header treatment below is what makes a wrapped group read as its own
+     thing rather than as a continuation. */
+  gap: 20px 26px;
+  align-items: start;
+  padding: 14px 16px 16px;
+}
+
+/* A grid item, i.e. one column. `min-width: 0` so a long collation cannot widen its own track and
+   squeeze the others. */
+.tp-group {
+  min-width: 0;
+}
+
+/* The anchor of each column, and the card's only structure — so it has to be visible.
+   At 9.5px in `--win-text-disabled` it was not: the card read as one flat expanse with nothing for
+   the eye to catch, and a wrapped group was indistinguishable from a continuation of the column
+   above it. Three changes carry the emphasis: the secondary text colour instead of the disabled one,
+   a full-strength rule instead of the subtle one, and the accent bar below. */
+.tp-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 0 6px;
+  margin-bottom: 5px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--win-text-secondary);
+  /* A short rule under its own column, not a full-width tinted band. The band was four horizontal
+     stripes across a 420px column; this reads as a table heading, which is what it is. */
+  border-bottom: 1px solid var(--win-border);
+}
+
+/* 3px of accent per column. The one spot of colour in the card, and enough to tell the eye where
+   each group starts without a frame, a fill, or a full-width band — all three of which were tried
+   and each read as "another block". */
+.tp-group-head::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 3px;
+  height: 10px;
+  border-radius: 1px;
+  background: var(--win-accent);
+}
+
+
+/* A fixed label column, not a percentage. At 44% of the card the value started near the middle and
+   every short number ("4", "0 B") sat alone in a wide field, which is what made the panel read as
+   half empty. 126px fits the longest label in all three languages (Japanese counts: 'シーケンシャルスキャン'
+   is eleven CJK glyphs) and puts the value right next to the word it answers. */
+.tp-row {
+  display: grid;
+  grid-template-columns: 126px minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  padding: 4px 12px;
+  font-size: 11.5px;
+}
+
+.tp-row + .tp-row {
+  border-top: 1px solid var(--win-border-subtle, var(--win-border-light));
+}
+
+/* A row with no label — a message rather than a property. Without this the single span would sit in
+   the label column and wrap one word per line. */
+.tp-row-full {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* MUST stay below `.tp-row + .tp-row`: same specificity, so source order decides. Above it, a
+   details row would keep the top border and every pair would carry a rule.
+   No rules between rows at all here, on purpose. A group is at most five rows now, which is short
+   enough that spacing alone separates them — and the panel had already collected the complaint that
+   a line between two things is what makes them look like two things. */
+.tp-details .tp-row {
+  border-top: none;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 8px;
+  padding: 3px 0;
+}
+
+.tp-label {
+  color: var(--win-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* 600 against the label's 400. The two used to differ only by colour, at the same size and weight,
+   so a row read as two equal halves and nothing told the eye which half was the answer. */
+.tp-val {
+  min-width: 0;
+  color: var(--win-text-primary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.tp-val-mono {
+  font-family: var(--win-font-mono);
+  font-size: 11px;
+}
+
+.tp-val-muted {
+  color: var(--win-text-disabled);
+  font-weight: 400;
+}
+
+/* --------------------------------------------------------------- Badges */
+
+.tp-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.tp-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  border: 1px solid var(--win-border);
+  background: var(--win-bg-hover);
+  color: var(--win-text-secondary);
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.tp-badge-key {
+  border-color: var(--win-accent);
+  color: var(--win-accent);
+  font-family: var(--win-font-mono);
+}
+
+.tp-badge-temp {
+  border-color: var(--win-warning, #f59e0b);
+  color: var(--win-warning, #f59e0b);
+}
+
+/* The object's kind, beside its name in the toolbar. It used to be a row in the General card AND
+   the subtitle of the size tile; here it is read once, where the name is. */
+.tp-badge-kind {
+  letter-spacing: 0.4px;
+}
+
+.tp-badge-view {
+  border-color: #8b5cf6;
+  color: #8b5cf6;
+}
+
+/* ------------------------------------------------------------ DDL block */
+
+.tp-codeblock {
+  margin: 0;
+  padding: 8px 0;
+  /* A viewport fraction rather than a pixel cap: this pane sits beside the details column now, so
+     what limits it is the screen, not a guess at how long a CREATE TABLE gets. */
+  max-height: 70vh;
+  overflow: auto;
+  background: var(--win-bg-code, var(--win-bg-input));
+  font-family: var(--win-font-mono);
+  font-size: 11.5px;
+  line-height: 1.6;
+  tab-size: 2;
+}
+
+.tp-code-line {
+  display: flex;
+  gap: 10px;
+  padding: 0 12px;
+  white-space: pre;
+}
+
+.tp-code-line:hover {
+  background: var(--win-bg-hover);
+}
+
+.tp-code-gutter {
+  flex: 0 0 auto;
+  min-width: 26px;
+  text-align: right;
+  color: var(--win-text-disabled);
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.tp-code-text {
+  flex: 1 1 auto;
+  color: var(--win-text-primary);
+}
+
+/* The one thing this file highlights: SQL keywords. A full tokenizer belongs to Monaco, and
+   Monaco is lazy-loaded on purpose (see the build notes in CLAUDE.md) — pulling it in for a
+   read-only DDL block would put 4MB back into startup. */
+.tp-kw {
+  color: var(--win-accent);
+  font-weight: 600;
+}
+
+.tp-str {
+  color: var(--win-success, #16a34a);
+}
+
+.tp-cmt {
+  color: var(--win-text-disabled);
+  font-style: italic;
+}

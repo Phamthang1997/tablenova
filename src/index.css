@@ -1561,6 +1561,44 @@ select.form-input {
   padding-left: 6px;
 }
 
+/* The heading of one object group, as a class rather than the ~14 inline declarations the Tables
+   and Views headings still carry. New groups use these; the two older ones are a backlog, not a
+   precedent (see the inline-style rule in CLAUDE.md). */
+.sidebar-group {
+  margin-bottom: 6px;
+}
+
+.sidebar-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  margin: 2px 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--win-text-secondary);
+}
+
+.sidebar-group-count {
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--win-bg-hover, rgba(0, 0, 0, 0.06));
+  color: var(--win-text-disabled);
+  padding: 1px 6px;
+  border-radius: 10px;
+  margin-left: auto;
+}
+
+/* Temporary tables are the session's, not the database's — the amber matches the "TEMP" badge in
+   the Properties tab so the two read as one idea. */
+.sidebar-group-icon-temp {
+  color: var(--win-warning, #f59e0b);
+}
+
 /* Icon buttons in a sidebar group heading (create / reload).
    They sink fully into the background by default so the heading area stays calm, and only rise on
    hover. */
