@@ -5,6 +5,10 @@ edition = "2024"
 license = "AGPL-3.0-or-later"
 
 [dependencies]
+# Process-wide allocator, wired up in main.rs — see the comment there for what it is expected to buy
+# and how to tell whether it did. Builds mimalloc from C via `cc`, so it costs one C toolchain
+# dependency and some first-build time; nothing at runtime beyond the allocator itself.
+mimalloc = "0.1.52"
 tauri = { version = "2.11.5", features = ["macos-private-api"] }
 tauri-plugin-dialog = "2.7.2"
 tauri-plugin-fs = "2.5.1"
