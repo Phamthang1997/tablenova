@@ -681,6 +681,8 @@ const en = {
     copiedRowCsv: 'Row copied as CSV.',
     copiedRowSql: 'Copied as a SQL INSERT.',
     copiedRowMarkdown: 'Copied as a Markdown table.',
+    copiedRowJson: 'Copied as a JSON array.',
+    ctxJsonArray: 'JSON Array',
     copiedCell: 'Cell value copied.',
     copiedColumn: 'All column values copied.',
     copiedFilterSql: 'The filter SQL was copied.',

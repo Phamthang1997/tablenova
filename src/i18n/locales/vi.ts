@@ -673,6 +673,8 @@ const vi: typeof en = {
     copiedRowCsv: 'Đã sao chép dòng dưới dạng CSV!',
     copiedRowSql: 'Đã sao chép dưới dạng SQL INSERT!',
     copiedRowMarkdown: 'Đã sao chép dưới dạng Markdown table!',
+    copiedRowJson: 'Đã sao chép dưới dạng mảng JSON!',
+    ctxJsonArray: 'Mảng JSON',
     copiedCell: 'Đã sao chép giá trị ô!',
     copiedColumn: 'Đã sao chép tất cả giá trị cột!',
     copiedFilterSql: 'Đã sao chép câu SQL của điều kiện lọc.',

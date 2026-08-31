@@ -670,6 +670,8 @@ const ja: typeof en = {
     copiedRowCsv: '行を CSV としてコピーしました。',
     copiedRowSql: 'SQL INSERT としてコピーしました。',
     copiedRowMarkdown: 'Markdown テーブルとしてコピーしました。',
+    copiedRowJson: 'JSON 配列としてコピーしました。',
+    ctxJsonArray: 'JSON 配列',
     copiedCell: 'セルの値をコピーしました。',
     copiedColumn: '列のすべての値をコピーしました。',
     copiedFilterSql: 'フィルタの SQL をコピーしました。',

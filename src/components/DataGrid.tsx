@@ -327,7 +327,28 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
   const [pendingChanges, setPendingChanges] = useState<GridChange[]>([]);
 
   // Selected row for highlighting
-  const [selectedRowId, setSelectedRowId] = useState<any | null>(null);
+  // The selection is a SET, and `selectedRowId` below is derived from it rather than stored
+  // alongside — two sources of truth for "what is selected" is how a grid ends up highlighting one
+  // row and acting on another.
+  //
+  // Keys are the same `selectionKey` the rows render with: the primary key when there is one, and
+  // `__idx_<n>` when there is not. An inserted row uses its `__tempId`.
+  const [selectedRowIds, setSelectedRowIds] = useState<Set<any>>(new Set());
+  // Where a Shift+click measures from. Set by every plain and Ctrl click, never by Shift itself, so
+  // repeated Shift+clicks grow and shrink the same range instead of walking the anchor along.
+  const [anchorRowId, setAnchorRowId] = useState<any | null>(null);
+
+  // The single-selection value the row-at-a-time features still ask for (open the document viewer,
+  // find a row's index). Deliberately `null` when several rows are selected: those features have no
+  // sensible answer for "which one", and silently picking the first would act on a row the user did
+  // not point at.
+  const selectedRowId = selectedRowIds.size === 1 ? selectedRowIds.values().next().value : null;
+
+  /** Replace the whole selection with one row. Used by every path that is not a modifier click. */
+  const setSelectedRowId = useCallback((id: any | null) => {
+    setSelectedRowIds(id === null || id === undefined ? new Set() : new Set([id]));
+    setAnchorRowId(id ?? null);
+  }, []);
 
   // Studio 3T-style Document / Row Viewer Modal
   const [documentViewerIndex, setDocumentViewerIndex] = useState<number | null>(null);
@@ -702,7 +723,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
       }
 
       // 4. Delete Selected Row (Delete or Backspace - only when not editing a text input/textarea)
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedRowId !== null) {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedRowIds.size > 0) {
         const activeEl = document.activeElement;
         const isEditingText = activeEl && (
           activeEl.tagName === 'INPUT' ||
@@ -816,6 +837,8 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
       setUpdates({});
       setDeletes(new Set());
       setInserts([]);
+      // Clears both the set and the Shift anchor — leaving an anchor behind would let the first
+      // Shift+click in the newly opened table measure from a row that belonged to the old one.
       setSelectedRowId(null);
       setPage(1);
       setSortBy(undefined);
@@ -831,7 +854,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
         setShowFilterBar(true);
       }
     });
-  }, [tableName, fetchSchema, initialViewMode, initialFilter, dbType]);
+  }, [tableName, fetchSchema, initialViewMode, initialFilter, dbType, setSelectedRowId]);
 
   useEffect(() => {
     if (columns.length > 0) {
@@ -952,22 +975,30 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
 
   // Delete Selected / Marked Row
   const handleDeleteRow = (targetRowId?: any) => {
-    const rowId = targetRowId ?? selectedRowId;
-    if (rowId === null || rowId === undefined) {
+    // Acts on the WHOLE selection unless a specific row is named (the row context menu names one).
+    // Safe to widen because nothing is deleted here: an existing row is only marked, and the marks
+    // are what Save turns into DELETEs — so a mis-aimed Delete is undone by pressing it again, or
+    // by not saving.
+    const targets = targetRowId !== undefined ? [targetRowId] : Array.from(selectedRowIds);
+    if (targets.length === 0) {
       setErrorMsg(t('dataGrid.errNoRowSelected'));
       return;
     }
 
-    const isTemp = String(rowId).startsWith('temp_');
-    if (isTemp) {
-      setInserts(inserts.filter(row => row.__tempId !== rowId));
-    } else {
+    const temps = targets.filter(id => String(id).startsWith('temp_'));
+    const existing = targets.filter(id => !String(id).startsWith('temp_'));
+
+    if (temps.length > 0) {
+      const drop = new Set(temps);
+      setInserts(inserts.filter(row => !drop.has(row.__tempId)));
+    }
+    if (existing.length > 0) {
       setDeletes(prev => {
         const next = new Set(prev);
-        if (next.has(rowId)) {
-          next.delete(rowId); // toggle off
-        } else {
-          next.add(rowId); // toggle on
+        // Toggle per row, so pressing Delete twice on the same selection puts it back exactly.
+        for (const id of existing) {
+          if (next.has(id)) next.delete(id);
+          else next.add(id);
         }
         return next;
       });
@@ -1044,16 +1075,38 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
     });
   };
 
+  /**
+   * The rows a context-menu copy acts on: the whole selection when the clicked row is part of it,
+   * and just that row otherwise.
+   *
+   * `selectForContextMenu` has already arranged for exactly that — right-clicking outside the
+   * selection replaces it — so this only has to read it back, in SCREEN order. Reading it from
+   * `orderedRowKeys` rather than from the Set is what makes a copied Markdown table come out in the
+   * order the user is looking at; a `Set` preserves insertion order, which for a Shift range is the
+   * click order, not the row order.
+   */
+  const rowsToCopy = (clicked: any): any[] => {
+    if (selectedRowIds.size <= 1) return [clicked];
+    const byKey = new Map<any, any>();
+    rows.forEach((row, idx) => {
+      const id = row[primaryKey];
+      byKey.set(id !== undefined && id !== null ? id : `__idx_${idx}`, row);
+    });
+    displayedInserts.forEach(row => byKey.set(row.__tempId, row));
+    const picked = orderedRowKeys.filter(k => selectedRowIds.has(k)).map(k => byKey.get(k));
+    return picked.filter(Boolean).length > 0 ? picked.filter(Boolean) : [clicked];
+  };
+
+  const csvCell = (v: any) => {
+    if (v === null || v === undefined) return '';
+    const s = String(v);
+    return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+
   const copyRowAsCSV = (row: any, withHeader: boolean) => {
     const cols = activeColumns.map(c => c.name);
-    const vals = cols.map(c => {
-      const v = row[c];
-      if (v === null || v === undefined) return '';
-      const s = String(v);
-      return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
-    });
-    const csv = withHeader ? `${cols.join(',')}\n${vals.join(',')}` : vals.join(',');
-    copyToClipboard(csv);
+    const lines = rowsToCopy(row).map(r => cols.map(c => csvCell(r[c])).join(','));
+    copyToClipboard(withHeader ? [cols.join(','), ...lines].join('\n') : lines.join('\n'));
     setSuccessMsg(t('dataGrid.copiedRowCsv'));
     setTimeout(() => setSuccessMsg(null), 2000);
   };
@@ -1061,12 +1114,17 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
   const copyRowAsSQL = (row: any) => {
     const cols = activeColumns.map(c => c.name);
     const colList = cols.map(c => `\`${c}\``).join(', ');
-    const valList = cols.map(c => {
-      const v = row[c];
-      if (v === null || v === undefined) return 'NULL';
-      return `'${String(v).replace(/'/g, "''")}'`;
-    }).join(', ');
-    copyToClipboard(`INSERT INTO \`${tableName}\` (${colList}) VALUES (${valList});`);
+    // One statement per row rather than one multi-VALUES INSERT: these are pasted into an editor
+    // and edited by hand, and a row that turns out to be wrong is then deleted by deleting its line.
+    const statements = rowsToCopy(row).map(r => {
+      const valList = cols.map(c => {
+        const v = r[c];
+        if (v === null || v === undefined) return 'NULL';
+        return `'${String(v).replace(/'/g, "''")}'`;
+      }).join(', ');
+      return `INSERT INTO \`${tableName}\` (${colList}) VALUES (${valList});`;
+    });
+    copyToClipboard(statements.join('\n'));
     setSuccessMsg(t('dataGrid.copiedRowSql'));
     setTimeout(() => setSuccessMsg(null), 2000);
   };
@@ -1075,9 +1133,23 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
     const cols = activeColumns.map(c => c.name);
     const header = `| ${cols.join(' | ')} |`;
     const sep = `| ${cols.map(() => '---').join(' | ')} |`;
-    const vals = `| ${cols.map(c => String(row[c] ?? '')).join(' | ')} |`;
-    copyToClipboard(`${header}\n${sep}\n${vals}`);
+    // `|` inside a value would end the cell early and shift every column after it, which turns a
+    // pasted table into a silently misaligned one.
+    const body = rowsToCopy(row).map(
+      r => `| ${cols.map(c => String(r[c] ?? '').replace(/\|/g, '\\|')).join(' | ')} |`,
+    );
+    copyToClipboard([header, sep, ...body].join('\n'));
     setSuccessMsg(t('dataGrid.copiedRowMarkdown'));
+    setTimeout(() => setSuccessMsg(null), 2000);
+  };
+
+  const copyRowAsJson = (row: any) => {
+    const cols = activeColumns.map(c => c.name);
+    const objects = rowsToCopy(row).map(r =>
+      Object.fromEntries(cols.map(c => [c, r[c] ?? null])),
+    );
+    copyToClipboard(JSON.stringify(objects, null, 2));
+    setSuccessMsg(t('dataGrid.copiedRowJson'));
     setTimeout(() => setSuccessMsg(null), 2000);
   };
 
@@ -1410,6 +1482,75 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
     return inserts.filter(row => rowMatchesSearch(row, quickSearchQuery, {}));
   }, [inserts, quickSearchQuery, rowMatchesSearch]);
 
+  /**
+   * Every selectable row's key, in the order they appear on screen — existing rows first, then the
+   * rows added in this session, which is how the two `.map()`s below render them.
+   *
+   * A Shift range is a range of what the user can SEE. Computing it from `rows` alone would make a
+   * shift-click span rows hidden by the quick search, so the selection would include rows that are
+   * not on screen and cannot be unselected by clicking.
+   */
+  const orderedRowKeys = React.useMemo(() => {
+    const keys = rows.map((row, idx) => {
+      const id = row[primaryKey];
+      return id !== undefined && id !== null ? id : `__idx_${idx}`;
+    });
+    return keys.concat(displayedInserts.map(row => row.__tempId));
+  }, [rows, displayedInserts, primaryKey]);
+
+  /**
+   * One click on a row, with the three behaviours every table has:
+   *
+   * - plain: select just this row;
+   * - Ctrl/Cmd: add or remove this row, leaving the rest alone;
+   * - Shift: select from the anchor to here, replacing the selection.
+   *
+   * Shift deliberately does not move the anchor, so holding Shift and clicking around resizes one
+   * range instead of chaining ranges end to end. Ctrl does move it, because the row just toggled is
+   * what the next Shift should measure from.
+   */
+  const handleRowClick = useCallback(
+    (key: any, e: React.MouseEvent) => {
+      if (e.shiftKey && anchorRowId !== null) {
+        const from = orderedRowKeys.indexOf(anchorRowId);
+        const to = orderedRowKeys.indexOf(key);
+        if (from >= 0 && to >= 0) {
+          const [lo, hi] = from <= to ? [from, to] : [to, from];
+          setSelectedRowIds(new Set(orderedRowKeys.slice(lo, hi + 1)));
+          return;
+        }
+        // The anchor scrolled out of the filtered list: fall through to a plain select rather than
+        // silently selecting nothing.
+      }
+      if (e.ctrlKey || e.metaKey) {
+        setSelectedRowIds(prev => {
+          const next = new Set(prev);
+          if (next.has(key)) next.delete(key);
+          else next.add(key);
+          return next;
+        });
+        setAnchorRowId(key);
+        return;
+      }
+      setSelectedRowId(key);
+    },
+    [anchorRowId, orderedRowKeys, setSelectedRowId],
+  );
+
+  /**
+   * What a right-click does to the selection: nothing, if the row it landed on is already part of
+   * it. Right-clicking inside a selection to reach "copy" must not first throw that selection away
+   * — that is the one interaction where clearing it destroys exactly what the user was about to act
+   * on. On a row outside the selection it behaves like a plain click.
+   */
+  const selectForContextMenu = useCallback(
+    (key: any) => {
+      setSelectedRowIds(prev => (prev.has(key) ? prev : new Set([key])));
+      setAnchorRowId(key);
+    },
+    [],
+  );
+
   return (
     <div className="table-data-view">
       {viewMode === 'data' && showFilterBar && (
@@ -1699,17 +1840,17 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
                   const hasPK = rowId !== undefined && rowId !== null;
                   const selectionKey = hasPK ? rowId : `__idx_${index}`;
                   const isDeleted = hasPK && deletes.has(rowId);
-                  const isSelected = selectedRowId === selectionKey;
+                  const isSelected = selectedRowIds.has(selectionKey);
                   const rowUpdates = hasPK ? (updates[rowId] || {}) : {};
 
                   return (
                     <tr
                       key={selectionKey}
                       className={`${isDeleted ? 'grid-row-deleted' : ''} ${isSelected ? 'selected' : ''}`}
-                      onClick={() => setSelectedRowId(selectionKey)}
+                      onClick={(e) => handleRowClick(selectionKey, e)}
                       onContextMenu={(e) => {
                         e.preventDefault();
-                        setSelectedRowId(selectionKey);
+                        selectForContextMenu(selectionKey);
                         const colName = (e.target as HTMLElement).closest('td')?.dataset.col || activeColumns[0]?.name || '';
                         const cellVal = colName in rowUpdates ? rowUpdates[colName] : row[colName];
                         setContextMenu({ x: e.clientX, y: e.clientY, rowId: selectionKey, row, colName, cellValue: cellVal });
@@ -1827,15 +1968,15 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
                 {/* 2. Render new added rows */}
                 {displayedInserts.map((row) => {
                   const rowId = row.__tempId;
-                  const isSelected = selectedRowId === rowId;
+                  const isSelected = selectedRowIds.has(rowId);
                   return (
                     <tr
                       key={rowId}
                       className={`grid-row-added ${isSelected ? 'selected' : ''}`}
-                      onClick={() => setSelectedRowId(rowId)}
+                      onClick={(e) => handleRowClick(rowId, e)}
                       onContextMenu={(e) => {
                         e.preventDefault();
-                        setSelectedRowId(rowId);
+                        selectForContextMenu(rowId);
                         const colName = (e.target as HTMLElement).closest('td')?.dataset.col || activeColumns[0]?.name || '';
                         setContextMenu({ x: e.clientX, y: e.clientY, rowId, row, colName, cellValue: row[colName] });
                       }}
@@ -2048,7 +2189,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
               <button
                 className="gp-btn icon danger"
                 onClick={handleDeleteRow}
-                disabled={selectedRowId === null}
+                disabled={selectedRowIds.size === 0}
                 title={t('dataGrid.deleteRowTitle')}
               >
                 <Minus size={13} />
@@ -2732,6 +2873,9 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
           </button>
           <button className="context-menu-item" onClick={() => { setContextMenu(null); copyRowAsMarkdown(contextMenu.row); }}>
             <span>📝</span> Markdown Table
+          </button>
+          <button className="context-menu-item" onClick={() => { setContextMenu(null); copyRowAsJson(contextMenu.row); }}>
+            <span>📦</span> {t('dataGrid.ctxJsonArray')}
           </button>
         </div>
       )}
