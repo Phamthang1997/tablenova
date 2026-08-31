@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { splitStatements, statementAt, analyzeStatements, resolveAliases, collectTableRefs, collectCteNames, describeStatement, enclosingCall, valuePosition, isSchemaChangingSql, findUnsafeStatements } from '../../sql/statements';
+import { splitStatements, statementAt, analyzeStatements, resolveAliases, collectTableRefs, collectCteNames, describeStatement, enclosingCall, valuePosition, isSchemaChangingSql, findUnsafeStatements, applyLimitToSql } from '../../sql/statements';
 import { formatSql, minifySql } from '../../sql/format';
 
 describe('splitStatements', () => {
@@ -664,5 +664,57 @@ describe('collectCteNames', () => {
 
   it('tên được hạ về chữ thường để so khớp không phân biệt hoa thường', () => {
     expect(names('WITH Recent AS (SELECT 1) SELECT * FROM RECENT')).toEqual(['recent']);
+  });
+});
+
+describe('applyLimitToSql', () => {
+  const cap = (sql: string) => applyLimitToSql(sql, '100 rows');
+
+  it('thêm LIMIT vào SELECT chưa có', () => {
+    expect(cap('SELECT * FROM t')).toBe('SELECT * FROM t LIMIT 100;');
+  });
+
+  it('thêm cho cả WITH', () => {
+    expect(cap('WITH a AS (SELECT 1) SELECT * FROM a')).toContain('LIMIT 100;');
+  });
+
+  it('không đụng vào câu đã có LIMIT', () => {
+    expect(cap('SELECT * FROM t LIMIT 5')).toBe('SELECT * FROM t LIMIT 5');
+  });
+
+  it('"No limit" trả về nguyên văn', () => {
+    expect(applyLimitToSql('SELECT * FROM t', 'No limit')).toBe('SELECT * FROM t');
+  });
+
+  it('không đụng vào câu ghi', () => {
+    expect(cap('UPDATE t SET a = 1')).toBe('UPDATE t SET a = 1');
+    expect(cap('INSERT INTO t VALUES (1)')).toBe('INSERT INTO t VALUES (1)');
+  });
+
+  // LIMIT phải đứng TRƯỚC mệnh đề khoá; nối vào cuối là lỗi cú pháp trên cả Postgres lẫn MySQL.
+  it('không thêm sau FOR UPDATE / FOR SHARE', () => {
+    expect(cap('SELECT * FROM t WHERE id = 1 FOR UPDATE')).toBe('SELECT * FROM t WHERE id = 1 FOR UPDATE');
+    expect(cap('SELECT * FROM t FOR SHARE')).toBe('SELECT * FROM t FOR SHARE');
+    expect(cap('SELECT * FROM t FOR NO KEY UPDATE')).toBe('SELECT * FROM t FOR NO KEY UPDATE');
+  });
+
+  it('không thêm sau LOCK IN SHARE MODE của MySQL', () => {
+    expect(cap('SELECT * FROM t LOCK IN SHARE MODE')).toBe('SELECT * FROM t LOCK IN SHARE MODE');
+  });
+
+  it('không thêm sau INTO OUTFILE / INTO @var', () => {
+    expect(cap("SELECT * FROM t INTO OUTFILE '/tmp/a.csv'")).toContain('INTO OUTFILE');
+    expect(cap("SELECT * FROM t INTO OUTFILE '/tmp/a.csv'")).not.toContain('LIMIT 100');
+    expect(cap('SELECT a INTO @v FROM t')).not.toContain('LIMIT 100');
+  });
+
+  it('áp cho từng câu trong một script nhiều câu', () => {
+    const out = cap('SELECT * FROM a;\nSELECT * FROM b;');
+    expect(out.match(/LIMIT 100/g)).toHaveLength(2);
+  });
+
+  it('nhiều câu: chỉ câu SELECT bị áp, câu ghi giữ nguyên', () => {
+    const out = cap('UPDATE t SET a = 1;\nSELECT * FROM t;');
+    expect(out.match(/LIMIT 100/g)).toHaveLength(1);
   });
 });

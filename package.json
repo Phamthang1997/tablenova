@@ -1,5 +1,5 @@
 {
-  "name": "table",
+  "name": "tablegrid",
   "private": true,
   "version": "0.1.1",
   "license": "AGPL-3.0-or-later",
@@ -17,7 +17,11 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "lint": "oxlint"
+    "lint": "oxlint",
+    "postinstall": "node scripts/setup-blame.mjs",
+    "fmt:rust": "cd src-tauri && cargo fmt",
+    "lint:rust": "cd src-tauri && cargo clippy --all-targets",
+    "test:rust": "cd src-tauri && cargo test --lib"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",

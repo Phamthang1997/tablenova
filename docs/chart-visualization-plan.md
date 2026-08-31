@@ -1,4 +1,4 @@
-# Thiết kế & Kế hoạch Triển khai: Visual Chart & BI Lite (Sử dụng Chart.js)
+﻿# Thiết kế & Kế hoạch Triển khai: Visual Chart & BI Lite (Sử dụng Chart.js)
 
 > **Mục tiêu:** Bổ sung nút chuyển đổi nhanh giữa chế độ xem **Bảng dữ liệu (Data Grid)** và **Biểu đồ trực quan (Visual Chart)** ngay trong `SqlEditor` (Result Pane) và `DataGrid` (Table Data View). Giúp người dùng quan sát xu hướng, so sánh chỉ số, vẽ báo cáo nhanh mà không cần export ra Excel hay cài đặt Metabase/Superset.
 >
@@ -39,7 +39,7 @@ flowchart TD
 ### 2.1. Động cơ Chart.js Canvas (Tối ưu cho Desktop & React 19)
 * **Siêu nhẹ (~60 KB):** Sử dụng Tree-shaking từ `chart.js` (chỉ đăng ký các module cần thiết như `CategoryScale`, `LinearScale`, `BarElement`, `PointElement`, `LineElement`, `ArcElement`, `Tooltip`, `Legend`, `Filler`).
 * **Hiệu năng Canvas cao:** Khả năng vẽ mượt mà hàng ngàn điểm dữ liệu với animation mượt và tiêu thụ CPU/RAM cực thấp.
-* **Tự động thích ứng giao diện (Theme Adaptive):** Bảng màu HSL hài hòa tự động điều chỉnh theo Theme Dark / Light của TableNova (màu chữ, đường lưới gridlines, màu nền popover tooltip).
+* **Tự động thích ứng giao diện (Theme Adaptive):** Bảng màu HSL hài hòa tự động điều chỉnh theo Theme Dark / Light của TABLEGRID (màu chữ, đường lưới gridlines, màu nền popover tooltip).
 
 ### 2.2. Trí thông minh Nhận diện Cột (Smart Column Binding)
 1. **Trục X (Dimension / Category):**

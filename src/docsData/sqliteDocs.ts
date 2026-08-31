@@ -60,7 +60,7 @@ export const SQLITE_DOCS: DocEntry[] = [
     params: [{ name: 'X', type: 'text | blob', desc: 'String or BLOB expression' }],
     returns: 'integer',
     since: 'SQLite 3.0',
-    examples: ["SELECT LENGTH('TableNova'); -- Returns 9"],
+    examples: ["SELECT LENGTH('TableGrid'); -- Returns 9"],
     officialUrl: 'https://sqlite.org/lang_corefunc.html#length',
   },
   {
@@ -106,7 +106,7 @@ export const SQLITE_DOCS: DocEntry[] = [
     ],
     returns: 'text',
     since: 'SQLite 3.0',
-    examples: ["SELECT SUBSTR('TableNova', 1, 5); -- Returns 'Table'"],
+    examples: ["SELECT SUBSTR('TableGrid', 1, 5); -- Returns 'Table'"],
     officialUrl: 'https://sqlite.org/lang_corefunc.html#substr',
   },
   {
@@ -124,7 +124,7 @@ export const SQLITE_DOCS: DocEntry[] = [
     ],
     returns: 'text',
     since: 'SQLite 3.0.8',
-    examples: ["SELECT REPLACE('hello world', 'world', 'TableNova');"],
+    examples: ["SELECT REPLACE('hello world', 'world', 'TableGrid');"],
     officialUrl: 'https://sqlite.org/lang_corefunc.html#replace',
   },
   {

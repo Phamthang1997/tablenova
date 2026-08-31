@@ -1,0 +1,5 @@
+# Bulk reformats. `git blame --ignore-revs-file .git-blame-ignore-revs`, or set it once with
+# `git config blame.ignoreRevsFile .git-blame-ignore-revs`.
+
+# style: format the Rust crate with rustfmt
+0ae2c612984f8063e4498038b6eee4e4b344ce3a

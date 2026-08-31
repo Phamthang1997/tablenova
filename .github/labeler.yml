@@ -1,4 +1,4 @@
-# GitHub Action Labeler Configuration for TABLENOVA
+# GitHub Action Labeler Configuration for TABLEGRID
 # Automatically labels Pull Requests based on modified file paths
 
 'area: frontend':

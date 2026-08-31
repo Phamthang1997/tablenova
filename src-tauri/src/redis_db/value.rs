@@ -3,7 +3,7 @@
 //! `lossy_text` turns non-UTF-8 bytes into U+FFFD — that is exactly why the `binary` flag blocks
 //! editing, and why the keyspace export/import does NOT go through this path but uses DUMP/RESTORE.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 // redis::Value -> serde_json::Value (recursive), for redis_execute_cmd.
 pub(crate) fn redis_value_to_json(v: &redis::Value) -> Value {
@@ -49,7 +49,9 @@ pub(crate) fn parse_info(text: &str) -> Value {
     let mut cur_name = String::from("Server");
     for line in text.lines() {
         let line = line.trim();
-        if line.is_empty() { continue; }
+        if line.is_empty() {
+            continue;
+        }
         if let Some(rest) = line.strip_prefix("# ") {
             if !cur.is_empty() {
                 sections.insert(cur_name.clone(), Value::Object(std::mem::take(&mut cur)));

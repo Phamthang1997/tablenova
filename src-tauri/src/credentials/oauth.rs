@@ -1,7 +1,7 @@
-use tokio::net::TcpListener;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use std::time::Duration;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
 
 /// Fallback Google OAuth client id, baked in at **compile time** from `GOOGLE_CLIENT_ID`.
 ///
@@ -45,11 +45,11 @@ fn simple_url_decode(input: &str) -> String {
     while let Some(ch) = chars.next() {
         if ch == '%' {
             let hex: String = chars.by_ref().take(2).collect();
-            if hex.len() == 2 {
-                if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                    result.push(byte as char);
-                    continue;
-                }
+            if hex.len() == 2
+                && let Ok(byte) = u8::from_str_radix(&hex, 16)
+            {
+                result.push(byte as char);
+                continue;
             }
             result.push('%');
             result.push_str(&hex);
@@ -67,6 +67,7 @@ pub async fn start_google_oauth_flow(
     client_id: Option<String>,
     code_challenge: Option<String>,
 ) -> Result<OAuthCallbackResult, String> {
+    Box::pin(async move {
     // The two revoked client ids that used to be excluded here are gone with the literals: an id
     // Google has deleted now fails the same way any wrong id does, and the caller no longer has a
     // baked-in one to be silently redirected onto.
@@ -81,7 +82,7 @@ pub async fn start_google_oauth_flow(
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .map_err(|e| format!("Không thể mở cổng OAuth loopback: {}", e))?;
-    
+
     let port = listener
         .local_addr()
         .map_err(|e| e.to_string())?
@@ -144,7 +145,7 @@ pub async fn start_google_oauth_flow(
 <html lang="vi">
 <head>
   <meta charset="utf-8">
-  <title>TableNova - Xác thực thành công</title>
+  <title>TableGrid - Xác thực thành công</title>
   <style>
     body { font-family: system-ui, -apple-system, sans-serif; background: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
     .card { background: #1e293b; padding: 36px 48px; border-radius: 16px; border: 1px solid #334155; text-align: center; box-shadow: 0 16px 36px rgba(0,0,0,0.5); max-width: 440px; }
@@ -157,7 +158,7 @@ pub async fn start_google_oauth_flow(
   <div class="card">
     <div class="icon">✨</div>
     <h2>Đăng nhập thành công!</h2>
-    <p>Xác thực tài khoản Google qua Web Browser đã hoàn tất. Bạn có thể đóng tab này và quay lại ứng dụng <strong>TableNova</strong>.</p>
+    <p>Xác thực tài khoản Google qua Web Browser đã hoàn tất. Bạn có thể đóng tab này và quay lại ứng dụng <strong>TableGrid</strong>.</p>
   </div>
 </body>
 </html>"#;
@@ -179,9 +180,9 @@ pub async fn start_google_oauth_flow(
             let mut code = None;
             let mut error = None;
 
-            if let Some(first_line) = request_str.lines().next() {
-                if let Some(query_start) = first_line.find('?') {
-                    if let Some(query_end) = first_line[query_start..].find(' ') {
+            if let Some(first_line) = request_str.lines().next()
+                && let Some(query_start) = first_line.find('?')
+                    && let Some(query_end) = first_line[query_start..].find(' ') {
                         let query = &first_line[query_start + 1..query_start + query_end];
                         for pair in query.split('&') {
                             let mut parts = pair.split('=');
@@ -194,8 +195,6 @@ pub async fn start_google_oauth_flow(
                             }
                         }
                     }
-                }
-            }
 
             Ok(OAuthCallbackResult {
                 success: code.is_some(),
@@ -207,4 +206,5 @@ pub async fn start_google_oauth_flow(
         Ok(Err(e)) => Err(format!("Lỗi kết nối OAuth: {}", e)),
         Err(_) => Err("Quá thời gian xác thực (120s). Vui lòng thử lại.".to_string()),
     }
+}).await
 }

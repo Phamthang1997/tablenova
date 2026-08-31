@@ -10,14 +10,14 @@
 //   { type:"exit",   code }          -> the shell exited
 //   { type:"closed" }                -> the session has closed
 
+use crate::ssh::connect_and_auth;
+use russh::ChannelMsg;
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Mutex;
-use serde_json::{Value, json};
+use tauri::ipc::Channel;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use tauri::ipc::Channel;
-use russh::ChannelMsg;
-use crate::ssh::connect_and_auth;
 
 // Commands sent from a frontend command into the task that manages one terminal session.
 enum TermCmd {
@@ -40,13 +40,14 @@ impl TerminalSession {
 
 #[tauri::command]
 pub async fn open_ssh_terminal(
-    state: tauri::State<'_, crate::AppState>,
     profile_config: Value,
     session_id: String,
     cols: u32,
     rows: u32,
     channel: Channel<Value>,
 ) -> Result<Value, String> {
+    Box::pin(async move {
+    let state = crate::state::require_state()?;
     // If session_id already exists (reopened), close the old session first
     {
         let mut map = state.ssh_terminals.lock().map_err(|e| e.to_string())?;
@@ -115,47 +116,52 @@ pub async fn open_ssh_terminal(
     }
 
     Ok(json!({ "success": true }))
+}).await
 }
 
 #[tauri::command]
-pub async fn send_ssh_input(
-    state: tauri::State<'_, crate::AppState>,
-    session_id: String,
-    data: String,
-) -> Result<Value, String> {
-    let map = state.ssh_terminals.lock().map_err(|e| e.to_string())?;
-    if let Some(sess) = map.get(&session_id) {
-        sess.tx
-            .send(TermCmd::Input(data.into_bytes()))
-            .map_err(|_| "Phiên terminal đã đóng".to_string())?;
-    }
-    Ok(json!({ "success": true }))
+pub async fn send_ssh_input(session_id: String, data: String) -> Result<Value, String> {
+    Box::pin(async move {
+        let state = crate::state::require_state()?;
+        let map = state.ssh_terminals.lock().map_err(|e| e.to_string())?;
+        if let Some(sess) = map.get(&session_id) {
+            sess.tx
+                .send(TermCmd::Input(data.into_bytes()))
+                .map_err(|_| "Phiên terminal đã đóng".to_string())?;
+        }
+        Ok(json!({ "success": true }))
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn resize_ssh_terminal(
-    state: tauri::State<'_, crate::AppState>,
     session_id: String,
     cols: u32,
     rows: u32,
 ) -> Result<Value, String> {
-    let map = state.ssh_terminals.lock().map_err(|e| e.to_string())?;
-    if let Some(sess) = map.get(&session_id) {
-        let _ = sess.tx.send(TermCmd::Resize(cols, rows));
-    }
-    Ok(json!({ "success": true }))
+    Box::pin(async move {
+        let state = crate::state::require_state()?;
+        let map = state.ssh_terminals.lock().map_err(|e| e.to_string())?;
+        if let Some(sess) = map.get(&session_id) {
+            let _ = sess.tx.send(TermCmd::Resize(cols, rows));
+        }
+        Ok(json!({ "success": true }))
+    })
+    .await
 }
 
 #[tauri::command]
-pub async fn close_ssh_terminal(
-    state: tauri::State<'_, crate::AppState>,
-    session_id: String,
-) -> Result<Value, String> {
-    let mut map = state.ssh_terminals.lock().map_err(|e| e.to_string())?;
-    if let Some(sess) = map.remove(&session_id) {
-        sess.shutdown();
-    }
-    Ok(json!({ "success": true }))
+pub async fn close_ssh_terminal(session_id: String) -> Result<Value, String> {
+    Box::pin(async move {
+        let state = crate::state::require_state()?;
+        let mut map = state.ssh_terminals.lock().map_err(|e| e.to_string())?;
+        if let Some(sess) = map.remove(&session_id) {
+            sess.shutdown();
+        }
+        Ok(json!({ "success": true }))
+    })
+    .await
 }
 
 // The state type held in AppState.

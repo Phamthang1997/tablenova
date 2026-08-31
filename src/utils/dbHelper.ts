@@ -21,6 +21,7 @@ import type {
   GenSpec,
   GenTargets,
 } from './dataGenHelper';
+import type { ProcessListSummary, KillResult } from './processMonitorTypes';
 
 /**
  * Which backend connection commands act on. Set from `connect()`'s response, cleared by
@@ -2343,6 +2344,21 @@ export const dbHelper = {
     } catch {
       // Cancelling is "best effort": an error here leaves the user nothing to act on.
     }
+  },
+
+  /** Fetches active database connections, processlist and lock activity. */
+  async getProcessList(connId?: string): Promise<ProcessListSummary> {
+    return await invoke<ProcessListSummary>('get_process_list', withConnId({}, connId));
+  },
+
+  /** Cancels a currently running query on a connection session without disconnecting. */
+  async killProcessQuery(processId: string, connId?: string): Promise<KillResult> {
+    return await invoke<KillResult>('kill_process_query', withConnId({ processId }, connId));
+  },
+
+  /** Terminates an entire connection session. */
+  async killProcessConnection(processId: string, connId?: string): Promise<KillResult> {
+    return await invoke<KillResult>('kill_process_connection', withConnId({ processId }, connId));
   },
 };
 

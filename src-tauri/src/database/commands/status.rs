@@ -1,6 +1,6 @@
 //! Connection status: the ping latency of every connection, and the full description of one connection.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sqlx::Row;
 
 use crate::database::DbKind;
@@ -42,9 +42,11 @@ pub struct ConnectionStatusInfo {
 /// connection. A failure on one connection returns `ok: false` rather than failing the whole command — a server that has gone away
 /// is *information* the UI needs to show, not an error that hides the other N-1 connections as well.
 #[tauri::command]
-pub async fn ping_connections(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
-    let handles = state.connections.handles()?;
-    let pings = futures_util::future::join_all(handles.into_iter().map(|(id, conn)| async move {
+pub async fn ping_connections() -> Result<Value, String> {
+    Box::pin(async move {
+        let state = crate::state::require_state()?;
+        let handles = state.connections.handles()?;
+        let pings = futures_util::future::join_all(handles.into_iter().map(|(id, conn)| async move {
         let started = std::time::Instant::now();
         let ok = match &conn.kind {
             // SQLite is a shared handle behind a `Mutex`: one `SELECT 1` takes microseconds, but when the lock is
@@ -60,7 +62,9 @@ pub async fn ping_connections(state: tauri::State<'_, crate::AppState>) -> Resul
         json!({ "connId": &*id, "ok": ok, "latencyMs": started.elapsed().as_millis() as u64 })
     }))
     .await;
-    Ok(json!({ "success": true, "pings": pings }))
+        Ok(json!({ "success": true, "pings": pings }))
+    })
+    .await
 }
 
 impl ConnectionStatusInfo {
@@ -105,8 +109,10 @@ async fn mysql_status_var(pool: &sqlx::MySqlPool, sql: &'static str) -> String {
 pub async fn get_connection_status(
     // `State`/`AppState` is not imported at the top of the file — every other command in this file writes
     // the full path, and that convention is kept.
-    state: tauri::State<'_, crate::AppState>, conn_id: String,
+    conn_id: String,
 ) -> Result<ConnectionStatusInfo, String> {
+    Box::pin(async move {
+    let state = crate::state::require_state()?;
     let start = std::time::Instant::now();
     let (conn, db_type, config, has_ssh) = {
         // `.ok()`, not `?`: having no SQL connection is a TOLERATED state here — the Redis
@@ -368,4 +374,5 @@ pub async fn get_connection_status(
         cipher,
         tls_version,
     })
+}).await
 }

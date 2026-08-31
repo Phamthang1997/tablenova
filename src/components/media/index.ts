@@ -1,5 +1,5 @@
 /**
- * Media Viewer Module for TableNova.
+ * Media Viewer Module for TableGrid.
  * Provides smart detection and interactive previewing of image & media content across data grids and query results.
  */
 

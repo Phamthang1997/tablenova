@@ -25,7 +25,14 @@ pub(super) async fn read_pg(conn: &DbConnection, schema: &str) -> Result<SchemaM
             continue;
         }
         let is_view = f_bool(&row, "is_view");
-        out.insert(name.clone(), TableMeta { name, is_view, ..Default::default() });
+        out.insert(
+            name.clone(),
+            TableMeta {
+                name,
+                is_view,
+                ..Default::default()
+            },
+        );
     }
 
     let sql = format!(
@@ -52,7 +59,10 @@ pub(super) async fn read_pg(conn: &DbConnection, schema: &str) -> Result<SchemaM
                 data_type: f_str(&row, "data_type"),
                 nullable: f_bool(&row, "is_nullable"),
                 auto_increment: f_bool(&row, "is_identity")
-                    || default.as_deref().map(|d| d.contains("nextval(")).unwrap_or(false),
+                    || default
+                        .as_deref()
+                        .map(|d| d.contains("nextval("))
+                        .unwrap_or(false),
                 default,
                 comment: f_opt_str(&row, "column_comment"),
                 position,

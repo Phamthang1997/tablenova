@@ -17,7 +17,7 @@ describe('aiContextBuilder', () => {
     const schema = 'Target SQL Dialect: PostgreSQL\n\nDatabase Schema:\nTable: users\nColumns: id (INT, PK), email (VARCHAR)';
     const prompt = buildSystemPrompt(schema, 'Always use UPPERCASE SQL keywords.');
 
-    expect(prompt).toContain('TableNova AI Copilot');
+    expect(prompt).toContain('TableGrid AI Copilot');
     expect(prompt).toContain('PostgreSQL');
     expect(prompt).toContain('Table: users');
     expect(prompt).toContain('Always use UPPERCASE SQL keywords.');

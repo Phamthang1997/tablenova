@@ -233,7 +233,7 @@ body {
 }
 
 /* Only the brand gets letter-spacing. uppercase + letter-spacing used to sit on the whole
-   .title-bar-left, which rendered "TableNova" as "TABLENOVA" and left every menu label undoing it
+   .title-bar-left, which rendered "TableGrid" as "TABLEGRID" and left every menu label undoing it
    with text-transform: none. */
 .title-bar-brand {
   font-size: 12px;
@@ -1758,30 +1758,37 @@ select.form-input {
   background: rgba(2, 132, 199, 0.12);
   color: #0284c7;
 }
+
 .sb-tool-icon-wrap.emerald {
   background: rgba(16, 185, 129, 0.12);
   color: #10b981;
 }
+
 .sb-tool-icon-wrap.indigo {
   background: rgba(99, 102, 241, 0.12);
   color: #6366f1;
 }
+
 .sb-tool-icon-wrap.violet {
   background: rgba(139, 92, 246, 0.12);
   color: #8b5cf6;
 }
+
 .sb-tool-icon-wrap.amber {
   background: rgba(245, 158, 11, 0.12);
   color: #f59e0b;
 }
+
 .sb-tool-icon-wrap.rose {
   background: rgba(244, 63, 94, 0.12);
   color: #f43f5e;
 }
+
 .sb-tool-icon-wrap.cyan {
   background: rgba(6, 182, 212, 0.12);
   color: #06b6d4;
 }
+
 .sb-tool-icon-wrap.teal {
   background: rgba(20, 184, 166, 0.12);
   color: #14b8a6;
@@ -1791,30 +1798,37 @@ select.form-input {
   background: rgba(56, 189, 248, 0.18);
   color: #38bdf8;
 }
+
 [data-theme='dark'] .sb-tool-icon-wrap.emerald {
   background: rgba(52, 211, 153, 0.18);
   color: #34d399;
 }
+
 [data-theme='dark'] .sb-tool-icon-wrap.indigo {
   background: rgba(129, 140, 248, 0.18);
   color: #818cf8;
 }
+
 [data-theme='dark'] .sb-tool-icon-wrap.violet {
   background: rgba(167, 139, 250, 0.18);
   color: #a78bfa;
 }
+
 [data-theme='dark'] .sb-tool-icon-wrap.amber {
   background: rgba(251, 191, 36, 0.18);
   color: #fbbf24;
 }
+
 [data-theme='dark'] .sb-tool-icon-wrap.rose {
   background: rgba(251, 113, 133, 0.18);
   color: #fb7185;
 }
+
 [data-theme='dark'] .sb-tool-icon-wrap.cyan {
   background: rgba(34, 211, 238, 0.18);
   color: #22d3ee;
 }
+
 [data-theme='dark'] .sb-tool-icon-wrap.teal {
   background: rgba(45, 212, 191, 0.18);
   color: #2dd4bf;
@@ -3102,7 +3116,7 @@ select.form-input {
 }
 
 /* ==========================================================================
-   TableNova AI Copilot Panel & Smart Chat UI (Theme Adaptive)
+   TableGrid AI Copilot Panel & Smart Chat UI (Theme Adaptive)
    ========================================================================== */
 
 .ai-panel {
@@ -9247,7 +9261,7 @@ input.rename-input {
 }
 
 
-/* ————— The "About TableNova" dialog ————— */
+/* ————— The "About TableGrid" dialog ————— */
 .about-dialog {
   position: relative;
   width: 420px;
@@ -11838,10 +11852,108 @@ input.rename-input {
   width: 14px;
   font-weight: bold;
   color: var(--win-accent);
+  padding-right: 5px;
 }
 
 .sql-item-icon {
   flex-shrink: 0;
+}
+
+/* SQL Editor Results Bar Controls (Grid / Chart View Modes & Badges) */
+.sql-results-controls {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 2px 0;
+}
+
+.sql-view-modes {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sql-view-btn {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.sql-view-btn.btn-secondary {
+  background: var(--win-bg-btn-secondary, #ffffff);
+  border: 1px solid var(--win-border);
+  color: var(--win-text-btn-secondary, var(--win-text-primary));
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.sql-view-btn.btn-secondary:hover {
+  background: var(--win-bg-btn-secondary-hover, #f8fafc);
+  border-color: var(--win-accent);
+  color: var(--win-accent);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.10);
+}
+
+.sql-view-btn.btn-primary {
+  background: var(--win-accent);
+  border: 1px solid var(--win-accent-secondary);
+  color: #ffffff !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+.sql-view-btn.btn-primary:hover {
+  background: var(--win-accent-secondary);
+}
+
+[data-theme='dark'] .sql-view-btn.btn-secondary {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--win-border);
+  color: var(--win-text-primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+
+[data-theme='dark'] .sql-view-btn.btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: var(--win-accent);
+  color: var(--win-accent);
+}
+
+.sql-badge-editable {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 9px;
+  color: var(--st-ok);
+  border: 1px solid var(--st-ok);
+  white-space: nowrap;
+}
+
+.sql-badge-readonly {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 9px;
+  color: var(--win-text-disabled);
+  border: 1px solid var(--win-border);
+  white-space: nowrap;
+}
+
+.sql-edit-btn {
+  padding: 2px 6px;
+  font-size: 11px;
+  height: 22px;
+}
+
+.sql-edit-btn-save {
+  background: var(--st-ok);
+  border-color: var(--st-ok);
 }
 
 /* ==========================================================================
@@ -12809,7 +12921,7 @@ input.rename-input {
   padding: 8px 10px;
 }
 
-.jobs-row + .jobs-row {
+.jobs-row+.jobs-row {
   border-top: 1px solid var(--win-border);
 }
 
@@ -13355,6 +13467,7 @@ input.rename-input {
   color: var(--st-danger, #ef4444);
   font-weight: 700;
 }
+
 /* ============================================================
    The Redis workspace
    ============================================================
@@ -14613,13 +14726,33 @@ input.rename-input {
 
 /* Fixed-width table columns. Named after their pixel width: these are real column widths, not a
    concept — calling one `.redis-col-id` would mean renaming it the next time 60px becomes 70px. */
-.redis-col-60 { width: 60px; }
-.redis-col-80 { width: 80px; }
-.redis-col-90 { width: 90px; }
-.redis-col-110 { width: 110px; }
-.redis-col-130 { width: 130px; }
-.redis-col-150 { width: 150px; }
-.redis-col-bar { width: 30%; }
+.redis-col-60 {
+  width: 60px;
+}
+
+.redis-col-80 {
+  width: 80px;
+}
+
+.redis-col-90 {
+  width: 90px;
+}
+
+.redis-col-110 {
+  width: 110px;
+}
+
+.redis-col-130 {
+  width: 130px;
+}
+
+.redis-col-150 {
+  width: 150px;
+}
+
+.redis-col-bar {
+  width: 30%;
+}
 
 /* ---- The Redis dialogs (PromptDialog, BulkDeleteDialog) ----
    `ModalBody style={{ gap }}` stays as it is: that is `Modal.tsx`'s API, and its inline style
@@ -15789,7 +15922,7 @@ input.rename-input {
 }
 
 /* ==========================================================================
-   Media / Image Viewer Component Styles (TableNova)
+   Media / Image Viewer Component Styles (TableGrid)
    Adheres to AGENTS.md: pure CSS classes, theme variables, no hardcoded inline styles.
    ========================================================================== */
 
@@ -15918,6 +16051,7 @@ input.rename-input {
     opacity: 0;
     transform: scale(0.96) translateY(4px);
   }
+
   to {
     opacity: 1;
     transform: scale(1) translateY(0);
@@ -16000,8 +16134,13 @@ input.rename-input {
 }
 
 @keyframes mediaBackdropFadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 .media-lightbox-container {
@@ -16288,6 +16427,16 @@ input.rename-input {
   border: 1px solid var(--win-border, rgba(255, 255, 255, 0.08));
 }
 
+/* Same pill as `.bi-badge-count`, in the warning colour: the chart is showing fewer points than
+   the data has. It sits next to the row count on purpose — the two numbers only make sense read
+   together. */
+.bi-badge-count.bi-badge-warn {
+  background: transparent;
+  color: var(--st-warn);
+  border-color: var(--st-warn);
+  cursor: help;
+}
+
 .bi-close-btn {
   background: transparent;
   border: none;
@@ -16337,36 +16486,34 @@ input.rename-input {
 .bi-btn-group {
   display: flex;
   align-items: center;
-  background: var(--win-bg-card, rgba(255, 255, 255, 0.04));
-  border: 1px solid var(--win-border, rgba(255, 255, 255, 0.1));
-  border-radius: 6px;
-  padding: 2px;
-  gap: 2px;
+  gap: 4px;
 }
 
 .bi-type-btn {
   background: transparent;
-  border: none;
+  border: 1px solid var(--win-border, rgba(255, 255, 255, 0.1));
   color: var(--win-text-secondary, #94a3b8);
   font-size: 11px;
   font-weight: 500;
-  padding: 3px 7px;
-  border-radius: 4px;
+  padding: 3px 8px;
+  border-radius: 6px;
   cursor: pointer;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 4px;
   transition: all 0.12s ease;
 }
 
 .bi-type-btn:hover {
-  color: var(--win-text-primary, #ffffff);
-  background: rgba(255, 255, 255, 0.06);
+  color: var(--win-accent);
+  border-color: var(--win-accent);
+  background: var(--win-bg-hover, rgba(255, 255, 255, 0.05));
 }
 
 .bi-type-btn.active {
-  background: var(--win-accent, #3b82f6);
-  color: #ffffff;
+  background: var(--win-accent-glow, rgba(59, 130, 246, 0.15));
+  border-color: var(--win-accent);
+  color: var(--win-accent);
   font-weight: 600;
 }
 
@@ -16624,22 +16771,25 @@ input.rename-input {
 }
 
 [data-theme='light'] .bi-btn-group {
-  background: #f1f5f9;
-  border-color: #e2e8f0;
+  background: transparent;
+  border-color: transparent;
 }
 
 [data-theme='light'] .bi-type-btn {
   color: #64748b;
+  border-color: var(--win-border, #e2e8f0);
 }
 
 [data-theme='light'] .bi-type-btn:hover {
-  color: #0f172a;
-  background: #e2e8f0;
+  color: var(--win-accent);
+  border-color: var(--win-accent);
+  background: rgba(0, 0, 0, 0.04);
 }
 
 [data-theme='light'] .bi-type-btn.active {
-  background: var(--win-accent, #3b82f6);
-  color: #ffffff;
+  background: var(--win-accent-glow, rgba(59, 130, 246, 0.12));
+  border-color: var(--win-accent);
+  color: var(--win-accent);
 }
 
 [data-theme='light'] .bi-select {
@@ -17685,5 +17835,3 @@ input.rename-input {
   max-width: 420px;
   line-height: 1.5;
 }
-
-

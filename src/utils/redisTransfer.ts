@@ -7,10 +7,10 @@
 //
 // FORMAT: NDJSON, one key per line.
 //
-//   {"tablenova":"redis-keys","version":1,"createdAt":"…","db":0,"pattern":"user:*"}
+//   {"tablegrid":"redis-keys","version":1,"createdAt":"…","db":0,"pattern":"user:*"}
 //   {"key":"user:1","type":"string","ttlMs":-1,"payload":"<base64 DUMP>"}
 //   …
-//   {"tablenova":"redis-keys-end","keys":123}
+//   {"tablegrid":"redis-keys-end","keys":123}
 //
 // Three decisions behind it:
 //
@@ -68,7 +68,8 @@ export interface RedisDumpEntry {
 }
 
 export interface TransferHeader {
-  tablenova: string;
+  tablegrid: string;
+  tablenova?: string;
   version: number;
   createdAt: string;
   db: number;
@@ -210,7 +211,7 @@ export async function buildRedisExport(
   const wantType = (spec.typeFilter || '').trim();
   const lines: string[] = [
     JSON.stringify({
-      tablenova: TRANSFER_KIND,
+      tablegrid: TRANSFER_KIND,
       version: TRANSFER_VERSION,
       createdAt: spec.createdAt,
       db: spec.db,
@@ -267,7 +268,7 @@ export async function buildRedisExport(
   // has none, so that on import it shows up as "possibly incomplete" rather than looking whole.
   const complete = !capped && !stopped;
   if (complete) {
-    lines.push(JSON.stringify({ tablenova: TRANSFER_END_KIND, keys: written }));
+    lines.push(JSON.stringify({ tablegrid: TRANSFER_END_KIND, keys: written }));
   }
 
   return {
@@ -326,9 +327,10 @@ export function parseRedisExport(text: string): ParsedExport {
 
     const obj = (parsed && typeof parsed === 'object' ? parsed : {}) as Record<string, unknown>;
 
-    if (obj.tablenova === TRANSFER_KIND) {
+    if (obj.tablegrid === TRANSFER_KIND || obj.tablenova === TRANSFER_KIND) {
       out.header = {
-        tablenova: String(obj.tablenova),
+        tablegrid: String(obj.tablegrid || obj.tablenova),
+        tablenova: String(obj.tablenova || obj.tablegrid),
         version: typeof obj.version === 'number' ? obj.version : 0,
         createdAt: typeof obj.createdAt === 'string' ? obj.createdAt : '',
         db: typeof obj.db === 'number' ? obj.db : 0,
@@ -336,7 +338,7 @@ export function parseRedisExport(text: string): ParsedExport {
       };
       continue;
     }
-    if (obj.tablenova === TRANSFER_END_KIND) {
+    if (obj.tablegrid === TRANSFER_END_KIND || obj.tablenova === TRANSFER_END_KIND) {
       out.truncated = false;
       out.declaredKeys = typeof obj.keys === 'number' ? obj.keys : null;
       continue;

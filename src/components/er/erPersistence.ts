@@ -5,7 +5,7 @@
 
 import type { ERLayoutPositions } from './erTypes';
 
-const STORAGE_PREFIX = 'tablenova:er-layout';
+const STORAGE_PREFIX = 'tablegrid:er-layout';
 
 function buildStorageKey(connId: string, database?: string, schema?: string): string {
   const dbPart = database ? database.trim() : 'default';

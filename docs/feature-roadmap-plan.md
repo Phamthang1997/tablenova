@@ -1,6 +1,6 @@
-# Kế hoạch Phát triển & Lộ trình Tính năng Mới cho TableNova
+﻿# Kế hoạch Phát triển & Lộ trình Tính năng Mới cho TABLEGRID
 
-Tài liệu này tổng hợp phân tích kiến trúc, thiết kế UX/UI và giải pháp kỹ thuật cho các tính năng tiếp theo nhằm nâng tầm TableNova trở thành một Database Client chuyên nghiệp hàng đầu (sánh ngang TablePlus, DataGrip, DBeaver).
+Tài liệu này tổng hợp phân tích kiến trúc, thiết kế UX/UI và giải pháp kỹ thuật cho các tính năng tiếp theo nhằm nâng tầm TABLEGRID trở thành một Database Client chuyên nghiệp hàng đầu (sánh ngang TablePlus, DataGrip, DBeaver).
 
 ---
 
@@ -9,7 +9,7 @@ Tài liệu này tổng hợp phân tích kiến trúc, thiết kế UX/UI và g
 | STT | Tính năng | Mục tiêu | Độ ưu tiên |
 |:---|:---|:---|:---:|
 | **1** | **Tự động cập nhật ứng dụng (Tauri Auto-Updater)** | Giúp người dùng nhận bản cập nhật mới tự động qua GitHub Releases mà không cần tải lại file `.exe`/`.dmg` thủ công. | **P0 (Cao nhất)** |
-| **2** | **Tích hợp MCP Server nội bộ (Built-in Model Context Protocol)** | Mở Local MCP Server (127.0.0.1) cho phép Cursor, Claude Desktop, Raycast truy vấn database qua TableNova có bảo vệ. | **P0 (Cao nhất)** |
+| **2** | **Tích hợp MCP Server nội bộ (Built-in Model Context Protocol)** | Mở Local MCP Server (127.0.0.1) cho phép Cursor, Claude Desktop, Raycast truy vấn database qua TABLEGRID có bảo vệ. | **P0 (Cao nhất)** |
 | **3** | **Sơ đồ quan hệ bảng trực quan (Interactive ER Diagram)** | Quét và trực quan hóa cấu trúc bảng, khóa ngoại (Foreign Keys) thành sơ đồ node tương tác, zoom/pan và xuất ảnh. | **P1** |
 | **4** | **Giám sát thời gian thực & Hủy truy vấn (Live Processlist & Kill Query)** | Giám sát các truy vấn đang chạy trên PostgreSQL/MySQL, phát hiện khóa (Locks) và hủy truy vấn bị treo với 1-click. | **P1** |
 | **5** | **Trực quan hóa kết quả truy vấn (Query Result Charts)** | Chuyển đổi bảng kết quả `SELECT` thành biểu đồ (Bar, Line, Pie, Area) trực tiếp trong SQL Editor. | **P2** |
@@ -26,13 +26,13 @@ Tài liệu này tổng hợp phân tích kiến trúc, thiết kế UX/UI và g
 
 ### 1.2. Luồng hoạt động (Workflow)
 1. **Bảo mật (Chữ ký số - Signing)**:
-   - Sinh cặp khóa: `npx @tauri-apps/cli signer generate -w ~/.tauri/tablenova.key`.
+   - Sinh cặp khóa: `npx @tauri-apps/cli signer generate -w ~/.tauri/TABLEGRID.key`.
    - **Public Key**: Đưa vào file `tauri.conf.json`.
    - **Private Key**: Lưu vào GitHub Actions Secrets (`TAURI_SIGNING_PRIVATE_KEY`).
 2. **Khi Build Release trên GitHub Actions**:
    - Khi tạo GitHub Tag (`v0.1.2`), GitHub Actions tự động build các target (Windows `.exe`/`.msi`, macOS `.dmg`/`.app`).
    - Tự động sinh file `latest.json` chứa: version, link download, changelog, signature hash và publish lên GitHub Release.
-3. **Trong ứng dụng TableNova**:
+3. **Trong ứng dụng TABLEGRID**:
    - Khởi động app ➔ gọi `check()` từ `@tauri-apps/plugin-updater`.
    - Nếu có bản mới ➔ hiện banner/modal thông báo với changelog.
    - Bấm **Cập nhật ngay** ➔ gọi `update.downloadAndInstall()` ➔ hiển thị thanh tiến trình ➔ tự khởi động lại app.
@@ -45,7 +45,7 @@ Tài liệu này tổng hợp phân tích kiến trúc, thiết kế UX/UI và g
     "updater": {
       "pubkey": "YOUR_PUBLIC_KEY_STRING",
       "endpoints": [
-        "https://github.com/Phamthang1997/tablenova/releases/latest/download/latest.json"
+        "https://github.com/Phamthang1997/TABLEGRID/releases/latest/download/latest.json"
       ]
     }
   }
@@ -78,7 +78,7 @@ Tài liệu này tổng hợp phân tích kiến trúc, thiết kế UX/UI và g
 ## 3. 🚦 Chi tiết Kỹ thuật: Giám sát tiến trình thời gian thực (Live Processlist & Kill Query)
 
 ### 3.1. Hiện trạng & Nhu cầu
-- Khi làm việc với database lớn, nhiều truy vấn chạy nặng hoặc bị khóa hàng (Row Lock / Deadlock) làm nghẽn server. Hiện tại TableNova chưa có công cụ để quản trị viên phát hiện và ngắt truy vấn này.
+- Khi làm việc với database lớn, nhiều truy vấn chạy nặng hoặc bị khóa hàng (Row Lock / Deadlock) làm nghẽn server. Hiện tại TABLEGRID chưa có công cụ để quản trị viên phát hiện và ngắt truy vấn này.
 
 ### 3.2. Kiến trúc giải pháp
 1. **Backend Rust Handlers**:

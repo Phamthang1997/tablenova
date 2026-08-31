@@ -1,6 +1,6 @@
-# Kế hoạch: SSH Terminal xem log server (bản chỉnh cho đúng repo TableNova)
+﻿# Kế hoạch: SSH Terminal xem log server (bản chỉnh cho đúng repo TABLEGRID)
 
-Tích hợp một SSH Terminal tương tác trong TableNova dùng `xterm.js` (frontend React) và
+Tích hợp một SSH Terminal tương tác trong TABLEGRID dùng `xterm.js` (frontend React) và
 `russh` (backend Rust) để người dùng kết nối trực tiếp vào máy chủ DB, chạy lệnh xem log
 (`tail -f`, `journalctl`, ...) mà không rời ứng dụng.
 
@@ -50,7 +50,7 @@ và xác thực cả `password` lẫn `key` (`decode_secret_key`/`load_secret_ke
 > Input đi ngược qua command `send_ssh_input` (Channel chỉ một chiều backend→frontend).
 
 ### [MODIFY] `src-tauri/src/lib.rs` — **KHÔNG phải main.rs**
-`main.rs` chỉ là 6 dòng gọi `tablenova::run()`. Mọi đăng ký nằm ở `lib.rs`.
+`main.rs` chỉ là 6 dòng gọi `TABLEGRID::run()`. Mọi đăng ký nằm ở `lib.rs`.
 - Thêm `pub mod ssh_terminal;` (cạnh `pub mod ssh_tunnel;`).
 - Thêm state phiên vào `AppState` (đã có tiền lệ: `cancel_flags: Mutex<HashMap<..>>`):
   ```rust
@@ -115,4 +115,4 @@ và xác thực cả `password` lẫn `key` (`decode_secret_key`/`load_secret_ke
 | Emit event `"ssh-data"` toàn cục | Dùng **`tauri::ipc::Channel`** (đồng bộ với streaming SQL). |
 | `xterm` / `xterm-addon-fit` (deprecated) | `@xterm/xterm` / `@xterm/addon-fit`. |
 | "global mutex state" rời | State trong **`AppState`** theo pattern `cancel_flags`. |
-| Tên "TableNova" ✓ | Đã đúng (project đã đổi tên). |
+| Tên "TABLEGRID" ✓ | Đã đúng (project đã đổi tên). |

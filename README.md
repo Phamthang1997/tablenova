@@ -1,4 +1,4 @@
-# 🚀 TABLENOVA
+# 🚀 TABLEGRID
 
 <div align="center">
 
@@ -15,7 +15,7 @@
 
 ---
 
-**TABLENOVA** is a high-performance, cross-platform desktop application built with **Tauri v2 + Rust** on the backend and **React 19 + TypeScript + Vite + Monaco Editor** on the frontend. It provides a fluid, intuitive, and feature-packed experience designed for developers, data engineers, and database administrators.
+**TABLEGRID** is a high-performance, cross-platform desktop application built with **Tauri v2 + Rust** on the backend and **React 19 + TypeScript + Vite + Monaco Editor** on the frontend. It provides a fluid, intuitive, and feature-packed experience designed for developers, data engineers, and database administrators.
 
 ---
 
@@ -97,8 +97,8 @@
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/Phamthang1997/tablenova.git
-   cd tablenova
+   git clone https://github.com/Phamthang1997/tablegrid.git
+   cd tablegrid
    ```
 
 2. **Install frontend dependencies**:
@@ -124,10 +124,10 @@
 
 ### ⚠️ macOS Gatekeeper Troubleshooting ("App is damaged and can't be opened")
 If you download a `.dmg` release built from GitHub Actions, macOS Gatekeeper may block unsigned binaries downloaded via web browsers. To resolve this:
-1. Drag `TableNova.app` into your `/Applications` folder.
+1. Drag `TableGrid.app` into your `/Applications` folder.
 2. Open Terminal and run:
    ```bash
-   sudo xattr -rd com.apple.quarantine /Applications/TableNova.app
+   sudo xattr -rd com.apple.quarantine /Applications/TableGrid.app
    ```
 
 ---
@@ -179,6 +179,6 @@ table/
 - **Author & Creator**: **Pham Thang**
   - 📧 **Email**: [pthang888@gmail.com](mailto:pthang888@gmail.com)
   - 💼 **LinkedIn**: [thangpx](https://www.linkedin.com/in/thangpx/)
-- **Copyright**: © 2026 Pham Thang and TableNova Contributors
+- **Copyright**: © 2026 Pham Thang and TableGrid Contributors
 - **License**: Released under the [GNU Affero General Public License v3.0 (AGPL-3.0)](LICENSE).
 - **Code of Conduct**: Please follow our [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md).

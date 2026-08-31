@@ -33,7 +33,10 @@ pub(super) fn lorem_sentence(rng: &mut Rng) -> String {
 
 pub(super) fn lorem_paragraph(rng: &mut Rng) -> String {
     let n = 2 + rng.below(4) as usize;
-    (0..n).map(|_| lorem_sentence(rng)).collect::<Vec<_>>().join(" ")
+    (0..n)
+        .map(|_| lorem_sentence(rng))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 pub(super) fn slug(s: &str) -> String {
@@ -52,16 +55,73 @@ pub(super) fn slug(s: &str) -> String {
 pub(super) fn vi_deaccent(s: &str) -> String {
     // Small transliteration table: enough to turn a Vietnamese name into an email local part.
     const MAP: &[(char, char)] = &[
-        ('à', 'a'), ('á', 'a'), ('ạ', 'a'), ('ả', 'a'), ('ã', 'a'), ('â', 'a'), ('ầ', 'a'),
-        ('ấ', 'a'), ('ậ', 'a'), ('ẩ', 'a'), ('ẫ', 'a'), ('ă', 'a'), ('ằ', 'a'), ('ắ', 'a'),
-        ('ặ', 'a'), ('ẳ', 'a'), ('ẵ', 'a'), ('è', 'e'), ('é', 'e'), ('ẹ', 'e'), ('ẻ', 'e'),
-        ('ẽ', 'e'), ('ê', 'e'), ('ề', 'e'), ('ế', 'e'), ('ệ', 'e'), ('ể', 'e'), ('ễ', 'e'),
-        ('ì', 'i'), ('í', 'i'), ('ị', 'i'), ('ỉ', 'i'), ('ĩ', 'i'), ('ò', 'o'), ('ó', 'o'),
-        ('ọ', 'o'), ('ỏ', 'o'), ('õ', 'o'), ('ô', 'o'), ('ồ', 'o'), ('ố', 'o'), ('ộ', 'o'),
-        ('ổ', 'o'), ('ỗ', 'o'), ('ơ', 'o'), ('ờ', 'o'), ('ớ', 'o'), ('ợ', 'o'), ('ở', 'o'),
-        ('ỡ', 'o'), ('ù', 'u'), ('ú', 'u'), ('ụ', 'u'), ('ủ', 'u'), ('ũ', 'u'), ('ư', 'u'),
-        ('ừ', 'u'), ('ứ', 'u'), ('ự', 'u'), ('ử', 'u'), ('ữ', 'u'), ('ỳ', 'y'), ('ý', 'y'),
-        ('ỵ', 'y'), ('ỷ', 'y'), ('ỹ', 'y'), ('đ', 'd'),
+        ('à', 'a'),
+        ('á', 'a'),
+        ('ạ', 'a'),
+        ('ả', 'a'),
+        ('ã', 'a'),
+        ('â', 'a'),
+        ('ầ', 'a'),
+        ('ấ', 'a'),
+        ('ậ', 'a'),
+        ('ẩ', 'a'),
+        ('ẫ', 'a'),
+        ('ă', 'a'),
+        ('ằ', 'a'),
+        ('ắ', 'a'),
+        ('ặ', 'a'),
+        ('ẳ', 'a'),
+        ('ẵ', 'a'),
+        ('è', 'e'),
+        ('é', 'e'),
+        ('ẹ', 'e'),
+        ('ẻ', 'e'),
+        ('ẽ', 'e'),
+        ('ê', 'e'),
+        ('ề', 'e'),
+        ('ế', 'e'),
+        ('ệ', 'e'),
+        ('ể', 'e'),
+        ('ễ', 'e'),
+        ('ì', 'i'),
+        ('í', 'i'),
+        ('ị', 'i'),
+        ('ỉ', 'i'),
+        ('ĩ', 'i'),
+        ('ò', 'o'),
+        ('ó', 'o'),
+        ('ọ', 'o'),
+        ('ỏ', 'o'),
+        ('õ', 'o'),
+        ('ô', 'o'),
+        ('ồ', 'o'),
+        ('ố', 'o'),
+        ('ộ', 'o'),
+        ('ổ', 'o'),
+        ('ỗ', 'o'),
+        ('ơ', 'o'),
+        ('ờ', 'o'),
+        ('ớ', 'o'),
+        ('ợ', 'o'),
+        ('ở', 'o'),
+        ('ỡ', 'o'),
+        ('ù', 'u'),
+        ('ú', 'u'),
+        ('ụ', 'u'),
+        ('ủ', 'u'),
+        ('ũ', 'u'),
+        ('ư', 'u'),
+        ('ừ', 'u'),
+        ('ứ', 'u'),
+        ('ự', 'u'),
+        ('ử', 'u'),
+        ('ữ', 'u'),
+        ('ỳ', 'y'),
+        ('ý', 'y'),
+        ('ỵ', 'y'),
+        ('ỷ', 'y'),
+        ('ỹ', 'y'),
+        ('đ', 'd'),
     ];
     s.chars()
         .map(|c| {
@@ -75,19 +135,35 @@ pub(super) fn vi_deaccent(s: &str) -> String {
 }
 
 pub(super) fn first_names(locale: &str) -> &'static [&'static str] {
-    if locale == "vi" { ds::FIRST_NAMES_VI } else { ds::FIRST_NAMES_EN }
+    if locale == "vi" {
+        ds::FIRST_NAMES_VI
+    } else {
+        ds::FIRST_NAMES_EN
+    }
 }
 
 pub(super) fn last_names(locale: &str) -> &'static [&'static str] {
-    if locale == "vi" { ds::LAST_NAMES_VI } else { ds::LAST_NAMES_EN }
+    if locale == "vi" {
+        ds::LAST_NAMES_VI
+    } else {
+        ds::LAST_NAMES_EN
+    }
 }
 
 pub(super) fn cities(locale: &str) -> &'static [&'static str] {
-    if locale == "vi" { ds::CITIES_VI } else { ds::CITIES_EN }
+    if locale == "vi" {
+        ds::CITIES_VI
+    } else {
+        ds::CITIES_EN
+    }
 }
 
 pub(super) fn streets(locale: &str) -> &'static [&'static str] {
-    if locale == "vi" { ds::STREETS_VI } else { ds::STREETS_EN }
+    if locale == "vi" {
+        ds::STREETS_VI
+    } else {
+        ds::STREETS_EN
+    }
 }
 
 pub(super) fn full_name(rng: &mut Rng, locale: &str) -> String {
@@ -100,7 +176,11 @@ pub(super) fn full_name(rng: &mut Rng, locale: &str) -> String {
             rng.pick(ds::FIRST_NAMES_VI)
         )
     } else {
-        format!("{} {}", rng.pick(ds::FIRST_NAMES_EN), rng.pick(ds::LAST_NAMES_EN))
+        format!(
+            "{} {}",
+            rng.pick(ds::FIRST_NAMES_EN),
+            rng.pick(ds::LAST_NAMES_EN)
+        )
     }
 }
 
@@ -129,12 +209,18 @@ mod tests {
             let d = if i % 2 == 1 { d * 2 } else { d };
             sum += if d > 9 { d - 9 } else { d };
         }
-        sum % 10 == 0
+        sum.is_multiple_of(10)
     }
 
     #[test]
     fn luhn_complete_appends_a_digit_that_validates() {
-        for body in ["453201511283003", "4111111111111", "37828224631000", "0", ""] {
+        for body in [
+            "453201511283003",
+            "4111111111111",
+            "37828224631000",
+            "0",
+            "",
+        ] {
             let full = luhn_complete(body);
             assert_eq!(full.len(), body.len() + 1, "{body}");
             assert!(full.starts_with(body), "{body}");

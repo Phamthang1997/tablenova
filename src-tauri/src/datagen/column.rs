@@ -4,21 +4,20 @@
 use std::collections::HashSet;
 
 use chrono::{NaiveTime, TimeDelta};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::datagen::datasets as ds;
 
-use super::regex::{parse_regex, sample_regex, Rx};
-use super::rng::{mix_seed, Rng};
+use super::regex::{Rx, parse_regex, sample_regex};
+use super::rng::{Rng, mix_seed};
 use super::spec::{
-    charset_of, date_bounds, datetime_bounds, o_arr, o_f64, o_i64, o_str, o_usize, Cell,
-    GenColumnSpec,
+    Cell, GenColumnSpec, charset_of, date_bounds, datetime_bounds, o_arr, o_f64, o_i64, o_str,
+    o_usize,
 };
 use super::template::expand_template;
 use super::text::{
-    cities, first_names, last_names, streets,
-    full_name, lorem_paragraph, lorem_sentence, lorem_words, luhn_complete, slug, title_case,
-    vi_deaccent,
+    cities, first_names, full_name, last_names, lorem_paragraph, lorem_sentence, lorem_words,
+    luhn_complete, slug, streets, title_case, vi_deaccent,
 };
 
 /// Retries before giving up on a `unique` column.
@@ -63,7 +62,10 @@ impl ColState {
 
         let mut pool: Vec<Cell> = Vec::new();
         if spec.generator == "list" || spec.generator == "enumValues" {
-            pool = o_arr(&spec.options, "values").iter().map(Cell::from_json).collect();
+            pool = o_arr(&spec.options, "values")
+                .iter()
+                .map(Cell::from_json)
+                .collect();
             if pool.is_empty() {
                 return Err(format!("Cột '{}' chưa có danh sách giá trị", qualified));
             }
@@ -92,7 +94,10 @@ impl ColState {
                 weighted.push((Cell::from_json(&v), acc));
             }
             if weighted.is_empty() {
-                return Err(format!("Cột '{}' chưa có danh sách giá trị có trọng số", qualified));
+                return Err(format!(
+                    "Cột '{}' chưa có danh sách giá trị có trọng số",
+                    qualified
+                ));
             }
         }
 
@@ -115,10 +120,10 @@ impl ColState {
 
     /// One value, honouring nullPercent / unique / prefix / suffix / case.
     pub(super) fn next_cell(&mut self, dialect: &str) -> Result<Cell, String> {
-        if let Some(p) = self.spec.null_percent {
-            if self.rng.chance(p) {
-                return Ok(Cell::Null);
-            }
+        if let Some(p) = self.spec.null_percent
+            && self.rng.chance(p)
+        {
+            return Ok(Cell::Null);
         }
         let attempts = if self.unique { UNIQUE_RETRIES } else { 1 };
         for _ in 0..attempts {
@@ -143,10 +148,10 @@ impl ColState {
             Cell::Text(t) => t,
             other => return other,
         };
-        if let Some(p) = self.spec.empty_percent {
-            if self.rng.chance(p) {
-                return Cell::Text(String::new());
-            }
+        if let Some(p) = self.spec.empty_percent
+            && self.rng.chance(p)
+        {
+            return Cell::Text(String::new());
         }
         let mut out = match self.spec.case.as_deref() {
             Some("upper") => text.to_uppercase(),
@@ -186,7 +191,11 @@ impl ColState {
             // ---- numbers ----
             "integer" | "smallint" | "bigint" => {
                 let min = o_i64(&opts, "min").unwrap_or(1);
-                let max = o_i64(&opts, "max").unwrap_or(if g == "bigint" { 1_000_000_000 } else { 100_000 });
+                let max = o_i64(&opts, "max").unwrap_or(if g == "bigint" {
+                    1_000_000_000
+                } else {
+                    100_000
+                });
                 let unit = self.shaped_unit();
                 let span = (max as i128 - min as i128).unsigned_abs() as f64;
                 Cell::Num(((min.min(max) as f64) + unit * span).round().to_string())
@@ -250,7 +259,9 @@ impl ColState {
             "string" => {
                 let charset = charset_of(&opts);
                 let min_len = o_usize(&opts, "minLength").unwrap_or(5);
-                let max_len = o_usize(&opts, "maxLength").unwrap_or(min_len.max(12)).max(min_len);
+                let max_len = o_usize(&opts, "maxLength")
+                    .unwrap_or(min_len.max(12))
+                    .max(min_len);
                 let len = min_len + self.rng.below((max_len - min_len + 1) as u64) as usize;
                 let mut out = String::with_capacity(len);
                 for _ in 0..len {
@@ -259,7 +270,8 @@ impl ColState {
                 Cell::Text(out)
             }
             "password" => {
-                const CS: &[u8] = b"abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%&*";
+                const CS: &[u8] =
+                    b"abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%&*";
                 let len = o_usize(&opts, "length").unwrap_or(12).clamp(4, 64);
                 let mut out = String::with_capacity(len);
                 for _ in 0..len {
@@ -380,7 +392,11 @@ impl ColState {
             "firstName" => Cell::Text(self.rng.pick(first_names(&loc)).to_string()),
             "lastName" => Cell::Text(self.rng.pick(last_names(&loc)).to_string()),
             "fullName" => Cell::Text(full_name(&mut self.rng, &loc)),
-            "gender" => Cell::Text(if self.rng.chance(50.0) { "male".into() } else { "female".into() }),
+            "gender" => Cell::Text(if self.rng.chance(50.0) {
+                "male".into()
+            } else {
+                "female".into()
+            }),
             "email" => {
                 let domains = {
                     let custom: Vec<String> = o_arr(&opts, "domains")
@@ -407,8 +423,16 @@ impl ColState {
             }
             "phone" => {
                 if loc == "vi" {
-                    const PREFIX: &[&str] = &["032", "033", "034", "035", "036", "037", "038", "039", "070", "076", "077", "078", "079", "081", "082", "083", "084", "085", "086", "088", "090", "091", "094", "096", "097", "098"];
-                    Cell::Text(format!("{}{:07}", self.rng.pick(PREFIX), self.rng.below(10_000_000)))
+                    const PREFIX: &[&str] = &[
+                        "032", "033", "034", "035", "036", "037", "038", "039", "070", "076",
+                        "077", "078", "079", "081", "082", "083", "084", "085", "086", "088",
+                        "090", "091", "094", "096", "097", "098",
+                    ];
+                    Cell::Text(format!(
+                        "{}{:07}",
+                        self.rng.pick(PREFIX),
+                        self.rng.below(10_000_000)
+                    ))
                 } else {
                     Cell::Text(format!(
                         "+1-{:03}-{:03}-{:04}",
@@ -469,11 +493,15 @@ impl ColState {
                 1 + self.rng.below(254)
             )),
             "ipv6" => {
-                let groups: Vec<String> = (0..8).map(|_| format!("{:04x}", self.rng.below(65_536))).collect();
+                let groups: Vec<String> = (0..8)
+                    .map(|_| format!("{:04x}", self.rng.below(65_536)))
+                    .collect();
                 Cell::Text(groups.join(":"))
             }
             "macAddress" => {
-                let bytes: Vec<String> = (0..6).map(|_| format!("{:02x}", self.rng.below(256))).collect();
+                let bytes: Vec<String> = (0..6)
+                    .map(|_| format!("{:02x}", self.rng.below(256)))
+                    .collect();
                 Cell::Text(bytes.join(":"))
             }
             "domain" => Cell::Text(self.rng.pick(ds::URL_HOSTS).to_string()),

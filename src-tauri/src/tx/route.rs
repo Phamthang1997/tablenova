@@ -11,10 +11,10 @@ use tauri::ipc::Channel;
 
 use crate::database::{self, DbConnection, DbKind};
 
-use super::effect::{begin_statements, dialect_of, is_write_stmt, tx_effect, TxEffect};
+use super::effect::{TxEffect, begin_statements, dialect_of, is_write_stmt, tx_effect};
 use super::session::{
-    apply_effect, check_not_aborted, emit_state, get_session, is_open, release_if_closed,
-    session_for, conn_scope_id, tx_registry, Pinned,
+    Pinned, apply_effect, check_not_aborted, conn_scope_id, emit_state, get_session, is_open,
+    release_if_closed, session_for, tx_registry,
 };
 
 // `reject_if_pending` was deleted along with `switch_database` — it existed only to guard swapping the pool
@@ -72,9 +72,7 @@ pub(super) async fn lock_pinned(
             DbKind::Postgres(pool) => {
                 Pinned::Postgres(pool.acquire().await.map_err(|e| e.to_string())?)
             }
-            DbKind::Mysql(pool) => {
-                Pinned::Mysql(pool.acquire().await.map_err(|e| e.to_string())?)
-            }
+            DbKind::Mysql(pool) => Pinned::Mysql(pool.acquire().await.map_err(|e| e.to_string())?),
         });
     }
     Ok(guard)
@@ -91,8 +89,8 @@ pub(super) async fn raw_on_pinned(
             DbKind::Sqlite(arc) => database::sqlite_raw(arc, sql),
             _ => Err("Kết nối không khớp với phiên transaction".to_string()),
         },
-        Pinned::Postgres(c) => database::pg_raw(&mut **c, sql).await,
-        Pinned::Mysql(c) => database::mysql_raw(&mut **c, sql).await,
+        Pinned::Postgres(c) => database::pg_raw(c, sql).await,
+        Pinned::Mysql(c) => database::mysql_raw(c, sql).await,
     }
 }
 
@@ -174,8 +172,8 @@ pub(crate) async fn run_bound(
             DbKind::Sqlite(arc) => database::sqlite_bound(arc, &sql, params),
             _ => Err("Kết nối không khớp với phiên transaction".to_string()),
         },
-        Pinned::Postgres(c) => database::pg_bound(&mut **c, &sql, params).await,
-        Pinned::Mysql(c) => database::mysql_bound(&mut **c, &sql, params).await,
+        Pinned::Postgres(c) => database::pg_bound(c, &sql, params).await,
+        Pinned::Mysql(c) => database::mysql_bound(c, &sql, params).await,
     };
     drop(guard);
 
@@ -218,10 +216,10 @@ pub(crate) async fn run_stream(
             _ => Err("Kết nối không khớp với phiên transaction".to_string()),
         },
         Pinned::Postgres(c) => {
-            database::pg_stream(&mut **c, sql, params, stmt_index, channel, cancel).await
+            database::pg_stream(c, sql, params, stmt_index, channel, cancel).await
         }
         Pinned::Mysql(c) => {
-            database::mysql_stream(&mut **c, sql, params, stmt_index, channel, cancel).await
+            database::mysql_stream(c, sql, params, stmt_index, channel, cancel).await
         }
     };
     drop(guard);
@@ -251,10 +249,8 @@ pub async fn abandon(conn: Option<&DbConnection>) {
     let was_open = is_open(&id);
     let pinned = session.pinned.clone();
     let mut guard = pinned.lock_owned().await;
-    if was_open {
-        if let (Some(p), Some(c)) = (guard.as_mut(), conn) {
-            let _ = raw_on_pinned(p, c, "ROLLBACK").await;
-        }
+    if was_open && let (Some(p), Some(c)) = (guard.as_mut(), conn) {
+        let _ = raw_on_pinned(p, c, "ROLLBACK").await;
     }
     *guard = None;
     drop(guard);

@@ -1,9 +1,9 @@
 //! Running SQL the user typed: one statement, several statements, or streaming the results back in batches.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tauri::ipc::Channel;
 
 use crate::database::{
@@ -12,57 +12,69 @@ use crate::database::{
 };
 
 #[tauri::command]
-pub async fn execute_query(state: tauri::State<'_, crate::AppState>, conn_id: String, sql: String, params: Option<Vec<Value>>) -> Result<Value, String> {
-    let (conn_type, limit) = {
-        let ctx = state.connections.acquire(&conn_id)?;
-        (ctx.conn().clone(), stmt_timeout(&ctx.server().config()))
-    };
+pub async fn execute_query(
+    conn_id: String,
+    sql: String,
+    params: Option<Vec<Value>>,
+) -> Result<Value, String> {
+    Box::pin(async move {
+        let state = crate::state::require_state()?;
+        let (conn_type, limit) = {
+            let ctx = state.connections.acquire(&conn_id)?;
+            (ctx.conn().clone(), stmt_timeout(&ctx.server().config()))
+        };
 
-    // With parameters -> bind at the driver level (parameterized, one statement). Without -> keep the old behaviour.
-    let params = params.unwrap_or_default();
-    let results = if params.is_empty() {
-        with_timeout(limit, execute_raw_sql_generic(&conn_type, sql.clone())).await?
-    } else {
-        with_timeout(limit, run_bound_query(&conn_type, sql.clone(), &params)).await?
-    };
-    Ok(json!({ "success": true, "results": results }))
+        // With parameters -> bind at the driver level (parameterized, one statement). Without -> keep the old behaviour.
+        let params = params.unwrap_or_default();
+        let results = if params.is_empty() {
+            with_timeout(limit, execute_raw_sql_generic(&conn_type, sql.clone())).await?
+        } else {
+            with_timeout(limit, run_bound_query(&conn_type, sql.clone(), &params)).await?
+        };
+        Ok(json!({ "success": true, "results": results }))
+    })
+    .await
 }
 
 // Run several SQL statements, each returning its own result set (feeding SqlEditor's multiple result tabs)
 #[tauri::command]
-pub async fn execute_multi_query(state: tauri::State<'_, crate::AppState>, conn_id: String, sql: String) -> Result<Value, String> {
-    let (conn_type, limit) = {
-        let ctx = state.connections.acquire(&conn_id)?;
-        (ctx.conn().clone(), stmt_timeout(&ctx.server().config()))
-    };
+pub async fn execute_multi_query(conn_id: String, sql: String) -> Result<Value, String> {
+    Box::pin(async move {
+        let state = crate::state::require_state()?;
+        let (conn_type, limit) = {
+            let ctx = state.connections.acquire(&conn_id)?;
+            (ctx.conn().clone(), stmt_timeout(&ctx.server().config()))
+        };
 
-    let statements = split_sql_statements(&sql);
-    let mut results: Vec<Value> = Vec::new();
+        let statements = split_sql_statements(&sql);
+        let mut results: Vec<Value> = Vec::new();
 
-    for stmt in statements {
-        // The limit applies to EACH statement, not to the batch: "Run all" over 50 short statements is not
-        // one long-running statement, and adding their times together would kill exactly the batches that are
-        // perfectly ordinary.
-        match with_timeout(limit, execute_raw_sql_generic(&conn_type, stmt.clone())).await {
-            Ok(mut res) => {
-                if let Some(first) = res.drain(..).next() {
-                    let mut obj = first.as_object().cloned().unwrap_or_default();
-                    obj.insert("query".to_string(), json!(stmt));
-                    results.push(Value::Object(obj));
+        for stmt in statements {
+            // The limit applies to EACH statement, not to the batch: "Run all" over 50 short statements is not
+            // one long-running statement, and adding their times together would kill exactly the batches that are
+            // perfectly ordinary.
+            match with_timeout(limit, execute_raw_sql_generic(&conn_type, stmt.clone())).await {
+                Ok(mut res) => {
+                    if let Some(first) = res.drain(..).next() {
+                        let mut obj = first.as_object().cloned().unwrap_or_default();
+                        obj.insert("query".to_string(), json!(stmt));
+                        results.push(Value::Object(obj));
+                    }
+                }
+                Err(e) => {
+                    // Return the results that did run + the error message of the statement that failed
+                    return Ok(json!({
+                        "success": false,
+                        "results": results,
+                        "message": format!("Lỗi tại câu lệnh:\n{}\n\nChi tiết: {}", stmt, e)
+                    }));
                 }
             }
-            Err(e) => {
-                // Return the results that did run + the error message of the statement that failed
-                return Ok(json!({
-                    "success": false,
-                    "results": results,
-                    "message": format!("Lỗi tại câu lệnh:\n{}\n\nChi tiết: {}", stmt, e)
-                }));
-            }
         }
-    }
 
-    Ok(json!({ "success": true, "results": results }))
+        Ok(json!({ "success": true, "results": results }))
+    })
+    .await
 }
 
 // ---- Streaming SQL cho SQL Editor ----
@@ -75,12 +87,14 @@ pub async fn execute_multi_query(state: tauri::State<'_, crate::AppState>, conn_
 //   { type:"error",   stmtIndex, message }                  -> an error, the stream stops
 #[tauri::command]
 pub async fn execute_query_stream(
-    state: tauri::State<'_, crate::AppState>, conn_id: String,
+    conn_id: String,
     sql: String,
     query_id: String,
     channel: Channel<Value>,
     params: Option<Vec<Value>>,
 ) -> Result<Value, String> {
+    Box::pin(async move {
+    let state = crate::state::require_state()?;
     let (conn_type, limit) = {
         let ctx = state.connections.acquire(&conn_id)?;
         (ctx.conn().clone(), stmt_timeout(&ctx.server().config()))
@@ -138,14 +152,19 @@ pub async fn execute_query_stream(
             Ok(json!({ "success": false }))
         }
     }
+}).await
 }
 
 // Mark a streaming query as needing to stop. Not an error when query_id no longer exists.
 #[tauri::command]
-pub async fn cancel_query(state: tauri::State<'_, crate::AppState>, query_id: String) -> Result<Value, String> {
-    let flags = state.cancel_flags.lock().map_err(|e| e.to_string())?;
-    if let Some(flag) = flags.get(&query_id) {
-        flag.store(true, Ordering::Relaxed);
-    }
-    Ok(json!({ "success": true }))
+pub async fn cancel_query(query_id: String) -> Result<Value, String> {
+    Box::pin(async move {
+        let state = crate::state::require_state()?;
+        let flags = state.cancel_flags.lock().map_err(|e| e.to_string())?;
+        if let Some(flag) = flags.get(&query_id) {
+            flag.store(true, Ordering::Relaxed);
+        }
+        Ok(json!({ "success": true }))
+    })
+    .await
 }

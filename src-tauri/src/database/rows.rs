@@ -3,7 +3,7 @@
 use serde_json::Value;
 
 pub(crate) fn rows_of(res: &[Value]) -> Vec<Value> {
-    res.get(0)
+    res.first()
         .and_then(|r| r.get("data"))
         .and_then(|v| v.as_array())
         .cloned()
@@ -57,20 +57,30 @@ pub(crate) fn uniquify_columns(columns: &mut [String]) {
 /// accepted here — this is the same widening the inline count-extraction did before, minus four
 /// levels of nesting, and it is now shared by the exact count and the estimate.
 pub(crate) fn first_i64(results: Vec<Value>) -> Option<i64> {
-    let row = results.first()?.get("data")?.as_array()?.first()?.as_object()?;
+    let row = results
+        .first()?
+        .get("data")?
+        .as_array()?
+        .first()?
+        .as_object()?;
     let v = row.values().next()?;
-    v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+    v.as_i64()
+        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
 }
 
 // Take the string value of the first cell of every row in an execute_raw_sql_generic result
 pub(crate) fn all_string_values(results: &[Value]) -> Vec<String> {
     let mut out = Vec::new();
-    if let Some(data) = results.get(0).and_then(|r| r.get("data")).and_then(|v| v.as_array()) {
+    if let Some(data) = results
+        .first()
+        .and_then(|r| r.get("data"))
+        .and_then(|v| v.as_array())
+    {
         for row in data {
-            if let Some(v) = row.as_object().and_then(|o| o.values().next()) {
-                if let Some(s) = v.as_str() {
-                    out.push(s.to_string());
-                }
+            if let Some(v) = row.as_object().and_then(|o| o.values().next())
+                && let Some(s) = v.as_str()
+            {
+                out.push(s.to_string());
             }
         }
     }
@@ -105,7 +115,10 @@ pub(crate) fn row_str<'a>(row: &'a Value, col: &str) -> Option<&'a str> {
 // information_schema, Postgres ::bigint) — accept both, like the code this replaces did.
 pub(crate) fn row_i64(row: &Value, col: &str) -> i64 {
     row.get(col)
-        .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+        .and_then(|v| {
+            v.as_i64()
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        })
         .unwrap_or(0)
 }
 
@@ -129,7 +142,13 @@ mod tests {
         uniquify_columns(&mut cols);
         assert_eq!(
             cols,
-            vec!["film_id", "last_update", "film_id (2)", "last_update (2)", "last_update (3)"]
+            vec![
+                "film_id",
+                "last_update",
+                "film_id (2)",
+                "last_update (2)",
+                "last_update (3)"
+            ]
         );
     }
 

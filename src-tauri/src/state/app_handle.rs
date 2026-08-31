@@ -36,6 +36,23 @@ pub fn parked_state() -> Option<crate::AppState> {
     guard.as_ref().cloned()
 }
 
+/// The parked state for a `#[tauri::command]`, which is why it returns an error rather than `None`.
+///
+/// Commands read the state through this INSTEAD of taking a `tauri::State<'_, AppState>` parameter,
+/// and the reason is a stack overflow, not style. That parameter carries a lifetime, so the
+/// command's future is not `'static`; Tauri can only `spawn` a `'static` future onto the async
+/// runtime, so a borrowing command is instead built and run on the calling thread — the main
+/// thread, whose stack Windows reserves at 1MB. `connect_db` grew past that and the release binary
+/// died at launch. Reading the state from here keeps every command `'static`, so the work lands on
+/// a runtime worker with a stack of its own.
+///
+/// The `Err` is unreachable in practice: `AppState::new()` parks the state before `manage()`, which
+/// is before any command can be invoked. It is an error rather than a panic because a command that
+/// somehow ran first should report that, not take the window down with it.
+pub fn require_state() -> Result<crate::AppState, String> {
+    parked_state().ok_or_else(|| "Ứng dụng chưa khởi tạo xong".to_string())
+}
+
 /// Is this connection refusing writes?
 ///
 /// `false` for an ad-hoc pool (it is this process's own, never the user's) and whenever the state is

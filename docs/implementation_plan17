@@ -1,4 +1,4 @@
-# Kế hoạch Thiết kế & Phát triển: Chế độ transaction thủ công (đối chiếu DataGrip)
+﻿# Kế hoạch Thiết kế & Phát triển: Chế độ transaction thủ công (đối chiếu DataGrip)
 
 > **Trạng thái: Phase 0–4 đã code xong** (2026-08-10) — `src-tauri/src/tx_session.rs` (mới, 7 command),
 > ba phễu SQL đã tách helper + route qua session, `commit_changes` thành transaction thật,
@@ -60,7 +60,7 @@ rộng đúng ý tưởng đó thành một session sống lâu.
 
 ### Có làm
 
-| DataGrip | TableNova | Phase |
+| DataGrip | TABLEGRID | Phase |
 |---|---|---|
 | Commit của lưới là một transaction nguyên tử | ⬜ | 0 |
 | Auto-commit ON/OFF | ⬜ | 1–2 |

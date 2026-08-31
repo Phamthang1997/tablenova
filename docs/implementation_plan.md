@@ -1,6 +1,6 @@
-# Plan: Hỗ trợ Redis Database trong TableNova (Redis Key-Value GUI Client)
+﻿# Plan: Hỗ trợ Redis Database trong TABLEGRID (Redis Key-Value GUI Client)
 
-Tích hợp **Redis** làm loại cơ sở dữ liệu thứ 4 trong TableNova (bên cạnh SQLite, PostgreSQL, và MySQL). Cung cấp giao diện trực quan để duyệt namespace/keys, chỉnh sửa dữ liệu đa dạng kiểu (String, Hash, List, Set, Sorted Set, Stream), quản lý TTL, chạy câu lệnh Redis CLI tương tác, và theo dõi thông số server (`INFO`).
+Tích hợp **Redis** làm loại cơ sở dữ liệu thứ 4 trong TABLEGRID (bên cạnh SQLite, PostgreSQL, và MySQL). Cung cấp giao diện trực quan để duyệt namespace/keys, chỉnh sửa dữ liệu đa dạng kiểu (String, Hash, List, Set, Sorted Set, Stream), quản lý TTL, chạy câu lệnh Redis CLI tương tác, và theo dõi thông số server (`INFO`).
 
 ---
 
@@ -8,7 +8,7 @@ Tích hợp **Redis** làm loại cơ sở dữ liệu thứ 4 trong TableNova (
 
 > [!IMPORTANT]
 > **Điểm khác biệt về UX giữa Relational DB (SQL) và Redis (Key-Value):**
-> 1. Khi kết nối đến Redis, Sidebar của TableNova sẽ chuyển sang chế độ **Redis Key Browser** thay vì danh sách Bảng SQL.
+> 1. Khi kết nối đến Redis, Sidebar của TABLEGRID sẽ chuyển sang chế độ **Redis Key Browser** thay vì danh sách Bảng SQL.
 > 2. Các tab chính cho Redis sẽ bao gồm: **Redis Key Editor** (xem/chỉnh sửa key), **Redis CLI Console** (chạy lệnh `GET`, `SET`, `HGETALL`, `INFO`,...), và **Redis Server Dashboard** (thống kê RAM, Clients, Keyspace).
 > 3. Để đảm bảo an toàn cho máy chủ Redis sản xuất có hàng triệu keys, hệ thống sẽ **luôn dùng `SCAN` dạng phân trang (non-blocking)**, tuyệt đối không dùng `KEYS *`.
 

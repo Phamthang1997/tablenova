@@ -77,7 +77,11 @@ pub(super) async fn read_sqlite(conn: &DbConnection) -> Result<SchemaMeta, Strin
                 .map(|r| f_str(r, "name"))
                 .filter(|c| !c.is_empty())
                 .collect();
-            indexes.push(IdxMeta { name: idx_name, columns: cols, unique });
+            indexes.push(IdxMeta {
+                name: idx_name,
+                columns: cols,
+                unique,
+            });
         }
 
         let mut fks: Vec<FkMeta> = Vec::new();

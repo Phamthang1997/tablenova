@@ -3,7 +3,7 @@
 use std::sync::{Arc, Mutex};
 
 use rusqlite::Connection as SqliteConnection;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sqlx::{Column, Executor, Row, SqlSafeStr, Statement, ValueRef};
 
 use super::super::conn::{DbConnection, DbKind};
@@ -16,14 +16,18 @@ use super::super::rows::uniquify_columns;
 // CREATE/DROP TRIGGER, PROCEDURE, FUNCTION, EVENT... Those statements have to be sent over the text protocol
 // (sqlx::raw_sql) instead of sqlx::query.
 pub(crate) fn is_mysql_unprepared_error(err_text: &str) -> bool {
-    err_text.contains("1295") || err_text.contains("not supported in the prepared statement protocol")
+    err_text.contains("1295")
+        || err_text.contains("not supported in the prepared statement protocol")
 }
 
 /// Funnel 1, the routed door: what every command in the app calls.
 ///
 /// Three questions in order — may this connection be written to, does this statement belong to a
 /// manual transaction session, and only then, run it.
-pub(crate) async fn execute_raw_sql_generic(conn: &DbConnection, sql: String) -> Result<Vec<Value>, String> {
+pub(crate) async fn execute_raw_sql_generic(
+    conn: &DbConnection,
+    sql: String,
+) -> Result<Vec<Value>, String> {
     reject_if_read_only(conn, &sql)?;
     // Manual transaction mode: the statement must run on the connection the transaction was opened
     // on, otherwise it neither sees nor joins the uncommitted work. See tx/.
@@ -49,7 +53,10 @@ pub(crate) async fn execute_raw_sql_generic(conn: &DbConnection, sql: String) ->
 /// reason it reads through a pool too. On SQLite there is no difference at all: `DbKind::Sqlite` is
 /// a single shared handle, so it observes the open transaction either way, and a second handle on
 /// one file is the `SQLITE_BUSY` that `find_sqlite()` exists to prevent.
-pub(crate) async fn execute_raw_sql_pooled(conn: &DbConnection, sql: String) -> Result<Vec<Value>, String> {
+pub(crate) async fn execute_raw_sql_pooled(
+    conn: &DbConnection,
+    sql: String,
+) -> Result<Vec<Value>, String> {
     reject_if_read_only(conn, &sql)?;
     match &conn.kind {
         DbKind::Sqlite(conn_arc) => sqlite_raw(conn_arc, &sql),
@@ -105,16 +112,21 @@ pub(crate) fn sqlite_raw(
     Ok(vec![json!({ "columns": columns, "data": rows_json })])
 }
 
-pub(crate) async fn pg_raw(
-    conn: &mut sqlx::PgConnection,
-    sql: &str,
-) -> Result<Vec<Value>, String> {
+pub(crate) async fn pg_raw(conn: &mut sqlx::PgConnection, sql: &str) -> Result<Vec<Value>, String> {
     let mut results = Vec::new();
-    if sql.to_uppercase().trim().starts_with("USE ") || sql.to_uppercase().trim().starts_with("CREATE DATABASE") {
-        sqlx::query(sqlx::AssertSqlSafe(sql.to_string())).execute(&mut *conn).await.map_err(|e| e.to_string())?;
+    if sql.to_uppercase().trim().starts_with("USE ")
+        || sql.to_uppercase().trim().starts_with("CREATE DATABASE")
+    {
+        sqlx::query(sqlx::AssertSqlSafe(sql.to_string()))
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| e.to_string())?;
         return Ok(results);
     }
-    let rows = sqlx::query(sqlx::AssertSqlSafe(sql.to_string())).fetch_all(&mut *conn).await.map_err(|e| e.to_string())?;
+    let rows = sqlx::query(sqlx::AssertSqlSafe(sql.to_string()))
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(|e| e.to_string())?;
     let mut rows_json = Vec::new();
     let mut columns = Vec::new();
     if !rows.is_empty() {
@@ -134,7 +146,10 @@ pub(crate) async fn pg_raw(
     } else {
         // Prepare on THIS connection, not on the pool: inside a manual transaction a second
         // connection would block on the locks this one holds.
-        if let Ok(stmt) = (&mut *conn).prepare(sqlx::AssertSqlSafe(sql.to_string()).into_sql_str()).await {
+        if let Ok(stmt) = (&mut *conn)
+            .prepare(sqlx::AssertSqlSafe(sql.to_string()).into_sql_str())
+            .await
+        {
             for col in stmt.columns() {
                 columns.push(col.name().to_string());
             }
@@ -150,11 +165,19 @@ pub(crate) async fn mysql_raw(
     sql: &str,
 ) -> Result<Vec<Value>, String> {
     let mut results = Vec::new();
-    if sql.to_uppercase().trim().starts_with("USE ") || sql.to_uppercase().trim().starts_with("CREATE DATABASE") {
-        sqlx::query(sqlx::AssertSqlSafe(sql.to_string())).execute(&mut *conn).await.map_err(|e| e.to_string())?;
+    if sql.to_uppercase().trim().starts_with("USE ")
+        || sql.to_uppercase().trim().starts_with("CREATE DATABASE")
+    {
+        sqlx::query(sqlx::AssertSqlSafe(sql.to_string()))
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| e.to_string())?;
         return Ok(results);
     }
-    let rows = match sqlx::query(sqlx::AssertSqlSafe(sql.to_string())).fetch_all(&mut *conn).await {
+    let rows = match sqlx::query(sqlx::AssertSqlSafe(sql.to_string()))
+        .fetch_all(&mut *conn)
+        .await
+    {
         Ok(r) => r,
         Err(e) if is_mysql_unprepared_error(&e.to_string()) => {
             // MySQL refuses to prepare some statements (CREATE/DROP TRIGGER, PROCEDURE,
@@ -185,7 +208,10 @@ pub(crate) async fn mysql_raw(
         }
     } else {
         // Same reason as the Postgres branch: prepare on this connection.
-        if let Ok(stmt) = (&mut *conn).prepare(sqlx::AssertSqlSafe(sql.to_string()).into_sql_str()).await {
+        if let Ok(stmt) = (&mut *conn)
+            .prepare(sqlx::AssertSqlSafe(sql.to_string()).into_sql_str())
+            .await
+        {
             for col in stmt.columns() {
                 columns.push(col.name().to_string());
             }

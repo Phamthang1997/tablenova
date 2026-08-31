@@ -2,7 +2,8 @@
 // XLSX files are ZIP packages containing structured XML files. Here we:
 //   - Build STORED uncompressed ZIP -> requires only CRC32, no deflate. Natively compatible with Excel/LibreOffice.
 //   - Single sheet using inline strings for text and <v> for numbers/booleans.
-// Optimized for table data exports; omits styles/sharedStrings to maintain minimal spec compliance.
+// Optimized for table data exports; omits sharedStrings to maintain minimal spec compliance. There
+// IS a styles part now, but only the minimum Excel demands plus one bold font — see STYLES_XML.
 
 // ---- CRC32 (PKZIP standard) ----
 let CRC_TABLE: Uint32Array | null = null;
@@ -150,24 +151,73 @@ function sanitizeSheetName(name: string): string {
   return cleaned || 'Sheet1';
 }
 
-function cellXml(ref: string, value: any): string {
+/**
+ * Index into `cellXfs` in `xl/styles.xml`. A cell with no `s=` gets 0.
+ *
+ * These are positions in a list, not names — inserting an entry in the middle of `cellXfs` silently
+ * restyles every cell pointing past it, so append there and add the constant here.
+ */
+const STYLE_DEFAULT = 0;
+const STYLE_HEADER = 1;
+
+function cellXml(ref: string, value: any, style: number = STYLE_DEFAULT): string {
+  const s = style === STYLE_DEFAULT ? '' : ` s="${style}"`;
   if (value === null || value === undefined || value === '') {
-    return `<c r="${ref}"/>`;
+    return `<c r="${ref}"${s}/>`;
   }
   if (typeof value === 'number' && Number.isFinite(value)) {
-    return `<c r="${ref}"><v>${value}</v></c>`;
+    return `<c r="${ref}"${s}><v>${value}</v></c>`;
   }
   if (typeof value === 'boolean') {
-    return `<c r="${ref}" t="b"><v>${value ? 1 : 0}</v></c>`;
+    return `<c r="${ref}"${s} t="b"><v>${value ? 1 : 0}</v></c>`;
   }
   const text = typeof value === 'object' ? JSON.stringify(value) : String(value);
-  return `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${xmlEsc(text)}</t></is></c>`;
+  return `<c r="${ref}"${s} t="inlineStr"><is><t xml:space="preserve">${xmlEsc(text)}</t></is></c>`;
 }
+
+/**
+ * The minimum `styles.xml` Excel accepts, plus one bold font for the header row.
+ *
+ * Every list here is positional and every one of the first four is MANDATORY even when unused —
+ * omitting `fills` or `borders`, or leaving `cellStyleXfs` out, makes Excel report the file as
+ * repairable rather than valid. The two fills are also fixed by the format: index 0 must be `none`
+ * and index 1 `gray125`, whether or not anything refers to them.
+ *
+ * `cellXfs` is what cells point at through `s=`:
+ *   0  default
+ *   1  bold — the header row
+ *
+ * Deliberately no date or number formats yet. Making a date DISPLAY as a date needs the value to be
+ * an Excel serial number rather than text, and the rows arriving here are JSON from the backend
+ * where a DATETIME is already a string (and a DECIMAL is too — sqlx hands those back as strings).
+ * Converting text that looks like a date or a number is where spreadsheets are famous for losing
+ * data: a `VARCHAR` product code of `0012345` becomes `12345`, and one of `2026-08-30` becomes a
+ * date that another locale's Excel then redraws in a different order. That is a decision about
+ * VALUES, not formatting, and it is not one to make silently inside a style sheet.
+ */
+const STYLES_XML =
+  `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+  `<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
+  `<fonts count="2">` +
+  `<font><sz val="11"/><name val="Calibri"/></font>` +
+  `<font><b/><sz val="11"/><name val="Calibri"/></font>` +
+  `</fonts>` +
+  `<fills count="2"><fill><patternFill patternType="none"/></fill>` +
+  `<fill><patternFill patternType="gray125"/></fill></fills>` +
+  `<borders count="1"><border/></borders>` +
+  `<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>` +
+  `<cellXfs count="2">` +
+  `<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>` +
+  `<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>` +
+  `</cellXfs>` +
+  `</styleSheet>`;
 
 // Constructs worksheet XML from column names and row values.
 function buildSheetXml(colNames: string[], rows: any[]): string {
   const rowXmls: string[] = [];
-  const headerCells = colNames.map((c, i) => cellXml(`${colLetter(i)}1`, c)).join('');
+  const headerCells = colNames
+    .map((c, i) => cellXml(`${colLetter(i)}1`, c, STYLE_HEADER))
+    .join('');
   rowXmls.push(`<row r="1">${headerCells}</row>`);
   for (let r = 0; r < rows.length; r++) {
     const rowNum = r + 2;
@@ -175,10 +225,28 @@ function buildSheetXml(colNames: string[], rows: any[]): string {
     const cells = colNames.map((c, i) => cellXml(`${colLetter(i)}${rowNum}`, row[c])).join('');
     rowXmls.push(`<row r="${rowNum}">${cells}</row>`);
   }
+  // The header row stays put while the sheet scrolls. Row 1 is always the column names, so this is
+  // unconditional — an export with no data rows still gets a frozen header, which costs nothing and
+  // keeps the output identical whether the query returned 0 rows or 100,000.
+  //
+  // `ySplit="1"` is how many rows are frozen; `topLeftCell="A2"` is the first cell of the scrolling
+  // pane and MUST agree with it, or Excel scrolls the frozen row out of view. `state="frozen"` is
+  // what makes it a freeze rather than a draggable split.
+  //
+  // `<sheetViews>` has to come BEFORE `<sheetData>`: the sheet schema is a `xsd:sequence`, so an
+  // element in the wrong order is not "ignored", it makes Excel report the file as corrupt.
+  //
+  // Deliberately no bold header or number formats here: both need a `styles.xml` part and an `s=`
+  // attribute on every cell, which is a different piece of work. A freeze needs neither.
+  const sheetViews =
+    `<sheetViews><sheetView workbookViewId="0">` +
+    `<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>` +
+    `</sheetView></sheetViews>`;
+
   return (
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
     `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
-    `<sheetData>${rowXmls.join('')}</sheetData></worksheet>`
+    `${sheetViews}<sheetData>${rowXmls.join('')}</sheetData></worksheet>`
   );
 }
 
@@ -225,6 +293,7 @@ export function buildXlsxWorkbook(sheets: XlsxSheet[]): Uint8Array {
     `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
     `<Default Extension="xml" ContentType="application/xml"/>` +
     `<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>` +
+    `<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>` +
     overrides.join('') +
     `</Types>`;
 
@@ -239,6 +308,13 @@ export function buildXlsxWorkbook(sheets: XlsxSheet[]): Uint8Array {
     `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">` +
     `<sheets>${wbSheets.join('')}</sheets></workbook>`;
 
+  // The styles part is only reachable through a relationship FROM the workbook. Ship the file and
+  // list it in [Content_Types].xml but forget this line, and Excel does not fall back to defaults —
+  // it reports the workbook as needing repair. Its id sits after the sheets', which own rId1..rIdN.
+  wbRels.push(
+    `<Relationship Id="rId${list.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>`,
+  );
+
   const workbookRels =
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
     `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
@@ -250,6 +326,7 @@ export function buildXlsxWorkbook(sheets: XlsxSheet[]): Uint8Array {
     { name: '_rels/.rels', data: enc.encode(rootRels) },
     { name: 'xl/workbook.xml', data: enc.encode(workbookXml) },
     { name: 'xl/_rels/workbook.xml.rels', data: enc.encode(workbookRels) },
+    { name: 'xl/styles.xml', data: enc.encode(STYLES_XML) },
     ...sheetFiles,
   ];
 

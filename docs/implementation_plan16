@@ -1,4 +1,4 @@
-# Kế hoạch Thiết kế & Phát triển: Sửa dữ liệu ngay trên kết quả truy vấn (đối chiếu DataGrip)
+﻿# Kế hoạch Thiết kế & Phát triển: Sửa dữ liệu ngay trên kết quả truy vấn (đối chiếu DataGrip)
 
 > **Trạng thái: Phase 1 đã làm xong** (2026-08-07) — `src/sql/editableResult.ts` (module thuần,
 > 22 unit test), badge "Sửa được / Chỉ đọc" + sửa ô + preview SQL + commit trong `SqlEditor.tsx`,
@@ -16,7 +16,7 @@
 > đúng đường chạy truy vấn dùng chung cho mọi câu lệnh.
 >
 > Kế hoạch này thu hẹp khoảng cách với **DataGrip** ở đúng một điểm: DataGrip resolve được bảng gốc
-> từ câu `SELECT` và cho sửa kết quả tại chỗ, TableNova trước đây chỉ cho sửa ở tab bảng.
+> từ câu `SELECT` và cho sửa kết quả tại chỗ, TABLEGRID trước đây chỉ cho sửa ở tab bảng.
 
 Comment mới trong code viết **tiếng Anh**; message lỗi trả về từ Rust vẫn **tiếng Việt** rồi dịch ở
 `backendErrors.ts` (đúng luật CLAUDE.md — cặp twin Rust ↔ `backendErrors.ts` phải cập nhật cùng lúc).
@@ -27,7 +27,7 @@ Comment mới trong code viết **tiếng Anh**; message lỗi trả về từ R
 
 ### Có làm
 
-| DataGrip | TableNova | Phase |
+| DataGrip | TABLEGRID | Phase |
 |---|---|---|
 | Nhận biết kết quả nào sửa được, nêu lý do khi không | ✅ | 1 |
 | Sửa ô + xem trước SQL + ghi xuống DB | ✅ | 1 |

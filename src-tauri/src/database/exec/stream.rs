@@ -5,12 +5,14 @@ use std::sync::{Arc, Mutex};
 
 use futures_util::TryStreamExt;
 use rusqlite::Connection as SqliteConnection;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sqlx::{Column, Executor, Row, SqlSafeStr, Statement, ValueRef};
 use tauri::ipc::Channel;
 
 use super::super::conn::{DbConnection, DbKind};
-use super::super::decode::{bind_mysql_params, bind_pg_params, decode_mysql_cell, decode_pg_cell, json_to_sqlite_value};
+use super::super::decode::{
+    bind_mysql_params, bind_pg_params, decode_mysql_cell, decode_pg_cell, json_to_sqlite_value,
+};
 use super::super::read_only::reject_if_read_only;
 use super::super::rows::uniquify_columns;
 use super::super::splitter::split_sql_statements;
@@ -63,7 +65,9 @@ pub(crate) async fn stream_one_statement(
         return crate::tx::run_stream(conn, sql, params, stmt_index, channel, cancel).await;
     }
     match &conn.kind {
-        DbKind::Sqlite(conn_arc) => sqlite_stream(conn_arc, sql, params, stmt_index, channel, cancel).await,
+        DbKind::Sqlite(conn_arc) => {
+            sqlite_stream(conn_arc, sql, params, stmt_index, channel, cancel).await
+        }
         DbKind::Postgres(pool) => {
             let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
             pg_stream(&mut conn, sql, params, stmt_index, channel, cancel).await
@@ -91,7 +95,8 @@ pub(crate) async fn sqlite_stream(
     let channel = channel.clone();
     let cancel = cancel.clone();
     let sql = sql.to_string();
-    let sqlite_params: Vec<rusqlite::types::Value> = params.iter().map(json_to_sqlite_value).collect();
+    let sqlite_params: Vec<rusqlite::types::Value> =
+        params.iter().map(json_to_sqlite_value).collect();
     tokio::task::spawn_blocking(move || -> Result<(), String> {
         let c = conn_arc.lock().map_err(|e| e.to_string())?;
         let mut stmt = c.prepare(&sql).map_err(|e| e.to_string())?;
@@ -158,12 +163,18 @@ pub(crate) async fn pg_stream(
 ) -> Result<(), String> {
     let trimmed = sql.trim().to_uppercase();
     if trimmed.starts_with("USE ") || trimmed.starts_with("CREATE DATABASE") {
-        sqlx::query(sqlx::AssertSqlSafe(sql.to_string())).execute(&mut *conn).await.map_err(|e| e.to_string())?;
+        sqlx::query(sqlx::AssertSqlSafe(sql.to_string()))
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| e.to_string())?;
         let _ = channel.send(json!({ "type": "columns", "stmtIndex": stmt_index, "query": sql, "columns": Vec::<String>::new() }));
         return Ok(());
     }
     // Probe whether the statement returns columns (via a prepared statement). If not -> execute + report affected.
-    let returns_rows = match (&mut *conn).prepare(sqlx::AssertSqlSafe(sql.to_string()).into_sql_str()).await {
+    let returns_rows = match (&mut *conn)
+        .prepare(sqlx::AssertSqlSafe(sql.to_string()).into_sql_str())
+        .await
+    {
         Ok(st) => !st.columns().is_empty(),
         Err(_) => true, // prepare failed -> just try fetching the old way
     };
@@ -211,13 +222,18 @@ pub(crate) async fn pg_stream(
     if columns.is_empty() {
         // Probe on THIS connection: inside a manual transaction a second pooled connection
         // would block on the locks this one holds.
-        if let Ok(stmt) = (&mut *conn).prepare(sqlx::AssertSqlSafe(sql.to_string()).into_sql_str()).await {
+        if let Ok(stmt) = (&mut *conn)
+            .prepare(sqlx::AssertSqlSafe(sql.to_string()).into_sql_str())
+            .await
+        {
             for col in stmt.columns() {
                 columns.push(col.name().to_string());
             }
             uniquify_columns(&mut columns);
         }
-        let _ = channel.send(json!({ "type": "columns", "stmtIndex": stmt_index, "query": sql, "columns": columns }));
+        let _ = channel.send(
+            json!({ "type": "columns", "stmtIndex": stmt_index, "query": sql, "columns": columns }),
+        );
     }
     Ok(())
 }
@@ -232,12 +248,18 @@ pub(crate) async fn mysql_stream(
 ) -> Result<(), String> {
     let trimmed = sql.trim().to_uppercase();
     if trimmed.starts_with("USE ") || trimmed.starts_with("CREATE DATABASE") {
-        sqlx::query(sqlx::AssertSqlSafe(sql.to_string())).execute(&mut *conn).await.map_err(|e| e.to_string())?;
+        sqlx::query(sqlx::AssertSqlSafe(sql.to_string()))
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| e.to_string())?;
         let _ = channel.send(json!({ "type": "columns", "stmtIndex": stmt_index, "query": sql, "columns": Vec::<String>::new() }));
         return Ok(());
     }
     // Probe whether the statement returns columns. If not -> execute + report affected.
-    let returns_rows = match (&mut *conn).prepare(sqlx::AssertSqlSafe(sql.to_string()).into_sql_str()).await {
+    let returns_rows = match (&mut *conn)
+        .prepare(sqlx::AssertSqlSafe(sql.to_string()).into_sql_str())
+        .await
+    {
         Ok(st) => !st.columns().is_empty(),
         Err(_) => {
             // It could not be prepared (CREATE/DROP TRIGGER|PROCEDURE|FUNCTION|EVENT -> error 1295,
@@ -291,13 +313,18 @@ pub(crate) async fn mysql_stream(
         let _ = channel.send(json!({ "type": "rows", "stmtIndex": stmt_index, "rows": batch }));
     }
     if columns.is_empty() {
-        if let Ok(stmt) = (&mut *conn).prepare(sqlx::AssertSqlSafe(sql.to_string()).into_sql_str()).await {
+        if let Ok(stmt) = (&mut *conn)
+            .prepare(sqlx::AssertSqlSafe(sql.to_string()).into_sql_str())
+            .await
+        {
             for col in stmt.columns() {
                 columns.push(col.name().to_string());
             }
             uniquify_columns(&mut columns);
         }
-        let _ = channel.send(json!({ "type": "columns", "stmtIndex": stmt_index, "query": sql, "columns": columns }));
+        let _ = channel.send(
+            json!({ "type": "columns", "stmtIndex": stmt_index, "query": sql, "columns": columns }),
+        );
     }
     Ok(())
 }

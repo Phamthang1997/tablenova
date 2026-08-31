@@ -5,10 +5,10 @@ use std::sync::Mutex;
 
 use serde_json::Value;
 
-use crate::database::DbConnection;
-use super::ctx::{ctx_of, redis_ctx_of, ConnCtx, RedisCtx};
+use super::ctx::{ConnCtx, RedisCtx, ctx_of, redis_ctx_of};
 use super::entry::{ConnEntry, LiveConn, RedisConn};
 use super::ids::ConnScopeId;
+use crate::database::DbConnection;
 
 /// Every open connection, keyed by `conn_id`.
 ///
@@ -28,7 +28,9 @@ impl Default for ConnRegistry {
 
 impl ConnRegistry {
     pub fn new() -> Self {
-        ConnRegistry { inner: Mutex::new(HashMap::new()) }
+        ConnRegistry {
+            inner: Mutex::new(HashMap::new()),
+        }
     }
 
     /// The only way to get a connection out of the registry.
@@ -42,7 +44,9 @@ impl ConnRegistry {
         // `get_key_value`, not `get`: the ConnCtx carries the *conn_id* (this map's key), which is
         // what tx will key a session on. `entry.server.id` is a different thing — several
         // conn_ids share one server.
-        let (key, entry) = map.get_key_value(id).ok_or_else(|| "Chưa kết nối CSDL".to_string())?;
+        let (key, entry) = map
+            .get_key_value(id)
+            .ok_or_else(|| "Chưa kết nối CSDL".to_string())?;
         ctx_of(key, entry)
     }
 
@@ -54,7 +58,9 @@ impl ConnRegistry {
     /// against.
     pub fn acquire_redis(&self, id: &str) -> Result<RedisCtx, String> {
         let map = self.inner.lock().map_err(|e| e.to_string())?;
-        let (key, entry) = map.get_key_value(id).ok_or_else(|| "Chưa kết nối Redis".to_string())?;
+        let (key, entry) = map
+            .get_key_value(id)
+            .ok_or_else(|| "Chưa kết nối Redis".to_string())?;
         redis_ctx_of(key, entry)
     }
 
@@ -157,7 +163,9 @@ impl ConnRegistry {
         Ok(map
             .iter()
             .find(|(_, e)| {
-                let Some(conn) = e.conn.sql() else { return false };
+                let Some(conn) = e.conn.sql() else {
+                    return false;
+                };
                 if !matches!(conn.kind, crate::database::DbKind::Sqlite(_)) {
                     return false;
                 }

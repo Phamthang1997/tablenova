@@ -13,7 +13,7 @@ use keyring::Entry;
 use serde::{Deserialize, Serialize};
 
 // The service name shown in Windows Credential Manager / Keychain.
-const SERVICE: &str = "TableNova";
+const SERVICE: &str = "TableGrid";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SecretRef {
@@ -58,7 +58,16 @@ pub fn secret_get(profile_id: String, field: String) -> Result<Option<String>, S
     let r = SecretRef { profile_id, field };
     match r.entry()?.get_password() {
         Ok(v) => Ok(Some(v)),
-        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(keyring::Error::NoEntry) => {
+            // Fallback to legacy service "TableNova" for smooth migration
+            match Entry::new("TableNova", &r.account()) {
+                Ok(legacy) => match legacy.get_password() {
+                    Ok(v) => Ok(Some(v)),
+                    _ => Ok(None),
+                },
+                _ => Ok(None),
+            }
+        }
         Err(e) => Err(format!("Không đọc được '{}' từ kho bí mật: {}", r.field, e)),
     }
 }
@@ -70,7 +79,10 @@ pub fn secret_delete(profile_id: String, field: String) -> Result<(), String> {
     match r.entry()?.delete_credential() {
         Ok(()) => Ok(()),
         Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(format!("Không xoá được '{}' khỏi kho bí mật: {}", r.field, e)),
+        Err(e) => Err(format!(
+            "Không xoá được '{}' khỏi kho bí mật: {}",
+            r.field, e
+        )),
     }
 }
 

@@ -9,27 +9,43 @@
 // would panic, while `get` returns None.
 fn delimiter_token_of_line(line: &str) -> Option<&str> {
     let t = line.trim_start_matches([' ', '\t']);
-    if !t.get(..9)?.eq_ignore_ascii_case("DELIMITER") { return None; }
+    if !t.get(..9)?.eq_ignore_ascii_case("DELIMITER") {
+        return None;
+    }
     let rest = &t[9..];
-    if !rest.starts_with([' ', '\t']) { return None; }
+    if !rest.starts_with([' ', '\t']) {
+        return None;
+    }
     let token = rest.trim(); // trim also strips the '\r' of a CRLF file
-    if token.is_empty() || token.contains(char::is_whitespace) { return None; }
+    if token.is_empty() || token.contains(char::is_whitespace) {
+        return None;
+    }
     Some(token)
 }
 
 // Read the DELIMITER command at the start of line `i` (a character index into `chars`).
 // Returns (the new token, the index right after that line). This command is NOT SQL: sending it to the server errors out.
 fn read_delimiter_command(chars: &[char], i: usize) -> Option<(String, usize)> {
-    let line_end = chars[i..].iter().position(|&c| c == '\n').map(|p| i + p).unwrap_or(chars.len());
+    let line_end = chars[i..]
+        .iter()
+        .position(|&c| c == '\n')
+        .map(|p| i + p)
+        .unwrap_or(chars.len());
     let line: String = chars[i..line_end].iter().collect();
     let token = delimiter_token_of_line(&line)?.to_string();
-    let next = if line_end < chars.len() { line_end + 1 } else { chars.len() };
+    let next = if line_end < chars.len() {
+        line_end + 1
+    } else {
+        chars.len()
+    };
     Some((token, next))
 }
 
 // Does `chars[i..]` match the statement terminator currently in force?
 fn matches_delimiter(chars: &[char], i: usize, delim: &[char]) -> bool {
-    if i + delim.len() > chars.len() { return false; }
+    if i + delim.len() > chars.len() {
+        return false;
+    }
     chars[i..i + delim.len()] == *delim
 }
 
@@ -79,7 +95,10 @@ pub(crate) fn strip_leading_comments(stmt: &str) -> &str {
 fn is_create_trigger_head(seg: &str) -> bool {
     let head = strip_leading_comments(seg).trim_start();
     let mut words = head.split_whitespace();
-    if !words.next().is_some_and(|w| w.eq_ignore_ascii_case("CREATE")) {
+    if !words
+        .next()
+        .is_some_and(|w| w.eq_ignore_ascii_case("CREATE"))
+    {
         return false;
     }
     for w in words.take(4) {
@@ -231,7 +250,9 @@ pub(crate) fn split_sql_statements(sql: &str) -> Vec<String> {
     let push_stmt = |out: &mut Vec<String>, from: usize, to: usize| {
         let s: String = chars[from..to].iter().collect();
         let s = s.trim().to_string();
-        if !s.is_empty() { out.push(s); }
+        if !s.is_empty() {
+            out.push(s);
+        }
     };
 
     while i < n {
@@ -240,7 +261,9 @@ pub(crate) fn split_sql_statements(sql: &str) -> Vec<String> {
 
         // Line comment: -- ... | # ...  ('#>' and '#-' are Postgres jsonb operators, not comments)
         if (c == '-' && peek == Some('-')) || (c == '#' && !matches!(peek, Some('>') | Some('-'))) {
-            while i < n && chars[i] != '\n' { i += 1; }
+            while i < n && chars[i] != '\n' {
+                i += 1;
+            }
             at_line_start = true;
             i += 1; // skip the '\n'
             continue;
@@ -248,7 +271,9 @@ pub(crate) fn split_sql_statements(sql: &str) -> Vec<String> {
         // Block comment: /* ... */
         if c == '/' && peek == Some('*') {
             i += 2;
-            while i + 1 < n && !(chars[i] == '*' && chars[i + 1] == '/') { i += 1; }
+            while i + 1 < n && !(chars[i] == '*' && chars[i + 1] == '/') {
+                i += 1;
+            }
             i = (i + 2).min(n);
             at_line_start = false;
             continue;
@@ -258,9 +283,15 @@ pub(crate) fn split_sql_statements(sql: &str) -> Vec<String> {
             let quote = c;
             i += 1;
             while i < n {
-                if chars[i] == '\\' && quote != '`' { i += 2; continue; }
+                if chars[i] == '\\' && quote != '`' {
+                    i += 2;
+                    continue;
+                }
                 if chars[i] == quote {
-                    if quote == '\'' && i + 1 < n && chars[i + 1] == '\'' { i += 2; continue; }
+                    if quote == '\'' && i + 1 < n && chars[i + 1] == '\'' {
+                        i += 2;
+                        continue;
+                    }
                     i += 1;
                     break;
                 }
@@ -272,26 +303,31 @@ pub(crate) fn split_sql_statements(sql: &str) -> Vec<String> {
         // A Postgres dollar-quoted block: $$ ... $$ or $tag$ ... $tag$ (not $1 or ${x})
         if !mysql_script && c == '$' {
             let mut j = i + 1;
-            while j < n && (chars[j].is_ascii_alphanumeric() || chars[j] == '_') { j += 1; }
-            if j < n && chars[j] == '$' && (j == i + 1 || chars[i + 1].is_ascii_alphabetic() || chars[i + 1] == '_') {
+            while j < n && (chars[j].is_ascii_alphanumeric() || chars[j] == '_') {
+                j += 1;
+            }
+            if j < n
+                && chars[j] == '$'
+                && (j == i + 1 || chars[i + 1].is_ascii_alphabetic() || chars[i + 1] == '_')
+            {
                 let tag: Vec<char> = chars[i..=j].to_vec();
                 let mut k = j + 1;
-                while k < n && !matches_delimiter(&chars, k, &tag) { k += 1; }
+                while k < n && !matches_delimiter(&chars, k, &tag) {
+                    k += 1;
+                }
                 i = if k < n { k + tag.len() } else { n };
                 at_line_start = false;
                 continue;
             }
         }
         // The DELIMITER command (at the start of a line): it changes the statement terminator, and the line itself is not a statement
-        if at_line_start {
-            if let Some((token, next)) = read_delimiter_command(&chars, i) {
-                push_stmt(&mut out, start, i);
-                delim = token.chars().collect();
-                start = next;
-                i = next;
-                at_line_start = true;
-                continue;
-            }
+        if at_line_start && let Some((token, next)) = read_delimiter_command(&chars, i) {
+            push_stmt(&mut out, start, i);
+            delim = token.chars().collect();
+            start = next;
+            i = next;
+            at_line_start = true;
+            continue;
         }
         // The statement terminator currently in force
         if matches_delimiter(&chars, i, &delim) {
@@ -322,7 +358,6 @@ pub(crate) fn split_sql_statements(sql: &str) -> Vec<String> {
     out
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -334,7 +369,10 @@ mod tests {
     #[test]
     fn splits_on_the_semicolon_and_trims() {
         assert_eq!(split("SELECT 1; SELECT 2"), ["SELECT 1", "SELECT 2"]);
-        assert_eq!(split("SELECT 1;\r\nSELECT 2;\r\n"), ["SELECT 1", "SELECT 2"]);
+        assert_eq!(
+            split("SELECT 1;\r\nSELECT 2;\r\n"),
+            ["SELECT 1", "SELECT 2"]
+        );
         assert!(split("   \n\t ").is_empty());
     }
 
@@ -353,18 +391,31 @@ mod tests {
     /// decision is made.
     #[test]
     fn a_comment_only_segment_survives() {
-        assert_eq!(split("-- hi\nSELECT 1;\n/* block */"), ["-- hi\nSELECT 1", "/* block */"]);
+        assert_eq!(
+            split("-- hi\nSELECT 1;\n/* block */"),
+            ["-- hi\nSELECT 1", "/* block */"]
+        );
     }
 
     #[test]
     fn a_dollar_quoted_body_is_not_split() {
         assert_eq!(
-            split("CREATE FUNCTION f() RETURNS int AS $$ BEGIN RETURN 1; END $$ LANGUAGE plpgsql; SELECT 1"),
-            ["CREATE FUNCTION f() RETURNS int AS $$ BEGIN RETURN 1; END $$ LANGUAGE plpgsql", "SELECT 1"]
+            split(
+                "CREATE FUNCTION f() RETURNS int AS $$ BEGIN RETURN 1; END $$ LANGUAGE plpgsql; SELECT 1"
+            ),
+            [
+                "CREATE FUNCTION f() RETURNS int AS $$ BEGIN RETURN 1; END $$ LANGUAGE plpgsql",
+                "SELECT 1"
+            ]
         );
         assert_eq!(
-            split("CREATE FUNCTION f() RETURNS int AS $body$ SELECT 1; $body$ LANGUAGE sql; SELECT 2"),
-            ["CREATE FUNCTION f() RETURNS int AS $body$ SELECT 1; $body$ LANGUAGE sql", "SELECT 2"]
+            split(
+                "CREATE FUNCTION f() RETURNS int AS $body$ SELECT 1; $body$ LANGUAGE sql; SELECT 2"
+            ),
+            [
+                "CREATE FUNCTION f() RETURNS int AS $body$ SELECT 1; $body$ LANGUAGE sql",
+                "SELECT 2"
+            ]
         );
     }
 
@@ -372,7 +423,10 @@ mod tests {
     /// if they did, everything after `$1` would be swallowed into one statement.
     #[test]
     fn a_bind_placeholder_does_not_open_a_dollar_block() {
-        assert_eq!(split("SELECT $1; SELECT ${x}"), ["SELECT $1", "SELECT ${x}"]);
+        assert_eq!(
+            split("SELECT $1; SELECT ${x}"),
+            ["SELECT $1", "SELECT ${x}"]
+        );
     }
 
     /// The DELIMITER line is a CLIENT command: it is consumed here and never sent to the server,
@@ -380,7 +434,9 @@ mod tests {
     #[test]
     fn the_delimiter_line_is_consumed_never_emitted() {
         assert_eq!(
-            split("DELIMITER $$\nCREATE PROCEDURE p() BEGIN SELECT 1; END$$\nDELIMITER ;\nSELECT 2;"),
+            split(
+                "DELIMITER $$\nCREATE PROCEDURE p() BEGIN SELECT 1; END$$\nDELIMITER ;\nSELECT 2;"
+            ),
             ["CREATE PROCEDURE p() BEGIN SELECT 1; END", "SELECT 2"]
         );
         // mysqldump --routines writes `;;`.
@@ -400,8 +456,14 @@ mod tests {
 
     #[test]
     fn delimiter_is_only_a_command_at_the_start_of_a_line() {
-        assert_eq!(split("SELECT 'DELIMITER $$'; SELECT 2"), ["SELECT 'DELIMITER $$'", "SELECT 2"]);
-        assert_eq!(split("SELECT 1 DELIMITER //;\nSELECT 2;"), ["SELECT 1 DELIMITER //", "SELECT 2"]);
+        assert_eq!(
+            split("SELECT 'DELIMITER $$'; SELECT 2"),
+            ["SELECT 'DELIMITER $$'", "SELECT 2"]
+        );
+        assert_eq!(
+            split("SELECT 1 DELIMITER //;\nSELECT 2;"),
+            ["SELECT 1 DELIMITER //", "SELECT 2"]
+        );
     }
 
     /// Outside a script that issued DELIMITER, `$$` is a Postgres dollar-quote and nothing else —
@@ -423,12 +485,20 @@ mod tests {
     fn a_trigger_body_holds_together() {
         assert_eq!(
             split("CREATE TRIGGER t AFTER INSERT ON a BEGIN UPDATE b SET n = 1; END;\nSELECT 9;"),
-            ["CREATE TRIGGER t AFTER INSERT ON a BEGIN UPDATE b SET n = 1; END", "SELECT 9"]
+            [
+                "CREATE TRIGGER t AFTER INSERT ON a BEGIN UPDATE b SET n = 1; END",
+                "SELECT 9"
+            ]
         );
         // END, then a comment, then the terminator.
         assert_eq!(
-            split("CREATE TRIGGER t AFTER INSERT ON a BEGIN UPDATE b SET n=1; END -- done\n;\nSELECT 9;"),
-            ["CREATE TRIGGER t AFTER INSERT ON a BEGIN UPDATE b SET n=1; END -- done", "SELECT 9"]
+            split(
+                "CREATE TRIGGER t AFTER INSERT ON a BEGIN UPDATE b SET n=1; END -- done\n;\nSELECT 9;"
+            ),
+            [
+                "CREATE TRIGGER t AFTER INSERT ON a BEGIN UPDATE b SET n=1; END -- done",
+                "SELECT 9"
+            ]
         );
     }
 
@@ -438,11 +508,17 @@ mod tests {
     fn a_trigger_without_begin_ends_at_its_first_semicolon() {
         assert_eq!(
             split("CREATE TRIGGER t AFTER INSERT ON a EXECUTE FUNCTION f();\nSELECT 9;"),
-            ["CREATE TRIGGER t AFTER INSERT ON a EXECUTE FUNCTION f()", "SELECT 9"]
+            [
+                "CREATE TRIGGER t AFTER INSERT ON a EXECUTE FUNCTION f()",
+                "SELECT 9"
+            ]
         );
         assert_eq!(
             split("CREATE TRIGGER t BEFORE INSERT ON a FOR EACH ROW SET NEW.x = 1;\nSELECT 9;"),
-            ["CREATE TRIGGER t BEFORE INSERT ON a FOR EACH ROW SET NEW.x = 1", "SELECT 9"]
+            [
+                "CREATE TRIGGER t BEFORE INSERT ON a FOR EACH ROW SET NEW.x = 1",
+                "SELECT 9"
+            ]
         );
     }
 
@@ -454,12 +530,18 @@ mod tests {
             split("INSERT INTO t VALUES ('BEGIN'); SELECT 1;"),
             ["INSERT INTO t VALUES ('BEGIN')", "SELECT 1"]
         );
-        assert_eq!(split("CREATE TABLE t (a INT); SELECT 1;"), ["CREATE TABLE t (a INT)", "SELECT 1"]);
+        assert_eq!(
+            split("CREATE TABLE t (a INT); SELECT 1;"),
+            ["CREATE TABLE t (a INT)", "SELECT 1"]
+        );
     }
 
     #[test]
     fn strip_leading_comments_reaches_the_first_keyword() {
-        assert_eq!(strip_leading_comments("-- header\n/* x */\n  SELECT 1"), "SELECT 1");
+        assert_eq!(
+            strip_leading_comments("-- header\n/* x */\n  SELECT 1"),
+            "SELECT 1"
+        );
         assert_eq!(strip_leading_comments("SELECT 1"), "SELECT 1");
         assert_eq!(strip_leading_comments("  /* only */  ").trim(), "");
     }

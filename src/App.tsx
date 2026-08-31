@@ -28,6 +28,7 @@ import { RoutineEditorModal } from './components/RoutineEditorModal';
 import { ViewEditorModal } from './components/ViewEditorModal';
 import { SchemaMigration } from './components/SchemaMigration';
 import { DbCompareDialog } from './components/DbCompareDialog';
+import { LiveProcessListPanel } from './components/LiveProcessListPanel';
 import { McpServerSettingsModal } from './components/McpServerSettingsModal';
 import { DataGeneratorDialog } from './components/DataGeneratorDialog';
 import { RedisSidebarView } from './components/redis/RedisSidebarView';
@@ -321,9 +322,6 @@ export const App: React.FC = () => {
   const [tabGroups, setTabGroups] = useState<TabGroup[]>([]);
   const [dbReloadKey, setDbReloadKey] = useState(0);
 
-  // Export/Import a whole database (its own dialog, from the Sidebar's Tools or the title menu)
-  const [showExportDbDialog, setShowExportDbDialog] = useState(false);
-  const [showImportDbDialog, setShowImportDbDialog] = useState(false);
   // Exporting one table (from the Sidebar's context menu) — the same dialog as the Export button under the grid
   const [exportTableTarget, setExportTableTarget] = useState<string | null>(null);
 
@@ -339,18 +337,7 @@ export const App: React.FC = () => {
   const [globalImportTargetTable, setGlobalImportTargetTable] = useState<string | null>(null);
   const [globalImportTab, setGlobalImportTab] = useState<'structure' | 'data'>('structure');
   const [globalImportProgress, setGlobalImportProgress] = useState<ProgressState | null>(null);
-  // The columns present in the file (the union of every row's keys, since CSV/JSON rows may omit some)
   const globalImportCols = React.useMemo(() => collectColumns(globalImportPendingRows), [globalImportPendingRows]);
-  const [showDbInfoModal, setShowDbInfoModal] = useState(false);
-  // Which DatabaseInfoModal tab opens: 'current' when entered from "Database info",
-  // 'all' when entered from "Statistics for all databases" in the Databases menu.
-  const [dbInfoTab, setDbInfoTab] = useState<'current' | 'all'>('current');
-  const [showSchemaMigration, setShowSchemaMigration] = useState(false);
-  const [showDbCompare, setShowDbCompare] = useState(false);
-  const [showMcpSettings, setShowMcpSettings] = useState(false);
-  // Data Generator: the table preselected when entered from a table's context menu.
-  const [showDataGen, setShowDataGen] = useState(false);
-  const [dataGenTable, setDataGenTable] = useState<string | null>(null);
   const [showSidebar, setShowSidebar] = useState(true);
   const [showAbout, setShowAbout] = useState(false);
   // Reads the real version from tauri.conf.json rather than hardcoding it in JSX, which drifts the
@@ -1877,6 +1864,163 @@ export const App: React.FC = () => {
     setActiveTabId(tabId);
   };
 
+  const handleOpenProcessMonitor = () => {
+    const tabId = `process_monitor_${activeConnIdState}`;
+    const existing = visibleTabs.find((tb) => tb.id === tabId);
+    if (existing) {
+      setActiveTabId(tabId);
+      return;
+    }
+    const label = `Processes: ${connection?.dbName || 'Server'}`;
+    const newTab: TabInfo = {
+      id: tabId,
+      connId: activeConnIdState,
+      type: 'process-monitor',
+      name: label,
+      label,
+    };
+    setTabs((prev) => [...prev, newTab]);
+    setActiveTabId(tabId);
+  };
+
+  const handleOpenSchemaMigration = () => {
+    const tabId = `schema_migration_${activeConnIdState}`;
+    const existing = visibleTabs.find((tb) => tb.id === tabId);
+    if (existing) {
+      setActiveTabId(tabId);
+      return;
+    }
+    const label = `Diff: ${connection?.dbName || 'Schema'}`;
+    const newTab: TabInfo = {
+      id: tabId,
+      connId: activeConnIdState,
+      type: 'schema-migration',
+      name: label,
+      label,
+    };
+    setTabs((prev) => [...prev, newTab]);
+    setActiveTabId(tabId);
+  };
+
+  const handleOpenDbCompare = () => {
+    const tabId = `db_compare_${activeConnIdState}`;
+    const existing = visibleTabs.find((tb) => tb.id === tabId);
+    if (existing) {
+      setActiveTabId(tabId);
+      return;
+    }
+    const label = `Compare: ${connection?.dbName || 'Databases'}`;
+    const newTab: TabInfo = {
+      id: tabId,
+      connId: activeConnIdState,
+      type: 'db-compare',
+      name: label,
+      label,
+    };
+    setTabs((prev) => [...prev, newTab]);
+    setActiveTabId(tabId);
+  };
+
+  const handleOpenDbInfo = (initialTab: 'current' | 'all' = 'current') => {
+    const tabId = `db_info_${activeConnIdState}_${initialTab}`;
+    const existing = visibleTabs.find((tb) => tb.id === tabId);
+    if (existing) {
+      setActiveTabId(tabId);
+      return;
+    }
+    const label = initialTab === 'all' ? 'All Databases' : `Db Info: ${connection?.dbName || 'Server'}`;
+    const newTab: TabInfo = {
+      id: tabId,
+      connId: activeConnIdState,
+      type: 'db-info',
+      name: label,
+      label,
+      dbInfoTab: initialTab,
+    };
+    setTabs((prev) => [...prev, newTab]);
+    setActiveTabId(tabId);
+  };
+
+  const handleOpenDataGen = (tableName?: string | null) => {
+    const tabId = `data_gen_${activeConnIdState}`;
+    const existing = visibleTabs.find((tb) => tb.id === tabId);
+    if (existing) {
+      if (tableName) {
+        setTabs((prev) => prev.map((tb) => (tb.id === tabId ? { ...tb, dataGenTable: tableName } : tb)));
+      }
+      setActiveTabId(tabId);
+      return;
+    }
+    const label = `Data Gen: ${connection?.dbName || 'Database'}`;
+    const newTab: TabInfo = {
+      id: tabId,
+      connId: activeConnIdState,
+      type: 'data-gen',
+      name: label,
+      label,
+      dataGenTable: tableName ?? null,
+    };
+    setTabs((prev) => [...prev, newTab]);
+    setActiveTabId(tabId);
+  };
+
+  const handleOpenExportDb = () => {
+    const tabId = `export_db_${activeConnIdState}`;
+    const existing = visibleTabs.find((tb) => tb.id === tabId);
+    if (existing) {
+      setActiveTabId(tabId);
+      return;
+    }
+    const label = `Export: ${connection?.dbName || 'Database'}`;
+    const newTab: TabInfo = {
+      id: tabId,
+      connId: activeConnIdState,
+      type: 'export-db',
+      name: label,
+      label,
+    };
+    setTabs((prev) => [...prev, newTab]);
+    setActiveTabId(tabId);
+  };
+
+  const handleOpenImportDb = () => {
+    const tabId = `import_db_${activeConnIdState}`;
+    const existing = visibleTabs.find((tb) => tb.id === tabId);
+    if (existing) {
+      setActiveTabId(tabId);
+      return;
+    }
+    const label = `Import: ${connection?.dbName || 'Database'}`;
+    const newTab: TabInfo = {
+      id: tabId,
+      connId: activeConnIdState,
+      type: 'import-db',
+      name: label,
+      label,
+    };
+    setTabs((prev) => [...prev, newTab]);
+    setActiveTabId(tabId);
+  };
+
+  const handleOpenMcpServer = () => {
+    const tabId = 'mcp_server';
+    const existing = visibleTabs.find((tb) => tb.id === tabId);
+    if (existing) {
+      setActiveTabId(tabId);
+      return;
+    }
+    const label = 'MCP Server';
+    const newTab: TabInfo = {
+      id: tabId,
+      connId: activeConnIdState,
+      type: 'mcp-server',
+      name: label,
+      label,
+    };
+    setTabs((prev) => [...prev, newTab]);
+    setActiveTabId(tabId);
+  };
+
   /**
    * The tab whose panel is on screen — looked up in `visibleTabs`, not `tabs`.
    *
@@ -1967,19 +2111,19 @@ export const App: React.FC = () => {
       onNewConnection={handleNewConnection}
       onDisconnect={handleDisconnect}
       onNewQuery={handleNewQueryTab}
-      onExportDatabase={() => setShowExportDbDialog(true)}
-      onImportDatabase={() => setShowImportDbDialog(true)}
+      onExportDatabase={handleOpenExportDb}
+      onImportDatabase={handleOpenImportDb}
       onToggleSidebar={() => setShowSidebar(prev => !prev)}
       onToggleTheme={toggleTheme}
       onShowShortcuts={() => setShowShortcuts(true)}
       onShowAbout={() => setShowAbout(true)}
       onShowWhatsNew={() => setShowWhatsNew(true)}
-      onOpenCompare={() => setShowDbCompare(true)}
+      onOpenCompare={handleOpenDbCompare}
       onToggleTerminal={handleOpenTerminal}
       aiOpen={showAi}
       onToggleAiAssistant={() => setShowAi(prev => !prev)}
       onDatabaseOpened={handleDatabaseOpened}
-      onOpenAllDbStats={() => { setDbInfoTab('all'); setShowDbInfoModal(true); }}
+      onOpenAllDbStats={() => handleOpenDbInfo('all')}
       onOpenDocs={() => setShowDocModal(true)}
     />
   );
@@ -2083,19 +2227,17 @@ export const App: React.FC = () => {
                 activeTable={activeTable}
                 onImportToTable={handleImportToTableTrigger}
                 onExportTable={handleExportTableTrigger}
-                onExportDatabase={() => setShowExportDbDialog(true)}
-                onImportDatabase={() => setShowImportDbDialog(true)}
+                onExportDatabase={handleOpenExportDb}
+                onImportDatabase={handleOpenImportDb}
                 onImportNewTable={() => { setGlobalImportTargetTable(null); setShowGlobalImportPicker(true); }}
-                onOpenDbInfo={() => { setDbInfoTab('current'); setShowDbInfoModal(true); }}
-                onOpenAllDbStats={() => { setDbInfoTab('all'); setShowDbInfoModal(true); }}
-                onSchemaMigration={() => setShowSchemaMigration(true)}
-                onCompareDatabases={() => setShowDbCompare(true)}
+                onOpenDbInfo={() => handleOpenDbInfo('current')}
+                onOpenProcessMonitor={handleOpenProcessMonitor}
+                onOpenAllDbStats={() => handleOpenDbInfo('all')}
+                onSchemaMigration={handleOpenSchemaMigration}
+                onCompareDatabases={handleOpenDbCompare}
                 onOpenErDiagram={handleOpenErDiagram}
-                onMcpSettings={() => setShowMcpSettings(true)}
-                onGenerateData={(tableName) => {
-                  setDataGenTable(tableName ?? null);
-                  setShowDataGen(true);
-                }}
+                onMcpSettings={handleOpenMcpServer}
+                onGenerateData={handleOpenDataGen}
                 onTableRenamed={(oldName, newName) => handleTableRenamed(activeConnIdState, oldName, newName)}
                 onTableDropped={handleTableDropped}
                 onDatabaseOpened={handleDatabaseOpened}
@@ -2218,6 +2360,78 @@ export const App: React.FC = () => {
                           onOpenTable={(tableName) => handleSelectTable(tableName, 'data')}
                         />
                       </React.Suspense>
+                    ) : activeTab.type === 'process-monitor' ? (
+                      <LiveProcessListPanel
+                        key={activeConnIdState + '|' + activeTab.id}
+                        connId={activeTab.connId || activeConnIdState}
+                        databaseName={connection?.dbName}
+                        onClose={() => handleCloseTab(activeTab.id)}
+                      />
+                    ) : activeTab.type === 'schema-migration' && connection ? (
+                      <SchemaMigration
+                        key={activeConnIdState + '|' + activeTab.id}
+                        dbType={connection.dbType}
+                        database={connection.dbName}
+                        asTab={true}
+                        onClose={() => handleCloseTab(activeTab.id)}
+                      />
+                    ) : activeTab.type === 'db-compare' && connection ? (
+                      <DbCompareDialog
+                        key={activeConnIdState + '|' + activeTab.id}
+                        connId={activeTab.connId || activeConnIdState}
+                        dbType={connection.dbType}
+                        currentDb={connection.dbName}
+                        asTab={true}
+                        onClose={() => handleCloseTab(activeTab.id)}
+                        onOpenInSqlEditor={openQueryTabWithSql}
+                      />
+                    ) : activeTab.type === 'data-gen' && connection ? (
+                      <DataGeneratorDialog
+                        key={activeConnIdState + '|' + activeTab.id}
+                        connId={activeTab.connId || activeConnIdState}
+                        dbName={connection.dbName}
+                        initialTable={activeTab.dataGenTable}
+                        asTab={true}
+                        onClose={() => {
+                          handleCloseTab(activeTab.id);
+                          window.dispatchEvent(new CustomEvent('database-restored', { detail: { connId: activeConnIdState } }));
+                        }}
+                      />
+                    ) : activeTab.type === 'db-info' ? (
+                      <DatabaseInfoModal
+                        key={activeConnIdState + '|' + activeTab.id}
+                        connId={activeTab.connId || activeConnIdState}
+                        initialTab={activeTab.dbInfoTab || 'current'}
+                        asTab={true}
+                        onClose={() => handleCloseTab(activeTab.id)}
+                        onSelectTable={(tableName) => handleSelectTable(tableName)}
+                        onDatabaseOpened={handleDatabaseOpened}
+                      />
+                    ) : activeTab.type === 'export-db' ? (
+                      <ExportDatabaseDialog
+                        key={activeConnIdState + '|' + activeTab.id}
+                        connId={activeTab.connId || activeConnIdState}
+                        dbName={connection?.dbName || ''}
+                        asTab={true}
+                        onClose={() => handleCloseTab(activeTab.id)}
+                        onSubmit={handleExportDatabase}
+                      />
+                    ) : activeTab.type === 'import-db' ? (
+                      <ImportDatabaseDialog
+                        key={activeConnIdState + '|' + activeTab.id}
+                        currentDb={connection?.dbName}
+                        canManageDatabases={!!connection && connection.dbType !== 'sqlite'}
+                        dbType={connection?.dbType}
+                        asTab={true}
+                        onClose={() => handleCloseTab(activeTab.id)}
+                        onSubmit={handleImportDatabase}
+                      />
+                    ) : activeTab.type === 'mcp-server' ? (
+                      <McpServerSettingsModal
+                        key={activeTab.id}
+                        asTab={true}
+                        onClose={() => handleCloseTab(activeTab.id)}
+                      />
                     ) : null}
                   </div>
                 )}
@@ -2354,25 +2568,6 @@ export const App: React.FC = () => {
           <ProgressBar progress={globalImportProgress} />
         </div>
       )}
-
-      {/* Export a whole database (Export Database) */}
-      <ExportDatabaseDialog
-              connId={activeConnIdState}
-        open={showExportDbDialog}
-        onClose={() => setShowExportDbDialog(false)}
-        onSubmit={handleExportDatabase}
-        dbName={connection?.dbName || ''}
-      />
-
-      {/* Import a whole database from a dump file (Import Database) */}
-      <ImportDatabaseDialog
-        open={showImportDbDialog}
-        onClose={() => setShowImportDbDialog(false)}
-        currentDb={connection?.dbName}
-        canManageDatabases={!!connection && connection.dbType !== 'sqlite'}
-        dbType={connection?.dbType}
-        onSubmit={handleImportDatabase}
-      />
 
       {/* Export one table — from the Sidebar's context menu, the same dialog as the Export button under the grid */}
       {exportTableTarget && connection && (
@@ -2595,56 +2790,6 @@ export const App: React.FC = () => {
         </Modal>
       )}
 
-      {/* Database Info Modal */}
-      <DatabaseInfoModal
-              connId={activeConnIdState}
-        isOpen={showDbInfoModal}
-        onClose={() => setShowDbInfoModal(false)}
-        onSelectTable={(tableName) => handleSelectTable(tableName)}
-        initialTab={dbInfoTab}
-        onDatabaseOpened={handleDatabaseOpened}
-      />
-
-      {/* Diff Schema & Migration Modal */}
-      {showSchemaMigration && connection && (
-        <SchemaMigration
-          dbType={connection.dbType}
-          database={connection.dbName}
-          onClose={() => setShowSchemaMigration(false)}
-        />
-      )}
-
-      {/* Comparing two databases (structure + data) */}
-      {/* Not gated on `connection`: the server, its token and the request log are app-wide, and the
-          screen has to be reachable to turn the thing OFF even with nothing open. */}
-      {showMcpSettings && <McpServerSettingsModal onClose={() => setShowMcpSettings(false)} />}
-
-      {showDbCompare && connection && (
-        <DbCompareDialog
-          connId={activeConnIdState}
-          dbType={connection.dbType}
-          currentDb={connection.dbName}
-          onClose={() => setShowDbCompare(false)}
-          onOpenInSqlEditor={openQueryTabWithSql}
-        />
-      )}
-
-      {/* Bulk test-data generation */}
-      {showDataGen && connection && (
-        <DataGeneratorDialog
-          connId={activeConnIdState}
-          dbName={connection.dbName}
-          initialTable={dataGenTable}
-          onClose={() => {
-            setShowDataGen(false);
-            setDataGenTable(null);
-            // Row counts changed -> Sidebar/DataGrid reload. This reuses the existing event rather
-            // than adding a new one (the schema did not change, so invalidateCatalog is NOT needed).
-            window.dispatchEvent(new CustomEvent('database-restored', { detail: { connId: activeConnIdState } }));
-          }}
-        />
-      )}
-
       {/* About Modal */}
       {showAbout && (
         /* Click outside to close — it used to be closable only by the button. */
@@ -2655,7 +2800,7 @@ export const App: React.FC = () => {
             </button>
 
             <img className="about-logo" src={appIcon} alt="" />
-            <div className="about-name">TableNova</div>
+            <div className="about-name">{t('app.appName')}</div>
             <div className="about-version">
               {t('app.aboutVersion', { version: appVersion })} (Build 2608)
             </div>

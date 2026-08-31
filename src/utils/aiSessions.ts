@@ -20,8 +20,8 @@ export interface AiChatSession {
   updatedAt: number;
 }
 
-const SESSIONS_STORAGE_KEY = 'tablenova_ai_sessions_v1';
-const ACTIVE_SESSION_KEY = 'tablenova_ai_active_session_id';
+const SESSIONS_STORAGE_KEY = 'tablegrid_ai_sessions_v1';
+const ACTIVE_SESSION_KEY = 'tablegrid_ai_active_session_id';
 
 export function getAiSessions(): AiChatSession[] {
   if (typeof window === 'undefined') return [];

@@ -1,115 +1,175 @@
 //! Table-level DDL: create / drop / empty / rename, and reading a table's DDL back.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sqlx::Row;
 
 use crate::database::{
-    all_string_values, execute_raw_sql_generic, fk_checks_sql, pg_schema_of, qualified,
-    quote_ident, reject_conn_read_only, sql_str, DbConnection, DbKind, Exec,
+    DbConnection, DbKind, Exec, all_string_values, execute_raw_sql_generic, fk_checks_sql,
+    pg_schema_of, qualified, quote_ident, reject_conn_read_only, sql_str,
 };
 
-use crate::database::introspect::get_primary_key_columns;
 use super::table_alter::generate_alter_sqls;
+use crate::database::introspect::get_primary_key_columns;
 
 #[tauri::command]
-pub async fn create_table(state: tauri::State<'_, crate::AppState>, conn_id: String, payload: Value) -> Result<Value, String> {
-    let (conn_type, schema) = {
-        let ctx = state.connections.acquire(&conn_id)?;
-        let ct = ctx.conn().clone();
-        (ct, ctx.raw_schema().map(str::to_string))
-    };
+pub async fn create_table(conn_id: String, payload: Value) -> Result<Value, String> {
+    Box::pin(async move {
+        let state = crate::state::require_state()?;
+        let (conn_type, schema) = {
+            let ctx = state.connections.acquire(&conn_id)?;
+            let ct = ctx.conn().clone();
+            (ct, ctx.raw_schema().map(str::to_string))
+        };
 
-    let table_name = payload.get("tableName").and_then(|v| v.as_str()).ok_or("Thiếu tên bảng")?;
+        let table_name = payload
+            .get("tableName")
+            .and_then(|v| v.as_str())
+            .ok_or("Thiếu tên bảng")?;
 
-    let db_type = match &conn_type.kind {
-        DbKind::Sqlite(_) => "sqlite",
-        DbKind::Postgres(_) => "postgres",
-        DbKind::Mysql(_) => "mysql",
-    };
-    let q = if db_type == "mysql" { '`' } else { '"' };
-    // Without qualifying it the new table lands in the first schema of search_path, not the selected schema.
-    let table_ref = qualified(&conn_type, &schema, table_name);
+        let db_type = match &conn_type.kind {
+            DbKind::Sqlite(_) => "sqlite",
+            DbKind::Postgres(_) => "postgres",
+            DbKind::Mysql(_) => "mysql",
+        };
+        let q = if db_type == "mysql" { '`' } else { '"' };
+        // Without qualifying it the new table lands in the first schema of search_path, not the selected schema.
+        let table_ref = qualified(&conn_type, &schema, table_name);
 
-    let columns = payload.get("columns").and_then(|v| v.as_array());
+        let columns = payload.get("columns").and_then(|v| v.as_array());
 
-    // When no columns are passed -> keep the old behaviour: create a minimal table with one id primary-key column
-    let create_sql = match columns {
-        Some(cols) if !cols.is_empty() => {
-            // The list of primary-key columns
-            let pk_cols: Vec<String> = cols.iter()
-                .filter(|c| c.get("isPrimaryKey").and_then(|v| v.as_bool()).unwrap_or(false))
-                .filter_map(|c| c.get("name").and_then(|v| v.as_str()).map(|s| s.to_string()))
-                .collect();
-            // Special case: exactly 1 primary key with auto-increment -> use the auto-increment syntax right on that column
-            let single_auto_pk = pk_cols.len() == 1
-                && cols.iter().any(|c| {
-                    c.get("isPrimaryKey").and_then(|v| v.as_bool()).unwrap_or(false)
-                        && c.get("autoIncrement").and_then(|v| v.as_bool()).unwrap_or(false)
-                });
+        // When no columns are passed -> keep the old behaviour: create a minimal table with one id primary-key column
+        let create_sql = match columns {
+            Some(cols) if !cols.is_empty() => {
+                // The list of primary-key columns
+                let pk_cols: Vec<String> = cols
+                    .iter()
+                    .filter(|c| {
+                        c.get("isPrimaryKey")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false)
+                    })
+                    .filter_map(|c| {
+                        c.get("name")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
+                    })
+                    .collect();
+                // Special case: exactly 1 primary key with auto-increment -> use the auto-increment syntax right on that column
+                let single_auto_pk = pk_cols.len() == 1
+                    && cols.iter().any(|c| {
+                        c.get("isPrimaryKey")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false)
+                            && c.get("autoIncrement")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false)
+                    });
 
-            let mut defs: Vec<String> = Vec::new();
-            for col in cols {
-                let name = match col.get("name").and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()) {
-                    Some(n) => n,
-                    None => continue,
-                };
-                let col_type = col.get("type").and_then(|v| v.as_str()).unwrap_or("TEXT");
-                let is_pk = col.get("isPrimaryKey").and_then(|v| v.as_bool()).unwrap_or(false);
-                let nullable = col.get("nullable").and_then(|v| v.as_bool()).unwrap_or(true);
-                let default_val = col.get("defaultValue").and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty());
-
-                if single_auto_pk && is_pk {
-                    // An auto-incrementing primary-key column: the syntax differs per dialect
-                    let def = match db_type {
-                        "mysql" => format!("{q}{name}{q} {ty} NOT NULL AUTO_INCREMENT PRIMARY KEY", q = q, name = name, ty = col_type),
-                        "postgres" => format!("{q}{name}{q} SERIAL PRIMARY KEY", q = q, name = name),
-                        _ => format!("{q}{name}{q} INTEGER PRIMARY KEY AUTOINCREMENT", q = q, name = name),
+                let mut defs: Vec<String> = Vec::new();
+                for col in cols {
+                    let name = match col
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.trim().is_empty())
+                    {
+                        Some(n) => n,
+                        None => continue,
                     };
-                    defs.push(def);
-                    continue;
-                }
+                    let col_type = col.get("type").and_then(|v| v.as_str()).unwrap_or("TEXT");
+                    let is_pk = col
+                        .get("isPrimaryKey")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let nullable = col
+                        .get("nullable")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(true);
+                    let default_val = col
+                        .get("defaultValue")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.trim().is_empty());
 
-                let mut def = format!("{q}{name}{q} {ty}", q = q, name = name, ty = col_type);
-                if !nullable {
-                    def.push_str(" NOT NULL");
-                }
-                if let Some(d) = default_val {
-                    if d.eq_ignore_ascii_case("CURRENT_TIMESTAMP") || d == "0" || d.eq_ignore_ascii_case("true") || d.eq_ignore_ascii_case("false") || d == "''" {
-                        def.push_str(&format!(" DEFAULT {}", d));
-                    } else {
-                        def.push_str(&format!(" DEFAULT '{}'", d.replace('\'', "''")));
+                    if single_auto_pk && is_pk {
+                        // An auto-incrementing primary-key column: the syntax differs per dialect
+                        let def = match db_type {
+                            "mysql" => format!(
+                                "{q}{name}{q} {ty} NOT NULL AUTO_INCREMENT PRIMARY KEY",
+                                q = q,
+                                name = name,
+                                ty = col_type
+                            ),
+                            "postgres" => {
+                                format!("{q}{name}{q} SERIAL PRIMARY KEY", q = q, name = name)
+                            }
+                            _ => format!(
+                                "{q}{name}{q} INTEGER PRIMARY KEY AUTOINCREMENT",
+                                q = q,
+                                name = name
+                            ),
+                        };
+                        defs.push(def);
+                        continue;
                     }
+
+                    let mut def = format!("{q}{name}{q} {ty}", q = q, name = name, ty = col_type);
+                    if !nullable {
+                        def.push_str(" NOT NULL");
+                    }
+                    if let Some(d) = default_val {
+                        if d.eq_ignore_ascii_case("CURRENT_TIMESTAMP")
+                            || d == "0"
+                            || d.eq_ignore_ascii_case("true")
+                            || d.eq_ignore_ascii_case("false")
+                            || d == "''"
+                        {
+                            def.push_str(&format!(" DEFAULT {}", d));
+                        } else {
+                            def.push_str(&format!(" DEFAULT '{}'", d.replace('\'', "''")));
+                        }
+                    }
+                    defs.push(def);
                 }
-                defs.push(def);
-            }
 
-            // With several primary keys (or a non-auto-increment primary key) -> add a table-level PRIMARY KEY constraint
-            if !single_auto_pk && !pk_cols.is_empty() {
-                let pk_list = pk_cols.iter().map(|c| format!("{q}{c}{q}", q = q, c = c)).collect::<Vec<_>>().join(", ");
-                defs.push(format!("PRIMARY KEY ({})", pk_list));
-            }
+                // With several primary keys (or a non-auto-increment primary key) -> add a table-level PRIMARY KEY constraint
+                if !single_auto_pk && !pk_cols.is_empty() {
+                    let pk_list = pk_cols
+                        .iter()
+                        .map(|c| format!("{q}{c}{q}", q = q, c = c))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    defs.push(format!("PRIMARY KEY ({})", pk_list));
+                }
 
-            format!("CREATE TABLE {name} ({defs})", name = table_ref, defs = defs.join(", "))
+                format!(
+                    "CREATE TABLE {name} ({defs})",
+                    name = table_ref,
+                    defs = defs.join(", ")
+                )
+            }
+            _ => match &conn_type.kind {
+                DbKind::Mysql(_) => format!(
+                    "CREATE TABLE {} (id INT AUTO_INCREMENT PRIMARY KEY)",
+                    table_ref
+                ),
+                _ => format!("CREATE TABLE {} (id INTEGER PRIMARY KEY)", table_ref),
+            },
+        };
+
+        execute_raw_sql_generic(&conn_type, create_sql).await?;
+
+        // After creating the table, create the Indexes & Foreign Keys too (when present) — reusing the SQL builder fixed in generate_alter_sqls
+        let extra_payload = json!({
+            "addedIndexes": payload.get("indexes").cloned().unwrap_or(json!([])),
+            "addedFKs": payload.get("foreignKeys").cloned().unwrap_or(json!([])),
+        });
+        let extra_sqls = generate_alter_sqls(table_name, &extra_payload, db_type, &schema);
+        for sql in extra_sqls {
+            execute_raw_sql_generic(&conn_type, sql).await?;
         }
-        _ => match &conn_type.kind {
-            DbKind::Mysql(_) => format!("CREATE TABLE {} (id INT AUTO_INCREMENT PRIMARY KEY)", table_ref),
-            _ => format!("CREATE TABLE {} (id INTEGER PRIMARY KEY)", table_ref),
-        },
-    };
 
-    execute_raw_sql_generic(&conn_type, create_sql).await?;
-
-    // After creating the table, create the Indexes & Foreign Keys too (when present) — reusing the SQL builder fixed in generate_alter_sqls
-    let extra_payload = json!({
-        "addedIndexes": payload.get("indexes").cloned().unwrap_or(json!([])),
-        "addedFKs": payload.get("foreignKeys").cloned().unwrap_or(json!([])),
-    });
-    let extra_sqls = generate_alter_sqls(table_name, &extra_payload, db_type, &schema);
-    for sql in extra_sqls {
-        execute_raw_sql_generic(&conn_type, sql).await?;
-    }
-
-    Ok(json!({ "success": true }))
+        Ok(json!({ "success": true }))
+    })
+    .await
 }
 
 /// Runs a short sequence on ONE connection, optionally with foreign-key checks turned off around it.
@@ -139,10 +199,10 @@ async fn run_fk_wrapped(
             let _ = execute_raw_sql_generic(conn, fk_checks_sql(conn, false).to_string()).await;
         }
         let result = execute_raw_sql_generic(conn, sql).await;
-        if result.is_ok() {
-            if let Some(extra) = optional {
-                let _ = execute_raw_sql_generic(conn, extra).await;
-            }
+        if result.is_ok()
+            && let Some(extra) = optional
+        {
+            let _ = execute_raw_sql_generic(conn, extra).await;
         }
         // Restore even on failure: the session lives on and later statements must not inherit a
         // disabled foreign-key check.
@@ -157,10 +217,10 @@ async fn run_fk_wrapped(
         exec.try_run(fk_checks_sql(conn, false)).await;
     }
     let result = exec.run(sql).await;
-    if result.is_ok() {
-        if let Some(extra) = optional {
-            exec.try_run(&extra).await;
-        }
+    if result.is_ok()
+        && let Some(extra) = optional
+    {
+        exec.try_run(&extra).await;
     }
     // Restore it even on error: the connection goes back to the pool (or is the shared SQLite handle),
     // otherwise the next statement runs on a session that still has foreign-key checking off.
@@ -173,39 +233,43 @@ async fn run_fk_wrapped(
 // Drop a table/view. `cascade` and `ignore_fk` are the 2 options of the sidebar's Delete dialog.
 #[tauri::command]
 pub async fn drop_table(
-    state: tauri::State<'_, crate::AppState>, conn_id: String,
+    conn_id: String,
     name: String,
     is_view: Option<bool>,
     cascade: Option<bool>,
     ignore_fk: Option<bool>,
 ) -> Result<Value, String> {
-    let (conn_type, schema) = {
-        let ctx = state.connections.acquire(&conn_id)?;
-        let ct = ctx.conn().clone();
-        (ct, ctx.raw_schema().map(str::to_string))
-    };
-    let is_view = is_view.unwrap_or(false);
-    let cascade = cascade.unwrap_or(false);
-    // Ignoring foreign keys means nothing for a view: a view takes part in no FK constraint.
-    let ignore_fk = ignore_fk.unwrap_or(false) && !is_view;
+    Box::pin(async move {
+        let state = crate::state::require_state()?;
+        let (conn_type, schema) = {
+            let ctx = state.connections.acquire(&conn_id)?;
+            let ct = ctx.conn().clone();
+            (ct, ctx.raw_schema().map(str::to_string))
+        };
+        let is_view = is_view.unwrap_or(false);
+        let cascade = cascade.unwrap_or(false);
+        // Ignoring foreign keys means nothing for a view: a view takes part in no FK constraint.
+        let ignore_fk = ignore_fk.unwrap_or(false) && !is_view;
 
-    // Only Postgres really honours CASCADE: SQLite reports a syntax error and MySQL accepts the keyword
-    // then ignores it -> the user believes the cascade happened when it did not. Refusing beats staying silent.
-    if cascade && !matches!(conn_type.kind, DbKind::Postgres(_)) {
-        return Err("CASCADE chỉ được hỗ trợ trên PostgreSQL".to_string());
-    }
+        // Only Postgres really honours CASCADE: SQLite reports a syntax error and MySQL accepts the keyword
+        // then ignores it -> the user believes the cascade happened when it did not. Refusing beats staying silent.
+        if cascade && !matches!(conn_type.kind, DbKind::Postgres(_)) {
+            return Err("CASCADE chỉ được hỗ trợ trên PostgreSQL".to_string());
+        }
 
-    let keyword = if is_view { "DROP VIEW" } else { "DROP TABLE" };
-    let sql = format!(
-        "{} {}{}",
-        keyword,
-        qualified(&conn_type, &schema, &name),
-        if cascade { " CASCADE" } else { "" }
-    );
+        let keyword = if is_view { "DROP VIEW" } else { "DROP TABLE" };
+        let sql = format!(
+            "{} {}{}",
+            keyword,
+            qualified(&conn_type, &schema, &name),
+            if cascade { " CASCADE" } else { "" }
+        );
 
-    run_fk_wrapped(&conn_type, ignore_fk, sql, None).await?;
+        run_fk_wrapped(&conn_type, ignore_fk, sql, None).await?;
 
-    Ok(json!({ "success": true }))
+        Ok(json!({ "success": true }))
+    })
+    .await
 }
 
 // The next AUTO_INCREMENT value of a MySQL table, None when the table has no auto-increment column.
@@ -217,7 +281,12 @@ async fn mysql_next_auto_increment(conn: &DbConnection, name: &str) -> Option<u6
         name.replace('\'', "''")
     );
     let results = execute_raw_sql_generic(conn, sql).await.ok()?;
-    let cell = results.first()?.get("data")?.as_array()?.first()?.get("ai")?;
+    let cell = results
+        .first()?
+        .get("data")?
+        .as_array()?
+        .first()?
+        .get("ai")?;
     // decode_mysql_cell! returns a u64 as a number, but a string is accepted too for safety.
     cell.as_u64().or_else(|| cell.as_str()?.parse().ok())
 }
@@ -226,77 +295,90 @@ async fn mysql_next_auto_increment(conn: &DbConnection, name: &str) -> Option<u6
 // `restart_identity` / `disable_fk` / `cascade` are the 3 options of the sidebar's Truncate dialog.
 #[tauri::command]
 pub async fn truncate_table(
-    state: tauri::State<'_, crate::AppState>, conn_id: String,
+    conn_id: String,
     name: String,
     restart_identity: Option<bool>,
     disable_fk: Option<bool>,
     cascade: Option<bool>,
 ) -> Result<Value, String> {
-    let (conn_type, schema) = {
-        let ctx = state.connections.acquire(&conn_id)?;
-        let ct = ctx.conn().clone();
-        (ct, ctx.raw_schema().map(str::to_string))
-    };
-    let restart_identity = restart_identity.unwrap_or(false);
-    let disable_fk = disable_fk.unwrap_or(false);
-    let cascade = cascade.unwrap_or(false);
-    let quoted = qualified(&conn_type, &schema, &name);
+    Box::pin(async move {
+        let state = crate::state::require_state()?;
+        let (conn_type, schema) = {
+            let ctx = state.connections.acquire(&conn_id)?;
+            let ct = ctx.conn().clone();
+            (ct, ctx.raw_schema().map(str::to_string))
+        };
+        let restart_identity = restart_identity.unwrap_or(false);
+        let disable_fk = disable_fk.unwrap_or(false);
+        let cascade = cascade.unwrap_or(false);
+        let quoted = qualified(&conn_type, &schema, &name);
 
-    // Like DROP: only Postgres has TRUNCATE ... CASCADE.
-    if cascade && !matches!(conn_type.kind, DbKind::Postgres(_)) {
-        return Err("CASCADE chỉ được hỗ trợ trên PostgreSQL".to_string());
-    }
+        // Like DROP: only Postgres has TRUNCATE ... CASCADE.
+        if cascade && !matches!(conn_type.kind, DbKind::Postgres(_)) {
+            return Err("CASCADE chỉ được hỗ trợ trên PostgreSQL".to_string());
+        }
 
-    // MySQL always resets the auto-increment counter inside TRUNCATE and offers no way to stop it, so "keep the
-    // counter" has to be done by hand: read the value first, set it back afterwards. Read it BEFORE truncating.
-    let keep_auto_inc = match (&conn_type.kind, restart_identity) {
-        (DbKind::Mysql(_), false) => mysql_next_auto_increment(&conn_type, &name).await,
-        _ => None,
-    };
+        // MySQL always resets the auto-increment counter inside TRUNCATE and offers no way to stop it, so "keep the
+        // counter" has to be done by hand: read the value first, set it back afterwards. Read it BEFORE truncating.
+        let keep_auto_inc = match (&conn_type.kind, restart_identity) {
+            (DbKind::Mysql(_), false) => mysql_next_auto_increment(&conn_type, &name).await,
+            _ => None,
+        };
 
-    // The mandatory statement + a "best effort" statement to run afterwards (its failure does not count as a failure).
-    let (sql, optional): (String, Option<String>) = match &conn_type.kind {
-        DbKind::Mysql(_) => (
-            format!("TRUNCATE TABLE {}", quoted),
-            match (restart_identity, keep_auto_inc) {
-                // InnoDB has already reset it; the statement is still issued so the intent is explicit and other engines
-                // behave the same. A table with no auto-increment column -> ignore the error.
-                (true, _) => Some(format!("ALTER TABLE {} AUTO_INCREMENT = 1", quoted)),
-                // Put the old value back so a new id does not reuse a deleted one.
-                (false, Some(v)) if v > 1 => {
-                    Some(format!("ALTER TABLE {} AUTO_INCREMENT = {}", quoted, v))
-                }
-                _ => None,
-            },
-        ),
-        DbKind::Postgres(_) => (
-            format!(
-                "TRUNCATE TABLE {}{}{}",
-                quoted,
-                if restart_identity { " RESTART IDENTITY" } else { "" },
-                if cascade { " CASCADE" } else { "" }
+        // The mandatory statement + a "best effort" statement to run afterwards (its failure does not count as a failure).
+        let (sql, optional): (String, Option<String>) = match &conn_type.kind {
+            DbKind::Mysql(_) => (
+                format!("TRUNCATE TABLE {}", quoted),
+                match (restart_identity, keep_auto_inc) {
+                    // InnoDB has already reset it; the statement is still issued so the intent is explicit and other engines
+                    // behave the same. A table with no auto-increment column -> ignore the error.
+                    (true, _) => Some(format!("ALTER TABLE {} AUTO_INCREMENT = 1", quoted)),
+                    // Put the old value back so a new id does not reuse a deleted one.
+                    (false, Some(v)) if v > 1 => {
+                        Some(format!("ALTER TABLE {} AUTO_INCREMENT = {}", quoted, v))
+                    }
+                    _ => None,
+                },
             ),
-            None,
-        ),
-        // SQLite has no TRUNCATE -> DELETE FROM, and the auto-increment counter lives in the helper table
-        // sqlite_sequence, which DELETE does not touch. That table only exists when the database has
-        // at least one AUTOINCREMENT column -> ignore the "no such table" error.
-        DbKind::Sqlite(_) => (
-            format!("DELETE FROM {}", quoted),
-            restart_identity.then(|| {
-                format!("DELETE FROM sqlite_sequence WHERE name = '{}'", name.replace('\'', "''"))
-            }),
-        ),
-    };
+            DbKind::Postgres(_) => (
+                format!(
+                    "TRUNCATE TABLE {}{}{}",
+                    quoted,
+                    if restart_identity {
+                        " RESTART IDENTITY"
+                    } else {
+                        ""
+                    },
+                    if cascade { " CASCADE" } else { "" }
+                ),
+                None,
+            ),
+            // SQLite has no TRUNCATE -> DELETE FROM, and the auto-increment counter lives in the helper table
+            // sqlite_sequence, which DELETE does not touch. That table only exists when the database has
+            // at least one AUTOINCREMENT column -> ignore the "no such table" error.
+            DbKind::Sqlite(_) => (
+                format!("DELETE FROM {}", quoted),
+                restart_identity.then(|| {
+                    format!(
+                        "DELETE FROM sqlite_sequence WHERE name = '{}'",
+                        name.replace('\'', "''")
+                    )
+                }),
+            ),
+        };
 
-    run_fk_wrapped(&conn_type, disable_fk, sql, optional).await?;
+        run_fk_wrapped(&conn_type, disable_fk, sql, optional).await?;
 
-    Ok(json!({ "success": true }))
+        Ok(json!({ "success": true }))
+    })
+    .await
 }
 
 // Returns the table's CREATE TABLE statement (its definition) per dialect
 #[tauri::command]
-pub async fn get_table_definition(state: tauri::State<'_, crate::AppState>, conn_id: String, name: String) -> Result<Value, String> {
+pub async fn get_table_definition(conn_id: String, name: String) -> Result<Value, String> {
+    Box::pin(async move {
+    let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
         let ct = ctx.conn().clone();
@@ -385,7 +467,7 @@ pub async fn get_table_definition(state: tauri::State<'_, crate::AppState>, conn
             );
             let results = execute_raw_sql_generic(&conn_type, sql).await?;
             let mut defs: Vec<String> = Vec::new();
-            if let Some(data) = results.get(0).and_then(|r| r.get("data")).and_then(|v| v.as_array()) {
+            if let Some(data) = results.first().and_then(|r| r.get("data")).and_then(|v| v.as_array()) {
                 for row in data {
                     let o = match row.as_object() { Some(o) => o, None => continue };
                     let col = o.get("column_name").and_then(|v| v.as_str()).unwrap_or("");
@@ -407,27 +489,36 @@ pub async fn get_table_definition(state: tauri::State<'_, crate::AppState>, conn
     };
 
     Ok(json!({ "success": true, "sql": ddl }))
+}).await
 }
 
 #[tauri::command]
-pub async fn rename_table(state: tauri::State<'_, crate::AppState>, conn_id: String, old_name: String, new_name: String) -> Result<Value, String> {
-    let (conn_type, schema) = {
-        let ctx = state.connections.acquire(&conn_id)?;
-        let ct = ctx.conn().clone();
-        (ct, ctx.raw_schema().map(str::to_string))
-    };
+pub async fn rename_table(
+    conn_id: String,
+    old_name: String,
+    new_name: String,
+) -> Result<Value, String> {
+    Box::pin(async move {
+        let state = crate::state::require_state()?;
+        let (conn_type, schema) = {
+            let ctx = state.connections.acquire(&conn_id)?;
+            let ct = ctx.conn().clone();
+            (ct, ctx.raw_schema().map(str::to_string))
+        };
 
-    // Only the source side carries the schema: RENAME TO takes an UNqualified new name (Postgres reports a syntax
-    // error if it is qualified), and the renamed table stays in the same schema.
-    let sql = match &conn_type.kind {
-        DbKind::Mysql(_) => format!("RENAME TABLE `{}` TO `{}`", old_name, new_name),
-        _ => format!(
-            "ALTER TABLE {} RENAME TO {}",
-            qualified(&conn_type, &schema, &old_name),
-            quote_ident(&conn_type, &new_name)
-        ),
-    };
-    execute_raw_sql_generic(&conn_type, sql.clone()).await?;
-    
-    Ok(json!({ "success": true }))
+        // Only the source side carries the schema: RENAME TO takes an UNqualified new name (Postgres reports a syntax
+        // error if it is qualified), and the renamed table stays in the same schema.
+        let sql = match &conn_type.kind {
+            DbKind::Mysql(_) => format!("RENAME TABLE `{}` TO `{}`", old_name, new_name),
+            _ => format!(
+                "ALTER TABLE {} RENAME TO {}",
+                qualified(&conn_type, &schema, &old_name),
+                quote_ident(&conn_type, &new_name)
+            ),
+        };
+        execute_raw_sql_generic(&conn_type, sql.clone()).await?;
+
+        Ok(json!({ "success": true }))
+    })
+    .await
 }

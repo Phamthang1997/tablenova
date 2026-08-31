@@ -24,6 +24,12 @@ export interface ExportGridContext {
    * `countMode`).
    */
   totalCount?: number | null;
+  /**
+   * The rows the user has selected in the grid, in screen order, or undefined/empty when nothing is
+   * selected. Row OBJECTS rather than keys: they are already in the frontend's hands, so exporting a
+   * selection reads nothing from the database at all.
+   */
+  selectedRows?: any[];
 }
 
 interface ExportTableDialogProps {
@@ -77,6 +83,9 @@ export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
   const [fileName, setFileName] = useState(tableName);
   const [visibleOnly, setVisibleOnly] = useState(false);
   const [applyView, setApplyView] = useState(true); // use the sort/filter currently applied on the grid
+  // Off by default: "export this table" is what the button says, and a selection left over from an
+  // earlier click must not quietly shrink the file the user asked for.
+  const [onlySelected, setOnlySelected] = useState(false);
   const [schemaCols, setSchemaCols] = useState<string[]>([]);
   const [rows, setRows] = useState<any[]>([]); // sample rows, for the preview only
   const [totalRows, setTotalRows] = useState(0);
@@ -118,6 +127,18 @@ export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
   // export is pressed (see fetchAllRows) — which is when the progress bar appears.
   useEffect(() => {
     if (!open || step !== 'preview') return;
+    // A selection needs no read, and must not do one: the picked rows are not page 1 of anything.
+    //
+    // Handled HERE, before the loading flag is scheduled, precisely because this path has no `await`:
+    // inside the async block below, its `setLoading(false)` would run synchronously and therefore
+    // BEFORE the queued `setLoading(true)`, leaving the preview stuck on "loading" forever.
+    const picked = onlySelected ? grid?.selectedRows : undefined;
+    if (picked && picked.length > 0) {
+      setRows(picked.slice(0, PREVIEW_ROWS));
+      setTotalRows(picked.length);
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     queueMicrotask(() => {
       setLoading(true);
@@ -138,10 +159,14 @@ export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
       setLoading(false);
     })();
     return () => { cancelled = true; };
-  }, [connId, open, step, tableName, grid, applyView]);
+  }, [connId, open, step, tableName, grid, applyView, onlySelected]);
 
   /** Loads EVERY row page by page, reporting real progress from the rows fetched so far. */
   const fetchAllRows = async (): Promise<any[]> => {
+    // Same as the preview: already in memory, so there is no page to wait for and no progress to
+    // report. `applyView` is irrelevant here — the selection is in screen order, which is the sorted
+    // and filtered order the user was looking at when they made it.
+    if (onlySelected && grid?.selectedRows?.length) return grid.selectedRows;
     const useView = !!grid && applyView;
     const all: any[] = [];
     let total = totalRows;
@@ -348,14 +373,20 @@ export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
                     <input type="checkbox" checked={visibleOnly} onChange={(e) => setVisibleOnly(e.target.checked)} />
                     <span>{t('exportDialog.visibleColumnsOnly', { shown: grid.visibleColumns.length, total: grid.columns.length })}</span>
                   </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}>
-                    <input type="checkbox" checked={applyView} onChange={(e) => setApplyView(e.target.checked)} />
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', color: onlySelected ? 'var(--win-text-disabled)' : 'var(--win-text-primary)', cursor: onlySelected ? 'default' : 'pointer' }}>
+                    <input type="checkbox" checked={applyView} disabled={onlySelected} onChange={(e) => setApplyView(e.target.checked)} />
                     <span>{t('exportDialog.applyGridView')}</span>
                   </label>
+                  {!!grid.selectedRows?.length && (
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}>
+                      <input type="checkbox" checked={onlySelected} onChange={(e) => setOnlySelected(e.target.checked)} />
+                      <span>{t('exportDialog.onlySelectedRows', { n: grid.selectedRows.length })}</span>
+                    </label>
+                  )}
                 </div>
               )}
 
-              <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)', lineHeight: 1.5 }}>
+              <div style={{ fontSize: '11px', color: 'var(--win-text-secondary)', lineHeight: 1.5, display: onlySelected ? 'none' : undefined }}>
                 {t('exportDialog.exportAllRowsNote')}
                 {grid?.totalCount
                   ? <Trans i18nKey="exportDialog.exportAllRowsCount" values={{ n: grid.totalCount }} components={{ strong: <b style={{ color: 'var(--win-text-primary)' }} /> }} />

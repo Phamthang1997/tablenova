@@ -14,7 +14,7 @@ use serde_json::Value;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
-use super::auth::{connect_and_auth, SshHandler};
+use super::auth::{SshHandler, connect_and_auth};
 
 pub struct SshTunnel {
     pub local_port: u16,
@@ -33,7 +33,11 @@ impl Drop for SshTunnel {
 impl SshTunnel {
     /// Open the tunnel. `config` carries the ssh* fields (from the frontend); `remote_host`/`remote_port`
     /// is the DB address as seen from the SSH server.
-    pub async fn open(config: &Value, remote_host: &str, remote_port: u16) -> Result<SshTunnel, String> {
+    pub async fn open(
+        config: &Value,
+        remote_host: &str,
+        remote_port: u16,
+    ) -> Result<SshTunnel, String> {
         // 1+2. Connect + authenticate (shared with the terminal)
         let handle = connect_and_auth(config).await?;
 
@@ -58,7 +62,12 @@ impl SshTunnel {
                 let rhost = remote_host.clone();
                 tokio::spawn(async move {
                     let channel = match sess
-                        .channel_open_direct_tcpip(rhost, remote_port as u32, "127.0.0.1", local_port as u32)
+                        .channel_open_direct_tcpip(
+                            rhost,
+                            remote_port as u32,
+                            "127.0.0.1",
+                            local_port as u32,
+                        )
                         .await
                     {
                         Ok(c) => c,

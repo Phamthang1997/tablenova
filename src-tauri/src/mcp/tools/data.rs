@@ -9,7 +9,6 @@ use crate::mcp::audit::Refusal;
 use rmcp::model::CallToolResult;
 use serde_json::{Value, json};
 
-
 use super::{app_state, json_result, passthrough};
 use crate::database::{execute_raw_sql_pooled, qualified, with_timeout};
 use crate::mcp::policy;
@@ -33,9 +32,12 @@ pub async fn preview_table(
     let sql = format!("SELECT * FROM {table} LIMIT {limit}");
 
     let started = Instant::now();
-    let results = with_timeout(Some(target.timeout), execute_raw_sql_pooled(&target.conn, sql))
-        .await
-        .map_err(passthrough)?;
+    let results = with_timeout(
+        Some(target.timeout),
+        execute_raw_sql_pooled(&target.conn, sql),
+    )
+    .await
+    .map_err(passthrough)?;
     // The database already applied the limit, so nothing here was cut off after the fact.
     json_result(&shape(results, limit, started, false))
 }
@@ -52,9 +54,12 @@ pub async fn query(
     let limit = policy::row_limit(limit);
 
     let started = Instant::now();
-    let results = with_timeout(Some(target.timeout), execute_raw_sql_pooled(&target.conn, sql.to_string()))
-        .await
-        .map_err(passthrough)?;
+    let results = with_timeout(
+        Some(target.timeout),
+        execute_raw_sql_pooled(&target.conn, sql.to_string()),
+    )
+    .await
+    .map_err(passthrough)?;
     json_result(&shape(results, limit, started, true))
 }
 
@@ -72,9 +77,17 @@ fn shape(results: Vec<Value>, limit: usize, started: Instant, cut_here: bool) ->
     let columns: Vec<String> = first
         .get("columns")
         .and_then(Value::as_array)
-        .map(|c| c.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
+        .map(|c| {
+            c.iter()
+                .filter_map(|v| v.as_str().map(str::to_owned))
+                .collect()
+        })
         .unwrap_or_default();
-    let data = first.get("data").and_then(Value::as_array).cloned().unwrap_or_default();
+    let data = first
+        .get("data")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
 
     let total = data.len();
     let rows: Vec<Value> = data

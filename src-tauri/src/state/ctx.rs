@@ -4,11 +4,11 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use crate::database::DbConnection;
-use crate::redis_db::RedisCaps;
 use super::entry::{ConnEntry, LiveConn};
 use super::ids::ConnScopeId;
 use super::server::ServerHandle;
+use crate::database::DbConnection;
+use crate::redis_db::RedisCaps;
 
 /// A connection plus everything a command used to clone out of `DatabaseManager` by hand.
 ///

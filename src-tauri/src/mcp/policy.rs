@@ -76,7 +76,10 @@ pub fn resolve(state: &AppState, given: Option<&str>) -> Result<(Target, String)
     if !state.connections.is_mcp_exposed(&connection_id) {
         return Err(unknown_connection());
     }
-    let ctx = state.connections.acquire(&connection_id).map_err(|_| unknown_connection())?;
+    let ctx = state
+        .connections
+        .acquire(&connection_id)
+        .map_err(|_| unknown_connection())?;
     reject_if_manual(&connection_id)?;
     let target = Target {
         conn: ctx.conn().clone(),
@@ -123,7 +126,7 @@ fn choose_only(mut shared: Vec<String>) -> Result<String, Refusal> {
                 McpError::invalid_params(
                     format!(
                         "the user has shared {} connections, so connection_id is required. Call \
-                         tablenova_list_connections and pass one of: {}",
+                         tablegrid_list_connections and pass one of: {}",
                         shared.len(),
                         shared.join(", ")
                     ),
@@ -150,7 +153,7 @@ pub fn reject_if_manual(connection_id: &str) -> Result<(), Refusal> {
         return Err(Refusal::new(
             Denial::ManualTransaction,
             McpError::invalid_params(
-                "this connection is in manual-commit mode in TableNova. Ask the user to commit or \
+                "this connection is in manual-commit mode in TableGrid. Ask the user to commit or \
                  roll back and switch back to auto-commit before querying it."
                     .to_string(),
                 None,
@@ -162,12 +165,12 @@ pub fn reject_if_manual(connection_id: &str) -> Result<(), Refusal> {
 
 fn unknown_connection() -> Refusal {
     // English, and NOT routed through `backendErrors.ts`: this is read by an AI client, not shown in
-    // the TableNova UI. Same rule as the comments `compare/` writes into a generated SQL script.
+    // the TableGrid UI. Same rule as the comments `compare/` writes into a generated SQL script.
     Refusal::new(
         Denial::NotShared,
         McpError::invalid_params(
             "unknown connection_id, or it is not shared with MCP clients. Call \
-             tablenova_list_connections to see the connections the user shared."
+             tablegrid_list_connections to see the connections the user shared."
                 .to_string(),
             None,
         ),
@@ -204,7 +207,7 @@ pub fn ensure_single_read(sql: &str) -> Result<(), Refusal> {
     } else {
         Err(refuse_read(format!(
             "this build allows read statements only ({}); got `{}`. \
-             Ask the user to run writes from TableNova itself.",
+             Ask the user to run writes from TableGrid itself.",
             READ_HEADS.join(", "),
             if head.is_empty() { "?" } else { &head }
         )))
@@ -232,7 +235,9 @@ fn statement_head(statement: &str) -> String {
 
 /// The row cap a caller actually gets.
 pub fn row_limit(requested: Option<usize>) -> usize {
-    requested.unwrap_or(DEFAULT_ROW_LIMIT).clamp(1, MAX_ROW_LIMIT)
+    requested
+        .unwrap_or(DEFAULT_ROW_LIMIT)
+        .clamp(1, MAX_ROW_LIMIT)
 }
 
 #[cfg(test)]
@@ -241,7 +246,13 @@ mod tests {
 
     #[test]
     fn reads_pass_and_everything_else_does_not() {
-        for sql in ["SELECT 1", "select * from t", "EXPLAIN SELECT 1", "SHOW TABLES", "DESC t"] {
+        for sql in [
+            "SELECT 1",
+            "select * from t",
+            "EXPLAIN SELECT 1",
+            "SHOW TABLES",
+            "DESC t",
+        ] {
             assert!(ensure_single_read(sql).is_ok(), "should allow: {sql}");
         }
         for sql in [
@@ -274,7 +285,10 @@ mod tests {
     #[test]
     fn a_second_statement_is_refused_but_a_semicolon_in_a_string_is_not() {
         assert!(ensure_single_read("SELECT 1; DROP TABLE t").is_err());
-        assert!(ensure_single_read("SELECT 1;").is_ok(), "one statement with a trailing ;");
+        assert!(
+            ensure_single_read("SELECT 1;").is_ok(),
+            "one statement with a trailing ;"
+        );
         // The splitter's whole job: this is ONE statement, not two.
         assert!(ensure_single_read("SELECT 'a;b' FROM t").is_ok());
     }
@@ -283,13 +297,13 @@ mod tests {
     #[test]
     fn an_omitted_connection_id_resolves_only_when_there_is_no_choice() {
         let one = choose_only(vec!["c1".to_string()]);
-        assert_eq!(one.ok().map(|s| s), Some("c1".to_string()));
+        assert_eq!(one.ok(), Some("c1".to_string()));
 
         // Nothing shared reads exactly like an id that does not exist - §3.3.
         assert!(choose_only(vec![]).is_err());
 
         // Two shared must REFUSE and name them, never guess.
-        let many = choose_only(vec!["zeta".to_string(), "alpha".to_string()]).err().expect("refuse");
+        let many = choose_only(vec!["zeta".to_string(), "alpha".to_string()]).expect_err("refuse");
         let msg = many.error.message.to_string();
         assert!(msg.contains("connection_id is required"), "{msg}");
         assert!(msg.contains("alpha, zeta"), "must name them, sorted: {msg}");
@@ -302,7 +316,10 @@ mod tests {
         // `stmt_timeout` returns None, which used to mean no brake at all.
         assert_eq!(mcp_timeout(None), MAX_TIMEOUT);
         // Stricter than us is the user asking for stricter, and it applies to an AI too.
-        assert_eq!(mcp_timeout(Some(Duration::from_secs(5))), Duration::from_secs(5));
+        assert_eq!(
+            mcp_timeout(Some(Duration::from_secs(5))),
+            Duration::from_secs(5)
+        );
         // Looser than us still lands on the ceiling: nobody is watching this query to stop it.
         assert_eq!(mcp_timeout(Some(Duration::from_secs(3600))), MAX_TIMEOUT);
         assert_eq!(mcp_timeout(Some(MAX_TIMEOUT)), MAX_TIMEOUT);

@@ -1,4 +1,4 @@
-# Kế hoạch Thiết kế & Phát triển: Redis parity (đối chiếu RedisInsight)
+﻿# Kế hoạch Thiết kế & Phát triển: Redis parity (đối chiếu RedisInsight)
 
 > **Trạng thái: Phase 1–5 đã làm xong** (2026-08-07) — `redis_cmds.rs` (helper thuần + whitelist
 > read-only, ~90 assertion qua `rustc` độc lập), 20 command mới trong `redis_db.rs`, `redisKeyTree.ts`
@@ -24,7 +24,7 @@ dịch ở `backendErrors.ts` (đúng luật CLAUDE.md — cặp twin Rust ↔ `
 
 ### Có làm (đối chiếu bản gốc)
 
-| RedisInsight | TableNova | Phase |
+| RedisInsight | TABLEGRID | Phase |
 |---|---|---|
 | Phân trang phần tử key lớn (HSCAN/SSCAN/ZSCAN, lô 500) | ✅ | 1 |
 | Chỉ đọc thật (không có ở bản gốc) | ✅ **chặn ở Rust**, không chỉ ở UI | 1 |

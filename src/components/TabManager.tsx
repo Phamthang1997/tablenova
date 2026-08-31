@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { Table, Terminal, TerminalSquare, X, Plus, Trash2, XCircle, ArrowRight, ChevronDown, Cog, Braces, Layers, Pencil, Key, Activity, Timer, Radio, BarChart3 } from 'lucide-react';
+import { Table, Terminal, TerminalSquare, X, Plus, Trash2, XCircle, ArrowRight, ChevronDown, Cog, Braces, Layers, Pencil, Key, Activity, Timer, Radio, BarChart3, GitCompare, ArrowLeftRight, Wand2, Database, Download, Upload, Plug } from 'lucide-react';
 import { TAB_GROUP_COLORS, type TabGroup } from '../utils/tabGroups';
 
 /** Stable empty default for the `groups` prop: a fresh `[]` each render breaks memoisation downstream. */
@@ -37,6 +37,14 @@ export interface TabInfo {
     | 'routine'
     | 'view'
     | 'er'
+    | 'process-monitor'
+    | 'schema-migration'
+    | 'db-compare'
+    | 'data-gen'
+    | 'db-info'
+    | 'export-db'
+    | 'import-db'
+    | 'mcp-server'
     | 'redis-key'
     | 'redis-console'
     | 'redis-dashboard'
@@ -48,6 +56,8 @@ export interface TabInfo {
   label: string;
   routineInfo?: { name: string; kind: 'procedure' | 'function'; sql: string };
   viewInfo?: { name: string; sql: string };
+  dataGenTable?: string | null;
+  dbInfoTab?: 'current' | 'all';
   /**
    * A `redis-key` tab. `keyType` is only there to draw the badge before the value has loaded — the
    * source of truth is the actual key read, because the type may have changed (the key deleted and
@@ -309,7 +319,13 @@ export const TabManager: React.FC<TabManagerProps> = ({
 
   useEffect(() => {
     const closeAll = () => {
-      setContextMenu((prev) => ({ ...prev, visible: false }));
+      // `prev` is returned UNCHANGED when the menu is already hidden, which is almost always.
+      // Spreading it unconditionally built a new object on every click anywhere in the app, and a
+      // new object is never `Object.is`-equal, so React could not bail out: every click in the SQL
+      // editor, the grid or the sidebar re-rendered the whole tab strip for nothing (measured at
+      // 0.5ms a click, the most expensive thing left in those commits). `setShowListDropdown(false)`
+      // needs no such guard — React already bails out on an identical primitive.
+      setContextMenu((prev) => (prev.visible ? { ...prev, visible: false } : prev));
       setShowListDropdown(false);
     };
     window.addEventListener('click', closeAll);
@@ -574,6 +590,22 @@ export const TabManager: React.FC<TabManagerProps> = ({
                     )
                   ) : tab.type === 'view' ? (
                     <Layers size={12} style={{ color: '#8b5cf6', marginRight: '6px' }} />
+                  ) : tab.type === 'process-monitor' ? (
+                    <Activity size={12} style={{ color: '#06b6d4', marginRight: '6px' }} />
+                  ) : tab.type === 'schema-migration' ? (
+                    <GitCompare size={12} style={{ color: '#8b5cf6', marginRight: '6px' }} />
+                  ) : tab.type === 'db-compare' ? (
+                    <ArrowLeftRight size={12} style={{ color: '#f59e0b', marginRight: '6px' }} />
+                  ) : tab.type === 'data-gen' ? (
+                    <Wand2 size={12} style={{ color: '#ec4899', marginRight: '6px' }} />
+                  ) : tab.type === 'db-info' ? (
+                    <Database size={12} style={{ color: '#3b82f6', marginRight: '6px' }} />
+                  ) : tab.type === 'export-db' ? (
+                    <Download size={12} style={{ color: '#06b6d4', marginRight: '6px' }} />
+                  ) : tab.type === 'import-db' ? (
+                    <Upload size={12} style={{ color: '#10b981', marginRight: '6px' }} />
+                  ) : tab.type === 'mcp-server' ? (
+                    <Plug size={12} style={{ color: '#10b981', marginRight: '6px' }} />
                   ) : tab.type.startsWith('redis-') ? (
                     (() => {
                       const RedisIcon = REDIS_TAB_ICON[tab.type] ?? Key;

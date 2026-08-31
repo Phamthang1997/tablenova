@@ -17,7 +17,7 @@ import { registerSqlSignatureHelp } from '../sql/signatureHelp';
 import { registerSqlPeekDefinition } from '../sql/peekDefinition';
 import { registerSqlOutline } from '../sql/outline';
 import {
-  statementAt, analyzeStatements, splitStatements, isSchemaChangingSql,
+  statementAt, analyzeStatements, splitStatements, isSchemaChangingSql, applyLimitToSql,
   findUnsafeStatements, type UnsafeStatement, type UnsafeStatementKind,
 } from '../sql/statements';
 import * as catalog from '../sql/catalog';
@@ -168,40 +168,65 @@ function isReadOnlySql(text: string): boolean {
   });
 }
 
-/** Applies the toolbar dropdown's row limit (LIMIT) to a SELECT/WITH statement that has none */
-function applyLimitToSql(sqlText: string, limitOption: string): string {
-  if (!limitOption || limitOption === 'No limit') return sqlText;
-  const match = limitOption.match(/[\d,]+/);
-  if (!match) return sqlText;
-  const limitNum = parseInt(match[0].replace(/,/g, ''), 10);
-  if (!limitNum || limitNum <= 0) return sqlText;
+/** Where the caret is, as the toolbar spells it out. */
+interface CaretPos { line: number; column: number }
 
-  const trimmed = sqlText.trim();
-  if (!trimmed) return sqlText;
-
-  const statements = splitStatements(trimmed);
-  if (statements.length === 0) return sqlText;
-
-  let modified = false;
-  const newStmts = statements.map((s) => {
-    const code = s.text.trim();
-    if (!code) return s.text;
-
-    let clean = code.endsWith(';') ? code.slice(0, -1).trim() : code;
-    const firstWord = clean.split(/\s+/)[0]?.toUpperCase();
-
-    if (firstWord === 'SELECT' || firstWord === 'WITH') {
-      const hasLimit = /\bLIMIT\s+\d+/i.test(clean);
-      if (!hasLimit) {
-        modified = true;
-        return `${clean} LIMIT ${limitNum};`;
-      }
-    }
-    return code.endsWith(';') ? code : `${code};`;
-  });
-
-  return modified ? newStmts.join('\n\n') : sqlText;
+/**
+ * The caret readout is the one thing on the toolbar that changes on every keystroke, every arrow
+ * key and every frame of a drag-selection — and it is read by nothing else. Held as `useState` on
+ * `SqlEditor` it re-rendered all 3,500 lines of it ~30 times a second for two numbers (measured:
+ * 83 commits in 2.5s, ~4ms each, all attributed to that one hook).
+ *
+ * So it lives outside React instead, in the smallest store that can notify one subscriber — the
+ * same shape as `utils/jobs.ts` and `utils/queryHistory.ts`, for the same reason. One store per
+ * pane, created per `SqlEditor` instance rather than at module level: several tabs stay mounted at
+ * once (see `QueryTabPanel` in App.tsx) and a module-level store would let them share a caret.
+ *
+ * `set` keeps the SAME object when the position has not moved, because `useSyncExternalStore`
+ * compares snapshots by identity and a fresh object every time would re-render on every event
+ * again — which is the bug this exists to remove.
+ */
+function createCaretStore() {
+  let pos: CaretPos = { line: 1, column: 1 };
+  const listeners = new Set<() => void>();
+  return {
+    get: () => pos,
+    set: (line: number, column: number) => {
+      if (pos.line === line && pos.column === column) return;
+      pos = { line, column };
+      listeners.forEach((fn) => fn());
+    },
+    subscribe: (fn: () => void) => {
+      listeners.add(fn);
+      return () => { listeners.delete(fn); };
+    },
+  };
 }
+
+type CaretStore = ReturnType<typeof createCaretStore>;
+
+/** Memoized so a `SqlEditor` render does not drag it along; `store` is a stable per-pane object. */
+const CaretReadout = React.memo(function CaretReadout({ store }: { store: CaretStore }) {
+  const pos = React.useSyncExternalStore(store.subscribe, store.get);
+  return <span className="sql-status-info">line {pos.line}, column {pos.column}</span>;
+});
+
+/**
+ * `<Editor>` from `@monaco-editor/react` is `memo()`'d, and a `loading` prop written inline as JSX
+ * is a new element on every render, which defeats that on its own. Rendered once here instead —
+ * it needs a component rather than a plain string because the text is translated.
+ */
+const EditorLoading: React.FC = () => {
+  const { t } = useTranslation();
+  return (
+    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', color: 'var(--win-text-secondary)', fontSize: '13px' }}>
+      {t('sqlEditor.loadingEditor')}
+    </div>
+  );
+};
+
+/** Created once: the whole point is that this element's identity never changes. */
+const EDITOR_LOADING = <EditorLoading />;
 
 export const SqlEditor: React.FC<SqlEditorProps> = ({
   connId,
@@ -233,6 +258,15 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   const langId = langIdForDbType(dbType); // 'mysql' | 'pgsql' cho smart completion
   const [sql, setSql] = useState(initialSql);
   const [sql2, setSql2] = useState(initialSql2);
+
+  // `initialSql` is a prop, and the parent hands back a NEW one every time the draft is flushed up
+  // to `App` (`tabs[].sql`) — which changed `<Editor>`'s `defaultValue` and so defeated its memo on
+  // every flush, no matter what this file does with its own callbacks. Only the mount-time value
+  // ever means anything: Monaco reads `defaultValue` when it creates the model and never again, and
+  // the `sql`/`sql2` state above is seeded from it once. Frozen here so a parent re-render cannot
+  // churn the prop.
+  const initialSqlRef = useRef(initialSql);
+  const initialSql2Ref = useRef(initialSql2);
   const [splitMode, setSplitMode] = useState<'none' | 'vertical' | 'horizontal'>(initialSplitMode);
   const [splitRatio, setSplitRatio] = useState<number>(50);
   const [isDraggingSplit, setIsDraggingSplit] = useState<boolean>(false);
@@ -286,8 +320,26 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   const [runningQueryId2, setRunningQueryId2] = useState<string | null>(null);
 
   // Result visualization view modes ('grid' | 'chart')
-  const [pane1ViewMode, setPane1ViewMode] = useState<'grid' | 'chart'>('grid');
-  const [pane2ViewMode, setPane2ViewMode] = useState<'grid' | 'chart'>('grid');
+  // Grid vs Chart, kept PER RESULT TAB rather than per pane. One run produces one result set per
+  // statement ("1: SELECT (19,040)", "2: SELECT (20,000)", …) and they are different shapes of
+  // data, so the one worth charting is rarely the one worth reading as a grid; a single flag per
+  // pane forced every result into the same view.
+  //
+  // Keyed by result index, and deliberately NOT cleared when a new run replaces the results: while
+  // you iterate on a statement, re-running it should come back in the view you left it in — the
+  // same way the sort column survives a re-run.
+  const [pane1ViewModes, setPane1ViewModes] = useState<Record<number, 'grid' | 'chart'>>({});
+  const [pane2ViewModes, setPane2ViewModes] = useState<Record<number, 'grid' | 'chart'>>({});
+
+  const viewModeOf = (paneId: 1 | 2, resultIndex: number): 'grid' | 'chart' =>
+    (paneId === 1 ? pane1ViewModes : pane2ViewModes)[resultIndex] ?? 'grid';
+
+  const setViewMode = (paneId: 1 | 2, resultIndex: number, mode: 'grid' | 'chart') => {
+    const setter = paneId === 1 ? setPane1ViewModes : setPane2ViewModes;
+    // `prev` is returned unchanged when the mode is already the one asked for, so clicking the
+    // button that is already active costs no render at all.
+    setter((prev) => (prev[resultIndex] === mode ? prev : { ...prev, [resultIndex]: mode }));
+  };
 
   const [userEditorHeight, setUserEditorHeight] = useState<number | null>(
     initialEditorHeight ?? null
@@ -338,8 +390,13 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   const [formatMenuPane, setFormatMenuPane] = useState<1 | 2 | null>(null);
   const [limitMenuPane, setLimitMenuPane] = useState<1 | 2 | null>(null);
   const [editorSettingsMenuPane, setEditorSettingsMenuPane] = useState<1 | 2 | null>(null);
-  const [limitPane1, setLimitPane1] = useState<string>('No limit');
-  const [limitPane2, setLimitPane2] = useState<string>('No limit');
+  // A row cap by default, not "No limit". `SELECT *` on a real table returns tens of thousands of
+  // rows to fill a grid that shows 50 at a time, and every one of them is decoded in Rust, shipped
+  // over IPC and held in memory — measured at ~6 seconds for 79k rows, against 80ms of actual query
+  // time. Someone who wants the whole table still says so in one click, and the button shows the
+  // cap at all times so the number on screen is never mistaken for the whole answer.
+  const [limitPane1, setLimitPane1] = useState<string>('100 rows');
+  const [limitPane2, setLimitPane2] = useState<string>('100 rows');
   const [dropdownPlacement, setDropdownPlacement] = useState<Record<string, 'up' | 'down'>>({});
 
   // TablePlus Editor & Grid Settings states (Image 2 + Image 3)
@@ -365,8 +422,10 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     void dbIndexRegistry.buildIndex();
   }, [connId]);
 
-  const [cursorPos1, setCursorPos1] = useState<{ line: number; column: number }>({ line: 1, column: 1 });
-  const [cursorPos2, setCursorPos2] = useState<{ line: number; column: number }>({ line: 1, column: 1 });
+  // Caret position, per pane. A store rather than state — see `createCaretStore` for why.
+  // Lazy `useState` because these must be created exactly once per mount and never replaced;
+  // nothing ever calls the setter.
+  const [caretStores] = useState(() => ({ 1: createCaretStore(), 2: createCaretStore() }));
 
   // The SQL result grid's column sort state (sort column and direction)
   const [sortCol1, setSortCol1] = useState<string | null>(null);
@@ -398,6 +457,42 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     }
   };
 
+  const sortedResults1 = React.useMemo(() => {
+    if (!sortCol1 || !sortDir1) return results;
+    const list = [...results];
+    list.sort((a, b) => {
+      const valA = a[sortCol1];
+      const valB = b[sortCol1];
+      if (valA === valB) return 0;
+      if (valA === null || valA === undefined) return 1;
+      if (valB === null || valB === undefined) return -1;
+      if (typeof valA === 'number' && typeof valB === 'number') {
+        return sortDir1 === 'asc' ? valA - valB : valB - valA;
+      }
+      const comp = String(valA).localeCompare(String(valB), undefined, { numeric: true, sensitivity: 'base' });
+      return sortDir1 === 'asc' ? comp : -comp;
+    });
+    return list;
+  }, [results, sortCol1, sortDir1]);
+
+  const sortedResults2 = React.useMemo(() => {
+    if (!sortCol2 || !sortDir2) return results2;
+    const list = [...results2];
+    list.sort((a, b) => {
+      const valA = a[sortCol2];
+      const valB = b[sortCol2];
+      if (valA === valB) return 0;
+      if (valA === null || valA === undefined) return 1;
+      if (valB === null || valB === undefined) return -1;
+      if (typeof valA === 'number' && typeof valB === 'number') {
+        return sortDir2 === 'asc' ? valA - valB : valB - valA;
+      }
+      const comp = String(valA).localeCompare(String(valB), undefined, { numeric: true, sensitivity: 'base' });
+      return sortDir2 === 'asc' ? comp : -comp;
+    });
+    return list;
+  }, [results2, sortCol2, sortDir2]);
+
   const toggleDropdown = (menuKey: string, paneId: 1 | 2, e: React.MouseEvent<HTMLElement>, setMenuPane: React.Dispatch<React.SetStateAction<1 | 2 | null>>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const spaceBelow = window.innerHeight - rect.bottom;
@@ -416,25 +511,53 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     const currentHeight = editorEl ? editorEl.clientHeight : 220;
     const startHeight = (paneId === 1 ? userEditorHeight : userEditorHeight2) ?? currentHeight;
 
+    let currentH = startHeight;
+    let rafId: number | null = null;
+
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'row-resize';
+    if (editorEl) {
+      editorEl.style.pointerEvents = 'none';
+    }
+
     const onMouseMove = (moveEvent: MouseEvent) => {
       const deltaY = moveEvent.clientY - startY;
       const maxH = paneEl ? paneEl.clientHeight - 100 : window.innerHeight - 180;
       const newHeight = Math.max(60, Math.min(maxH, startHeight + deltaY));
+      currentH = newHeight;
 
-      if (paneId === 1) {
-        setUserEditorHeight(newHeight);
-        onEditorHeightChange?.(newHeight);
-      } else {
-        setUserEditorHeight2(newHeight);
+      if (rafId === null) {
+        rafId = requestAnimationFrame(() => {
+          rafId = null;
+          if (editorEl) {
+            editorEl.style.flex = `0 0 ${currentH}px`;
+          }
+        });
       }
     };
 
     const onMouseUp = () => {
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      if (editorEl) {
+        editorEl.style.pointerEvents = '';
+      }
       setIsDraggingResizer(false);
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
-      if (editorRef.current) editorRef.current.layout();
-      if (editorRef2.current) editorRef2.current.layout();
+
+      if (paneId === 1) {
+        setUserEditorHeight(currentH);
+        onEditorHeightChange?.(currentH);
+        if (editorRef.current) editorRef.current.layout();
+      } else {
+        setUserEditorHeight2(currentH);
+        if (editorRef2.current) editorRef2.current.layout();
+      }
     };
 
     window.addEventListener('mousemove', onMouseMove);
@@ -513,7 +636,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       if (editorRef2.current) editorRef2.current.layout();
     }, 50);
     return () => clearTimeout(timer);
-  }, [showHistory, splitMode, userEditorHeight, userEditorHeight2, hasResult1, hasResult2]);
+  }, [showHistory, splitMode, splitRatio, userEditorHeight, userEditorHeight2, hasResult1, hasResult2]);
 
   /** Returns the history row's id so `runRawSql` can write the outcome onto it when the run finishes. */
   const addToHistory = (queryText: string): string => {
@@ -597,7 +720,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     const today = new Date();
     const yesterday = new Date();
     yesterday.setDate(today.getDate() - 1);
-    
+
     if (date.toDateString() === today.toDateString()) {
       return t('sqlEditor.today');
     } else if (date.toDateString() === yesterday.toDateString()) {
@@ -629,7 +752,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       }
       groups[dateKey].push(item);
     });
-    
+
     return groups;
   };
 
@@ -652,9 +775,19 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   // The content is synced out to React state and the parent on a BEAT (a trailing debounce).
   // Every keystroke used to call onSqlChange -> App.setTabs -> a re-render of the WHOLE app (every
   // tab, DataGrid included), so holding Backspace stuttered visibly. The "real" content is always
-  // read from the editor (getPaneSql/getCurrentStatement), so a 150ms lag in state changes no
-  // behaviour.
-  const SQL_SYNC_DELAY = 150;
+  // read from the editor (getPaneSql/getCurrentStatement), so lagging the state changes no
+  // behaviour: `sql`/`sql2` are only ever read as a fallback for when there is no editor instance.
+  //
+  // 600ms rather than 150ms, because one flush is NOT cheap and never was local to this component:
+  // it calls `onSqlChange` -> `App.setTabs`, which re-renders App and the whole title bar/sidebar
+  // chrome (DbRail, TabManager, TxControl, SafeModeControl…) and re-serializes every tab into
+  // localStorage. Measured at ~9ms per flush. At 150ms a continuous typing burst paid that four
+  // times a second; at 600ms an uninterrupted burst pays it zero times, because the flush only
+  // lands once the user pauses. Nothing is risked by the longer wait: `onDidBlurEditorText` flushes
+  // immediately, and so does the unmount cleanup below, so leaving the pane, switching tabs and
+  // closing all still persist at once. Only a crash mid-burst can lose anything, and it now loses
+  // at most 600ms of typing.
+  const SQL_SYNC_DELAY = 600;
   const sqlSyncRef = useRef<{ timer: any; value: string | null }[]>([
     { timer: null, value: null },
     { timer: null, value: null },
@@ -730,15 +863,6 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     document.addEventListener('mouseup', handleMouseUp);
   };
 
-  useEffect(() => {
-    if (editorRef.current) {
-      setTimeout(() => editorRef.current?.layout(), 50);
-    }
-    if (editorRef2.current) {
-      setTimeout(() => editorRef2.current?.layout(), 50);
-    }
-  }, [splitMode, splitRatio, userEditorHeight, userEditorHeight2, hasResult1, hasResult2]);
-
   const handleEditorDidMount = (editor: any, editorId: 1 | 2) => {
     if (editorId === 1) {
       editorRef.current = editor;
@@ -761,10 +885,9 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
 
     const syncCursor = () => {
       const pos = editor.getPosition();
-      if (pos) {
-        if (editorId === 1) setCursorPos1({ line: pos.lineNumber, column: pos.column });
-        else setCursorPos2({ line: pos.lineNumber, column: pos.column });
-      }
+      // Straight into the store: this fires on every cursor and selection event, so it must not
+      // touch `SqlEditor`'s state. Only `CaretReadout` re-renders.
+      if (pos) caretStores[editorId].set(pos.lineNumber, pos.column);
     };
 
     editor.onDidFocusEditorText(() => {
@@ -876,7 +999,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
       executeSql(getTextToRun(editorId), editorId);
     });
-    
+
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Enter, () => {
       executeSql(editor.getValue(), editorId);
     });
@@ -1020,6 +1143,27 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     }, 100);
   };
 
+  // `Editor` is `memo()`'d inside @monaco-editor/react, so an inline arrow for `onChange`/`onMount`
+  // is a new prop identity every render and defeats it — and its `onChange` effect then disposes
+  // and re-subscribes Monaco's `onDidChangeModelContent` listener each time, for nothing. These
+  // four wrappers never change identity and read the current implementation through a ref, the
+  // same trick `tRef` and `changeCallbacksRef` above use.
+  const editorCallbacksRef = useRef({ queueSqlSync, handleEditorDidMount });
+  editorCallbacksRef.current = { queueSqlSync, handleEditorDidMount };
+
+  const handleChange1 = React.useCallback((val: string | undefined) => {
+    editorCallbacksRef.current.queueSqlSync(1, val || '');
+  }, []);
+  const handleChange2 = React.useCallback((val: string | undefined) => {
+    editorCallbacksRef.current.queueSqlSync(2, val || '');
+  }, []);
+  const handleMount1 = React.useCallback((editor: any) => {
+    editorCallbacksRef.current.handleEditorDidMount(editor, 1);
+  }, []);
+  const handleMount2 = React.useCallback((editor: any) => {
+    editorCallbacksRef.current.handleEditorDidMount(editor, 2);
+  }, []);
+
   // Opens a table tab when `name` really is a table or view in the current DB.
   // `notify` = false for Ctrl+Click (a stray click on a keyword stays silent), = true for F12.
   const openTableIfExists = async (name: string, paneId: 1 | 2, notify = true) => {
@@ -1131,20 +1275,52 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     // grid is still filling in behind it. The Rust command always sends exactly ONE terminating
     // message ('done' or 'error') before returning, and the channel preserves order, so waiting for
     // that message is both sufficient and impossible to hang on.
-    let markStreamEnd: () => void = () => {};
+    let markStreamEnd: () => void = () => { };
     const streamEnded = new Promise<void>(resolve => { markStreamEnd = resolve; });
 
-    const flush = () => {
+    const flushNow = () => {
       const snapshot = acc.map(r => ({ query: r.query, columns: r.columns, data: r.data, affected: r.affected }));
       if (isPane1) {
         setAllResults(snapshot);
         const first = snapshot[0];
+        // `.slice()` is not a copy for its own sake: `acc[i].data` is pushed into in place, so the
+        // array identity never changes and React would bail out of every update after the first.
+        // What made it expensive was how OFTEN it ran, which is what the throttle below fixes.
         if (first) { setColumns(first.columns); setResults(first.data.slice()); }
       } else {
         setAllResults2(snapshot);
         const first = snapshot[0];
         if (first) { setColumns2(first.columns); setResults2(first.data.slice()); }
       }
+    };
+
+    // Rust pushes a batch every 500 rows (`STREAM_BATCH`), so a run returning 79k rows delivers ~159
+    // of them — and mirroring each one straight into state was ~159 React commits, every one
+    // re-rendering the editor and the result grid to display the same 50 rows, plus one copy of the
+    // whole first result set each time. Measured at ~9-18ms per commit, that is seconds of the
+    // "transfer" figure in the status bar, spent on frames nobody can see: the screen repaints at
+    // ~16ms and the numbers scroll past unread anyway.
+    //
+    // Leading-edge throttle, deliberately: the FIRST batch still lands immediately, so results
+    // appear as fast as they ever did; only the flood behind it is coalesced. Rows are never
+    // dropped — `acc` keeps accumulating and the final `flushNow()` after the stream ends mirrors
+    // whatever the last window was still holding.
+    const FLUSH_INTERVAL_MS = 120;
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
+    let flushPending = false;
+
+    const flush = () => {
+      if (flushTimer !== null) { flushPending = true; return; }
+      flushNow();
+      flushTimer = setTimeout(function tick() {
+        flushTimer = null;
+        if (flushPending) { flushPending = false; flush(); }
+      }, FLUSH_INTERVAL_MS);
+    };
+
+    const stopFlushing = () => {
+      if (flushTimer !== null) { clearTimeout(flushTimer); flushTimer = null; }
+      flushPending = false;
     };
 
     try {
@@ -1178,7 +1354,10 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
       errText = t('sqlEditor.errQuery', { message: String(e) });
     }
 
-    flush(); // one last mirror (so the final batch has reached the state)
+    // One last mirror, unthrottled: whatever the final window was still holding has to reach state,
+    // and the pending timer must not fire into a run that is already over.
+    stopFlushing();
+    flushNow();
 
     const totalRows = acc.reduce((s, r) => s + r.data.length, 0);
     const affectedTotal = acc.reduce((s, r) => s + (r.affected || 0), 0);
@@ -1238,8 +1417,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     if (variant === 'analyze') {
       if ((readOnly || connReadOnly) && !isReadOnlySql(textToRun)) {
         // Two different switches block writes and they live in different places. Naming the wrong one
-      // leaves the user toggling something that changes nothing.
-      const msg = connReadOnly && !readOnly ? t('sqlEditor.errConnReadOnlyRun') : t('sqlEditor.errReadOnlyRun');
+        // leaves the user toggling something that changes nothing.
+        const msg = connReadOnly && !readOnly ? t('sqlEditor.errConnReadOnlyRun') : t('sqlEditor.errReadOnlyRun');
         if (paneId === 1) setErrorMsg(msg);
         else setErrorMsg2(msg);
         return;
@@ -1530,7 +1709,16 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                     display: 'flex',
                     flexDirection: 'column',
                     padding: '4px 0',
-                    fontSize: '12px'
+                    fontSize: '12px',
+                    // MUST stay above `.sql-menu-overlay`, which is `position: fixed; inset: 0;
+                    // z-index: 9998` — a sheet over the whole window whose only job is to close the
+                    // menu on an outside click. At 999 it covered this menu instead (the wrapper is
+                    // only `position: relative`, so it opens no stacking context and the two
+                    // z-indexes compare directly), and every click in the popover hit the sheet: the
+                    // menu just closed. The font-size `<select>` is where it showed, because a
+                    // native select has to open a dropdown of its own and visibly never did.
+                    // Every other menu in this file pairs 9998 with 9999; this one was a digit short.
+                    zIndex: 9999,
                   }}>
                     {/* Font size */}
                     <div style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -1587,9 +1775,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
             </div>
 
             {/* status cursor position: line X, column Y (Image 2) */}
-            <span className="sql-status-info">
-              line {(paneId === 1 ? cursorPos1 : cursorPos2).line}, column {(paneId === 1 ? cursorPos1 : cursorPos2).column}
-            </span>
+            <CaretReadout store={caretStores[paneId]} />
           </div>
 
           {/* Right block: the No-limit button plus the Format, Run and [...] cluster */}
@@ -1688,7 +1874,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                     <div style={{ padding: '4px 12px 2px 12px', fontSize: '10px', fontWeight: 700, color: 'var(--win-text-disabled)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                       Chia khung (Split Panes)
                     </div>
-                    <button 
+                    <button
                       className={`context-menu-item ${splitMode === 'none' ? 'active' : ''}`}
                       onClick={() => { setMoreMenuPane(null); setSplitMode('none'); onSplitModeChange?.('none'); }}
                       style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}
@@ -1696,7 +1882,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                       <Square size={13} style={{ flexShrink: 0 }} />
                       <span>{t('sqlEditor.singlePane')}</span>
                     </button>
-                    <button 
+                    <button
                       className={`context-menu-item ${splitMode === 'vertical' ? 'active' : ''}`}
                       onClick={() => { setMoreMenuPane(null); setSplitMode('vertical'); onSplitModeChange?.('vertical'); }}
                       style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}
@@ -1704,7 +1890,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                       <Columns size={13} style={{ flexShrink: 0 }} />
                       <span>{t('sqlEditor.splitVertical')}</span>
                     </button>
-                    <button 
+                    <button
                       className={`context-menu-item ${splitMode === 'horizontal' ? 'active' : ''}`}
                       onClick={() => { setMoreMenuPane(null); setSplitMode('horizontal'); onSplitModeChange?.('horizontal'); }}
                       style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}
@@ -1973,13 +2159,13 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     const curResults = paneId === 1 ? results : results2;
     const curColumns = paneId === 1 ? columns : columns2;
     if (curResults.length === 0) return;
-    
+
     let textToCopy = '';
     let successMsg = '';
-    
+
     if (format === 'table') {
       const headers = curColumns.join('\t');
-      const rows = curResults.map(row => 
+      const rows = curResults.map(row =>
         curColumns.map(col => {
           const val = row[col];
           return val === null ? 'NULL' : String(val).replace(/\t/g, ' ').replace(/\n/g, ' ');
@@ -2003,7 +2189,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
         shape: curColumns.length === 1 ? t('sqlEditor.arrayShape1d') : t('sqlEditor.arrayShape2d'),
       });
     }
-    
+
     navigator.clipboard.writeText(textToCopy);
     if (paneId === 1) {
       setStatusMsg(successMsg);
@@ -2019,7 +2205,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     const curColumns = paneId === 1 ? columns : columns2;
     if (curResults.length === 0) return;
     const headers = curColumns.map(c => `"${c.replace(/"/g, '""')}"`).join(',');
-    const rows = curResults.map(row => 
+    const rows = curResults.map(row =>
       curColumns.map(col => {
         const val = row[col];
         if (val === null) return '""';
@@ -2292,34 +2478,18 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     const pSetPageSize = paneId === 1 ? setPageSize : setPageSize2;
     const pSetShowCopyDropdown = paneId === 1 ? setShowCopyDropdown : setShowCopyDropdown2;
 
+    // Read for the result tab currently on screen, not for the pane — see `pane1ViewModes`.
+    const pViewMode = viewModeOf(paneId, pActiveTabIndex);
+
     const pExplainResult = paneId === 1 ? explainResult1 : explainResult2;
     const pActiveTabType = paneId === 1 ? activeTabType1 : activeTabType2;
     const pSetActiveTabType = paneId === 1 ? setActiveTabType1 : setActiveTabType2;
 
     const activeResult = pAllResults[pActiveTabIndex] || { data: [], columns: [], affectedRows: 0, query: '' };
     const totalPagesNum = Math.ceil(pResults.length / pPageSize) || 1;
-
     const pSortCol = paneId === 1 ? sortCol1 : sortCol2;
     const pSortDir = paneId === 1 ? sortDir1 : sortDir2;
-
-    let sortedResults = [...pResults];
-    if (pSortCol && pSortDir) {
-      sortedResults.sort((a, b) => {
-        const valA = a[pSortCol];
-        const valB = b[pSortCol];
-        if (valA === valB) return 0;
-        if (valA === null || valA === undefined) return 1;
-        if (valB === null || valB === undefined) return -1;
-
-        let comp = 0;
-        if (typeof valA === 'number' && typeof valB === 'number') {
-          comp = valA - valB;
-        } else {
-          comp = String(valA).localeCompare(String(valB), undefined, { numeric: true, sensitivity: 'base' });
-        }
-        return pSortDir === 'asc' ? comp : -comp;
-      });
-    }
+    const sortedResults = paneId === 1 ? sortedResults1 : sortedResults2;
 
     const pEditability = editabilityInMode(activeResult.query || '', pColumns);
     const pTarget = pEditability.editable ? pEditability : null;
@@ -2406,49 +2576,41 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
             )}
           </div>
 
-            {pResults.length > 0 && (
-            <div style={{ display: 'flex', gap: '6px', alignItems: 'center', padding: '2px 0' }}>
+          {pResults.length > 0 && (
+            <div className="sql-results-controls">
               {/* Grid / Chart View Mode Toggle */}
-              <div style={{ display: 'inline-flex', alignItems: 'center', background: 'var(--win-bg-card)', border: '1px solid var(--win-border)', borderRadius: '6px', padding: '1px' }}>
+              <div className="sql-view-modes">
                 <button
                   type="button"
-                  className={`gp-btn ${(paneId === 1 ? pane1ViewMode : pane2ViewMode) === 'grid' ? 'on' : ''}`}
-                  onClick={() => (paneId === 1 ? setPane1ViewMode('grid') : setPane2ViewMode('grid'))}
-                  style={{ padding: '2px 6px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '3px' }}
-                  title="Table Grid View"
+                  className={`btn sql-view-btn ${pViewMode === 'grid' ? 'btn-primary' : 'btn-secondary'}`}
+                  onClick={() => setViewMode(paneId, pActiveTabIndex, 'grid')}
+                  title={t('sqlEditor.viewModeGridTitle', 'Table Grid View')}
                 >
-                  <Rows size={11} />
-                  <span>Grid</span>
+                  <Rows size={12} />
+                  <span>{t('sqlEditor.viewModeGrid', 'Grid')}</span>
                 </button>
                 <button
                   type="button"
-                  className={`gp-btn ${(paneId === 1 ? pane1ViewMode : pane2ViewMode) === 'chart' ? 'on' : ''}`}
-                  onClick={() => (paneId === 1 ? setPane1ViewMode('chart') : setPane2ViewMode('chart'))}
-                  style={{ padding: '2px 6px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '3px' }}
-                  title="Visualize with Chart"
+                  className={`btn sql-view-btn ${pViewMode === 'chart' ? 'btn-primary' : 'btn-secondary'}`}
+                  onClick={() => setViewMode(paneId, pActiveTabIndex, 'chart')}
+                  title={t('sqlEditor.viewModeChartTitle', 'Visualize with Chart')}
                 >
-                  <BarChart2 size={11} />
-                  <span>Chart</span>
+                  <BarChart2 size={12} />
+                  <span>{t('sqlEditor.viewModeChart', 'Chart')}</span>
                 </button>
               </div>
 
               {pEditability.editable ? (
                 <span
+                  className="sql-badge-editable"
                   title={t('sqlEditor.editableHint', { table: pEditability.table })}
-                  style={{
-                    fontSize: '10px', fontWeight: 600, padding: '1px 6px', borderRadius: '9px',
-                    color: 'var(--st-ok)', border: '1px solid var(--st-ok)', whiteSpace: 'nowrap',
-                  }}
                 >
                   {t('sqlEditor.editableBadge', { table: pEditability.table })}
                 </span>
               ) : (
                 <span
+                  className="sql-badge-readonly"
                   title={notEditableLabel(pEditability.reason, pEditability.table)}
-                  style={{
-                    fontSize: '10px', padding: '1px 6px', borderRadius: '9px',
-                    color: 'var(--win-text-disabled)', border: '1px solid var(--win-border)', whiteSpace: 'nowrap',
-                  }}
                 >
                   {t('sqlEditor.readOnlyBadge')}
                 </span>
@@ -2457,18 +2619,16 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
               {pTarget && pEditCount > 0 && (
                 <>
                   <button
-                    className="btn btn-secondary"
+                    className="btn btn-secondary sql-edit-btn"
                     onClick={() => discardEdits(paneId)}
                     title={t('sqlEditor.editDiscardTitle')}
-                    style={{ padding: '2px 6px' }}
                   >
                     {t('sqlEditor.editDiscard')}
                   </button>
                   <button
-                    className="btn btn-primary"
+                    className="btn btn-primary sql-edit-btn sql-edit-btn-save"
                     onClick={() => handleEditSave(paneId, pTarget.table, pTarget.primaryKey)}
                     title={t('sqlEditor.editSaveTitle')}
-                    style={{ padding: '2px 6px', background: 'var(--st-ok)', borderColor: 'var(--st-ok)' }}
                   >
                     {t('sqlEditor.editSave', { n: pEditCount })}
                   </button>
@@ -2518,217 +2678,217 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
               )}
 
               {!pErrorMsg && (pResults.length > 0 || pColumns.length > 0) && (
-                (paneId === 1 ? pane1ViewMode : pane2ViewMode) === 'chart' ? (
+                pViewMode === 'chart' ? (
                   <DataVisualizer
                     rows={pResults}
                     columnNames={pColumns}
                     title={t('sqlEditor.chartResultsTitle', 'Query Results Visualization')}
                   />
                 ) : (
-                <div className="grid-table-container" style={{ height: '100%' }}>
-                  <table className="grid-table">
-                    <thead>
-                      <tr>
-                        {showRowNumbers && (
-                          <th
-                            className="grid-header-index"
-                            style={{ width: '28px', textAlign: 'center', fontWeight: 400, color: '#9ca3af', cursor: 'pointer' }}
-                            onClick={() => {
-                              if (paneId === 1) setAutoFitColsPane1(v => !v);
-                              else setAutoFitColsPane2(v => !v);
-                            }}
-                            title={t('sqlEditor.autoFitColumnsTitle', 'Tự động vừa khớp độ rộng cột')}
-                          >
-                            <span style={{ fontSize: '11px', opacity: (paneId === 1 ? autoFitColsPane1 : autoFitColsPane2) ? 1 : 0.65, display: 'inline-block', color: (paneId === 1 ? autoFitColsPane1 : autoFitColsPane2) ? 'var(--win-accent)' : undefined }}>⇄</span>
-                          </th>
-                        )}
-                        {/* Keyed by POSITION, not by name: `SELECT *` across several JOINs returns
+                  <div className="grid-table-container" style={{ height: '100%' }}>
+                    <table className="grid-table">
+                      <thead>
+                        <tr>
+                          {showRowNumbers && (
+                            <th
+                              className="grid-header-index"
+                              style={{ width: '28px', textAlign: 'center', fontWeight: 400, color: '#9ca3af', cursor: 'pointer' }}
+                              onClick={() => {
+                                if (paneId === 1) setAutoFitColsPane1(v => !v);
+                                else setAutoFitColsPane2(v => !v);
+                              }}
+                              title={t('sqlEditor.autoFitColumnsTitle', 'Tự động vừa khớp độ rộng cột')}
+                            >
+                              <span style={{ fontSize: '11px', opacity: (paneId === 1 ? autoFitColsPane1 : autoFitColsPane2) ? 1 : 0.65, display: 'inline-block', color: (paneId === 1 ? autoFitColsPane1 : autoFitColsPane2) ? 'var(--win-accent)' : undefined }}>⇄</span>
+                            </th>
+                          )}
+                          {/* Keyed by POSITION, not by name: `SELECT *` across several JOINs returns
                             repeated column names (film_id exists in film/film_actor/inventory), so a
                             column name is not a unique key — React warns and may duplicate or drop
                             cells. */}
-                        {pColumns.map((col, ci) => {
-                          const sampleVal = pResults[0]?.[col];
-                          const isNum = typeof sampleVal === 'number' || (sampleVal !== null && sampleVal !== undefined && !isNaN(Number(sampleVal)) && String(sampleVal).trim() !== '') || col.toLowerCase().endsWith('_id') || col.toLowerCase().includes('year');
-                          const isAutoFit = paneId === 1 ? autoFitColsPane1 : autoFitColsPane2;
-                          const isSorted = pSortCol === col;
-                          return (
-                            <th
-                              key={ci}
-                              onClick={() => handleTableSort(col, paneId)}
-                              style={{
-                                textAlign: isNum ? 'right' : 'left',
-                                whiteSpace: isAutoFit ? 'nowrap' : undefined,
-                                cursor: 'pointer',
-                                userSelect: 'none'
-                              }}
-                              title={t('sqlEditor.sortColumnTitle', { col })}
-                            >
-                              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', justifyContent: isNum ? 'flex-end' : 'flex-start', width: '100%' }}>
-                                <span>{col}</span>
-                                {isSorted && (
-                                  <span style={{ fontSize: '10px', color: 'var(--win-accent, #3b82f6)', flexShrink: 0 }}>
-                                    {pSortDir === 'asc' ? '▲' : '▼'}
-                                  </span>
-                                )}
-                              </div>
-                            </th>
-                          );
-                        })}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sortedResults.slice((pPage - 1) * pPageSize, pPage * pPageSize).map((row, index) => (
-                        <tr key={index}>
-                          {showRowNumbers && (
-                            <td className="grid-row-index" style={{ textAlign: 'right', paddingRight: '6px', userSelect: 'none' }}>
-                              {(pPage - 1) * pPageSize + index + 1}
-                            </td>
-                          )}
                           {pColumns.map((col, ci) => {
-                            // It has to be keyed by primary-key VALUE rather than row index: the grid
-                            // pages on the client, so an index is only meaningful within the current page.
-                            const rowKey = pTarget ? String(row[pTarget.primaryKey]) : '';
-                            const edited = pTarget ? pEdits[rowKey]?.[col] : undefined;
-                            const isDirty = edited !== undefined;
-                            const cellVal = isDirty ? edited : row[col];
-                            const canEdit = !!pEditableCols?.has(col);
-                            const isEditing =
-                              editingCell?.pane === paneId && editingCell.rowKey === rowKey && editingCell.col === col;
-                            const isFkCol = col.toLowerCase().endsWith('_id') && !col.toLowerCase().startsWith('id');
-                            const isNum = typeof cellVal === 'number' || (cellVal !== null && cellVal !== undefined && !isNaN(Number(cellVal)) && String(cellVal).trim() !== '') || col.toLowerCase().endsWith('_id') || col.toLowerCase().includes('year');
+                            const sampleVal = pResults[0]?.[col];
+                            const isNum = typeof sampleVal === 'number' || (sampleVal !== null && sampleVal !== undefined && !isNaN(Number(sampleVal)) && String(sampleVal).trim() !== '') || col.toLowerCase().endsWith('_id') || col.toLowerCase().includes('year');
                             const isAutoFit = paneId === 1 ? autoFitColsPane1 : autoFitColsPane2;
-
+                            const isSorted = pSortCol === col;
                             return (
-                              <td
+                              <th
                                 key={ci}
-                                className={`${isDirty ? 'grid-cell-dirty' : ''} ${isEditing ? 'is-editing' : ''}`.trim()}
-                                style={{ textAlign: isNum ? 'right' : 'left', whiteSpace: isAutoFit ? 'nowrap' : undefined }}
-                                title={
-                                  pTarget && !canEdit
-                                    ? t('sqlEditor.editColumnReadOnly', { table: pTarget.table })
-                                    : undefined
-                                }
-                                onDoubleClick={canEdit ? () => startCellEdit(paneId, rowKey, col, cellVal) : undefined}
+                                onClick={() => handleTableSort(col, paneId)}
+                                style={{
+                                  textAlign: isNum ? 'right' : 'left',
+                                  whiteSpace: isAutoFit ? 'nowrap' : undefined,
+                                  cursor: 'pointer',
+                                  userSelect: 'none'
+                                }}
+                                title={t('sqlEditor.sortColumnTitle', { col })}
                               >
-                                {isEditing ? (
-                                  <>
-                                    <span className="grid-cell-ghost">{cellVal === null ? 'NULL' : String(cellVal)}</span>
-                                    <div className="grid-edit-wrapper">
-                                    <input
-                                      type="text"
-                                      className="grid-input-edit"
-                                      value={editValue}
-                                      onChange={(e) => setEditValue(e.target.value)}
-                                      onBlur={(e) => saveCellEdit(row[col], e)}
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter') saveCellEdit(row[col]);
-                                        if (e.key === 'Escape') setEditingCell(null);
-                                      }}
-                                      autoFocus
-                                    />
-                                    {(col.toLowerCase().includes('date') || col.toLowerCase().includes('time') || col.toLowerCase().endsWith('_at') || /^\d{4}-\d{2}-\d{2}/.test(String(cellVal || ''))) && (
-                                      <div
-                                        className="grid-date-picker-btn"
-                                        title={t('common.selectDate', 'Select Date & Time')}
-                                        onMouseDown={(e) => {
-                                          e.preventDefault();
-                                          e.stopPropagation();
-                                          const pickerEl = e.currentTarget.querySelector('input[type="datetime-local"]') as HTMLInputElement;
-                                          if (pickerEl && typeof pickerEl.showPicker === 'function') {
-                                            try { pickerEl.showPicker(); } catch {}
-                                          }
-                                        }}
-                                      >
-                                        <Calendar size={13} style={{ pointerEvents: 'none' }} />
-                                        <input
-                                          type="datetime-local"
-                                          step="1"
-                                          className="grid-date-picker-input"
-                                          value={(() => {
-                                            if (!editValue) return new Date().toISOString().slice(0, 19);
-                                            const str = String(editValue).trim().replace(' ', 'T');
-                                            const match = str.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?)/);
-                                            return match ? match[1] : '';
-                                          })()}
-                                          onMouseDown={(e) => {
-                                            e.preventDefault();
-                                            e.stopPropagation();
-                                            if (typeof e.currentTarget.showPicker === 'function') {
-                                              try { e.currentTarget.showPicker(); } catch {}
-                                            }
-                                          }}
-                                          onChange={(e) => {
-                                            if (e.target.value) {
-                                              const orig = String(cellVal || editValue || '');
-                                              if (orig.includes('+')) {
-                                                const tz = orig.slice(orig.indexOf('+'));
-                                                setEditValue(e.target.value + tz);
-                                              } else if (orig.includes('Z')) {
-                                                setEditValue(e.target.value + 'Z');
-                                              } else if (orig.includes(' ') && !orig.includes('T')) {
-                                                setEditValue(e.target.value.replace('T', ' '));
-                                              } else {
-                                                setEditValue(e.target.value);
-                                              }
-                                            }
-                                          }}
-                                        />
-                                      </div>
-                                    )}
-                                  </div>
-                                  </>
-                                ) : cellVal === null ? (
-                                  <span style={{ color: 'var(--win-accent, #3b82f6)', opacity: 0.8, fontStyle: 'italic' }}>{'NULL'}</span>
-                                ) : isFkCol ? (
-                                  <div
-                                    style={{
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      justifyContent: 'flex-end',
-                                      gap: '4px',
-                                      width: '100%',
-                                      cursor: 'pointer'
-                                    }}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleFkClick(col, cellVal, pTarget?.table, paneId);
-                                    }}
-                                    title={t('sqlEditor.fkNavigateTitle', { col, val: cellVal })}
-                                  >
-                                    <span style={{ textDecoration: 'underline', textDecorationStyle: 'dotted', textUnderlineOffset: '3px', color: 'var(--win-accent, #3b82f6)' }}>
-                                      {String(cellVal)}
+                                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', justifyContent: isNum ? 'flex-end' : 'flex-start', width: '100%' }}>
+                                  <span>{col}</span>
+                                  {isSorted && (
+                                    <span style={{ fontSize: '10px', color: 'var(--win-accent, #3b82f6)', flexShrink: 0 }}>
+                                      {pSortDir === 'asc' ? '▲' : '▼'}
                                     </span>
-                                    <span
-                                      style={{
-                                        opacity: 0.85,
-                                        fontSize: '11px',
-                                        color: 'var(--win-accent, #3b82f6)',
-                                        padding: '0 3px',
-                                        borderRadius: '3px',
-                                        transition: 'all 0.15s ease'
-                                      }}
-                                      onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.background = 'var(--win-accent, #3b82f6)'; e.currentTarget.style.color = '#fff'; }}
-                                      onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.85'; e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--win-accent, #3b82f6)'; }}
-                                    >
-                                      →
-                                    </span>
-                                  </div>
-                                ) : (
-                                  <MediaCellPreview
-                                    value={cellVal}
-                                    columnName={col}
-                                    tableName={pTarget?.table}
-                                    fallbackText={String(cellVal)}
-                                  />
-                                )}
-                              </td>
+                                  )}
+                                </div>
+                              </th>
                             );
                           })}
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </thead>
+                      <tbody>
+                        {sortedResults.slice((pPage - 1) * pPageSize, pPage * pPageSize).map((row, index) => (
+                          <tr key={index}>
+                            {showRowNumbers && (
+                              <td className="grid-row-index" style={{ textAlign: 'right', paddingRight: '6px', userSelect: 'none' }}>
+                                {(pPage - 1) * pPageSize + index + 1}
+                              </td>
+                            )}
+                            {pColumns.map((col, ci) => {
+                              // It has to be keyed by primary-key VALUE rather than row index: the grid
+                              // pages on the client, so an index is only meaningful within the current page.
+                              const rowKey = pTarget ? String(row[pTarget.primaryKey]) : '';
+                              const edited = pTarget ? pEdits[rowKey]?.[col] : undefined;
+                              const isDirty = edited !== undefined;
+                              const cellVal = isDirty ? edited : row[col];
+                              const canEdit = !!pEditableCols?.has(col);
+                              const isEditing =
+                                editingCell?.pane === paneId && editingCell.rowKey === rowKey && editingCell.col === col;
+                              const isFkCol = col.toLowerCase().endsWith('_id') && !col.toLowerCase().startsWith('id');
+                              const isNum = typeof cellVal === 'number' || (cellVal !== null && cellVal !== undefined && !isNaN(Number(cellVal)) && String(cellVal).trim() !== '') || col.toLowerCase().endsWith('_id') || col.toLowerCase().includes('year');
+                              const isAutoFit = paneId === 1 ? autoFitColsPane1 : autoFitColsPane2;
+
+                              return (
+                                <td
+                                  key={ci}
+                                  className={`${isDirty ? 'grid-cell-dirty' : ''} ${isEditing ? 'is-editing' : ''}`.trim()}
+                                  style={{ textAlign: isNum ? 'right' : 'left', whiteSpace: isAutoFit ? 'nowrap' : undefined }}
+                                  title={
+                                    pTarget && !canEdit
+                                      ? t('sqlEditor.editColumnReadOnly', { table: pTarget.table })
+                                      : undefined
+                                  }
+                                  onDoubleClick={canEdit ? () => startCellEdit(paneId, rowKey, col, cellVal) : undefined}
+                                >
+                                  {isEditing ? (
+                                    <>
+                                      <span className="grid-cell-ghost">{cellVal === null ? 'NULL' : String(cellVal)}</span>
+                                      <div className="grid-edit-wrapper">
+                                        <input
+                                          type="text"
+                                          className="grid-input-edit"
+                                          value={editValue}
+                                          onChange={(e) => setEditValue(e.target.value)}
+                                          onBlur={(e) => saveCellEdit(row[col], e)}
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter') saveCellEdit(row[col]);
+                                            if (e.key === 'Escape') setEditingCell(null);
+                                          }}
+                                          autoFocus
+                                        />
+                                        {(col.toLowerCase().includes('date') || col.toLowerCase().includes('time') || col.toLowerCase().endsWith('_at') || /^\d{4}-\d{2}-\d{2}/.test(String(cellVal || ''))) && (
+                                          <div
+                                            className="grid-date-picker-btn"
+                                            title={t('common.selectDate', 'Select Date & Time')}
+                                            onMouseDown={(e) => {
+                                              e.preventDefault();
+                                              e.stopPropagation();
+                                              const pickerEl = e.currentTarget.querySelector('input[type="datetime-local"]') as HTMLInputElement;
+                                              if (pickerEl && typeof pickerEl.showPicker === 'function') {
+                                                try { pickerEl.showPicker(); } catch { }
+                                              }
+                                            }}
+                                          >
+                                            <Calendar size={13} style={{ pointerEvents: 'none' }} />
+                                            <input
+                                              type="datetime-local"
+                                              step="1"
+                                              className="grid-date-picker-input"
+                                              value={(() => {
+                                                if (!editValue) return new Date().toISOString().slice(0, 19);
+                                                const str = String(editValue).trim().replace(' ', 'T');
+                                                const match = str.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?)/);
+                                                return match ? match[1] : '';
+                                              })()}
+                                              onMouseDown={(e) => {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                if (typeof e.currentTarget.showPicker === 'function') {
+                                                  try { e.currentTarget.showPicker(); } catch { }
+                                                }
+                                              }}
+                                              onChange={(e) => {
+                                                if (e.target.value) {
+                                                  const orig = String(cellVal || editValue || '');
+                                                  if (orig.includes('+')) {
+                                                    const tz = orig.slice(orig.indexOf('+'));
+                                                    setEditValue(e.target.value + tz);
+                                                  } else if (orig.includes('Z')) {
+                                                    setEditValue(e.target.value + 'Z');
+                                                  } else if (orig.includes(' ') && !orig.includes('T')) {
+                                                    setEditValue(e.target.value.replace('T', ' '));
+                                                  } else {
+                                                    setEditValue(e.target.value);
+                                                  }
+                                                }
+                                              }}
+                                            />
+                                          </div>
+                                        )}
+                                      </div>
+                                    </>
+                                  ) : cellVal === null ? (
+                                    <span style={{ color: 'var(--win-accent, #3b82f6)', opacity: 0.8, fontStyle: 'italic' }}>{'NULL'}</span>
+                                  ) : isFkCol ? (
+                                    <div
+                                      style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'flex-end',
+                                        gap: '4px',
+                                        width: '100%',
+                                        cursor: 'pointer'
+                                      }}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleFkClick(col, cellVal, pTarget?.table, paneId);
+                                      }}
+                                      title={t('sqlEditor.fkNavigateTitle', { col, val: cellVal })}
+                                    >
+                                      <span style={{ textDecoration: 'underline', textDecorationStyle: 'dotted', textUnderlineOffset: '3px', color: 'var(--win-accent, #3b82f6)' }}>
+                                        {String(cellVal)}
+                                      </span>
+                                      <span
+                                        style={{
+                                          opacity: 0.85,
+                                          fontSize: '11px',
+                                          color: 'var(--win-accent, #3b82f6)',
+                                          padding: '0 3px',
+                                          borderRadius: '3px',
+                                          transition: 'all 0.15s ease'
+                                        }}
+                                        onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.background = 'var(--win-accent, #3b82f6)'; e.currentTarget.style.color = '#fff'; }}
+                                        onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.85'; e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--win-accent, #3b82f6)'; }}
+                                      >
+                                        →
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <MediaCellPreview
+                                      value={cellVal}
+                                      columnName={col}
+                                      tableName={pTarget?.table}
+                                      fallbackText={String(cellVal)}
+                                    />
+                                  )}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )
               )}
             </>
@@ -2870,11 +3030,42 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
     );
   };
 
+  // The generic is load-bearing: without a contextual type, `wordWrap: cond ? 'on' : 'off'` and
+  // `renderWhitespace` widen to `string` in the object literal and no longer satisfy Monaco's
+  // unions, so the `options={editorOptions}` call sites below fail to compile.
+  const editorOptions = React.useMemo<monaco.editor.IStandaloneEditorConstructionOptions>(() => ({
+    ...SQL_EDITOR_OPTIONS,
+    fontSize: editorFontSize,
+    renderWhitespace: showInvisibleChars ? 'all' : 'none',
+    wordWrap: wordWrap ? 'on' : 'off',
+    readOnly: readOnly,
+  }), [editorFontSize, showInvisibleChars, wordWrap, readOnly]);
+
+  const memoizedResultGrid1 = React.useMemo(() => {
+    return renderResultGrid(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    results, columns, allResults, activeTabIndex, loading, hasRun, errorMsg, statusMsg,
+    page, pageSize, showCopyDropdown, explainResult1, activeTabType1,
+    sortCol1, sortDir1, sortedResults1, cellEdits, editingCell, editValue, editMsg,
+    pane1ViewModes, showRowNumbers, autoFitColsPane1, userEditorHeight, dbType, locale, t
+  ]);
+
+  const memoizedResultGrid2 = React.useMemo(() => {
+    return renderResultGrid(2);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    results2, columns2, allResults2, activeTabIndex2, loading2, hasRun2, errorMsg2, statusMsg2,
+    page2, pageSize2, showCopyDropdown2, explainResult2, activeTabType2,
+    sortCol2, sortDir2, sortedResults2, cellEdits, editingCell, editValue, editMsg,
+    pane2ViewModes, showRowNumbers, autoFitColsPane2, userEditorHeight2, dbType, locale, t
+  ]);
+
   return (
     <div className="sql-editor-container" ref={containerRef} style={{ display: 'flex', flexDirection: 'row', height: '100%', width: '100%', overflow: 'hidden', position: 'relative' }}>
       {/* Main Split Wrapper: holds Pane 1 and optional Pane 2 side-by-side or stacked */}
-      <div className={`sql-editor-split-wrapper ${splitMode}`} style={{ 
-        flex: 1, 
+      <div className={`sql-editor-split-wrapper ${splitMode}`} style={{
+        flex: 1,
         display: 'flex',
         flexDirection: splitMode === 'horizontal' ? 'column' : 'row',
         overflow: 'hidden',
@@ -2882,13 +3073,13 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
         minWidth: 0
       }}>
         {/* Pane 1 */}
-        <div 
+        <div
           ref={pane1Ref}
           className="sql-pane"
-          style={{ 
+          style={{
             flex: splitMode === 'none' ? '1 1 100%' : 'none',
-            width: splitMode === 'vertical' ? `${splitRatio}%` : '100%', 
-            height: splitMode === 'horizontal' ? `${splitRatio}%` : '100%', 
+            width: splitMode === 'vertical' ? `${splitRatio}%` : '100%',
+            height: splitMode === 'horizontal' ? `${splitRatio}%` : '100%',
             display: 'flex',
             flexDirection: 'column',
             overflow: 'hidden',
@@ -2911,21 +3102,11 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
               height="100%"
               language={langId}
               theme={sqlThemeName(theme)}
-              defaultValue={initialSql}
-              onChange={(val) => queueSqlSync(1, val || '')}
-              onMount={(editor) => handleEditorDidMount(editor, 1)}
-              loading={
-                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', color: 'var(--win-text-secondary)', fontSize: '13px' }}>
-                  {t('sqlEditor.loadingEditor')}
-                </div>
-              }
-              options={{
-                ...SQL_EDITOR_OPTIONS,
-                fontSize: editorFontSize,
-                renderWhitespace: showInvisibleChars ? 'all' : 'none',
-                wordWrap: wordWrap ? 'on' : 'off',
-                readOnly: readOnly,
-              }}
+              defaultValue={initialSqlRef.current}
+              onChange={handleChange1}
+              onMount={handleMount1}
+              loading={EDITOR_LOADING}
+              options={editorOptions}
             />
           </div>
 
@@ -2933,12 +3114,12 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
           {renderPaneActionBar(1)}
 
           {/* Result Grid 1 Section */}
-          {renderResultGrid(1)}
+          {memoizedResultGrid1}
         </div>
 
         {/* Resizer Divider Bar between Pane 1 & Pane 2 */}
         {splitMode !== 'none' && (
-          <div 
+          <div
             className={`${splitMode === 'vertical' ? 'split-divider-h' : 'split-divider-v'} ${isDraggingSplit ? 'dragging' : ''}`}
             onMouseDown={handleSplitMouseDown}
             title={t('sqlEditor.resizePanes')}
@@ -2947,13 +3128,13 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
 
         {/* Pane 2 (Rendered when splitMode !== 'none') */}
         {splitMode !== 'none' && (
-          <div 
+          <div
             ref={pane2Ref}
             className="sql-pane"
-            style={{ 
+            style={{
               flex: '1 1 0%',
-              width: splitMode === 'vertical' ? `calc(${100 - splitRatio}% - 6px)` : '100%', 
-              height: splitMode === 'horizontal' ? `calc(${100 - splitRatio}% - 6px)` : '100%', 
+              width: splitMode === 'vertical' ? `calc(${100 - splitRatio}% - 6px)` : '100%',
+              height: splitMode === 'horizontal' ? `calc(${100 - splitRatio}% - 6px)` : '100%',
               display: 'flex',
               flexDirection: 'column',
               overflow: 'hidden',
@@ -2973,7 +3154,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                 overflow: 'hidden'
               }}
             >
-              <button 
+              <button
                 className="split-pane-close-btn"
                 onClick={() => {
                   setSplitMode('none');
@@ -2988,21 +3169,11 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                 height="100%"
                 language={langId}
                 theme={sqlThemeName(theme)}
-                defaultValue={initialSql2}
-                onChange={(val) => queueSqlSync(2, val || '')}
-                onMount={(editor) => handleEditorDidMount(editor, 2)}
-                loading={
-                  <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', color: 'var(--win-text-secondary)', fontSize: '13px' }}>
-                    {t('sqlEditor.loadingEditor')}
-                  </div>
-                }
-                options={{
-                  ...SQL_EDITOR_OPTIONS,
-                  fontSize: editorFontSize,
-                  renderWhitespace: showInvisibleChars ? 'all' : 'none',
-                  wordWrap: wordWrap ? 'on' : 'off',
-                  readOnly: readOnly,
-                }}
+                defaultValue={initialSql2Ref.current}
+                onChange={handleChange2}
+                onMount={handleMount2}
+                loading={EDITOR_LOADING}
+                options={editorOptions}
               />
             </div>
 
@@ -3010,7 +3181,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
             {renderPaneActionBar(2)}
 
             {/* Result Grid 2 Section */}
-            {renderResultGrid(2)}
+            {memoizedResultGrid2}
           </div>
         )}
       </div>
@@ -3031,8 +3202,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                 <History size={13} />
                 <span>{t('sqlEditor.queryTable')}</span>
               </div>
-              <button 
-                className="btn btn-secondary" 
+              <button
+                className="btn btn-secondary"
                 onClick={() => setShowHistory(false)}
                 style={{ padding: '2px 6px', height: '20px', minWidth: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
               >
@@ -3153,7 +3324,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                                 )}
                               </span>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <span 
+                                <span
                                   style={{ cursor: 'pointer', color: 'var(--win-accent)', display: 'flex', alignItems: 'center', gap: '2px' }}
                                   onClick={(e) => {
                                     e.stopPropagation();
@@ -3165,7 +3336,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                                 >
                                   <Copy size={11} /> {t('sqlEditor.copy')}
                                 </span>
-                                <span 
+                                <span
                                   style={{ cursor: 'pointer', color: 'var(--st-danger)', display: 'flex', alignItems: 'center', gap: '2px' }}
                                   onClick={(e) => {
                                     e.stopPropagation();
@@ -3196,8 +3367,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                 getFilteredSaved().map(item => {
                   const dateStr = new Date(item.timestamp).toLocaleDateString(locale, { day: '2-digit', month: '2-digit' });
                   return (
-                    <div 
-                      key={item.id} 
+                    <div
+                      key={item.id}
                       className="sql-history-item"
                       onClick={() => handleSelectHistoryItem(item.sql)}
                       style={{ borderLeft: '3px solid var(--win-accent)', paddingLeft: '8px' }}
@@ -3208,7 +3379,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                           {effectiveScope !== 'db' && item.db && <span style={{ opacity: 0.7 }}>{item.db}</span>}
                           <span>{dateStr}</span>
-                          <span 
+                          <span
                             style={{ cursor: 'pointer', color: 'var(--win-accent)', display: 'flex', alignItems: 'center', gap: '2px' }}
                             onClick={(e) => {
                               e.stopPropagation();
@@ -3240,8 +3411,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
           </div>
           {historyTab === 'history' && historyCount > 0 && (
             <div style={{ padding: '8px', borderTop: '1px solid var(--win-border)', display: 'flex', justifyContent: 'flex-end', background: 'rgba(0, 0, 0, 0.02)' }}>
-              <button 
-                className="btn btn-secondary" 
+              <button
+                className="btn btn-secondary"
                 onClick={handleClearHistory}
                 style={{ width: '100%' }}
               >
@@ -3264,9 +3435,9 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
               <label style={{ fontSize: '11px', display: 'block', marginBottom: '6px', color: 'var(--win-text-secondary)' }}>
                 {t('sqlEditor.saveModalLabel')}
               </label>
-              <input 
-                type="text" 
-                className="form-input" 
+              <input
+                type="text"
+                className="form-input"
                 value={newQueryName}
                 onChange={(e) => setNewQueryName(e.target.value)}
                 placeholder={t('sqlEditor.saveModalPlaceholder')}

@@ -1,7 +1,6 @@
 //! Identifier quoting per dialect. Only Postgres gets schema-qualified, so the output for
 //! MySQL/SQLite is unchanged.
 
-
 pub(super) fn quote_char(dialect: &str) -> char {
     if dialect == "mysql" { '`' } else { '"' }
 }
@@ -13,7 +12,11 @@ pub(super) fn quote_char(dialect: &str) -> char {
 pub(super) fn qualified(dialect: &str, schema: &Option<String>, table: &str) -> String {
     match (dialect, schema.as_deref()) {
         ("postgres", Some(s)) if !s.is_empty() => {
-            format!("{}.{}", quote_ident(dialect, s), quote_ident(dialect, table))
+            format!(
+                "{}.{}",
+                quote_ident(dialect, s),
+                quote_ident(dialect, table)
+            )
         }
         _ => quote_ident(dialect, table),
     }

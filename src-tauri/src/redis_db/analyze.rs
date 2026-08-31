@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tauri::ipc::Channel;
 
 use crate::redis_db::conn::take_conn;
@@ -28,12 +28,13 @@ pub(crate) fn namespace_of(key: &str) -> String {
 
 #[tauri::command]
 pub async fn redis_analyze_db(
-    state: tauri::State<'_, crate::AppState>,
     conn_id: String,
     sample: Option<usize>,
     query_id: String,
     channel: Channel<Value>,
 ) -> Result<Value, String> {
+    Box::pin(async move {
+    let state = crate::state::require_state()?;
     let cancel = register_cancel(&state, &query_id)?;
     let limit = sample.unwrap_or(ANALYZE_SAMPLE_MAX).clamp(100, 200_000);
     let mut c = take_conn(&state, &conn_id)?;
@@ -115,7 +116,9 @@ pub async fn redis_analyze_db(
         return Ok(json!({ "success": false, "message": msg }));
     }
 
-    top.sort_by(|a, b| b.1.cmp(&a.1));
+    // `Reverse` rather than swapping the operands: descending is the intent, and a comparator
+    // written backwards is the kind of thing that reads as a typo on the next visit.
+    top.sort_by_key(|entry| std::cmp::Reverse(entry.1));
     top.truncate(20);
     let sampled_bytes: i64 = by_type.values().map(|(_, b)| *b).sum();
     // Extrapolation, only meaningful when the scan stopped early.
@@ -164,4 +167,5 @@ pub async fn redis_analyze_db(
     });
     let _ = channel.send(json!({ "type": "done" }));
     Ok(result)
+}).await
 }

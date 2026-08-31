@@ -1,10 +1,10 @@
 //! `get_table_data` — reads one page of a table's data for the grid.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::database::{
-    execute_raw_sql_generic, qualified, sql_str, stmt_timeout, uniquify_columns, with_timeout,
-    DbKind,
+    DbKind, execute_raw_sql_generic, qualified, sql_str, stmt_timeout, uniquify_columns,
+    with_timeout,
 };
 
 use super::catalog::{estimate_row_count, exact_row_count};
@@ -37,7 +37,7 @@ fn scalar_to_cursor(v: &Value) -> Option<String> {
 /// can afford a `~`, opts into the other two modes.
 #[tauri::command]
 pub async fn get_table_data(
-    state: tauri::State<'_, crate::AppState>, conn_id: String,
+    conn_id: String,
     name: String,
     page: u32,
     limit: u32,
@@ -48,6 +48,8 @@ pub async fn get_table_data(
     seek_column: Option<String>,
     cursor: Option<String>,
 ) -> Result<Value, String> {
+    Box::pin(async move {
+    let state = crate::state::require_state()?;
     let (conn_type, schema, limit_dur) = {
         let ctx = state.connections.acquire(&conn_id)?;
         let ct = ctx.conn().clone();
@@ -69,12 +71,12 @@ pub async fn get_table_data(
     };
 
     // strip any quoting characters already present so the syntax cannot break, then quote it ourselves
-    let safe_ident = |s: &str| s.replace('`', "").replace('"', "");
+    let safe_ident = |s: &str| s.replace(['`', '"'], "");
     let seek_col = seek_column
         .as_ref()
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
-        .map(|s| safe_ident(s));
+        .map(&safe_ident);
 
     // ORDER BY: the column the user picked, and failing that the seek column (a single-column primary key) the
     // frontend sends down. Keyset pagination is only correct when the order is deterministic, so even the "unsorted"
@@ -84,7 +86,7 @@ pub async fn get_table_data(
         .as_ref()
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
-        .map(|s| safe_ident(s))
+        .map(safe_ident)
         .or_else(|| seek_col.clone());
     let desc = matches!(sort_dir.as_deref(), Some(d) if d.eq_ignore_ascii_case("desc"));
     let dir = if desc { "DESC" } else { "ASC" };
@@ -97,7 +99,7 @@ pub async fn get_table_data(
     // used when the order in force IS that seek column: sorting by another column makes the frontend stop sending
     // `seek_column`, and this condition is the second line of defence.
     let seek_active = seek_col.as_ref().filter(|c| sort_col.as_deref() == Some(c.as_str()));
-    let seek_clause = match (seek_active, cursor.as_ref().map(|s| s.as_str()).filter(|s| !s.is_empty())) {
+    let seek_clause = match (seek_active, cursor.as_deref().filter(|s| !s.is_empty())) {
         (Some(col), Some(v)) => {
             let op = if desc { "<" } else { ">" };
             let lit = sql_str(v);
@@ -170,7 +172,7 @@ pub async fn get_table_data(
         }
         _ => {
             let result = with_timeout(limit_dur, execute_raw_sql_generic(&conn_type, sql.clone())).await?;
-            if let Some(first_res) = result.get(0) {
+            if let Some(first_res) = result.first() {
                 if let Some(data) = first_res.get("data").and_then(|v| v.as_array()) {
                     rows_json = data.clone();
                 }
@@ -240,4 +242,5 @@ pub async fn get_table_data(
         // page, or the key is neither a number nor a string) and the frontend goes back to page numbers.
         "nextCursor": next_cursor
     }))
+}).await
 }

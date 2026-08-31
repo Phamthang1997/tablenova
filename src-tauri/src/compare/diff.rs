@@ -14,12 +14,19 @@ pub(super) fn norm_type(raw: &str) -> String {
     let mut t = raw.trim().to_ascii_lowercase();
     t = t.split_whitespace().collect::<Vec<_>>().join(" ");
 
-    for base in ["tinyint", "smallint", "mediumint", "bigint", "int", "integer"] {
+    for base in [
+        "tinyint",
+        "smallint",
+        "mediumint",
+        "bigint",
+        "int",
+        "integer",
+    ] {
         if let Some(rest) = t.strip_prefix(base) {
-            if rest.starts_with('(') {
-                if let Some(close) = rest.find(')') {
-                    t = format!("{}{}", base, &rest[close + 1..]);
-                }
+            if rest.starts_with('(')
+                && let Some(close) = rest.find(')')
+            {
+                t = format!("{}{}", base, &rest[close + 1..]);
             }
             break;
         }
@@ -112,13 +119,19 @@ pub(super) fn fk_changes(a: &FkMeta, b: &FkMeta) -> Vec<&'static str> {
     if a.ref_columns != b.ref_columns {
         ch.push("refColumns");
     }
-    if a.on_delete.clone().unwrap_or_default().to_ascii_uppercase()
-        != b.on_delete.clone().unwrap_or_default().to_ascii_uppercase()
+    if !a
+        .on_delete
+        .clone()
+        .unwrap_or_default()
+        .eq_ignore_ascii_case(&b.on_delete.clone().unwrap_or_default())
     {
         ch.push("onDelete");
     }
-    if a.on_update.clone().unwrap_or_default().to_ascii_uppercase()
-        != b.on_update.clone().unwrap_or_default().to_ascii_uppercase()
+    if !a
+        .on_update
+        .clone()
+        .unwrap_or_default()
+        .eq_ignore_ascii_case(&b.on_update.clone().unwrap_or_default())
     {
         ch.push("onUpdate");
     }
@@ -153,15 +166,14 @@ pub(super) fn view_def_differs(
                     str_val = &str_val[cut_offset..];
                 }
             }
-        } else if let Some(as_idx) = lower.find(" as ") {
-            if lower.starts_with("create") || lower.starts_with("replace") {
-                str_val = &str_val[as_idx + 4..];
-            }
+        } else if let Some(as_idx) = lower.find(" as ")
+            && (lower.starts_with("create") || lower.starts_with("replace"))
+        {
+            str_val = &str_val[as_idx + 4..];
         }
 
         let mut cleaned = str_val
-            .replace('"', "")
-            .replace('`', "")
+            .replace(['"', '`'], "")
             .replace("public.", "")
             .replace("PUBLIC.", "")
             .replace("dbo.", "")
@@ -183,7 +195,7 @@ pub(super) fn view_def_differs(
             cleaned = cleaned.replace(&pfx1, "").replace(&pfx2, "");
         }
 
-        cleaned = cleaned.replace('(', " ").replace(')', " ");
+        cleaned = cleaned.replace(['(', ')'], " ");
 
         cleaned
             .split_whitespace()
@@ -227,7 +239,10 @@ mod tests {
         assert_eq!(norm_type("int8"), norm_type("bigint"));
         assert_eq!(norm_type("bool"), norm_type("BOOLEAN"));
         assert_eq!(norm_type("double precision"), norm_type("double"));
-        assert_eq!(norm_type("timestamp without time zone"), norm_type("TIMESTAMP"));
+        assert_eq!(
+            norm_type("timestamp without time zone"),
+            norm_type("TIMESTAMP")
+        );
         assert_eq!(norm_type("numeric(10,2)"), norm_type("DECIMAL(10,2)"));
         assert_eq!(norm_type("bytea"), norm_type("BLOB"));
         assert_eq!(norm_type("longtext"), norm_type("TEXT"));

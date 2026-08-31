@@ -19,7 +19,7 @@ use rmcp::transport::streamable_http_server::{
 use tokio_util::sync::CancellationToken;
 
 use super::audit::{self, Denial};
-use super::tools::TableNovaMcp;
+use super::tools::TableGridMcp;
 
 /// The path AI clients point at: `http://127.0.0.1:<port>/mcp`.
 pub const MOUNT_PATH: &str = "/mcp";
@@ -44,7 +44,7 @@ pub fn router(port: u16, token: Arc<str>, cancel: CancellationToken) -> Router {
     // far as it went: nothing here needs a session - the tools are stateless reads, and the only real
     // state, which connection is shared, lives in `AppState` rather than in the transport - and
     // SEP-2567 removes sessions from protocol 2026-07-28 anyway. It also promised to kill a genuine
-    // annoyance: in session mode every TableNova restart invalidates every client's session, which
+    // annoyance: in session mode every TableGrid restart invalidates every client's session, which
     // reaches the user as `session not found`.
     //
     // It broke a client that had been working. Stateless has no server-to-client stream, so
@@ -52,12 +52,12 @@ pub fn router(port: u16, token: Arc<str>, cancel: CancellationToken) -> Router {
     // that stream (its own name for it is `subscriptions/listen`), then abandons its whole tool list
     // when it cannot. Measured both ways against the real client.
     //
-    // So the trade is deliberate: keep sessions, and a restart of TableNova costs connected clients
+    // So the trade is deliberate: keep sessions, and a restart of TableGrid costs connected clients
     // one reconnect. That is a transient with an obvious remedy; the alternative was a permanent
     // failure for one of the two clients this build is actually tested against. Anyone tempted to
     // flip this again should read `docs/mcp-server-plan.md` §6 Bước 3 first.
     let service = StreamableHttpService::new(
-        || Ok(TableNovaMcp::new()),
+        || Ok(TableGridMcp::new()),
         LocalSessionManager::default().into(),
         StreamableHttpServerConfig::default().with_cancellation_token(cancel),
     );
@@ -82,7 +82,12 @@ async fn guard_origin(State(g): State<Guard>, req: Request<Body>, next: Next) ->
         Some(v) => v.to_str().map(is_loopback_origin).unwrap_or(false),
     };
     if !origin_ok {
-        return deny(StatusCode::FORBIDDEN, "origin not allowed", Denial::BadOrigin, &req);
+        return deny(
+            StatusCode::FORBIDDEN,
+            "origin not allowed",
+            Denial::BadOrigin,
+            &req,
+        );
     }
 
     // HTTP/2 carries the authority in the pseudo-header rather than in `Host`; axum surfaces it on
@@ -95,7 +100,12 @@ async fn guard_origin(State(g): State<Guard>, req: Request<Body>, next: Next) ->
         .map(str::to_owned)
         .or_else(|| req.uri().authority().map(|a| a.as_str().to_owned()));
     if !host.map(|h| is_expected_host(&h, g.port)).unwrap_or(false) {
-        return deny(StatusCode::FORBIDDEN, "host not allowed", Denial::BadOrigin, &req);
+        return deny(
+            StatusCode::FORBIDDEN,
+            "host not allowed",
+            Denial::BadOrigin,
+            &req,
+        );
     }
 
     next.run(req).await
@@ -309,8 +319,13 @@ pub(super) mod server_tests {
     /// A whole request/response, body included. Bounded by a timeout because a streamable-HTTP
     /// response can legitimately stay open.
     pub(super) async fn exchange(port: u16, headers: &str, body: &str) -> String {
-        let mut stream = TcpStream::connect(("127.0.0.1", port)).await.expect("connect");
-        stream.write_all(request(headers, body).as_bytes()).await.expect("write");
+        let mut stream = TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("connect");
+        stream
+            .write_all(request(headers, body).as_bytes())
+            .await
+            .expect("write");
         let mut out = Vec::new();
         // Bounded: a streamable-HTTP response can legitimately stay open, and a test that hangs is
         // worse than one that fails.
@@ -337,21 +352,31 @@ pub(super) mod server_tests {
 
     /// One raw HTTP/1.1 request; returns the status line only, so an SSE response cannot hang us.
     async fn status_line(port: u16, headers: &str, body: &str) -> String {
-        let mut stream = TcpStream::connect(("127.0.0.1", port)).await.expect("connect");
+        let mut stream = TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("connect");
         let req = request(headers, body);
         stream.write_all(req.as_bytes()).await.expect("write");
         let mut line = String::new();
-        BufReader::new(stream).read_line(&mut line).await.expect("read");
+        BufReader::new(stream)
+            .read_line(&mut line)
+            .await
+            .expect("read");
         line
     }
 
     /// A raw GET, for the paths a client probes before it trusts its configured header.
     pub(super) async fn get_status(port: u16, path: &str, headers: &str) -> String {
-        let mut stream = TcpStream::connect(("127.0.0.1", port)).await.expect("connect");
+        let mut stream = TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("connect");
         let req = format!("GET {path} HTTP/1.1\r\n{headers}Connection: close\r\n\r\n");
         stream.write_all(req.as_bytes()).await.expect("write");
         let mut line = String::new();
-        BufReader::new(stream).read_line(&mut line).await.expect("read");
+        BufReader::new(stream)
+            .read_line(&mut line)
+            .await
+            .expect("read");
         line
     }
 
@@ -389,10 +414,16 @@ pub(super) mod server_tests {
             init,
         )
         .await;
-        assert!(rebound.contains("403"), "forged host got through: {rebound}");
+        assert!(
+            rebound.contains("403"),
+            "forged host got through: {rebound}"
+        );
 
         let anonymous = status_line(port, &host, init).await;
-        assert!(anonymous.contains("401"), "no token got through: {anonymous}");
+        assert!(
+            anonymous.contains("401"),
+            "no token got through: {anonymous}"
+        );
 
         let wrong = status_line(port, &format!("{host}Authorization: Bearer nope\r\n"), init).await;
         assert!(wrong.contains("401"), "wrong token got through: {wrong}");
@@ -402,12 +433,23 @@ pub(super) mod server_tests {
         // been working; the log noise those probes caused is suppressed in `deny`/`guard_token`
         // instead, which was the only real goal. See `is_oauth_discovery`.
         let disco = get_status(port, "/.well-known/oauth-protected-resource", &host).await;
-        assert!(disco.contains("401"), "oauth discovery should 401 like the rest: {disco}");
+        assert!(
+            disco.contains("401"),
+            "oauth discovery should 401 like the rest: {disco}"
+        );
 
         // The real thing. What rmcp answers is rmcp's business; what matters here is that neither
         // door turned it away.
-        let ok = status_line(port, &format!("{host}Authorization: Bearer {TOKEN}\r\n"), init).await;
-        assert!(!ok.contains("401") && !ok.contains("403"), "valid request blocked: {ok}");
+        let ok = status_line(
+            port,
+            &format!("{host}Authorization: Bearer {TOKEN}\r\n"),
+            init,
+        )
+        .await;
+        assert!(
+            !ok.contains("401") && !ok.contains("403"),
+            "valid request blocked: {ok}"
+        );
 
         cancel.cancel();
         let _ = task.await;
@@ -442,8 +484,8 @@ mod handshake_tests {
         )
         .await;
         assert!(init.contains(" 200 "), "initialize failed: {init}");
-        // The server has to introduce itself as this app, not as the SDK - see `tablenova_identity`.
-        assert!(init.contains("tablenova"), "wrong server identity: {init}");
+        // The server has to introduce itself as this app, not as the SDK - see `tablegrid_identity`.
+        assert!(init.contains("tablegrid"), "wrong server identity: {init}");
 
         let listed = exchange(
             port,
@@ -459,17 +501,23 @@ mod handshake_tests {
         .await;
 
         for tool in [
-            "tablenova_list_connections",
-            "tablenova_list_databases",
-            "tablenova_list_tables",
-            "tablenova_describe_table",
-            "tablenova_preview_table",
-            "tablenova_query",
+            "tablegrid_list_connections",
+            "tablegrid_list_databases",
+            "tablegrid_list_tables",
+            "tablegrid_describe_table",
+            "tablegrid_preview_table",
+            "tablegrid_query",
         ] {
-            assert!(listed.contains(tool), "{tool} missing from tools/list: {listed}");
+            assert!(
+                listed.contains(tool),
+                "{tool} missing from tools/list: {listed}"
+            );
         }
         // The generated schema has to arrive with them, or a client cannot call anything.
-        assert!(listed.contains("connection_id"), "no parameter schema: {listed}");
+        assert!(
+            listed.contains("connection_id"),
+            "no parameter schema: {listed}"
+        );
 
         cancel.cancel();
         let _ = task.await;

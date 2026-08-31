@@ -11,7 +11,7 @@ import {
 const TARGET: McpTarget = {
   url: 'http://127.0.0.1:45124/mcp',
   token: 'deadbeef',
-  exePath: 'C:/Program Files/TableNova/tablenova.exe',
+  exePath: 'C:/Program Files/TableGrid/tablegrid.exe',
   port: 45124,
 };
 
@@ -53,7 +53,7 @@ describe('mcpClients', () => {
   // stdio has ONE shape across clients - that is what makes it the portable answer. HTTP does not.
   it('emits one identical stdio JSON for the two JSON clients', () => {
     expect(built('antigravity', 'stdio')).toBe(built('generic', 'stdio'));
-    const entry = JSON.parse(built('generic', 'stdio')).mcpServers.tablenova;
+    const entry = JSON.parse(built('generic', 'stdio')).mcpServers.tablegrid;
     expect(entry.command).toBe(TARGET.exePath);
     expect(entry.args).toEqual(['--mcp-stdio', '--port', String(TARGET.port)]);
     expect(entry.env).toBeUndefined();
@@ -62,8 +62,8 @@ describe('mcpClients', () => {
   it('falls back to a bare command name when the OS will not say where we are', () => {
     const entry = JSON.parse(
       mcpVariant('generic', 'stdio').build({ ...TARGET, exePath: '' }),
-    ).mcpServers.tablenova;
-    expect(entry.command).toBe('tablenova');
+    ).mcpServers.tablegrid;
+    expect(entry.command).toBe('tablegrid');
   });
 
   // Claude Code defaults to the stdio transport when `type` is absent, and does not read MCP servers
@@ -88,20 +88,20 @@ describe('mcpClients', () => {
     for (const tr of TRANSPORTS) {
       const lines = built('claudeCode', tr).split('\n');
       expect(lines, tr).toHaveLength(3);
-      expect(lines[0], tr).toBe('claude mcp remove tablenova -s local');
-      expect(lines[1], tr).toBe('claude mcp remove tablenova -s user');
+      expect(lines[0], tr).toBe('claude mcp remove tablegrid -s local');
+      expect(lines[1], tr).toBe('claude mcp remove tablegrid -s user');
       expect(lines[2], tr).toContain('--scope user');
     }
   });
 
   // Antigravity's docs: `url` and `httpUrl` are not supported, only `serverUrl`.
   it('uses serverUrl for Antigravity over http, and the bare url for the generic client', () => {
-    const ag = JSON.parse(built('antigravity', 'http')).mcpServers.tablenova;
+    const ag = JSON.parse(built('antigravity', 'http')).mcpServers.tablegrid;
     expect(ag.serverUrl).toBe(TARGET.url);
     expect(ag.url).toBeUndefined();
     expect(ag.httpUrl).toBeUndefined();
 
-    const gen = JSON.parse(built('generic', 'http')).mcpServers.tablenova;
+    const gen = JSON.parse(built('generic', 'http')).mcpServers.tablegrid;
     expect(gen.url).toBe(TARGET.url);
     expect(gen.serverUrl).toBeUndefined();
   });

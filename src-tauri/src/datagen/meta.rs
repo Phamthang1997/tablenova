@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
 
-use crate::database::{execute_raw_sql_generic, DbConnection};
+use crate::database::{DbConnection, execute_raw_sql_generic};
 
 use super::spec::{opt_i64, rows_of, s};
 
@@ -77,7 +77,9 @@ pub(super) fn parse_enum_type(column_type: &str) -> Vec<String> {
 }
 
 pub(super) async fn query_rows(conn: &DbConnection, sql: &str) -> Result<Vec<Value>, String> {
-    Ok(rows_of(&execute_raw_sql_generic(conn, sql.to_string()).await?))
+    Ok(rows_of(
+        &execute_raw_sql_generic(conn, sql.to_string()).await?,
+    ))
 }
 
 /// Reads columns + foreign keys of the base tables. `only` limits the work for SQLite, whose
@@ -89,7 +91,10 @@ pub async fn collect_meta(
     only: Option<&[String]>,
 ) -> Result<Vec<TableMeta>, String> {
     // Postgres only; the MySQL branch below filters by DATABASE() and SQLite has no schema.
-    let sch = schema.clone().unwrap_or_else(|| "public".to_string()).replace('\'', "''");
+    let sch = schema
+        .clone()
+        .unwrap_or_else(|| "public".to_string())
+        .replace('\'', "''");
     let mut metas: Vec<TableMeta> = Vec::new();
 
     match dialect {
@@ -177,7 +182,10 @@ pub async fn collect_meta(
             .await
             .unwrap_or_default()
             {
-                enum_labels.entry(s(&r, "tname")).or_default().push(s(&r, "label"));
+                enum_labels
+                    .entry(s(&r, "tname"))
+                    .or_default()
+                    .push(s(&r, "label"));
             }
 
             let mut pks: HashMap<String, HashSet<String>> = HashMap::new();
@@ -220,13 +228,17 @@ pub async fn collect_meta(
                 } else {
                     Vec::new()
                 };
-                let is_pk = pks.get(&tname).map(|set| set.contains(&cname)).unwrap_or(false);
+                let is_pk = pks
+                    .get(&tname)
+                    .map(|set| set.contains(&cname))
+                    .unwrap_or(false);
                 cols.entry(tname).or_default().push(ColMeta {
                     name: cname,
                     data_type: if dtype == "USER-DEFINED" { udt } else { dtype },
                     nullable: s(&r, "nullable").eq_ignore_ascii_case("YES"),
                     is_pk,
-                    auto_inc: default.contains("nextval") || s(&r, "identity").eq_ignore_ascii_case("YES"),
+                    auto_inc: default.contains("nextval")
+                        || s(&r, "identity").eq_ignore_ascii_case("YES"),
                     has_default: !default.is_empty(),
                     max_len: opt_i64(&r, "maxlen"),
                     scale: opt_i64(&r, "nscale"),
@@ -278,7 +290,12 @@ pub async fn collect_meta(
             }
             for t in order {
                 let mut columns = Vec::new();
-                for r in query_rows(conn, &format!("PRAGMA table_info(\"{}\")", t.replace('"', "\"\""))).await? {
+                for r in query_rows(
+                    conn,
+                    &format!("PRAGMA table_info(\"{}\")", t.replace('"', "\"\"")),
+                )
+                .await?
+                {
                     let dtype = s(&r, "type");
                     let is_pk = opt_i64(&r, "pk").unwrap_or(0) > 0;
                     let default = r.get("dflt_value").map(|v| !v.is_null()).unwrap_or(false);
@@ -309,7 +326,11 @@ pub async fn collect_meta(
                         ref_column: s(&r, "to"),
                     });
                 }
-                metas.push(TableMeta { name: t, columns, fks });
+                metas.push(TableMeta {
+                    name: t,
+                    columns,
+                    fks,
+                });
             }
         }
     }
@@ -319,7 +340,10 @@ pub async fn collect_meta(
 
 /// Insertion order: parents before children. Kahn's algorithm, keeping the caller's order as
 /// the tie-break so the result is stable. Returns the tables that are still part of a cycle.
-pub fn topo_order(tables: &[String], fks: &HashMap<String, Vec<FkMeta>>) -> (Vec<String>, Vec<String>) {
+pub fn topo_order(
+    tables: &[String],
+    fks: &HashMap<String, Vec<FkMeta>>,
+) -> (Vec<String>, Vec<String>) {
     let in_scope: HashSet<&String> = tables.iter().collect();
     // deps[child] = parents that must be inserted first (self-references ignored: a row can
     // point at another row of the same table, which no ordering can fix).
@@ -357,7 +381,11 @@ pub fn topo_order(tables: &[String], fks: &HashMap<String, Vec<FkMeta>>) -> (Vec
         }
     }
 
-    let cyclic: Vec<String> = tables.iter().filter(|t| !done.contains(*t)).cloned().collect();
+    let cyclic: Vec<String> = tables
+        .iter()
+        .filter(|t| !done.contains(*t))
+        .cloned()
+        .collect();
     // Cyclic tables still have to be generated; they go last and need constraints turned off.
     let mut order = out;
     order.extend(cyclic.iter().cloned());

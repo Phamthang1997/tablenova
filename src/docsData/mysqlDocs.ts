@@ -203,7 +203,7 @@ export const MYSQL_DOCS: DocEntry[] = [
     ],
     returns: 'JSON',
     since: 'MySQL 5.7.8 / 8.0',
-    examples: ["SELECT JSON_EXTRACT('{\"id\": 10, \"name\": \"TableNova\"}', '$.name');", "SELECT data->>'$.email' FROM user_profiles;"],
+    examples: ["SELECT JSON_EXTRACT('{\"id\": 10, \"name\": \"TableGrid\"}', '$.name');", "SELECT data->>'$.email' FROM user_profiles;"],
     officialUrl: 'https://dev.mysql.com/doc/refman/8.0/en/json-search-functions.html#function_json-extract',
   },
   {

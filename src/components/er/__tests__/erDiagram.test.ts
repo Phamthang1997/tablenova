@@ -6,7 +6,7 @@ import {
   computeBezierPath,
   computeDiagramBounds,
 } from '../erLayoutEngine';
-import { exportToMermaid, exportToDbml, exportToSql } from '../erExportHelper';
+import { exportToMermaid, exportToDbml, exportToSql, generateFullDiagramSvg } from '../erExportHelper';
 import type { ERTable, ERRelationship } from '../erTypes';
 
 const mockTables: ERTable[] = [
@@ -144,5 +144,27 @@ describe('erExportHelper', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS `customer`');
     expect(sql).toContain('PRIMARY KEY (`customer_id`)');
     expect(sql).toContain('ALTER TABLE `payment` ADD CONSTRAINT `fk_payment_customer` FOREIGN KEY (`customer_id`) REFERENCES `customer` (`customer_id`);');
+  });
+
+  it('generates complete standalone SVG diagram with tables and relationship paths', () => {
+    const layout = computeAutoLayout(mockTables, mockRelationships, 'full');
+    const { svgString, width, height } = generateFullDiagramSvg(mockTables, mockRelationships, layout, 'full', 'dark');
+
+    expect(width).toBeGreaterThan(500);
+    expect(height).toBeGreaterThan(300);
+    expect(svgString).toContain('<svg xmlns="http://www.w3.org/2000/svg"');
+    expect(svgString).toContain('customer');
+    expect(svgString).toContain('payment');
+    expect(svgString).toContain('store');
+    expect(svgString).toContain('customer_id');
+    expect(svgString).toContain('marker id="er-export-arrow"');
+    expect(svgString).toContain('<path d="M');
+  });
+
+  it('handles empty tables for SVG generation gracefully', () => {
+    const { svgString, width, height } = generateFullDiagramSvg([], [], {}, 'full', 'dark');
+    expect(width).toBe(600);
+    expect(height).toBe(400);
+    expect(svgString).toContain('No tables to display');
   });
 });

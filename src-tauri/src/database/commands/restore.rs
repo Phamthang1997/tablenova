@@ -1,12 +1,12 @@
 //! `restore_backup` — replays a multi-statement `.sql` dump, filtered to the tables the user selected.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sqlx::{MySqlPool, PgPool};
 use tauri::ipc::Channel;
 
 use crate::database::{
-    build_mysql_url, build_pg_url, execute_raw_sql_generic, reject_conn_read_only,
-    split_sql_statements, strip_leading_comments, DbConnection, DbKind,
+    DbConnection, DbKind, build_mysql_url, build_pg_url, execute_raw_sql_generic,
+    reject_conn_read_only, split_sql_statements, strip_leading_comments,
 };
 
 /// The head of a statement, upper-cased — enough to classify it with `is_skipped_stmt`/`is_session_level_stmt`.
@@ -97,7 +97,10 @@ pub(crate) struct TableMatcher {
 impl TableMatcher {
     pub(crate) fn new(tables: &[String]) -> Self {
         if tables.is_empty() {
-            return Self { re: None, lowered: Vec::new() };
+            return Self {
+                re: None,
+                lowered: Vec::new(),
+            };
         }
         let alts: Vec<String> = tables.iter().map(|t| regex::escape(t)).collect();
         // (?i) instead of lower-casing each statement: `to_lowercase()` allocates a copy
@@ -132,7 +135,7 @@ fn use_db_name(stmt: &str) -> Option<String> {
 
 #[tauri::command]
 pub async fn restore_backup(
-    state: tauri::State<'_, crate::AppState>, conn_id: String,
+    conn_id: String,
     sql_content: String,
     tables: Vec<String>,
     // The progress channel back to the UI: {type:'start'|'progress'|'done', done, total}. A restore is one
@@ -149,6 +152,8 @@ pub async fn restore_backup(
     // This mode rescues the part that can run, at the cost of atomicity.
     continue_on_error: Option<bool>,
 ) -> Result<Value, String> {
+    Box::pin(async move {
+    let state = crate::state::require_state()?;
     let continue_on_error = continue_on_error.unwrap_or(false);
     // Failing statements that were skipped: all of them are counted, but only the first few are kept to show the user.
     let mut failed_count: usize = 0;
@@ -195,11 +200,10 @@ pub async fn restore_backup(
         }
         let session_level = is_session_level_stmt(&head);
         if session_level {
-            if head.starts_with("USE ") {
-                if let Some(db) = use_db_name(body) {
+            if head.starts_with("USE ")
+                && let Some(db) = use_db_name(body) {
                     last_use_db = Some(db);
                 }
-            }
         } else if !matcher.matches(&q) {
             continue;
         }
@@ -378,14 +382,10 @@ pub async fn restore_backup(
             }
 
             // Turn foreign keys back on
-            match &conn_type.kind {
-                DbKind::Sqlite(conn_arc) => {
-                    if let Ok(conn) = conn_arc.lock() {
-                        let _ = conn.execute("PRAGMA foreign_keys = ON;", []);
-                    }
+            if let DbKind::Sqlite(conn_arc) = &conn_type.kind
+                && let Ok(conn) = conn_arc.lock() {
+                    let _ = conn.execute("PRAGMA foreign_keys = ON;", []);
                 }
-                _ => {}
-            }
         }
     }
 
@@ -446,4 +446,5 @@ pub async fn restore_backup(
         "failedCount": failed_count,
         "failedSamples": failed_samples
     }))
+}).await
 }

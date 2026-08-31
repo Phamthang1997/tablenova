@@ -17,7 +17,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde::Serialize;
 use serde_json::{Value, json};
 
-
 /// How many requests are kept. Old entries fall off the front.
 const CAP: usize = 500;
 
@@ -41,7 +40,7 @@ pub enum Denial {
     NotShared,
     /// Layer 4: not a single read statement.
     NotReadOnly,
-    /// The connection is mid-transaction in TableNova.
+    /// The connection is mid-transaction in TableGrid.
     ManualTransaction,
     /// The database itself refused, or the query failed.
     Failed,
@@ -182,6 +181,28 @@ impl Entry {
     }
 }
 
+/// A refusal, carrying **both** what the client is told and which layer said no.
+///
+/// The two must travel together. Recovering the layer from the message afterwards would mean
+/// branching on user-facing text, which this codebase refuses to do anywhere - and the message is
+/// the one part that may be reworded freely.
+pub struct Refusal {
+    pub denial: Denial,
+    pub error: rmcp::ErrorData,
+}
+
+impl Refusal {
+    pub fn new(denial: Denial, error: rmcp::ErrorData) -> Self {
+        Refusal { denial, error }
+    }
+}
+
+impl From<Refusal> for rmcp::ErrorData {
+    fn from(r: Refusal) -> Self {
+        r.error
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,12 +237,12 @@ mod tests {
 
     #[test]
     fn a_denial_records_which_layer_refused() {
-        let e = entry("tablenova_query", Some("c1"), Some("DROP TABLE t"), 3)
+        let e = entry("tablegrid_query", Some("c1"), Some("DROP TABLE t"), 3)
             .denied(Denial::NotReadOnly, "writes are refused".to_string());
         assert!(!e.ok);
         assert_eq!(e.layer, Some(4));
         // The database's own failures are not a defence layer, and must not read as one.
-        let f = entry("tablenova_query", Some("c1"), Some("SELECT 1"), 3)
+        let f = entry("tablegrid_query", Some("c1"), Some("SELECT 1"), 3)
             .denied(Denial::Failed, "syntax error".to_string());
         assert_eq!(f.layer, Some(0));
     }
@@ -234,35 +255,15 @@ mod tests {
         let origin = entry("POST /mcp", None, None, 0)
             .denied(Denial::BadOrigin, "origin not allowed".to_string());
         assert_eq!(origin.layer, Some(1));
-        let token = entry("POST /mcp", None, None, 0)
-            .denied(Denial::BadToken, "missing or invalid bearer token".to_string());
+        let token = entry("POST /mcp", None, None, 0).denied(
+            Denial::BadToken,
+            "missing or invalid bearer token".to_string(),
+        );
         assert_eq!(token.layer, Some(2));
         // The layer must survive serialisation: the UI switches on `denial`, and falls back to
         // `layer` for a variant it does not know yet.
         let wire = json!(token);
         assert_eq!(wire["denial"], "badToken");
         assert_eq!(wire["layer"], 2);
-    }
-}
-
-/// A refusal, carrying **both** what the client is told and which layer said no.
-///
-/// The two must travel together. Recovering the layer from the message afterwards would mean
-/// branching on user-facing text, which this codebase refuses to do anywhere - and the message is
-/// the one part that may be reworded freely.
-pub struct Refusal {
-    pub denial: Denial,
-    pub error: rmcp::ErrorData,
-}
-
-impl Refusal {
-    pub fn new(denial: Denial, error: rmcp::ErrorData) -> Self {
-        Refusal { denial, error }
-    }
-}
-
-impl From<Refusal> for rmcp::ErrorData {
-    fn from(r: Refusal) -> Self {
-        r.error
     }
 }

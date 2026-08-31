@@ -1,3 +1,16 @@
+# DEAD CONFIG on every machine that builds this repo today, kept only because it is someone's
+# working MinGW setup and the absolute path below cannot be reconstructed if it is lost.
+#
+# Cargo applies a `[target.<triple>]` section only when that triple is the one being built, and
+# nothing here builds `x86_64-pc-windows-gnu`: `rustc -vV` reports an MSVC host, and package.json's
+# `build:win` names the MSVC triple explicitly. So neither the linker line nor anything added to
+# these rustflags has any effect — and cargo reports no error for it. A `/STACK` flag was added here
+# while chasing a release-only stack overflow, an entire build was spent testing it, and it had
+# never reached the binary. Put build flags in a `[target.x86_64-pc-windows-msvc]` section instead.
+#
+# (That overflow turned out to need no build flag at all: see `connect_db` in
+# database/commands/connection.rs. A command borrowing `State<'_, _>` has a non-`'static` future,
+# which Tauri cannot spawn, so it built and ran on the main thread's 1MB stack.)
 [target.x86_64-pc-windows-gnu]
 linker = "x86_64-w64-mingw32-gcc"
 rustflags = [

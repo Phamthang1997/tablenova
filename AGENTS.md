@@ -1,24 +1,28 @@
-# Project Rules & Guidelines for TableNova
+# Project Rules & Guidelines for TableGrid
 
-## Quy tắc CSS & Styling
-- **Không được phép sử dụng Inline CSS** (`style={{ ... }}`).
-- Tất cả giao diện UI phải sử dụng **CSS Classes** định nghĩa trong `src/index.css` (hoặc tệp `.css` tương ứng).
-- **Ngoại lệ duy nhất**: Chỉ dùng inline style khi giá trị thuộc tính là dữ liệu động tính toán runtime (như tọa độ chuột, thanh phần trăm progress, màu động từ user picker).
+## CSS & Styling Rules
+- **No Inline CSS Allowed** (`style={{ ... }}`).
+- All UI styling must use **CSS Classes** defined in `src/index.css` (or corresponding component `.css` files).
+- **Sole Exception**: Inline styles are only permitted when property values are dynamically calculated at runtime (such as mouse coordinates, progress percentages, dynamic colors chosen from a user picker).
 
-## Quy tắc Thiết kế Giao diện & Nút bấm (UI & Buttons)
-- **Luôn làm nút giống thiết kế hiện tại của TableNova**: Mỗi lựa chọn hoặc hành động phải là một nút độc lập với viền riêng (`1px solid var(--win-border)`), `border-radius: 6px`, màu nền trong suốt, hiệu ứng hover/active đổi viền và màu theo `var(--win-accent)`.
-- **Cấm gom nút vào khung viên thuốc dính liền (iOS-style segmented container)**: Không bọc các nút lựa chọn vào một khung viền chung dạng capsule.
+## UI & Button Design Rules
+- **Always match TableGrid's existing button design**: Each option or action must be an independent button with its own border (`1px solid var(--win-border)`), `border-radius: 6px`, transparent background, and hover/active transition effects changing border and color to `var(--win-accent)`.
+- **Never group buttons into a fused pill container (iOS-style segmented control)**: Do not wrap option buttons into a shared continuous capsule container.
 
-## Quy tắc Cấu trúc Module & Tính năng Rust (`src-tauri`)
-- **Tổ chức theo đúng thư mục domain**:
-  - Tính năng thuộc domain có sẵn (`database`, `redis_db`, `compare`, `credentials`, `datagen`, `ssh`, `terminal`, `stats`, `tx`, `state`, `app`) phải đặt vào thư mục tương ứng trong `src-tauri/src/<domain>/`.
-  - Tính năng/Domain mới: Tạo thư mục mới `src-tauri/src/<feature_name>/` kèm `mod.rs` và khai báo `pub mod <feature_name>;` trong `src-tauri/src/lib.rs`.
-- **Cấm viết logic trực tiếp trong `src-tauri/src/lib.rs` hoặc `main.rs`**: `lib.rs` chỉ dùng để khai báo module và re-export cần thiết (`AppState`, `run`).
-- **Đăng ký `#[tauri::command]`**: Mọi command mới bắt buộc phải được thêm vào danh sách `tauri::generate_handler![...]` trong `src-tauri/src/app/handlers.rs`.
-- **Quản lý State**: Trạng thái dùng chung phải được gắn vào `AppState` trong `src-tauri/src/state/`.
+## Rust Module Structure & Features (`src-tauri`)
+- **Organize strictly by domain directory**:
+  - Features belonging to existing domains (`database`, `redis_db`, `compare`, `credentials`, `datagen`, `ssh`, `terminal`, `stats`, `tx`, `state`, `app`) must be placed in their respective folder under `src-tauri/src/<domain>/`.
+  - New domain/feature: Create a new directory `src-tauri/src/<feature_name>/` with `mod.rs` and declare `pub mod <feature_name>;` in `src-tauri/src/lib.rs`.
+- **Do not write logic directly in `src-tauri/src/lib.rs` or `main.rs`**: `lib.rs` is solely for module declarations and essential re-exports (`AppState`, `run`).
+- **Register `#[tauri::command]`**: Every new command must be registered in the `tauri::generate_handler![...]` list in `src-tauri/src/app/handlers.rs`.
+- **State Management**: Shared application state must be attached to `AppState` in `src-tauri/src/state/`.
 
-## Quy tắc Git Commit, PR & Chú thích Mã nguồn (English Only)
-- **Git Commit Messages**: Toàn bộ commit message bắt buộc phải viết bằng **tiếng Anh (English)** theo định dạng Conventional Commits (ví dụ: `feat(scope): ...`, `fix(scope): ...`, `refactor(scope): ...`, `docs(scope): ...`).
-- **Pull Requests**: Tiêu đề (PR Title) và nội dung mô tả (PR Description) bắt buộc phải viết bằng **tiếng Anh (English)**. Không thêm footer/trailer `Co-Authored-By`.
-- **Code Comments**: Toàn bộ ghi chú, giải thích, docstring trong mã nguồn TypeScript & Rust bắt buộc phải viết bằng **tiếng Anh (English)**.
+## Git Commits, PRs & Source Code Comments (English Only)
+- **Git Commit Messages**: All commit messages must be written in **English** using Conventional Commits format (e.g., `feat(scope): ...`, `fix(scope): ...`, `refactor(scope): ...`, `docs(scope): ...`).
+- **Pull Requests**: PR Titles and Descriptions must be written in **English**. Do not include `Co-Authored-By` footers/trailers. **Always apply and fill out `.github/pull_request_template.md` directly from the start when creating any PR body** (never invent an ad-hoc format).
+- **Code Comments**: All code comments, explanations, and docstrings in TypeScript and Rust source files must be written in **English**.
 
+## Refactoring & Verification Protocol
+- **Always run `npx tsc --noEmit` and `oxlint` after every refactoring task**: Never rely solely on `vitest` / `npm test` because test runners do not perform full static type checking across large JSX files like `App.tsx`.
+- **Grep the entire codebase before deleting or replacing state or props**: When converting tools (e.g., from modal to workspace tab) or removing state setters, always `grep_search` to verify and update all call sites synchronously (including `TitleBar`, `Sidebar`, shortcuts, and context menus).
+- **Strictly differentiate similarly named features**: Never delete or mix up logic/memos between independent modules with similar names (e.g., the *Import Database* SQL dump restore tool vs the *Global Import Table* CSV/JSON/SQL feature).

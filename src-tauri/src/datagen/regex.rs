@@ -206,7 +206,8 @@ pub(super) fn parse_quant(node: Rx, chars: &[char], i: usize) -> Result<(Rx, usi
     }
 }
 
-pub(super) const RX_ANY_FALLBACK: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+pub(super) const RX_ANY_FALLBACK: &[u8] =
+    b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
 pub(super) fn sample_regex(seq: &[Rx], rng: &mut Rng, out: &mut String) {
     for node in seq {
@@ -287,7 +288,8 @@ mod tests {
             let v = sample("[a-c0-9_]{6}", s);
             assert_eq!(v.chars().count(), 6, "{v}");
             assert!(
-                v.chars().all(|c| ('a'..='c').contains(&c) || c.is_ascii_digit() || c == '_'),
+                v.chars()
+                    .all(|c| ('a'..='c').contains(&c) || c.is_ascii_digit() || c == '_'),
                 "{v}"
             );
         }
@@ -305,7 +307,11 @@ mod tests {
     fn the_shorthand_classes_work() {
         for s in 0..30 {
             assert!(sample(r"\d{4}", s).chars().all(|c| c.is_ascii_digit()));
-            assert!(sample(r"\w{4}", s).chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
+            assert!(
+                sample(r"\w{4}", s)
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
+            );
             assert!(sample(r"\D{4}", s).chars().all(|c| !c.is_ascii_digit()));
         }
     }
@@ -337,7 +343,10 @@ mod tests {
         for s in 0..30 {
             let v = sample(r"[A-Z]{2}-\d{4}", s);
             assert_eq!(v.len(), 7, "{v}");
-            assert!(v.as_bytes()[..2].iter().all(|b| b.is_ascii_uppercase()), "{v}");
+            assert!(
+                v.as_bytes()[..2].iter().all(|b| b.is_ascii_uppercase()),
+                "{v}"
+            );
             assert_eq!(&v[2..3], "-");
             assert!(v[3..].chars().all(|c| c.is_ascii_digit()), "{v}");
         }
@@ -354,16 +363,14 @@ mod tests {
     #[test]
     fn out_of_subset_syntax_is_refused_up_front() {
         for bad in [
-            "(?:abc)",   // non-capturing / lookaround groups
-            "(?=abc)",
-            "^abc",      // anchors have no meaning when generating
-            "abc$",
-            "a{1,999}",  // over RX_REPEAT_MAX
-            "*abc",      // quantifier with nothing before it
-            "[a-z",      // unterminated class
-            "[]",        // empty class
-            "(abc",      // unterminated group
-            "abc\\",     // trailing backslash
+            "(?:abc)", // non-capturing / lookaround groups
+            "(?=abc)", "^abc", // anchors have no meaning when generating
+            "abc$", "a{1,999}", // over RX_REPEAT_MAX
+            "*abc",     // quantifier with nothing before it
+            "[a-z",     // unterminated class
+            "[]",       // empty class
+            "(abc",     // unterminated group
+            "abc\\",    // trailing backslash
         ] {
             assert!(parse_regex(bad).is_err(), "should be rejected: {bad}");
         }

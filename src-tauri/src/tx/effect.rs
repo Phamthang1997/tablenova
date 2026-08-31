@@ -41,7 +41,9 @@ fn tokens(stmt: &str) -> (Vec<String>, Vec<String>) {
     // and this runs on EVERY statement — including a bulk INSERT whose text can be megabytes. The
     // cap keeps that from allocating a token per value.
     let raw: Vec<String> = stmt
-        .split(|c: char| c.is_whitespace() || c == ';' || c == '(' || c == ')' || c == ',' || c == '=')
+        .split(|c: char| {
+            c.is_whitespace() || c == ';' || c == '(' || c == ')' || c == ',' || c == '='
+        })
         .filter(|w| !w.is_empty())
         .take(4)
         .map(|w| w.to_string())
@@ -59,7 +61,8 @@ pub(super) fn same_savepoint(a: &str, b: &str) -> bool {
 /// Strip the quoting a savepoint name may carry so `RELEASE SAVEPOINT \`s1\`` and
 /// `RELEASE SAVEPOINT s1` name the same savepoint.
 fn unquote(name: &str) -> String {
-    name.trim_matches(|c| c == '`' || c == '"' || c == '\'' || c == ';').to_string()
+    name.trim_matches(|c| c == '`' || c == '"' || c == '\'' || c == ';')
+        .to_string()
 }
 
 /// MySQL statements that commit the open transaction before they run.
@@ -105,7 +108,11 @@ pub fn tx_effect(dialect: &str, stmt: &str) -> TxEffect {
         "ROLLBACK" => {
             // ROLLBACK TO [SAVEPOINT] name — keeps the transaction open, unlike a plain ROLLBACK.
             if second == "TO" {
-                let name = if w.get(2).map(|s| s.as_str()) == Some("SAVEPOINT") { raw.get(3) } else { raw.get(2) };
+                let name = if w.get(2).map(|s| s.as_str()) == Some("SAVEPOINT") {
+                    raw.get(3)
+                } else {
+                    raw.get(2)
+                };
                 match name {
                     Some(n) => TxEffect::RollbackTo(unquote(n)),
                     None => TxEffect::Rollback,
@@ -119,7 +126,11 @@ pub fn tx_effect(dialect: &str, stmt: &str) -> TxEffect {
             None => TxEffect::None,
         },
         "RELEASE" => {
-            let name = if second == "SAVEPOINT" { raw.get(2) } else { raw.get(1) };
+            let name = if second == "SAVEPOINT" {
+                raw.get(2)
+            } else {
+                raw.get(1)
+            };
             match name {
                 Some(n) => TxEffect::Release(unquote(n)),
                 None => TxEffect::None,
@@ -150,8 +161,18 @@ pub fn is_write_stmt(stmt: &str) -> bool {
         first,
         // Reads and session/metadata statements. `WITH` is deliberately absent: a CTE can end in
         // INSERT/UPDATE/DELETE, so it is treated as a write.
-        "SELECT" | "SHOW" | "EXPLAIN" | "DESCRIBE" | "DESC" | "PRAGMA" | "USE" | "SET" | "VALUES"
-            | "TABLE" | "HELP" | ""
+        "SELECT"
+            | "SHOW"
+            | "EXPLAIN"
+            | "DESCRIBE"
+            | "DESC"
+            | "PRAGMA"
+            | "USE"
+            | "SET"
+            | "VALUES"
+            | "TABLE"
+            | "HELP"
+            | ""
     )
 }
 
@@ -161,7 +182,10 @@ pub fn is_write_stmt(stmt: &str) -> bool {
 pub fn isolation_allowed(dialect: &str, level: &str) -> bool {
     let up = level.to_uppercase();
     match dialect {
-        "postgres" => matches!(up.as_str(), "READ COMMITTED" | "REPEATABLE READ" | "SERIALIZABLE"),
+        "postgres" => matches!(
+            up.as_str(),
+            "READ COMMITTED" | "REPEATABLE READ" | "SERIALIZABLE"
+        ),
         "mysql" => matches!(
             up.as_str(),
             "READ UNCOMMITTED" | "READ COMMITTED" | "REPEATABLE READ" | "SERIALIZABLE"
@@ -208,7 +232,10 @@ pub fn begin_statements(dialect: &str, isolation: Option<&str>, read_only: bool)
             out
         }
         // SQLite: the level select carries the locking mode instead. READ ONLY has no equivalent.
-        _ => vec![format!("BEGIN {}", level.unwrap_or_else(|| "DEFERRED".to_string()))],
+        _ => vec![format!(
+            "BEGIN {}",
+            level.unwrap_or_else(|| "DEFERRED".to_string())
+        )],
     }
 }
 
@@ -234,8 +261,13 @@ pub(super) fn sanitize_savepoint(name: &str) -> Result<String, String> {
     let trimmed = name.trim();
     let ok = !trimmed.is_empty()
         && trimmed.len() <= 64
-        && trimmed.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-        && trimmed.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        && trimmed
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && trimmed
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_');
     if !ok {
         return Err("Tên savepoint chỉ gồm chữ, số và dấu gạch dưới, bắt đầu bằng chữ".to_string());
     }
@@ -266,7 +298,10 @@ mod tests {
     /// `ROLLBACK TO` keeps the transaction open — a different UI state from a plain ROLLBACK.
     #[test]
     fn rollback_to_carries_the_savepoint_name() {
-        assert_eq!(tx_effect("postgres", "ROLLBACK TO s1"), TxEffect::RollbackTo("s1".into()));
+        assert_eq!(
+            tx_effect("postgres", "ROLLBACK TO s1"),
+            TxEffect::RollbackTo("s1".into())
+        );
         assert_eq!(
             tx_effect("postgres", "ROLLBACK TO SAVEPOINT s1"),
             TxEffect::RollbackTo("s1".into())
@@ -279,28 +314,49 @@ mod tests {
     /// as `s1`, and the dialog is a record of what ran.
     #[test]
     fn savepoint_names_keep_their_case_and_lose_their_quotes() {
-        assert_eq!(tx_effect("mysql", "SAVEPOINT s1"), TxEffect::Savepoint("s1".into()));
-        assert_eq!(tx_effect("mysql", "SAVEPOINT `s1`"), TxEffect::Savepoint("s1".into()));
-        assert_eq!(tx_effect("mysql", "RELEASE SAVEPOINT s1"), TxEffect::Release("s1".into()));
+        assert_eq!(
+            tx_effect("mysql", "SAVEPOINT s1"),
+            TxEffect::Savepoint("s1".into())
+        );
+        assert_eq!(
+            tx_effect("mysql", "SAVEPOINT `s1`"),
+            TxEffect::Savepoint("s1".into())
+        );
+        assert_eq!(
+            tx_effect("mysql", "RELEASE SAVEPOINT s1"),
+            TxEffect::Release("s1".into())
+        );
     }
 
     /// MySQL commits before DDL. Missing one leaves the counter promising a rollback that cannot
     /// undo what already went in.
     #[test]
     fn mysql_ddl_commits_implicitly() {
-        for sql in ["CREATE TABLE t (id INT)", "DROP TABLE t", "ALTER TABLE t ADD c INT",
-                    "TRUNCATE t", "LOCK TABLES t WRITE", "SET AUTOCOMMIT=1"] {
+        for sql in [
+            "CREATE TABLE t (id INT)",
+            "DROP TABLE t",
+            "ALTER TABLE t ADD c INT",
+            "TRUNCATE t",
+            "LOCK TABLES t WRITE",
+            "SET AUTOCOMMIT=1",
+        ] {
             assert_eq!(tx_effect("mysql", sql), TxEffect::ImplicitCommit, "{sql}");
         }
         // Only MySQL behaves this way.
-        assert_eq!(tx_effect("postgres", "CREATE TABLE t (id INT)"), TxEffect::None);
+        assert_eq!(
+            tx_effect("postgres", "CREATE TABLE t (id INT)"),
+            TxEffect::None
+        );
     }
 
     /// The negative case matters as much: a TEMPORARY table does NOT commit, so the counter must
     /// stay put and the changes stay rollback-able.
     #[test]
     fn mysql_temporary_tables_do_not_commit() {
-        assert_eq!(tx_effect("mysql", "CREATE TEMPORARY TABLE t (id INT)"), TxEffect::None);
+        assert_eq!(
+            tx_effect("mysql", "CREATE TEMPORARY TABLE t (id INT)"),
+            TxEffect::None
+        );
         assert_eq!(tx_effect("mysql", "DROP TEMPORARY TABLE t"), TxEffect::None);
     }
 
@@ -308,8 +364,15 @@ mod tests {
     /// "this many changes are waiting".
     #[test]
     fn reads_are_not_writes() {
-        for sql in ["SELECT 1", "SHOW TABLES", "EXPLAIN SELECT 1", "PRAGMA foreign_keys",
-                    "USE db", "SET autocommit=1", ""] {
+        for sql in [
+            "SELECT 1",
+            "SHOW TABLES",
+            "EXPLAIN SELECT 1",
+            "PRAGMA foreign_keys",
+            "USE db",
+            "SET autocommit=1",
+            "",
+        ] {
             assert!(!is_write_stmt(sql), "{sql}");
         }
     }
@@ -318,8 +381,13 @@ mod tests {
     /// under-reporting loses data. `WITH` can end in an INSERT.
     #[test]
     fn unknown_shapes_count_as_writes() {
-        for sql in ["INSERT INTO t VALUES (1)", "UPDATE t SET a = 1", "DELETE FROM t",
-                    "WITH x AS (SELECT 1) INSERT INTO t SELECT * FROM x", "CALL p()"] {
+        for sql in [
+            "INSERT INTO t VALUES (1)",
+            "UPDATE t SET a = 1",
+            "DELETE FROM t",
+            "WITH x AS (SELECT 1) INSERT INTO t SELECT * FROM x",
+            "CALL p()",
+        ] {
             assert!(is_write_stmt(sql), "{sql}");
         }
     }
@@ -345,9 +413,15 @@ mod tests {
         );
         assert_eq!(
             begin_statements("mysql", Some("REPEATABLE READ"), false),
-            vec!["SET TRANSACTION ISOLATION LEVEL REPEATABLE READ", "START TRANSACTION"]
+            vec![
+                "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ",
+                "START TRANSACTION"
+            ]
         );
-        assert_eq!(begin_statements("sqlite", None, false), vec!["BEGIN DEFERRED"]);
+        assert_eq!(
+            begin_statements("sqlite", None, false),
+            vec!["BEGIN DEFERRED"]
+        );
     }
 
     /// The whitelist IS the escaping: the level is formatted into SQL, so a value that is not on
@@ -364,7 +438,14 @@ mod tests {
     fn savepoint_names_are_restricted_not_quoted() {
         assert_eq!(sanitize_savepoint("  sp_1  ").unwrap(), "sp_1");
         assert_eq!(sanitize_savepoint("_x").unwrap(), "_x");
-        for bad in ["", "1sp", "sp-1", "sp 1", "sp\"; DROP TABLE t --", &"a".repeat(65)] {
+        for bad in [
+            "",
+            "1sp",
+            "sp-1",
+            "sp 1",
+            "sp\"; DROP TABLE t --",
+            &"a".repeat(65),
+        ] {
             assert!(sanitize_savepoint(bad).is_err(), "{bad}");
         }
     }

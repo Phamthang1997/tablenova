@@ -1,36 +1,44 @@
 //! The Tauri commands behind the MCP settings screen.
 //!
 //! Language note, and it is the opposite of the rest of this directory: these messages surface in
-//! the TableNova UI, so they follow the repo rule - Vietnamese literals, translated at the dbHelper
+//! the TableGrid UI, so they follow the repo rule - Vietnamese literals, translated at the dbHelper
 //! boundary by `src/utils/backendErrors.ts`. The errors in `http.rs` and `tools/` are read by an AI
 //! client instead, so those are English and never go through that table. Registering these strings
 //! in `backendErrors.ts` happens together with the Settings UI (Bước 3 of the plan).
 
 use super::auth;
 use super::server::{DEFAULT_PORT, McpStatus};
-use crate::state::AppState;
 
 #[tauri::command]
-pub async fn mcp_status(state: tauri::State<'_, AppState>) -> Result<McpStatus, String> {
-    Ok(state.mcp.status())
+pub async fn mcp_status() -> Result<McpStatus, String> {
+    Box::pin(async move {
+        let state = crate::state::require_state()?;
+        Ok(state.mcp.status())
+    })
+    .await
 }
 
 #[tauri::command]
-pub async fn mcp_start(
-    state: tauri::State<'_, AppState>,
-    port: Option<u16>,
-) -> Result<McpStatus, String> {
-    state.mcp.start(port.unwrap_or(DEFAULT_PORT)).await
+pub async fn mcp_start(port: Option<u16>) -> Result<McpStatus, String> {
+    Box::pin(async move {
+        let state = crate::state::require_state()?;
+        state.mcp.start(port.unwrap_or(DEFAULT_PORT)).await
+    })
+    .await
 }
 
 #[tauri::command]
-pub async fn mcp_stop(state: tauri::State<'_, AppState>) -> Result<McpStatus, String> {
-    Ok(state.mcp.stop().await)
+pub async fn mcp_stop() -> Result<McpStatus, String> {
+    Box::pin(async move {
+        let state = crate::state::require_state()?;
+        Ok(state.mcp.stop().await)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn mcp_get_token() -> Result<String, String> {
-    auth::load_or_create()
+    Box::pin(async move { auth::load_or_create() }).await
 }
 
 /// Mints a new token, and restarts the server if it was running.
@@ -40,14 +48,18 @@ pub async fn mcp_get_token() -> Result<String, String> {
 /// opposite of what the button promises. Clients configured with the old token are cut off either
 /// way, which is why the UI has to say so before calling this.
 #[tauri::command]
-pub async fn mcp_regenerate_token(state: tauri::State<'_, AppState>) -> Result<String, String> {
-    let was = state.mcp.status();
-    let token = auth::regenerate()?;
-    if was.running {
-        state.mcp.stop().await;
-        state.mcp.start(was.port).await?;
-    }
-    Ok(token)
+pub async fn mcp_regenerate_token() -> Result<String, String> {
+    Box::pin(async move {
+        let state = crate::state::require_state()?;
+        let was = state.mcp.status();
+        let token = auth::regenerate()?;
+        if was.running {
+            state.mcp.stop().await;
+            state.mcp.start(was.port).await?;
+        }
+        Ok(token)
+    })
+    .await
 }
 
 /// The requests AI clients have made this run, newest first.
@@ -55,14 +67,20 @@ pub async fn mcp_regenerate_token(state: tauri::State<'_, AppState>) -> Result<S
 /// In memory only, and the Settings screen says so - see `audit.rs`. The UI reads this once on open
 /// and then follows the `mcp-request` event, rather than polling.
 #[tauri::command]
-pub async fn mcp_audit_log(
-    state: tauri::State<'_, AppState>,
-) -> Result<Vec<serde_json::Value>, String> {
-    Ok(state.mcp.audit.snapshot())
+pub async fn mcp_audit_log() -> Result<Vec<serde_json::Value>, String> {
+    Box::pin(async move {
+        let state = crate::state::require_state()?;
+        Ok(state.mcp.audit.snapshot())
+    })
+    .await
 }
 
 #[tauri::command]
-pub async fn mcp_audit_clear(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    state.mcp.audit.clear();
-    Ok(())
+pub async fn mcp_audit_clear() -> Result<(), String> {
+    Box::pin(async move {
+        let state = crate::state::require_state()?;
+        state.mcp.audit.clear();
+        Ok(())
+    })
+    .await
 }

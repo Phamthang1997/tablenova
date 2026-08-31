@@ -85,14 +85,14 @@ describe('buildRedisExport', () => {
 
     const lines = res.text.trim().split('\n');
     expect(JSON.parse(lines[0])).toMatchObject({
-      tablenova: 'redis-keys',
+      tablegrid: 'redis-keys',
       version: 1,
       createdAt: AT,
       db: 0,
       pattern: 'user:*',
     });
     expect(lines).toHaveLength(5);
-    expect(JSON.parse(lines[4])).toEqual({ tablenova: 'redis-keys-end', keys: 3 });
+    expect(JSON.parse(lines[4])).toEqual({ tablegrid: 'redis-keys-end', keys: 3 });
     expect(res.keys).toBe(3);
     expect(res.capped).toBe(false);
     expect(res.stopped).toBe(false);
@@ -142,7 +142,7 @@ describe('buildRedisExport', () => {
     expect(res.keys).toBe(1);
     expect(res.missing).toEqual(['user:2']);
     expect(JSON.parse(res.text.trim().split('\n').at(-1)!)).toEqual({
-      tablenova: 'redis-keys-end',
+      tablegrid: 'redis-keys-end',
       keys: 1,
     });
   });
@@ -241,7 +241,7 @@ describe('isValidEntry', () => {
 
 describe('parseRedisExport', () => {
   const header = JSON.stringify({
-    tablenova: 'redis-keys', version: 1, createdAt: AT, db: 2, pattern: 'a*',
+    tablegrid: 'redis-keys', version: 1, createdAt: AT, db: 2, pattern: 'a*',
   });
   const entry = (k: string) => JSON.stringify({ key: k, type: 'string', ttlMs: -1, payload: 'YWJj' });
 
@@ -265,7 +265,7 @@ describe('parseRedisExport', () => {
   });
 
   it('reads the declared count from the footer', () => {
-    const text = [header, entry('a'), JSON.stringify({ tablenova: 'redis-keys-end', keys: 9 })].join('\n');
+    const text = [header, entry('a'), JSON.stringify({ tablegrid: 'redis-keys-end', keys: 9 })].join('\n');
     const parsed = parseRedisExport(text);
     expect(parsed.truncated).toBe(false);
     expect(parsed.declaredKeys).toBe(9);
@@ -280,9 +280,22 @@ describe('parseRedisExport', () => {
   });
 
   it('reads the header fields', () => {
-    expect(parseRedisExport(header).header).toEqual({
-      tablenova: 'redis-keys', version: 1, createdAt: AT, db: 2, pattern: 'a*',
+    expect(parseRedisExport(header).header).toMatchObject({
+      tablegrid: 'redis-keys', version: 1, createdAt: AT, db: 2, pattern: 'a*',
     });
+  });
+
+  it('backward compatibility: reads legacy tablenova header and footer', () => {
+    const legacyHeader = JSON.stringify({
+      tablenova: 'redis-keys', version: 1, createdAt: AT, db: 3, pattern: 'legacy*',
+    });
+    const text = [legacyHeader, entry('x'), JSON.stringify({ tablenova: 'redis-keys-end', keys: 1 })].join('\n');
+    const parsed = parseRedisExport(text);
+    expect(parsed.header?.tablegrid).toBe('redis-keys');
+    expect(parsed.header?.pattern).toBe('legacy*');
+    expect(parsed.truncated).toBe(false);
+    expect(parsed.declaredKeys).toBe(1);
+    expect(parsed.entries).toHaveLength(1);
   });
 });
 

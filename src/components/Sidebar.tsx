@@ -4,7 +4,7 @@ import { clampMenu, type MenuRect } from '../utils/menuPosition';
 import { dbHelper } from '../utils/dbHelper';
 import { isMariaDbVersion } from '../utils/serverFlavor';
 import type { TableItem, SchemaInfo, TriggerInfo, CheckConstraintInfo } from '../utils/dbHelper';
-import { Search, Table, TerminalSquare, RefreshCw, Layers, Plus, ChevronDown, ChevronRight, Braces, Cog, Key, Sliders, FileCode, Trash2, CheckCircle2, Copy, AlertTriangle, History, Bookmark, Columns3, ArrowDownAZ, Link2, Zap, Code2, Database, Sparkles, GitCompare, ArrowLeftRight, HardDriveDownload, HardDriveUpload, Plug, Network } from 'lucide-react';
+import { Search, Table, TerminalSquare, RefreshCw, Layers, Plus, ChevronDown, ChevronRight, Braces, Cog, Key, Sliders, FileCode, Trash2, CheckCircle2, Copy, AlertTriangle, History, Bookmark, Columns3, ArrowDownAZ, Link2, Zap, Code2, Database, Sparkles, GitCompare, ArrowLeftRight, HardDriveDownload, HardDriveUpload, Plug, Network, Activity } from 'lucide-react';
 import { CreateTableModal } from './CreateTableModal';
 import { Modal, ModalBody, ModalFooter } from './Modal';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -568,6 +568,7 @@ interface SidebarProps {
   /** Imports a CSV/JSON/XLSX file into a NEW table (unlike onImportDatabase, which restores a whole dump). */
   onImportNewTable?: () => void;
   onOpenDbInfo?: () => void;
+  onOpenProcessMonitor?: () => void;
   onOpenAllDbStats?: () => void;
   onSchemaMigration?: () => void;
   onCompareDatabases?: () => void;
@@ -613,6 +614,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onImportDatabase,
   onImportNewTable,
   onOpenDbInfo,
+  onOpenProcessMonitor,
   onOpenAllDbStats: _onOpenAllDbStats,
   onSchemaMigration,
   onCompareDatabases,
@@ -1421,6 +1423,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
           visible: !!onOpenDbInfo,
         },
         {
+          id: 'processMonitor',
+          label: t('sidebar.processMonitor', 'Process Monitor'),
+          icon: Activity,
+          colorClass: 'cyan',
+          onClick: onOpenProcessMonitor,
+          visible: !!onOpenProcessMonitor,
+        },
+        {
           id: 'schemaMigration',
           label: t('sidebar.schemaMigration'),
           icon: GitCompare,
@@ -1487,7 +1497,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         },
       ],
     },
-  ], [t, onNewQuery, onOpenTerminal, onOpenDbInfo, onSchemaMigration, onCompareDatabases, onOpenErDiagram, onMcpSettings, onGenerateData, onExportDatabase, onImportDatabase, blockedByReadOnly]);
+  ], [t, onNewQuery, onOpenTerminal, onOpenDbInfo, onOpenProcessMonitor, onSchemaMigration, onCompareDatabases, onOpenErDiagram, onMcpSettings, onGenerateData, onExportDatabase, onImportDatabase, blockedByReadOnly]);
 
   return (
     <div className="sidebar-navigation" ref={rootRef} style={{ width: `${width}px` }}>

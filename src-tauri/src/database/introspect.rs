@@ -14,8 +14,7 @@
 //!
 //! The `#[tauri::command]` wrappers stay in `commands/`; each is three lines and calls in here.
 
-
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sqlx::Row;
 
 use super::conn::{DbConnection, DbKind};
@@ -23,27 +22,30 @@ use super::exec::raw::execute_raw_sql_generic;
 use super::ident::{pg_schema_of, sql_str};
 use super::rows::all_string_values;
 
-
 // The list of primary-key columns of a table, per dialect (composite primary keys included).
 //
 // `schema` must be the same one the caller writes through. This feeds `commit_changes`, whose
 // UPDATE/DELETE build their WHERE from the result: reading the PK of `public.film` while writing
 // to `sales.film` produces no error at all, just a wrong WHERE — i.e. the wrong rows changed.
-pub(crate) async fn get_primary_key_columns(conn: &DbConnection, schema: &Option<String>, table: &str) -> Vec<String> {
+pub(crate) async fn get_primary_key_columns(
+    conn: &DbConnection,
+    schema: &Option<String>,
+    table: &str,
+) -> Vec<String> {
     match &conn.kind {
         DbKind::Sqlite(conn_arc) => {
             let mut cols: Vec<(i32, String)> = Vec::new();
             if let Ok(c) = conn_arc.lock() {
                 let sql = format!("PRAGMA table_info(\"{}\")", table);
-                if let Ok(mut stmt) = c.prepare(&sql) {
-                    if let Ok(mut rows) = stmt.query([]) {
-                        while let Ok(Some(row)) = rows.next() {
-                            let pk: i32 = row.get("pk").unwrap_or(0);
-                            if pk > 0 {
-                                if let Ok(name) = row.get::<_, String>("name") {
-                                    cols.push((pk, name));
-                                }
-                            }
+                if let Ok(mut stmt) = c.prepare(&sql)
+                    && let Ok(mut rows) = stmt.query([])
+                {
+                    while let Ok(Some(row)) = rows.next() {
+                        let pk: i32 = row.get("pk").unwrap_or(0);
+                        if pk > 0
+                            && let Ok(name) = row.get::<_, String>("name")
+                        {
+                            cols.push((pk, name));
                         }
                     }
                 }
@@ -82,7 +84,10 @@ pub(crate) async fn get_primary_key_columns(conn: &DbConnection, schema: &Option
 
 /// The MCP server calls this: it holds an `AppState` handle (see `state/app_handle.rs`) but never a
 /// `State`, which exists only inside an IPC call.
-pub(crate) async fn list_databases_inner(state: &crate::AppState, conn_id: String) -> Result<Value, String> {
+pub(crate) async fn list_databases_inner(
+    state: &crate::AppState,
+    conn_id: String,
+) -> Result<Value, String> {
     let conn_type = {
         let ctx = state.connections.acquire(&conn_id)?;
         ctx.conn().clone()
@@ -99,9 +104,11 @@ pub(crate) async fn list_databases_inner(state: &crate::AppState, conn_id: Strin
     Ok(json!({ "success": true, "databases": databases }))
 }
 
-
 /// The body, reachable without a `tauri::State` - see `list_databases_inner`.
-pub(crate) async fn get_tables_inner(state: &crate::AppState, conn_id: String) -> Result<Value, String> {
+pub(crate) async fn get_tables_inner(
+    state: &crate::AppState,
+    conn_id: String,
+) -> Result<Value, String> {
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
         let ct = ctx.conn().clone();
@@ -115,18 +122,18 @@ pub(crate) async fn get_tables_inner(state: &crate::AppState, conn_id: String) -
         DbKind::Sqlite(conn_arc) => {
             let conn = conn_arc.lock().map_err(|e| e.to_string())?;
             let mut stmt = conn.prepare("SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%'").map_err(|e| e.to_string())?;
-            let rows = stmt.query_map([], |row| {
-                let name: String = row.get(0)?;
-                let table_type: String = row.get(1)?;
-                Ok(json!({
-                    "name": name,
-                    "type": if table_type == "view" { "view" } else { "table" }
-                }))
-            }).map_err(|e| e.to_string())?;
-            for row in rows {
-                if let Ok(val) = row {
-                    tables.push(val);
-                }
+            let rows = stmt
+                .query_map([], |row| {
+                    let name: String = row.get(0)?;
+                    let table_type: String = row.get(1)?;
+                    Ok(json!({
+                        "name": name,
+                        "type": if table_type == "view" { "view" } else { "table" }
+                    }))
+                })
+                .map_err(|e| e.to_string())?;
+            for val in rows.flatten() {
+                tables.push(val);
             }
         }
         DbKind::Postgres(pool) => {
@@ -161,13 +168,16 @@ pub(crate) async fn get_tables_inner(state: &crate::AppState, conn_id: String) -
             }
         }
     }
-    
+
     Ok(json!({ "success": true, "tables": tables }))
 }
 
-
 /// The body, reachable without a `tauri::State` - see `list_databases_inner`.
-pub(crate) async fn get_table_schema_inner(state: &crate::AppState, conn_id: String, name: String) -> Result<Value, String> {
+pub(crate) async fn get_table_schema_inner(
+    state: &crate::AppState,
+    conn_id: String,
+    name: String,
+) -> Result<Value, String> {
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
         let ct = ctx.conn().clone();
@@ -194,7 +204,7 @@ pub(crate) async fn get_table_schema_inner(state: &crate::AppState, conn_id: Str
                 let notnull: i32 = row.get("notnull").map_err(|e| e.to_string())?;
                 let pk: i32 = row.get("pk").map_err(|e| e.to_string())?;
                 let def_val: Option<String> = row.get("dflt_value").map_err(|e| e.to_string())?;
-                
+
                 columns.push(json!({
                     "name": col_name,
                     "type": col_type,
@@ -273,9 +283,14 @@ pub(crate) async fn get_table_schema_inner(state: &crate::AppState, conn_id: Str
                  LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
                  WHERE n.nspname = '{}' AND c.relname = '{}'
                    AND a.attnum > 0 AND NOT a.attisdropped
-                 ORDER BY a.attnum", sch, name.replace('\'', "''")
+                 ORDER BY a.attnum",
+                sch,
+                name.replace('\'', "''")
             );
-            let rows = sqlx::query(sqlx::AssertSqlSafe(sql.clone())).fetch_all(pool).await.map_err(|e| e.to_string())?;
+            let rows = sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
+                .fetch_all(pool)
+                .await
+                .map_err(|e| e.to_string())?;
             for r in rows {
                 let col_name: String = r.get("column_name");
                 let col_type: String = r.get("data_type");
@@ -309,14 +324,17 @@ pub(crate) async fn get_table_schema_inner(state: &crate::AppState, conn_id: Str
                  WHERE t.relkind = 'r' AND n.nspname = '{}' AND t.relname = '{}'",
                 sch, name.replace('\'', "''")
             );
-            if let Ok(idx_rows) = sqlx::query(sqlx::AssertSqlSafe(idx_sql)).fetch_all(pool).await {
+            if let Ok(idx_rows) = sqlx::query(sqlx::AssertSqlSafe(idx_sql))
+                .fetch_all(pool)
+                .await
+            {
                 for r in idx_rows {
                     let idx_name: String = r.get(0);
                     let unique: bool = r.get(1);
                     let is_primary: bool = r.get(2);
                     let method: String = r.get(3);
                     let index_def: String = r.get(4);
-                    
+
                     let columns_str = if let Some(start) = index_def.rfind('(') {
                         if let Some(end) = index_def.rfind(')') {
                             index_def[start + 1..end].to_string()
@@ -346,7 +364,10 @@ pub(crate) async fn get_table_schema_inner(state: &crate::AppState, conn_id: Str
                  WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = '{}' AND tc.table_name = '{}'",
                 sch, name.replace('\'', "''")
             );
-            if let Ok(fk_rows) = sqlx::query(sqlx::AssertSqlSafe(fk_sql)).fetch_all(pool).await {
+            if let Ok(fk_rows) = sqlx::query(sqlx::AssertSqlSafe(fk_sql))
+                .fetch_all(pool)
+                .await
+            {
                 for r in fk_rows {
                     let fk_name: String = r.get("name");
                     let from_col: String = r.get("column");
@@ -371,7 +392,10 @@ pub(crate) async fn get_table_schema_inner(state: &crate::AppState, conn_id: Str
                  WHERE table_name = '{}' AND table_schema = DATABASE()
                  ORDER BY ordinal_position", name
             );
-            let rows = sqlx::query(sqlx::AssertSqlSafe(sql.clone())).fetch_all(pool).await.map_err(|e| e.to_string())?;
+            let rows = sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
+                .fetch_all(pool)
+                .await
+                .map_err(|e| e.to_string())?;
             for r in rows {
                 let col_name: String = r.get(0);
                 let col_type: String = r.get(1);
@@ -400,21 +424,36 @@ pub(crate) async fn get_table_schema_inner(state: &crate::AppState, conn_id: Str
 
             // The list of MySQL indexes
             let idx_sql = format!("SHOW INDEX FROM `{}`", name);
-            if let Ok(idx_rows) = sqlx::query(sqlx::AssertSqlSafe(idx_sql)).fetch_all(pool).await {
+            if let Ok(idx_rows) = sqlx::query(sqlx::AssertSqlSafe(idx_sql))
+                .fetch_all(pool)
+                .await
+            {
                 use std::collections::HashMap;
                 let mut idx_map: HashMap<String, (Vec<String>, bool, String)> = HashMap::new();
                 for r in idx_rows {
-                    let key_name: String = r.try_get("Key_name").or_else(|_| r.try_get("KEY_NAME")).unwrap_or_default();
-                    let col_name: String = r.try_get("Column_name").or_else(|_| r.try_get("COLUMN_NAME")).unwrap_or_default();
-                    let non_unique: i64 = r.try_get::<i64, _>("Non_unique")
+                    let key_name: String = r
+                        .try_get("Key_name")
+                        .or_else(|_| r.try_get("KEY_NAME"))
+                        .unwrap_or_default();
+                    let col_name: String = r
+                        .try_get("Column_name")
+                        .or_else(|_| r.try_get("COLUMN_NAME"))
+                        .unwrap_or_default();
+                    let non_unique: i64 = r
+                        .try_get::<i64, _>("Non_unique")
                         .or_else(|_| r.try_get::<i64, _>("NON_UNIQUE"))
                         .or_else(|_| r.try_get::<i32, _>("Non_unique").map(|v| v as i64))
                         .or_else(|_| r.try_get::<i32, _>("NON_UNIQUE").map(|v| v as i64))
                         .unwrap_or(1);
-                    let index_type: String = r.try_get("Index_type")
+                    let index_type: String = r
+                        .try_get("Index_type")
                         .or_else(|_| r.try_get("INDEX_TYPE"))
                         .unwrap_or_else(|_| "BTREE".to_string());
-                    let entry = idx_map.entry(key_name).or_insert((Vec::new(), non_unique == 0, index_type));
+                    let entry = idx_map.entry(key_name).or_insert((
+                        Vec::new(),
+                        non_unique == 0,
+                        index_type,
+                    ));
                     entry.0.push(col_name);
                 }
                 for (idx_name, (cols, unique, method)) in idx_map {
@@ -435,7 +474,10 @@ pub(crate) async fn get_table_schema_inner(state: &crate::AppState, conn_id: Str
                  FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
                  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{}' AND REFERENCED_TABLE_NAME IS NOT NULL", name
             );
-            if let Ok(fk_rows) = sqlx::query(sqlx::AssertSqlSafe(fk_sql)).fetch_all(pool).await {
+            if let Ok(fk_rows) = sqlx::query(sqlx::AssertSqlSafe(fk_sql))
+                .fetch_all(pool)
+                .await
+            {
                 for r in fk_rows {
                     let fk_name: String = r.get(0);
                     let from_col: String = r.get(1);
@@ -451,7 +493,7 @@ pub(crate) async fn get_table_schema_inner(state: &crate::AppState, conn_id: Str
             }
         }
     }
-    
+
     Ok(json!({
         "success": true,
         "columns": columns,

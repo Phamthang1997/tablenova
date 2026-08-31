@@ -1,11 +1,13 @@
 //! A table's CHECK constraints.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::database::{execute_raw_sql_generic, result_rows, row_str, sql_str, DbKind};
+use crate::database::{DbKind, execute_raw_sql_generic, result_rows, row_str, sql_str};
 
 #[tauri::command]
-pub async fn get_check_constraints(state: tauri::State<'_, crate::AppState>, conn_id: String, table_name: String) -> Result<Value, String> {
+pub async fn get_check_constraints(conn_id: String, table_name: String) -> Result<Value, String> {
+    Box::pin(async move {
+    let state = crate::state::require_state()?;
     let (conn_type, schema) = {
         let ctx = state.connections.acquire(&conn_id)?;
         let ct = ctx.conn().clone();
@@ -36,4 +38,5 @@ pub async fn get_check_constraints(state: tauri::State<'_, crate::AppState>, con
     }
 
     Ok(json!({ "success": true, "constraints": constraints }))
+}).await
 }

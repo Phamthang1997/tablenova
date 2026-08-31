@@ -70,6 +70,8 @@ export const COMMAND_KINDS: Record<string, CommandKind> = {
   save_trigger: 'write',
   save_view_definition: 'write',
   truncate_table: 'write',
+  kill_process_query: 'write',
+  kill_process_connection: 'write',
 
   // --- Redis writes ---
   redis_delete_by_pattern: 'write',
@@ -113,6 +115,7 @@ export const COMMAND_KINDS: Record<string, CommandKind> = {
   get_database_stats: 'internal',
   get_databases_list: 'internal',
   get_db_charsets: 'internal',
+  get_process_list: 'internal',
   get_exact_table_row_count: 'internal',
   get_full_catalog: 'internal',
   get_generation_targets: 'internal',
@@ -476,7 +479,12 @@ export function describeCommand(cmd: string, args: Record<string, unknown>): Com
 
   const out: CommandTarget = {};
   out.name =
-    str(args.name) ?? str(args.tableName) ?? str(payload.tableName) ?? str(args.pattern) ?? str(args.key);
+    str(args.name) ??
+    str(args.tableName) ??
+    str(payload.tableName) ??
+    str(args.pattern) ??
+    str(args.key) ??
+    str(args.processId);
 
   const changes = arr(payload.changes) ?? arr(args.changes);
   if (cmd === 'commit_changes' && changes) {

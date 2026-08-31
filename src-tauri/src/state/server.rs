@@ -4,8 +4,8 @@ use std::sync::Mutex;
 
 use serde_json::Value;
 
-use crate::ssh::SshTunnel;
 use super::ids::ServerId;
+use crate::ssh::SshTunnel;
 
 /// What every `ConnEntry` on the same server shares.
 ///
@@ -34,7 +34,12 @@ pub struct ServerHandle {
 }
 
 impl ServerHandle {
-    pub fn new(id: ServerId, db_type: String, last_config: Value, ssh_tunnel: Option<SshTunnel>) -> Self {
+    pub fn new(
+        id: ServerId,
+        db_type: String,
+        last_config: Value,
+        ssh_tunnel: Option<SshTunnel>,
+    ) -> Self {
         ServerHandle {
             id,
             db_type,

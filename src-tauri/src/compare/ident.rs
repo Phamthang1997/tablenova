@@ -1,6 +1,5 @@
 //! Quoting identifiers and literals for the TARGET dialect (the generated script always runs on the target).
 
-
 // ---- Identifier / literal quoting ----
 
 pub(super) fn q_ident(dialect: &str, name: &str) -> String {

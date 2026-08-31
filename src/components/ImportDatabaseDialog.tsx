@@ -104,7 +104,7 @@ function formatSize(bytes: number): string {
 }
 
 interface ImportDatabaseDialogProps {
-  open: boolean;
+  open?: boolean;
   onClose: () => void;
   /** The connected database (the default target when the file names none). */
   currentDb?: string;
@@ -127,6 +127,7 @@ interface ImportDatabaseDialogProps {
     targetDb: string,
     continueOnError: boolean
   ) => Promise<boolean>;
+  asTab?: boolean;
 }
 
 /**
@@ -134,12 +135,13 @@ interface ImportDatabaseDialogProps {
  * details on the left, and the tables detected in it on the right, for importing only part of it.
  */
 export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
-  open,
+  open = true,
   onClose,
   currentDb,
   canManageDatabases = true,
   dbType = 'mysql',
   onSubmit,
+  asTab = false,
 }) => {
   const { t, i18n } = useTranslation();
   const fmtNum = (n: number) => n.toLocaleString(i18n.language);
@@ -416,56 +418,49 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
   // really running, the ETA is recomputed from the measured rate.
   const estimatedSeconds = plannedStatements > 0 ? plannedStatements / 800 : 0;
 
-  return (
-    <>
-      {/* The pre-run summary: which database, how many tables/statements, and how long it may take */}
-      <ConfirmDialog
-        open={confirming}
-        tone={overwrite ? 'danger' : 'info'}
-        title={t('importDialog.confirmTitle')}
-        message={
-          <>
-            <div>
-              <Trans
-                i18nKey="importDialog.restoreInto"
-                values={{ db: targetDb.trim() || currentDb || t('importDialog.restoreIntoConnected') }}
-                components={{ code: <b style={{ fontFamily: 'monospace' }} /> }}
-              />
-              {canManageDatabases && targetDb.trim() && targetDb.trim() !== currentDb
-                ? t('importDialog.willBeCreated')
-                : '.'}
-            </div>
-            <div style={{ marginTop: '8px', display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '2px 10px' }}>
-              <span style={{ color: 'var(--win-text-secondary)' }}>{t('importDialog.rowTables')}</span>
-              <b>{tables.length === 0
-                ? t('importDialog.allFile')
-                : t('importDialog.tablesCount', { selected: selected.length, total: tables.length })}</b>
-              <span style={{ color: 'var(--win-text-secondary)' }}>{t('importDialog.rowStatements')}</span>
-              <b>{fmtNum(plannedStatements)}</b>
-              <span style={{ color: 'var(--win-text-secondary)' }}>{t('importDialog.rowFile')}</span>
-              <b>{file ? `${file.name} (${formatSize(file.size)})` : ''}</b>
-              <span style={{ color: 'var(--win-text-secondary)' }}>{t('importDialog.rowEta')}</span>
-              <b>~{formatDuration(t, estimatedSeconds)}</b>
-            </div>
-          </>
-        }
-        note={overwrite ? t('importDialog.noteOverwrite') : t('importDialog.noteEstimate')}
-        confirmLabel={t('importDialog.startRestore')}
-        cancelLabel={t('importDialog.back')}
-        onConfirm={runImport}
-        onCancel={() => setConfirming(false)}
-      />
+  if (!open && !asTab) return null;
 
-    <Modal
-      title={t('importDialog.title')}
-      onClose={onClose}
-      closeDisabled={submitting}
-      width="820px"
-      height="540px"
-      zIndex={9999}
-    >
-        {/* The body: two columns — the dump file | the tables inside it */}
-        <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+  const confirmDialog = (
+    <ConfirmDialog
+      open={confirming}
+      tone={overwrite ? 'danger' : 'info'}
+      title={t('importDialog.confirmTitle')}
+      message={
+        <>
+          <div>
+            <Trans
+              i18nKey="importDialog.restoreInto"
+              values={{ db: targetDb.trim() || currentDb || t('importDialog.restoreIntoConnected') }}
+              components={{ code: <b style={{ fontFamily: 'monospace' }} /> }}
+            />
+            {canManageDatabases && targetDb.trim() && targetDb.trim() !== currentDb
+              ? t('importDialog.willBeCreated')
+              : '.'}
+          </div>
+          <div style={{ marginTop: '8px', display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '2px 10px' }}>
+            <span style={{ color: 'var(--win-text-secondary)' }}>{t('importDialog.rowTables')}</span>
+            <b>{tables.length === 0
+              ? t('importDialog.allFile')
+              : t('importDialog.tablesCount', { selected: selected.length, total: tables.length })}</b>
+            <span style={{ color: 'var(--win-text-secondary)' }}>{t('importDialog.rowStatements')}</span>
+            <b>{fmtNum(plannedStatements)}</b>
+            <span style={{ color: 'var(--win-text-secondary)' }}>{t('importDialog.rowFile')}</span>
+            <b>{file ? `${file.name} (${formatSize(file.size)})` : ''}</b>
+            <span style={{ color: 'var(--win-text-secondary)' }}>{t('importDialog.rowEta')}</span>
+            <b>~{formatDuration(t, estimatedSeconds)}</b>
+          </div>
+        </>
+      }
+      note={overwrite ? t('importDialog.noteOverwrite') : t('importDialog.noteEstimate')}
+      confirmLabel={t('importDialog.startRestore')}
+      cancelLabel={t('importDialog.back')}
+      onConfirm={runImport}
+      onCancel={() => setConfirming(false)}
+    />
+  );
+
+  const bodyContent = (
+    <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
           <div style={{
             width: '340px',
             flexShrink: 0,
@@ -972,32 +967,75 @@ export const ImportDatabaseDialog: React.FC<ImportDatabaseDialogProps> = ({
             )}
           </div>
         </div>
+  );
 
-        <ModalFooter>
-          {progress ? (
-            <ProgressBar progress={progress} />
-          ) : error ? (
-            <span style={{ marginRight: 'auto', fontSize: '11px', color: 'var(--win-error, #ff6b6b)' }}>
-              {error}
+  const footerContent = (
+    <>
+      {progress ? (
+        <ProgressBar progress={progress} />
+      ) : error ? (
+        <span style={{ marginRight: 'auto', fontSize: '11px', color: 'var(--win-error, #ff6b6b)' }}>
+          {error}
+        </span>
+      ) : null}
+      <button className="btn btn-secondary" onClick={onClose} disabled={submitting} style={{ flexShrink: 0 }}>{t('common.cancel')}</button>
+      <button
+        className="btn btn-primary"
+        onClick={askConfirm}
+        disabled={!canSubmit}
+        style={{
+          background: canSubmit ? 'var(--win-accent)' : 'var(--win-bg-hover)',
+          color: canSubmit ? '#fff' : 'var(--win-text-disabled)',
+          border: 'none',
+          cursor: canSubmit ? 'pointer' : 'not-allowed',
+          flexShrink: 0
+        }}
+      >
+        {submitting ? t('importDialog.importing') : t('importDialog.startImport')}
+      </button>
+    </>
+  );
+
+  if (asTab) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, height: '100%', width: '100%', overflow: 'hidden', background: 'var(--win-bg-window)' }}>
+        {confirmDialog}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 18px', borderBottom: '1px solid var(--win-border)', background: 'var(--win-bg-card)', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--win-text-primary)' }}>
+              {t('importDialog.title')}
             </span>
-          ) : null}
-          <button className="btn btn-secondary" onClick={onClose} disabled={submitting} style={{ flexShrink: 0 }}>{t('common.cancel')}</button>
-          <button
-            className="btn btn-primary"
-            onClick={askConfirm}
-            disabled={!canSubmit}
-            style={{
-              background: canSubmit ? 'var(--win-accent)' : 'var(--win-bg-hover)',
-              color: canSubmit ? '#fff' : 'var(--win-text-disabled)',
-              border: 'none',
-              cursor: canSubmit ? 'pointer' : 'not-allowed',
-              flexShrink: 0
-            }}
-          >
-            {submitting ? t('importDialog.importing') : t('importDialog.startImport')}
-          </button>
+            {currentDb && (
+              <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '4px', background: 'var(--win-bg-hover)', border: '1px solid var(--win-border)', color: 'var(--win-text-secondary)' }}>
+                {currentDb}
+              </span>
+            )}
+          </div>
+        </div>
+        {bodyContent}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '10px 18px', borderTop: '1px solid var(--win-border)', background: 'var(--win-bg-card)', flexShrink: 0, gap: '8px' }}>
+          {footerContent}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {confirmDialog}
+      <Modal
+        title={t('importDialog.title')}
+        onClose={onClose}
+        closeDisabled={submitting}
+        width="820px"
+        height="540px"
+        zIndex={9999}
+      >
+        {bodyContent}
+        <ModalFooter>
+          {footerContent}
         </ModalFooter>
-    </Modal>
+      </Modal>
     </>
   );
 };

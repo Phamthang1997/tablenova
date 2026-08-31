@@ -59,15 +59,18 @@ pub fn serve(port: u16) -> ! {
     let token = match super::auth::load_or_create() {
         Ok(t) => t,
         Err(e) => {
-            eprintln!("[tablenova --mcp-stdio] cannot read the access token: {e}");
+            eprintln!("[tablegrid --mcp-stdio] cannot read the access token: {e}");
             std::process::exit(1);
         }
     };
 
-    let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("[tablenova --mcp-stdio] cannot start: {e}");
+            eprintln!("[tablegrid --mcp-stdio] cannot start: {e}");
             std::process::exit(1);
         }
     };
@@ -92,7 +95,7 @@ async fn pump(port: u16, token: String) {
         let line = match line {
             Ok(l) => l,
             Err(e) => {
-                eprintln!("[tablenova --mcp-stdio] stdin: {e}");
+                eprintln!("[tablegrid --mcp-stdio] stdin: {e}");
                 return;
             }
         };
@@ -116,19 +119,23 @@ async fn pump(port: u16, token: String) {
         let res = match req.body(line).send().await {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[tablenova --mcp-stdio] {e}");
+                eprintln!("[tablegrid --mcp-stdio] {e}");
                 continue;
             }
         };
 
-        if let Some(s) = res.headers().get("mcp-session-id").and_then(|v| v.to_str().ok()) {
+        if let Some(s) = res
+            .headers()
+            .get("mcp-session-id")
+            .and_then(|v| v.to_str().ok())
+        {
             session = Some(s.to_string());
         }
 
         let body = match res.text().await {
             Ok(b) => b,
             Err(e) => {
-                eprintln!("[tablenova --mcp-stdio] reading response: {e}");
+                eprintln!("[tablegrid --mcp-stdio] reading response: {e}");
                 continue;
             }
         };
@@ -170,7 +177,11 @@ fn extract_messages(body: &str) -> Vec<&str> {
 /// a struct: this is the one field needed out of a response this process otherwise never inspects.
 fn negotiated_protocol(message: &str) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(message).ok()?;
-    value.get("result")?.get("protocolVersion")?.as_str().map(str::to_owned)
+    value
+        .get("result")?
+        .get("protocolVersion")?
+        .as_str()
+        .map(str::to_owned)
 }
 
 #[cfg(test)]
@@ -181,20 +192,42 @@ mod tests {
     fn the_flag_is_required_and_the_port_defaults() {
         let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
 
-        assert_eq!(requested_port(&args(&["tablenova.exe"])), None, "no flag, normal launch");
-        assert_eq!(requested_port(&args(&["tablenova.exe", FLAG])), Some(DEFAULT_PORT));
-        assert_eq!(requested_port(&args(&["tablenova.exe", FLAG, PORT_FLAG, "45999"])), Some(45999));
+        assert_eq!(
+            requested_port(&args(&["tablegrid.exe"])),
+            None,
+            "no flag, normal launch"
+        );
+        assert_eq!(
+            requested_port(&args(&["tablegrid.exe", FLAG])),
+            Some(DEFAULT_PORT)
+        );
+        assert_eq!(
+            requested_port(&args(&["tablegrid.exe", FLAG, PORT_FLAG, "45999"])),
+            Some(45999)
+        );
         // A typo must not leave the client with no server: fall back rather than refuse.
-        assert_eq!(requested_port(&args(&["tablenova.exe", FLAG, PORT_FLAG, "nope"])), Some(DEFAULT_PORT));
-        assert_eq!(requested_port(&args(&["tablenova.exe", FLAG, PORT_FLAG, "0"])), Some(DEFAULT_PORT));
-        assert_eq!(requested_port(&args(&["tablenova.exe", FLAG, PORT_FLAG])), Some(DEFAULT_PORT));
+        assert_eq!(
+            requested_port(&args(&["tablegrid.exe", FLAG, PORT_FLAG, "nope"])),
+            Some(DEFAULT_PORT)
+        );
+        assert_eq!(
+            requested_port(&args(&["tablegrid.exe", FLAG, PORT_FLAG, "0"])),
+            Some(DEFAULT_PORT)
+        );
+        assert_eq!(
+            requested_port(&args(&["tablegrid.exe", FLAG, PORT_FLAG])),
+            Some(DEFAULT_PORT)
+        );
     }
 
     #[test]
     fn messages_come_out_of_both_body_shapes() {
         // SSE: only `data:` lines, and the priming/bookkeeping lines are dropped.
         let sse = "data: \nid: 0\nretry: 3000\n\ndata: {\"jsonrpc\":\"2.0\",\"id\":1}\n";
-        assert_eq!(extract_messages(sse), vec!["{\"jsonrpc\":\"2.0\",\"id\":1}"]);
+        assert_eq!(
+            extract_messages(sse),
+            vec!["{\"jsonrpc\":\"2.0\",\"id\":1}"]
+        );
         // Plain JSON, no framing.
         assert_eq!(extract_messages("{\"a\":1}"), vec!["{\"a\":1}"]);
         // A notification's empty 202 body yields nothing to forward.

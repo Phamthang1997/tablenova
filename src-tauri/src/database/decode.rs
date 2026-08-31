@@ -16,47 +16,77 @@ macro_rules! decode_pg_cell {
     ($row:expr, $col:expr) => {{
         let row = $row;
         let col = $col;
-        if let Ok(v) = row.try_get::<Option<i16>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<i32>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<i64>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<f32>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<f64>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<bool>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<bigdecimal::BigDecimal>, _>(col) { v.map(|x| json!(x.to_string())).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<chrono::NaiveDateTime>, _>(col) { v.map(|x| json!(x.to_string())).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(col) { v.map(|x| json!(x.to_rfc3339())).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<chrono::NaiveDate>, _>(col) { v.map(|x| json!(x.to_string())).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<chrono::NaiveTime>, _>(col) { v.map(|x| json!(x.to_string())).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<uuid::Uuid>, _>(col) { v.map(|x| json!(x.to_string())).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<serde_json::Value>, _>(col) { v.map(|x| json!(x.to_string())).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<String>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<Vec<u8>>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
-        // Last resort: hand back the raw bytes the server sent.
+        // A text column SKIPS the numeric/temporal branches — it does not reorder them.
         //
-        // Every branch above asks sqlx to decode into a Rust type, and sqlx first checks that
-        // the column's type id is compatible — so a type it has no mapping for (MySQL GEOMETRY
-        // is the one that bit us: sakila's `address.location`) failed every branch and fell
-        // into `Value::Null`. The cell then exported as NULL, and re-importing that dump died
-        // on `location` being NOT NULL — silent data loss that only surfaced on the way back.
-        // `try_get` is what enforces that check; calling Decode directly on the raw value skips
-        // it, so anything the server sent survives as bytes. (`MySqlValueRef::as_bytes` is
-        // pub(crate) in sqlx 0.9, hence going through Decode rather than reading it off.)
-        else {
-            match row.try_get_raw(col) {
-                Ok(raw) if !raw.is_null() => {
-                    match <Vec<u8> as sqlx::Decode<'_, sqlx::Postgres>>::decode(raw) {
-                        // Postgres sends most of what lands here as text: an ENUM arrives as its
-                        // label, and so do inet/interval/tsvector. Handing those back as an array
-                        // of byte numbers would trade one wrong answer for another, so valid
-                        // UTF-8 becomes a string and only genuinely binary payloads stay bytes.
-                        Ok(b) => match std::str::from_utf8(&b) {
-                            Ok(s) => json!(s),
-                            Err(_) => json!(b),
-                        },
-                        Err(_) => Value::Null,
+        // Every branch below asks sqlx whether the column's type is compatible before decoding, and
+        // a failed attempt is not free: it builds an `Error::ColumnDecode`, which allocates. A
+        // VARCHAR fails thirteen of them before reaching `String`, once per cell, and that was the
+        // largest single cost in shipping a large result (measured: 792ms of a 1576ms run over
+        // 79,040 rows, ~10us per cell).
+        //
+        // Skipping is safe here in a way that reordering would NOT be, and the difference matters:
+        // which branch wins encodes real decisions. Every skipped branch is provably incompatible
+        // with these types — sqlx-postgres compares `PgTypeInfo` by equality for i16/i32/i64/f32/
+        // f64/bool/BigDecimal/the chrono types/Uuid, and `serde_json::Value` accepts JSON and JSONB
+        // only. So for a text column the skipped branches would every one of them have returned
+        // `Err`, and `String` wins exactly as before.
+        //
+        // The names are `PgTypeInfo::name()`'s own spelling: `CHAR` is `bpchar` (the internal
+        // one-byte `"CHAR"` prints WITH quotes and is deliberately not matched), and `citext` is
+        // there because sqlx lists it as string-compatible. Anything not named here takes the full
+        // chain, unchanged — including every type this list has never heard of.
+        let text_like = match sqlx::Row::try_column(row, col) {
+            Ok(c) => matches!(
+                sqlx::TypeInfo::name(sqlx::Column::type_info(c)),
+                "TEXT" | "VARCHAR" | "CHAR" | "NAME" | "citext"
+            ),
+            Err(_) => false,
+        };
+        'cell: {
+            if !text_like {
+                if let Ok(v) = row.try_get::<Option<i16>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<i32>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<i64>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<f32>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<f64>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<bool>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<bigdecimal::BigDecimal>, _>(col) { break 'cell v.map(|x| json!(x.to_string())).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<chrono::NaiveDateTime>, _>(col) { break 'cell v.map(|x| json!(x.to_string())).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(col) { break 'cell v.map(|x| json!(x.to_rfc3339())).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<chrono::NaiveDate>, _>(col) { break 'cell v.map(|x| json!(x.to_string())).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<chrono::NaiveTime>, _>(col) { break 'cell v.map(|x| json!(x.to_string())).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<uuid::Uuid>, _>(col) { break 'cell v.map(|x| json!(x.to_string())).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<serde_json::Value>, _>(col) { break 'cell v.map(|x| json!(x.to_string())).unwrap_or(Value::Null); }
+            }
+            if let Ok(v) = row.try_get::<Option<String>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
+            else if let Ok(v) = row.try_get::<Option<Vec<u8>>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
+            // Last resort: hand back the raw bytes the server sent.
+            //
+            // Every branch above asks sqlx to decode into a Rust type, and sqlx first checks that
+            // the column's type id is compatible — so a type it has no mapping for (MySQL GEOMETRY
+            // is the one that bit us: sakila's `address.location`) failed every branch and fell
+            // into `Value::Null`. The cell then exported as NULL, and re-importing that dump died
+            // on `location` being NOT NULL — silent data loss that only surfaced on the way back.
+            // `try_get` is what enforces that check; calling Decode directly on the raw value skips
+            // it, so anything the server sent survives as bytes. (`MySqlValueRef::as_bytes` is
+            // pub(crate) in sqlx 0.9, hence going through Decode rather than reading it off.)
+            else {
+                match row.try_get_raw(col) {
+                    Ok(raw) if !raw.is_null() => {
+                        match <Vec<u8> as sqlx::Decode<'_, sqlx::Postgres>>::decode(raw) {
+                            // Postgres sends most of what lands here as text: an ENUM arrives as its
+                            // label, and so do inet/interval/tsvector. Handing those back as an array
+                            // of byte numbers would trade one wrong answer for another, so valid
+                            // UTF-8 becomes a string and only genuinely binary payloads stay bytes.
+                            Ok(b) => match std::str::from_utf8(&b) {
+                                Ok(s) => json!(s),
+                                Err(_) => json!(b),
+                            },
+                            Err(_) => Value::Null,
+                        }
                     }
+                    _ => Value::Null,
                 }
-                _ => Value::Null,
             }
         }
     }};
@@ -70,44 +100,74 @@ macro_rules! decode_mysql_cell {
     ($row:expr, $col:expr) => {{
         let row = $row;
         let col = $col;
-        if let Ok(v) = row.try_get::<Option<i8>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<i16>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<i32>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<i64>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<u8>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<u16>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<u32>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<u64>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<f32>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<f64>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<bool>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<bigdecimal::BigDecimal>, _>(col) { v.map(|x| json!(x.to_string())).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<chrono::NaiveDateTime>, _>(col) { v.map(|x| json!(x.to_string())).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(col) { v.map(|x| json!(x.to_rfc3339())).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<chrono::NaiveDate>, _>(col) { v.map(|x| json!(x.to_string())).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<chrono::NaiveTime>, _>(col) { v.map(|x| json!(x.to_string())).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<serde_json::Value>, _>(col) { v.map(|x| json!(x.to_string())).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<String>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
-        else if let Ok(v) = row.try_get::<Option<Vec<u8>>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
-        // Last resort: hand back the raw bytes the server sent.
+        // Same idea as `decode_pg_cell!`, but the cut is in a different place — and that is the
+        // whole reason this is not shared code. On MySQL `serde_json::Value` IS compatible with the
+        // text and blob types (`sqlx-mysql/src/types/json.rs`: `Json` accepts anything `&str` or
+        // `&[u8]` accepts), and it sits BEFORE `String` in the chain. So a VARCHAR holding valid
+        // JSON is currently decoded as JSON and re-serialised — `{"a": 1}` comes back `{"a":1}`.
+        // That is surprising, but it is what ships, so the fast path keeps the Json branch in front
+        // of String and skips only what cannot match.
         //
-        // Every branch above asks sqlx to decode into a Rust type, and sqlx first checks that
-        // the column's type id is compatible — so a type it has no mapping for (MySQL GEOMETRY
-        // is the one that bit us: sakila's `address.location`) failed every branch and fell
-        // into `Value::Null`. The cell then exported as NULL, and re-importing that dump died
-        // on `location` being NOT NULL — silent data loss that only surfaced on the way back.
-        // `try_get` is what enforces that check; calling Decode directly on the raw value skips
-        // it, so anything the server sent survives as bytes. (`MySqlValueRef::as_bytes` is
-        // pub(crate) in sqlx 0.9, hence going through Decode rather than reading it off.)
-        else {
-            match row.try_get_raw(col) {
-                Ok(raw) if !raw.is_null() => {
-                    match <Vec<u8> as sqlx::Decode<'_, sqlx::MySql>>::decode(raw) {
-                        Ok(b) => json!(b),
-                        Err(_) => Value::Null,
+        // What it skips is provable from sqlx-mysql's own `compatible` lists: int/uint accept
+        // Tiny|Short|Long|Int24|LongLong(|Year), float accepts Float|Double, bool accepts the
+        // integer types, BigDecimal accepts Decimal|NewDecimal, and the chrono types accept
+        // Datetime|Timestamp|Date|Time. None of them lists a text or blob type.
+        //
+        // Names are `ColumnType::name()`'s spelling, where the same wire type prints differently by
+        // flag: Blob is `TEXT` or `BLOB`, VarChar is `VARCHAR` or `VARBINARY`, String is `CHAR`,
+        // `BINARY` or `ENUM`. `GEOMETRY` is deliberately absent — it matches no branch at all and
+        // must keep falling through to the raw-bytes tail, which is the bug that tail exists for.
+        let text_like = match sqlx::Row::try_column(row, col) {
+            Ok(c) => matches!(
+                sqlx::TypeInfo::name(sqlx::Column::type_info(c)),
+                "VARCHAR" | "CHAR" | "TEXT" | "TINYTEXT" | "MEDIUMTEXT" | "LONGTEXT"
+                    | "ENUM" | "SET" | "BINARY" | "VARBINARY"
+                    | "BLOB" | "TINYBLOB" | "MEDIUMBLOB" | "LONGBLOB"
+            ),
+            Err(_) => false,
+        };
+        'cell: {
+            if !text_like {
+                if let Ok(v) = row.try_get::<Option<i8>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<i16>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<i32>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<i64>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<u8>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<u16>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<u32>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<u64>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<f32>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<f64>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<bool>, _>(col) { break 'cell v.map(|x| json!(x)).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<bigdecimal::BigDecimal>, _>(col) { break 'cell v.map(|x| json!(x.to_string())).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<chrono::NaiveDateTime>, _>(col) { break 'cell v.map(|x| json!(x.to_string())).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(col) { break 'cell v.map(|x| json!(x.to_rfc3339())).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<chrono::NaiveDate>, _>(col) { break 'cell v.map(|x| json!(x.to_string())).unwrap_or(Value::Null); }
+                else if let Ok(v) = row.try_get::<Option<chrono::NaiveTime>, _>(col) { break 'cell v.map(|x| json!(x.to_string())).unwrap_or(Value::Null); }
+            }
+            if let Ok(v) = row.try_get::<Option<serde_json::Value>, _>(col) { v.map(|x| json!(x.to_string())).unwrap_or(Value::Null) }
+            else if let Ok(v) = row.try_get::<Option<String>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
+            else if let Ok(v) = row.try_get::<Option<Vec<u8>>, _>(col) { v.map(|x| json!(x)).unwrap_or(Value::Null) }
+            // Last resort: hand back the raw bytes the server sent.
+            //
+            // Every branch above asks sqlx to decode into a Rust type, and sqlx first checks that
+            // the column's type id is compatible — so a type it has no mapping for (MySQL GEOMETRY
+            // is the one that bit us: sakila's `address.location`) failed every branch and fell
+            // into `Value::Null`. The cell then exported as NULL, and re-importing that dump died
+            // on `location` being NOT NULL — silent data loss that only surfaced on the way back.
+            // `try_get` is what enforces that check; calling Decode directly on the raw value skips
+            // it, so anything the server sent survives as bytes. (`MySqlValueRef::as_bytes` is
+            // pub(crate) in sqlx 0.9, hence going through Decode rather than reading it off.)
+            else {
+                match row.try_get_raw(col) {
+                    Ok(raw) if !raw.is_null() => {
+                        match <Vec<u8> as sqlx::Decode<'_, sqlx::MySql>>::decode(raw) {
+                            Ok(b) => json!(b),
+                            Err(_) => Value::Null,
+                        }
                     }
+                    _ => Value::Null,
                 }
-                _ => Value::Null,
             }
         }
     }};
@@ -171,9 +231,9 @@ pub(crate) fn bind_mysql_params<'q>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
-    use rusqlite::types::Value as SV;
     use rusqlite::Connection as SqliteConnection;
+    use rusqlite::types::Value as SV;
+    use serde_json::json;
 
     #[test]
     fn test_json_to_sqlite_value_null() {
@@ -190,19 +250,32 @@ mod tests {
     #[test]
     fn test_json_to_sqlite_value_number() {
         assert_eq!(json_to_sqlite_value(&json!(100)), SV::Integer(100));
-        assert_eq!(json_to_sqlite_value(&json!(3.14159)), SV::Real(3.14159));
+        // Not 3.14159: clippy's `approx_constant` is deny-by-default and reads any float near PI as
+        // a botched `std::f64::consts::PI`, which fails `cargo clippy --all-targets` outright. The
+        // test only needs a number with a fractional part, so it may as well be one nothing
+        // recognises.
+        assert_eq!(json_to_sqlite_value(&json!(12.625)), SV::Real(12.625));
     }
 
     #[test]
     fn test_json_to_sqlite_value_string() {
-        assert_eq!(json_to_sqlite_value(&json!("TableNova")), SV::Text("TableNova".into()));
+        assert_eq!(
+            json_to_sqlite_value(&json!("TableGrid")),
+            SV::Text("TableGrid".into())
+        );
     }
 
     #[test]
     fn test_sqlite_in_memory_query() -> Result<(), Box<dyn std::error::Error>> {
         let conn = SqliteConnection::open_in_memory()?;
-        conn.execute("CREATE TABLE test_users (id INTEGER PRIMARY KEY, name TEXT NOT NULL);", [])?;
-        conn.execute("INSERT INTO test_users (name) VALUES (?1), (?2);", ["Alice", "Bob"])?;
+        conn.execute(
+            "CREATE TABLE test_users (id INTEGER PRIMARY KEY, name TEXT NOT NULL);",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO test_users (name) VALUES (?1), (?2);",
+            ["Alice", "Bob"],
+        )?;
 
         let mut stmt = conn.prepare("SELECT id, name FROM test_users ORDER BY id ASC;")?;
         let rows = stmt.query_map([], |row| {

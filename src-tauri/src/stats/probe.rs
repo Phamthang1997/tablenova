@@ -17,7 +17,10 @@ pub(super) const PG_DB_COUNT_SQL: &str = r#"
 "#;
 
 pub(super) async fn pg_count_tables_rows(pool: &sqlx::PgPool) -> Result<(i64, i64), String> {
-    let row = sqlx::query(PG_DB_COUNT_SQL).fetch_one(pool).await.map_err(|e| e.to_string())?;
+    let row = sqlx::query(PG_DB_COUNT_SQL)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok((
         get_pg_i64_cell(&row, "total_tables").max(0),
         get_pg_i64_cell(&row, "total_rows").max(0),

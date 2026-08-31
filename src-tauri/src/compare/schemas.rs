@@ -2,44 +2,44 @@
 
 use std::collections::BTreeSet;
 
-use serde_json::{json, Value};
-use tauri::State;
+use serde_json::{Value, json};
 
-use crate::AppState;
-use crate::compare::diff::{
-    column_changes, fk_changes, index_changes, view_def_differs,
-};
+use crate::compare::diff::{column_changes, fk_changes, index_changes, view_def_differs};
 use crate::compare::ident::{q_ident, qualified};
 use crate::compare::meta::{col_json, fk_json, idx_json};
 use crate::compare::read::read_schema;
-use crate::compare::side::{resolve_side, side_json, CompareSide, Resolved};
+use crate::compare::side::{CompareSide, Resolved, resolve_side, side_json};
 use crate::compare::sync_sql::{
-    add_fk_sql, alter_column_stmts, column_clause, create_index_sql, create_table_sql,
-    drop_fk_sql, drop_index_sql, fk_stmt_or_note, SqlOut,
+    SqlOut, add_fk_sql, alter_column_stmts, column_clause, create_index_sql, create_table_sql,
+    drop_fk_sql, drop_index_sql, fk_stmt_or_note,
 };
 
 // ===================== Command: compare structure =====================
 
 #[tauri::command]
 pub async fn compare_schemas(
-    state: State<'_, AppState>, conn_id: String,
+    conn_id: String,
     source: CompareSide,
     target: CompareSide,
     include_drops: Option<bool>,
 ) -> Result<Value, String> {
-    let src = resolve_side(&state, &source, &conn_id).await?;
-    let tgt = match resolve_side(&state, &target, &conn_id).await {
-        Ok(t) => t,
-        Err(e) => {
-            src.close().await;
-            return Err(e);
-        }
-    };
+    Box::pin(async move {
+        let state = crate::state::require_state()?;
+        let src = resolve_side(&state, &source, &conn_id).await?;
+        let tgt = match resolve_side(&state, &target, &conn_id).await {
+            Ok(t) => t,
+            Err(e) => {
+                src.close().await;
+                return Err(e);
+            }
+        };
 
-    let out = compare_schemas_inner(&src, &tgt, include_drops.unwrap_or(false)).await;
-    src.close().await;
-    tgt.close().await;
-    out
+        let out = compare_schemas_inner(&src, &tgt, include_drops.unwrap_or(false)).await;
+        src.close().await;
+        tgt.close().await;
+        out
+    })
+    .await
 }
 
 pub(super) async fn compare_schemas_inner(
@@ -144,8 +144,19 @@ pub(super) async fn compare_schemas_inner(
             (Some(s), Some(t)) => {
                 if s.is_view || t.is_view {
                     let is_kind_mismatch = s.is_view != t.is_view;
-                    let view_differs = !is_kind_mismatch && view_def_differs(s.view_def.as_ref(), t.view_def.as_ref(), &src.schema, &tgt.schema, name);
-                    let status = if is_kind_mismatch || view_differs { "different" } else { "identical" };
+                    let view_differs = !is_kind_mismatch
+                        && view_def_differs(
+                            s.view_def.as_ref(),
+                            t.view_def.as_ref(),
+                            &src.schema,
+                            &tgt.schema,
+                            name,
+                        );
+                    let status = if is_kind_mismatch || view_differs {
+                        "different"
+                    } else {
+                        "identical"
+                    };
 
                     let mut changes: Vec<String> = Vec::new();
                     if is_kind_mismatch {
@@ -175,7 +186,10 @@ pub(super) async fn compare_schemas_inner(
                                 sql.note(format!("Could not read the definition of view {}", name));
                             } else if tgt.dialect == "sqlite" {
                                 sql.paired(
-                                    format!("DROP VIEW {};", qualified(&tgt.dialect, &tgt.schema, name)),
+                                    format!(
+                                        "DROP VIEW {};",
+                                        qualified(&tgt.dialect, &tgt.schema, name)
+                                    ),
                                     if body.to_ascii_uppercase().starts_with("CREATE ") {
                                         format!("{};", body)
                                     } else {
@@ -221,7 +235,12 @@ pub(super) async fn compare_schemas_inner(
                         .columns
                         .iter()
                         .map(|c| c.name.clone())
-                        .chain(t.columns.iter().filter(|c| s.column(&c.name).is_none()).map(|c| c.name.clone()))
+                        .chain(
+                            t.columns
+                                .iter()
+                                .filter(|c| s.column(&c.name).is_none())
+                                .map(|c| c.name.clone()),
+                        )
                         .collect();
                     for cn in &col_names {
                         match (s.column(cn), t.column(cn)) {
@@ -267,7 +286,13 @@ pub(super) async fn compare_schemas_inner(
                                     }));
                                     if ch.iter().any(|c| *c != "position") {
                                         table_sql.extend(alter_column_stmts(
-                                            name, sc, tc, &ch, &src.dialect, &tgt.dialect, &tgt.schema,
+                                            name,
+                                            sc,
+                                            tc,
+                                            &ch,
+                                            &src.dialect,
+                                            &tgt.dialect,
+                                            &tgt.schema,
                                         ));
                                     }
                                 }
@@ -275,7 +300,10 @@ pub(super) async fn compare_schemas_inner(
                             (None, None) => {}
                         }
                     }
-                    if cols_json.iter().any(|c| c.get("status").and_then(|v| v.as_str()) != Some("identical")) {
+                    if cols_json
+                        .iter()
+                        .any(|c| c.get("status").and_then(|v| v.as_str()) != Some("identical"))
+                    {
                         changes.push("columns");
                     }
 
@@ -303,7 +331,12 @@ pub(super) async fn compare_schemas_inner(
                                     "name": iname, "status": "onlySource", "changes": [],
                                     "source": idx_json(si), "target": Value::Null
                                 }));
-                                table_sql.push(create_index_sql(si, name, &tgt.dialect, &tgt.schema));
+                                table_sql.push(create_index_sql(
+                                    si,
+                                    name,
+                                    &tgt.dialect,
+                                    &tgt.schema,
+                                ));
                             }
                             (None, Some(ti)) => {
                                 idx_diffs += 1;
@@ -312,7 +345,12 @@ pub(super) async fn compare_schemas_inner(
                                     "name": iname, "status": "onlyTarget", "changes": [],
                                     "source": Value::Null, "target": idx_json(ti)
                                 }));
-                                destructive_sql.push(drop_index_sql(ti, name, &tgt.dialect, &tgt.schema));
+                                destructive_sql.push(drop_index_sql(
+                                    ti,
+                                    name,
+                                    &tgt.dialect,
+                                    &tgt.schema,
+                                ));
                             }
                             (Some(si), Some(ti)) => {
                                 let ch = index_changes(si, ti);
@@ -337,7 +375,10 @@ pub(super) async fn compare_schemas_inner(
                             (None, None) => {}
                         }
                     }
-                    if idx_json_list.iter().any(|i| i.get("status").and_then(|v| v.as_str()) != Some("identical")) {
+                    if idx_json_list
+                        .iter()
+                        .any(|i| i.get("status").and_then(|v| v.as_str()) != Some("identical"))
+                    {
                         changes.push("indexes");
                     }
 
@@ -380,9 +421,19 @@ pub(super) async fn compare_schemas_inner(
                                     "source": Value::Null, "target": fk_json(tf)
                                 }));
                                 if tgt.dialect == "sqlite" {
-                                    table_sql.push(fk_stmt_or_note(&tgt.dialect, name, fname, String::new()));
+                                    table_sql.push(fk_stmt_or_note(
+                                        &tgt.dialect,
+                                        name,
+                                        fname,
+                                        String::new(),
+                                    ));
                                 } else {
-                                    destructive_sql.push(drop_fk_sql(tf, name, &tgt.dialect, &tgt.schema));
+                                    destructive_sql.push(drop_fk_sql(
+                                        tf,
+                                        name,
+                                        &tgt.dialect,
+                                        &tgt.schema,
+                                    ));
                                 }
                             }
                             (Some(sf), Some(tf)) => {
@@ -400,7 +451,12 @@ pub(super) async fn compare_schemas_inner(
                                         "source": fk_json(sf), "target": fk_json(tf)
                                     }));
                                     if tgt.dialect == "sqlite" {
-                                        table_sql.push(fk_stmt_or_note(&tgt.dialect, name, fname, String::new()));
+                                        table_sql.push(fk_stmt_or_note(
+                                            &tgt.dialect,
+                                            name,
+                                            fname,
+                                            String::new(),
+                                        ));
                                     } else {
                                         paired_sql.push((
                                             drop_fk_sql(tf, name, &tgt.dialect, &tgt.schema),
@@ -412,7 +468,10 @@ pub(super) async fn compare_schemas_inner(
                             (None, None) => {}
                         }
                     }
-                    if fk_json_list.iter().any(|f| f.get("status").and_then(|v| v.as_str()) != Some("identical")) {
+                    if fk_json_list
+                        .iter()
+                        .any(|f| f.get("status").and_then(|v| v.as_str()) != Some("identical"))
+                    {
                         changes.push("foreignKeys");
                     }
 
@@ -423,7 +482,11 @@ pub(super) async fn compare_schemas_inner(
                         changes.push("primaryKey");
                     }
 
-                    let status = if diff_count == 0 { "identical" } else { "different" };
+                    let status = if diff_count == 0 {
+                        "identical"
+                    } else {
+                        "different"
+                    };
 
                     if status == "identical" {
                         identical += 1;
