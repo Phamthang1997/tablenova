@@ -321,15 +321,13 @@ pub(crate) fn split_sql_statements(sql: &str) -> Vec<String> {
             }
         }
         // The DELIMITER command (at the start of a line): it changes the statement terminator, and the line itself is not a statement
-        if at_line_start {
-            if let Some((token, next)) = read_delimiter_command(&chars, i) {
-                push_stmt(&mut out, start, i);
-                delim = token.chars().collect();
-                start = next;
-                i = next;
-                at_line_start = true;
-                continue;
-            }
+        if at_line_start && let Some((token, next)) = read_delimiter_command(&chars, i) {
+            push_stmt(&mut out, start, i);
+            delim = token.chars().collect();
+            start = next;
+            i = next;
+            at_line_start = true;
+            continue;
         }
         // The statement terminator currently in force
         if matches_delimiter(&chars, i, &delim) {

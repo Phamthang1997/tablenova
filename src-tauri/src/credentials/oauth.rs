@@ -45,11 +45,11 @@ fn simple_url_decode(input: &str) -> String {
     while let Some(ch) = chars.next() {
         if ch == '%' {
             let hex: String = chars.by_ref().take(2).collect();
-            if hex.len() == 2 {
-                if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                    result.push(byte as char);
-                    continue;
-                }
+            if hex.len() == 2
+                && let Ok(byte) = u8::from_str_radix(&hex, 16)
+            {
+                result.push(byte as char);
+                continue;
             }
             result.push('%');
             result.push_str(&hex);
@@ -180,9 +180,9 @@ pub async fn start_google_oauth_flow(
             let mut code = None;
             let mut error = None;
 
-            if let Some(first_line) = request_str.lines().next() {
-                if let Some(query_start) = first_line.find('?') {
-                    if let Some(query_end) = first_line[query_start..].find(' ') {
+            if let Some(first_line) = request_str.lines().next()
+                && let Some(query_start) = first_line.find('?')
+                    && let Some(query_end) = first_line[query_start..].find(' ') {
                         let query = &first_line[query_start + 1..query_start + query_end];
                         for pair in query.split('&') {
                             let mut parts = pair.split('=');
@@ -195,8 +195,6 @@ pub async fn start_google_oauth_flow(
                             }
                         }
                     }
-                }
-            }
 
             Ok(OAuthCallbackResult {
                 success: code.is_some(),

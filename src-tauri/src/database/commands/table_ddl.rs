@@ -199,10 +199,10 @@ async fn run_fk_wrapped(
             let _ = execute_raw_sql_generic(conn, fk_checks_sql(conn, false).to_string()).await;
         }
         let result = execute_raw_sql_generic(conn, sql).await;
-        if result.is_ok() {
-            if let Some(extra) = optional {
-                let _ = execute_raw_sql_generic(conn, extra).await;
-            }
+        if result.is_ok()
+            && let Some(extra) = optional
+        {
+            let _ = execute_raw_sql_generic(conn, extra).await;
         }
         // Restore even on failure: the session lives on and later statements must not inherit a
         // disabled foreign-key check.
@@ -217,10 +217,10 @@ async fn run_fk_wrapped(
         exec.try_run(fk_checks_sql(conn, false)).await;
     }
     let result = exec.run(sql).await;
-    if result.is_ok() {
-        if let Some(extra) = optional {
-            exec.try_run(&extra).await;
-        }
+    if result.is_ok()
+        && let Some(extra) = optional
+    {
+        exec.try_run(&extra).await;
     }
     // Restore it even on error: the connection goes back to the pool (or is the shared SQLite handle),
     // otherwise the next statement runs on a session that still has foreign-key checking off.

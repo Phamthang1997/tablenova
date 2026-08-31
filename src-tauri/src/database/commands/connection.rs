@@ -94,17 +94,16 @@ pub async fn connect_db(app: tauri::AppHandle, config: Value) -> Result<Value, S
         // Opening the same SQLite file twice would be two `rusqlite::Connection`s on one file, i.e.
         // `SQLITE_BUSY` as soon as both write. Hand back the connection that is already open instead.
         // Postgres/MySQL are deliberately not deduplicated — see `ConnRegistry::find_sqlite`.
-        if db_type == "sqlite" {
-            if let Some(path) = config.get("filePath").and_then(|v| v.as_str()) {
-                if let Some(existing) = state.connections.find_sqlite(path)? {
-                    let ctx = state.connections.acquire(&existing)?;
-                    return Ok(json!({
-                        "success": true,
-                        "schema": ctx.raw_schema(),
-                        "connId": &*existing,
-                    }));
-                }
-            }
+        if db_type == "sqlite"
+            && let Some(path) = config.get("filePath").and_then(|v| v.as_str())
+            && let Some(existing) = state.connections.find_sqlite(path)?
+        {
+            let ctx = state.connections.acquire(&existing)?;
+            return Ok(json!({
+                "success": true,
+                "schema": ctx.raw_schema(),
+                "connId": &*existing,
+            }));
         }
 
         let mut ssh_tunnel: Option<SshTunnel> = None;

@@ -23,10 +23,10 @@ pub(super) fn norm_type(raw: &str) -> String {
         "integer",
     ] {
         if let Some(rest) = t.strip_prefix(base) {
-            if rest.starts_with('(') {
-                if let Some(close) = rest.find(')') {
-                    t = format!("{}{}", base, &rest[close + 1..]);
-                }
+            if rest.starts_with('(')
+                && let Some(close) = rest.find(')')
+            {
+                t = format!("{}{}", base, &rest[close + 1..]);
             }
             break;
         }
@@ -160,10 +160,10 @@ pub(super) fn view_def_differs(
                     str_val = &str_val[cut_offset..];
                 }
             }
-        } else if let Some(as_idx) = lower.find(" as ") {
-            if lower.starts_with("create") || lower.starts_with("replace") {
-                str_val = &str_val[as_idx + 4..];
-            }
+        } else if let Some(as_idx) = lower.find(" as ")
+            && (lower.starts_with("create") || lower.starts_with("replace"))
+        {
+            str_val = &str_val[as_idx + 4..];
         }
 
         let mut cleaned = str_val

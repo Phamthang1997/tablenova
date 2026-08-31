@@ -162,11 +162,11 @@ pub async fn open_database(conn_id: String, name: String) -> Result<Value, Strin
 
         // The config used to build the URL: with a tunnel it points at 127.0.0.1:<local_port>
         let mut url_conf = server.config();
-        if let Some(port) = tunnel_port {
-            if let Some(obj) = url_conf.as_object_mut() {
-                obj.insert("host".to_string(), json!("127.0.0.1"));
-                obj.insert("port".to_string(), json!(port));
-            }
+        if let Some(port) = tunnel_port
+            && let Some(obj) = url_conf.as_object_mut()
+        {
+            obj.insert("host".to_string(), json!("127.0.0.1"));
+            obj.insert("port".to_string(), json!(port));
         }
 
         let new_id = crate::state::mint_id();

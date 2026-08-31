@@ -82,20 +82,19 @@ pub(super) async fn estimate_fk_pool(
     let want = parent.rows.clamp(1, SAMPLE);
 
     let parent_col = parent.columns.iter().find(|c| c.column == ref_column);
-    if let Some(cspec) = parent_col {
-        if cspec.generator != "skip" {
-            if let Ok(mut st) = ColState::new(seed, ref_table, cspec) {
-                let mut out = Vec::with_capacity(want);
-                for _ in 0..want {
-                    match st.next_cell(dialect) {
-                        Ok(Cell::Null) => {}
-                        Ok(cell) => out.push(cell),
-                        Err(_) => break,
-                    }
-                }
-                return out;
+    if let Some(cspec) = parent_col
+        && cspec.generator != "skip"
+        && let Ok(mut st) = ColState::new(seed, ref_table, cspec)
+    {
+        let mut out = Vec::with_capacity(want);
+        for _ in 0..want {
+            match st.next_cell(dialect) {
+                Ok(Cell::Null) => {}
+                Ok(cell) => out.push(cell),
+                Err(_) => break,
             }
         }
+        return out;
     }
 
     // Auto-increment (or a column left to the database): continue the sequence from MAX(key).

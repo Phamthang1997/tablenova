@@ -52,10 +52,11 @@ fn uri_encode(input: &str) -> String {
 // Detect the region from the RDS hostname: <name>.<hash>.<region>.rds.amazonaws.com
 pub fn detect_region(host: &str) -> Option<String> {
     let parts: Vec<&str> = host.split('.').collect();
-    if let Some(pos) = parts.iter().position(|p| *p == "rds") {
-        if pos > 0 && !parts[pos - 1].is_empty() {
-            return Some(parts[pos - 1].to_string());
-        }
+    if let Some(pos) = parts.iter().position(|p| *p == "rds")
+        && pos > 0
+        && !parts[pos - 1].is_empty()
+    {
+        return Some(parts[pos - 1].to_string());
     }
     None
 }
@@ -91,15 +92,13 @@ fn read_profile_creds(profile: &str) -> Result<AwsCreds, String> {
             in_section = name == profile;
             continue;
         }
-        if in_section {
-            if let Some((k, v)) = line.split_once('=') {
-                let (k, v) = (k.trim(), v.trim());
-                match k {
-                    "aws_access_key_id" => ak = v.to_string(),
-                    "aws_secret_access_key" => sk = v.to_string(),
-                    "aws_session_token" => token = Some(v.to_string()),
-                    _ => {}
-                }
+        if in_section && let Some((k, v)) = line.split_once('=') {
+            let (k, v) = (k.trim(), v.trim());
+            match k {
+                "aws_access_key_id" => ak = v.to_string(),
+                "aws_secret_access_key" => sk = v.to_string(),
+                "aws_session_token" => token = Some(v.to_string()),
+                _ => {}
             }
         }
     }

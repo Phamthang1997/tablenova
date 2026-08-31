@@ -37,15 +37,15 @@ pub(crate) async fn get_primary_key_columns(
             let mut cols: Vec<(i32, String)> = Vec::new();
             if let Ok(c) = conn_arc.lock() {
                 let sql = format!("PRAGMA table_info(\"{}\")", table);
-                if let Ok(mut stmt) = c.prepare(&sql) {
-                    if let Ok(mut rows) = stmt.query([]) {
-                        while let Ok(Some(row)) = rows.next() {
-                            let pk: i32 = row.get("pk").unwrap_or(0);
-                            if pk > 0 {
-                                if let Ok(name) = row.get::<_, String>("name") {
-                                    cols.push((pk, name));
-                                }
-                            }
+                if let Ok(mut stmt) = c.prepare(&sql)
+                    && let Ok(mut rows) = stmt.query([])
+                {
+                    while let Ok(Some(row)) = rows.next() {
+                        let pk: i32 = row.get("pk").unwrap_or(0);
+                        if pk > 0
+                            && let Ok(name) = row.get::<_, String>("name")
+                        {
+                            cols.push((pk, name));
                         }
                     }
                 }

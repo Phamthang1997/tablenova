@@ -84,10 +84,10 @@ pub async fn tx_set_isolation(
         let state = crate::state::require_state()?;
         let conn = current_conn(&state, &conn_id)?;
         let dialect = dialect_of(&conn);
-        if let Some(l) = &level {
-            if !isolation_allowed(dialect, l) {
-                return Err("Mức cô lập không hợp lệ cho hệ quản trị này".to_string());
-            }
+        if let Some(l) = &level
+            && !isolation_allowed(dialect, l)
+        {
+            return Err("Mức cô lập không hợp lệ cho hệ quản trị này".to_string());
         }
         {
             let session = session_for(&conn_id);

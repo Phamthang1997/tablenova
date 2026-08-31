@@ -139,18 +139,19 @@ pub(super) async fn resolve_side(
 
         // The same file as the open connection -> reuse it (so the file is not locked twice).
         let active_path = cfg_str(&base, "filePath");
-        if !own_config && active_path.as_deref() == Some(path.as_str()) {
-            if let Some(conn) = active.clone() {
-                return Ok(Resolved {
-                    conn,
-                    dialect,
-                    schema: "main".to_string(),
-                    label: path.clone(),
-                    server: path,
-                    owned: false,
-                    _tunnel: None,
-                });
-            }
+        if !own_config
+            && active_path.as_deref() == Some(path.as_str())
+            && let Some(conn) = active.clone()
+        {
+            return Ok(Resolved {
+                conn,
+                dialect,
+                schema: "main".to_string(),
+                label: path.clone(),
+                server: path,
+                owned: false,
+                _tunnel: None,
+            });
         }
 
         // Opened READ-ONLY: a comparison must never create an empty file when the user mistypes a path.
@@ -188,29 +189,27 @@ pub(super) async fn resolve_side(
 
     // Reuse the open connection when this side points at the current database: no
     // re-authentication (which matters for AWS IAM, whose token only lives 15 minutes).
-    if !own_config {
-        if let Some(conn) = active.clone() {
-            let current = current_db_name(&conn, &dialect).await;
-            let same = match (&wanted_db, &current) {
-                (Some(w), Some(c)) => w == c,
-                (None, _) => true,
-                _ => false,
+    if !own_config && let Some(conn) = active.clone() {
+        let current = current_db_name(&conn, &dialect).await;
+        let same = match (&wanted_db, &current) {
+            (Some(w), Some(c)) => w == c,
+            (None, _) => true,
+            _ => false,
+        };
+        if same {
+            let schema = match dialect.as_str() {
+                "postgres" => side.schema.clone().unwrap_or_else(|| "public".to_string()),
+                _ => current.clone().or(wanted_db.clone()).unwrap_or_default(),
             };
-            if same {
-                let schema = match dialect.as_str() {
-                    "postgres" => side.schema.clone().unwrap_or_else(|| "public".to_string()),
-                    _ => current.clone().or(wanted_db.clone()).unwrap_or_default(),
-                };
-                return Ok(Resolved {
-                    conn,
-                    dialect,
-                    schema,
-                    label: current.or(wanted_db).unwrap_or_default(),
-                    server: server_label(&base),
-                    owned: false,
-                    _tunnel: None,
-                });
-            }
+            return Ok(Resolved {
+                conn,
+                dialect,
+                schema,
+                label: current.or(wanted_db).unwrap_or_default(),
+                server: server_label(&base),
+                owned: false,
+                _tunnel: None,
+            });
         }
     }
 

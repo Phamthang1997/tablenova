@@ -106,11 +106,10 @@ pub async fn get_database_objects(conn_id: String) -> Result<Value, String> {
         .await
         .unwrap_or_default();
         for row in result_rows(&ev) {
-            if let Some(name) = row_str(row, "name") {
-                if !name.is_empty() {
+            if let Some(name) = row_str(row, "name")
+                && !name.is_empty() {
                     events.push(name.to_string());
                 }
-            }
         }
     }
 

@@ -23,10 +23,10 @@ pub(crate) fn register_cancel(
 }
 
 pub(crate) fn drop_cancel(app: &tauri::AppHandle, query_id: &str) {
-    if let Some(st) = app.try_state::<crate::AppState>() {
-        if let Ok(mut flags) = st.cancel_flags.lock() {
-            flags.remove(query_id);
-        }
+    if let Some(st) = app.try_state::<crate::AppState>()
+        && let Ok(mut flags) = st.cancel_flags.lock()
+    {
+        flags.remove(query_id);
     }
 }
 

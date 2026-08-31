@@ -69,10 +69,10 @@ pub(super) fn render_default(src_dialect: &str, tgt_dialect: &str, raw: &str) ->
         return q_lit(trimmed);
     }
     // Postgres/SQLite source: already a SQL expression. Drop the `::type` cast when the target is not PG.
-    if tgt_dialect != "postgres" {
-        if let Some(i) = trimmed.find("::") {
-            return trimmed[..i].trim().to_string();
-        }
+    if tgt_dialect != "postgres"
+        && let Some(i) = trimmed.find("::")
+    {
+        return trimmed[..i].trim().to_string();
     }
     trimmed.to_string()
 }
@@ -109,10 +109,10 @@ pub(super) fn column_clause(
             out.push_str(&format!(" DEFAULT {}", render_default(src_dialect, tgt, d)));
         }
     }
-    if tgt == "mysql" {
-        if let Some(cm) = c.comment.as_deref().filter(|c| !c.is_empty()) {
-            out.push_str(&format!(" COMMENT {}", q_lit(cm)));
-        }
+    if tgt == "mysql"
+        && let Some(cm) = c.comment.as_deref().filter(|c| !c.is_empty())
+    {
+        out.push_str(&format!(" COMMENT {}", q_lit(cm)));
     }
     out
 }
@@ -149,14 +149,15 @@ pub(super) fn create_table_sql(
 
     // SQLite -> SQLite: the original CREATE statement is the most complete description (including AUTOINCREMENT,
     // CHECK, inline FKs) and needs no type translation.
-    if src_dialect == "sqlite" && tgt == "sqlite" {
-        if let Some(orig) = t.create_sql.as_deref().filter(|s| !s.trim().is_empty()) {
-            stmts.push(format!("{};", orig.trim().trim_end_matches(';')));
-            for idx in &t.indexes {
-                stmts.push(create_index_sql(idx, &t.name, tgt, schema));
-            }
-            return stmts;
+    if src_dialect == "sqlite"
+        && tgt == "sqlite"
+        && let Some(orig) = t.create_sql.as_deref().filter(|s| !s.trim().is_empty())
+    {
+        stmts.push(format!("{};", orig.trim().trim_end_matches(';')));
+        for idx in &t.indexes {
+            stmts.push(create_index_sql(idx, &t.name, tgt, schema));
         }
+        return stmts;
     }
 
     let single_int_pk = t.pk.len() == 1

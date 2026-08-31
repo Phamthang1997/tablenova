@@ -117,11 +117,11 @@ pub async fn send_local_input(session_id: String, data: String) -> Result<Value,
     Box::pin(async move {
         let state = crate::state::require_state()?;
         let map = state.local_terminals.lock().map_err(|e| e.to_string())?;
-        if let Some(sess) = map.get(&session_id) {
-            if let Ok(mut w) = sess.writer.lock() {
-                w.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
-                let _ = w.flush();
-            }
+        if let Some(sess) = map.get(&session_id)
+            && let Ok(mut w) = sess.writer.lock()
+        {
+            w.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
+            let _ = w.flush();
         }
         Ok(json!({ "success": true }))
     })
@@ -137,15 +137,15 @@ pub async fn resize_local_terminal(
     Box::pin(async move {
         let state = crate::state::require_state()?;
         let map = state.local_terminals.lock().map_err(|e| e.to_string())?;
-        if let Some(sess) = map.get(&session_id) {
-            if let Ok(master) = sess.master.lock() {
-                let _ = master.resize(PtySize {
-                    rows,
-                    cols,
-                    pixel_width: 0,
-                    pixel_height: 0,
-                });
-            }
+        if let Some(sess) = map.get(&session_id)
+            && let Ok(master) = sess.master.lock()
+        {
+            let _ = master.resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            });
         }
         Ok(json!({ "success": true }))
     })

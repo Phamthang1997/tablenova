@@ -303,8 +303,7 @@ mod tests {
         assert!(choose_only(vec![]).is_err());
 
         // Two shared must REFUSE and name them, never guess.
-        let many = choose_only(vec!["zeta".to_string(), "alpha".to_string()])
-            .expect_err("refuse");
+        let many = choose_only(vec!["zeta".to_string(), "alpha".to_string()]).expect_err("refuse");
         let msg = many.error.message.to_string();
         assert!(msg.contains("connection_id is required"), "{msg}");
         assert!(msg.contains("alpha, zeta"), "must name them, sorted: {msg}");

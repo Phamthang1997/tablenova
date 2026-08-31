@@ -48,55 +48,55 @@ pub async fn redis_set_key(conn_id: String, payload: Value) -> Result<Value, Str
                 let _: redis::Value = cmd.query_async(&mut c).await.map_err(|e| e.to_string())?;
             }
             "hash" => {
-                if let Some(fields) = payload.get("fields").and_then(|v| v.as_array()) {
-                    if !fields.is_empty() {
-                        let mut cmd = redis::cmd("HSET");
-                        cmd.arg(&key);
-                        for f in fields {
-                            let field = f.get("field").and_then(|v| v.as_str()).unwrap_or("");
-                            let value = f.get("value").and_then(|v| v.as_str()).unwrap_or("");
-                            cmd.arg(field).arg(value);
-                        }
-                        let _: i64 = cmd.query_async(&mut c).await.map_err(|e| e.to_string())?;
+                if let Some(fields) = payload.get("fields").and_then(|v| v.as_array())
+                    && !fields.is_empty()
+                {
+                    let mut cmd = redis::cmd("HSET");
+                    cmd.arg(&key);
+                    for f in fields {
+                        let field = f.get("field").and_then(|v| v.as_str()).unwrap_or("");
+                        let value = f.get("value").and_then(|v| v.as_str()).unwrap_or("");
+                        cmd.arg(field).arg(value);
                     }
+                    let _: i64 = cmd.query_async(&mut c).await.map_err(|e| e.to_string())?;
                 }
             }
             "list" => {
-                if let Some(items) = payload.get("items").and_then(|v| v.as_array()) {
-                    if !items.is_empty() {
-                        let mut cmd = redis::cmd("RPUSH");
-                        cmd.arg(&key);
-                        for it in items {
-                            cmd.arg(it.as_str().unwrap_or(""));
-                        }
-                        let _: i64 = cmd.query_async(&mut c).await.map_err(|e| e.to_string())?;
+                if let Some(items) = payload.get("items").and_then(|v| v.as_array())
+                    && !items.is_empty()
+                {
+                    let mut cmd = redis::cmd("RPUSH");
+                    cmd.arg(&key);
+                    for it in items {
+                        cmd.arg(it.as_str().unwrap_or(""));
                     }
+                    let _: i64 = cmd.query_async(&mut c).await.map_err(|e| e.to_string())?;
                 }
             }
             "set" => {
-                if let Some(members) = payload.get("members").and_then(|v| v.as_array()) {
-                    if !members.is_empty() {
-                        let mut cmd = redis::cmd("SADD");
-                        cmd.arg(&key);
-                        for m in members {
-                            cmd.arg(m.as_str().unwrap_or(""));
-                        }
-                        let _: i64 = cmd.query_async(&mut c).await.map_err(|e| e.to_string())?;
+                if let Some(members) = payload.get("members").and_then(|v| v.as_array())
+                    && !members.is_empty()
+                {
+                    let mut cmd = redis::cmd("SADD");
+                    cmd.arg(&key);
+                    for m in members {
+                        cmd.arg(m.as_str().unwrap_or(""));
                     }
+                    let _: i64 = cmd.query_async(&mut c).await.map_err(|e| e.to_string())?;
                 }
             }
             "zset" => {
-                if let Some(entries) = payload.get("entries").and_then(|v| v.as_array()) {
-                    if !entries.is_empty() {
-                        let mut cmd = redis::cmd("ZADD");
-                        cmd.arg(&key);
-                        for e in entries {
-                            let score = e.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                            let member = e.get("member").and_then(|v| v.as_str()).unwrap_or("");
-                            cmd.arg(score).arg(member);
-                        }
-                        let _: i64 = cmd.query_async(&mut c).await.map_err(|e| e.to_string())?;
+                if let Some(entries) = payload.get("entries").and_then(|v| v.as_array())
+                    && !entries.is_empty()
+                {
+                    let mut cmd = redis::cmd("ZADD");
+                    cmd.arg(&key);
+                    for e in entries {
+                        let score = e.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        let member = e.get("member").and_then(|v| v.as_str()).unwrap_or("");
+                        cmd.arg(score).arg(member);
                     }
+                    let _: i64 = cmd.query_async(&mut c).await.map_err(|e| e.to_string())?;
                 }
             }
             other => return Err(format!("Chưa hỗ trợ set cho kiểu \"{}\"", other)),

@@ -71,15 +71,16 @@ pub(crate) fn first_i64(results: Vec<Value>) -> Option<i64> {
 // Take the string value of the first cell of every row in an execute_raw_sql_generic result
 pub(crate) fn all_string_values(results: &[Value]) -> Vec<String> {
     let mut out = Vec::new();
-    if let Some(data) = results.first()
+    if let Some(data) = results
+        .first()
         .and_then(|r| r.get("data"))
         .and_then(|v| v.as_array())
     {
         for row in data {
-            if let Some(v) = row.as_object().and_then(|o| o.values().next()) {
-                if let Some(s) = v.as_str() {
-                    out.push(s.to_string());
-                }
+            if let Some(v) = row.as_object().and_then(|o| o.values().next())
+                && let Some(s) = v.as_str()
+            {
+                out.push(s.to_string());
             }
         }
     }

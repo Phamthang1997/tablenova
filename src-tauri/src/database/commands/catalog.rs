@@ -68,9 +68,8 @@ pub async fn get_full_catalog(conn_id: String) -> Result<Value, String> {
             let c = cell(&row, "c");
             if let Some(arr) = columns_map.get_mut(t).and_then(|v| v.as_array_mut()) {
                 for col in arr.iter_mut() {
-                    if col.get("name").and_then(|v| v.as_str()) == Some(c) {
-                        if let Some(o) = col.as_object_mut() { o.insert("isPrimaryKey".into(), json!(true)); }
-                    }
+                    if col.get("name").and_then(|v| v.as_str()) == Some(c)
+                        && let Some(o) = col.as_object_mut() { o.insert("isPrimaryKey".into(), json!(true)); }
                 }
             }
         }

@@ -200,11 +200,10 @@ pub async fn restore_backup(
         }
         let session_level = is_session_level_stmt(&head);
         if session_level {
-            if head.starts_with("USE ") {
-                if let Some(db) = use_db_name(body) {
+            if head.starts_with("USE ")
+                && let Some(db) = use_db_name(body) {
                     last_use_db = Some(db);
                 }
-            }
         } else if !matcher.matches(&q) {
             continue;
         }

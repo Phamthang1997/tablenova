@@ -120,10 +120,10 @@ impl ColState {
 
     /// One value, honouring nullPercent / unique / prefix / suffix / case.
     pub(super) fn next_cell(&mut self, dialect: &str) -> Result<Cell, String> {
-        if let Some(p) = self.spec.null_percent {
-            if self.rng.chance(p) {
-                return Ok(Cell::Null);
-            }
+        if let Some(p) = self.spec.null_percent
+            && self.rng.chance(p)
+        {
+            return Ok(Cell::Null);
         }
         let attempts = if self.unique { UNIQUE_RETRIES } else { 1 };
         for _ in 0..attempts {
@@ -148,10 +148,10 @@ impl ColState {
             Cell::Text(t) => t,
             other => return other,
         };
-        if let Some(p) = self.spec.empty_percent {
-            if self.rng.chance(p) {
-                return Cell::Text(String::new());
-            }
+        if let Some(p) = self.spec.empty_percent
+            && self.rng.chance(p)
+        {
+            return Cell::Text(String::new());
         }
         let mut out = match self.spec.case.as_deref() {
             Some("upper") => text.to_uppercase(),

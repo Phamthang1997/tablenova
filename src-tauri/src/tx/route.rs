@@ -249,10 +249,8 @@ pub async fn abandon(conn: Option<&DbConnection>) {
     let was_open = is_open(&id);
     let pinned = session.pinned.clone();
     let mut guard = pinned.lock_owned().await;
-    if was_open {
-        if let (Some(p), Some(c)) = (guard.as_mut(), conn) {
-            let _ = raw_on_pinned(p, c, "ROLLBACK").await;
-        }
+    if was_open && let (Some(p), Some(c)) = (guard.as_mut(), conn) {
+        let _ = raw_on_pinned(p, c, "ROLLBACK").await;
     }
     *guard = None;
     drop(guard);

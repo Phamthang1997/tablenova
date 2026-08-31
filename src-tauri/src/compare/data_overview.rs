@@ -70,10 +70,10 @@ pub(super) async fn data_overview_inner(
     let mut diff_tables = 0usize;
 
     for name in names {
-        if let Some(f) = &filter {
-            if !f.contains(name) {
-                continue;
-            }
+        if let Some(f) = &filter
+            && !f.contains(name)
+        {
+            continue;
         }
         let s = src_meta.get(name);
         let t = tgt_meta.get(name);
