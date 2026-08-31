@@ -17,7 +17,7 @@ import { getDoc, formatDocMarkdown } from '../utils/docsService';
 import { enumValues, typeFamily } from '../utils/columnType';
 import i18n from '../i18n';
 
-const BUMP_CMD = 'tablenova.bumpUsage';
+const BUMP_CMD = 'tablegrid.bumpUsage';
 
 /** Type labels in suggest popup matching hover documentation keys. */
 const tableKind = (type: string) =>

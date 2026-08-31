@@ -1,20 +1,20 @@
 ===============================================================================
                        TERMS OF SERVICE AND PRIVACY POLICY
                              (EULA & PRIVACY POLICY)
-                                   TABLENOVA
+                                    TABLEGRID
 ===============================================================================
 
 Version: 1.0.0
 Effective Date: 2026
 
-Welcome to TableNova - Database Management and Operation Software.
+Welcome to TableGrid - Database Management and Operation Software.
 By downloading, installing, or using this software, you agree to be bound by the
 terms and conditions specified below.
 
 -------------------------------------------------------------------------------
 1. LICENSE GRANT
 -------------------------------------------------------------------------------
-- TableNova grants you a personal, non-commercial or commercial right to use the
+- TableGrid grants you a personal, non-commercial or commercial right to use the
   software under a valid license.
 - You have the right to install the software on personal computer devices owned
   or controlled by you.
@@ -48,5 +48,5 @@ terms and conditions specified below.
   DROP) before executing them in a Production environment.
 
 -------------------------------------------------------------------------------
-Thank you for choosing and trusting TableNova!
+Thank you for choosing and trusting TableGrid!
 ===============================================================================

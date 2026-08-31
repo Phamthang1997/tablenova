@@ -1,5 +1,5 @@
 /**
- * Chart.js setup and registration for TableNova.
+ * Chart.js setup and registration for TableGrid.
  * Registers necessary controllers, scales, elements, and plugins.
  */
 

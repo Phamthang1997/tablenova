@@ -1,6 +1,6 @@
 //! The four introspection tools: what connections exist, and what is inside one.
 //!
-//! These reuse the very bodies the TableNova UI calls, through the `*_inner` entry points that take
+//! These reuse the very bodies the TableGrid UI calls, through the `*_inner` entry points that take
 //! an `&AppState` instead of a `tauri::State`. That is the point - schema introspection is a pile of
 //! dialect-specific SQL, and a second copy written for AI clients would answer a different question
 //! from the sidebar within a release or two.

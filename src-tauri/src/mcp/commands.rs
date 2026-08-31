@@ -1,7 +1,7 @@
 //! The Tauri commands behind the MCP settings screen.
 //!
 //! Language note, and it is the opposite of the rest of this directory: these messages surface in
-//! the TableNova UI, so they follow the repo rule - Vietnamese literals, translated at the dbHelper
+//! the TableGrid UI, so they follow the repo rule - Vietnamese literals, translated at the dbHelper
 //! boundary by `src/utils/backendErrors.ts`. The errors in `http.rs` and `tools/` are read by an AI
 //! client instead, so those are English and never go through that table. Registering these strings
 //! in `backendErrors.ts` happens together with the Settings UI (Bước 3 of the plan).

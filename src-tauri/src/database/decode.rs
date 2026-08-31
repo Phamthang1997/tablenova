@@ -260,8 +260,8 @@ mod tests {
     #[test]
     fn test_json_to_sqlite_value_string() {
         assert_eq!(
-            json_to_sqlite_value(&json!("TableNova")),
-            SV::Text("TableNova".into())
+            json_to_sqlite_value(&json!("TableGrid")),
+            SV::Text("TableGrid".into())
         );
     }
 

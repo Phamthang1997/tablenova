@@ -1,4 +1,4 @@
-//! Live Processlist and Query Monitoring Commands for TableNova.
+//! Live Processlist and Query Monitoring Commands for TableGrid.
 //!
 //! Provides real-time visibility into database connections, active running queries,
 //! lock waits/deadlock blockers, and allows administrators to safely cancel queries

@@ -1,12 +1,12 @@
-// Custom Monaco theme for TableNova.
+// Custom Monaco theme for TableGrid.
 // Avoids direct monaco-sql-languages token palette (vs-plus) because in Light mode it
 // sets comment = #B1B4C5 and operators = #7D98B1 (hard to read), keyword = #3300FF
 // and scope = #E221DA (harsh). Custom palette prioritizes TABLE/COLUMN NAMES (identifier) as
 // highest-contrast elements — the natural reading priority for SQL database tools.
 import * as monaco from 'monaco-editor';
 
-export const SQL_THEME_DARK = 'tablenova-sql-dark';
-export const SQL_THEME_LIGHT = 'tablenova-sql-light';
+export const SQL_THEME_DARK = 'tablegrid-sql-dark';
+export const SQL_THEME_LIGHT = 'tablegrid-sql-light';
 
 export function sqlThemeName(theme: 'dark' | 'light' | undefined): string {
   return theme === 'light' ? SQL_THEME_LIGHT : SQL_THEME_DARK;

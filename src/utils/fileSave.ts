@@ -10,7 +10,7 @@ import i18n from '../i18n';
  * file is never lost.
  */
 
-const LAST_DIR_KEY = 'tablenova.export.lastDir';
+const LAST_DIR_KEY = 'tablegrid.export.lastDir';
 
 /** The directory used for the previous export (pre-filled in the dialog next time). */
 export function getLastExportDir(): string {

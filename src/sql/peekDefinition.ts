@@ -72,7 +72,7 @@ export function registerSqlPeekDefinition(monacoInstance: typeof monaco): void {
       // URI includes connId: identical table name `users` across two connections represents distinct definitions.
       
       const uri = monacoInstance.Uri.parse(
-        `tablenova://table/${encodeURIComponent(connId)}/${encodeURIComponent(table.name)}.sql`,
+        `tablegrid://table/${encodeURIComponent(connId)}/${encodeURIComponent(table.name)}.sql`,
       );
       const existing = monacoInstance.editor.getModel(uri);
       if (existing) {

@@ -21,7 +21,7 @@ for (const item of ALL_DOCS) {
 }
 
 /**
- * Normalizes DB type strings used in TableNova ('postgres' | 'mysql' | 'sqlite' | 'redis')
+ * Normalizes DB type strings used in TableGrid ('postgres' | 'mysql' | 'sqlite' | 'redis')
  */
 export function normalizeEngine(dbType?: string): DbEngine | undefined {
   if (!dbType) return undefined;

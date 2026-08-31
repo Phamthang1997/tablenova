@@ -124,10 +124,10 @@
 
 ### ⚠️ macOS Gatekeeper Troubleshooting ("App is damaged and can't be opened")
 If you download a `.dmg` release built from GitHub Actions, macOS Gatekeeper may block unsigned binaries downloaded via web browsers. To resolve this:
-1. Drag `TableNova.app` into your `/Applications` folder.
+1. Drag `TableGrid.app` into your `/Applications` folder.
 2. Open Terminal and run:
    ```bash
-   sudo xattr -rd com.apple.quarantine /Applications/TableNova.app
+   sudo xattr -rd com.apple.quarantine /Applications/TableGrid.app
    ```
 
 ---

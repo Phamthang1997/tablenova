@@ -124,7 +124,7 @@ export const SQLITE_DOCS: DocEntry[] = [
     ],
     returns: 'text',
     since: 'SQLite 3.0.8',
-    examples: ["SELECT REPLACE('hello world', 'world', 'TableNova');"],
+    examples: ["SELECT REPLACE('hello world', 'world', 'TableGrid');"],
     officialUrl: 'https://sqlite.org/lang_corefunc.html#replace',
   },
   {

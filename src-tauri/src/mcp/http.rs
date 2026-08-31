@@ -44,7 +44,7 @@ pub fn router(port: u16, token: Arc<str>, cancel: CancellationToken) -> Router {
     // far as it went: nothing here needs a session - the tools are stateless reads, and the only real
     // state, which connection is shared, lives in `AppState` rather than in the transport - and
     // SEP-2567 removes sessions from protocol 2026-07-28 anyway. It also promised to kill a genuine
-    // annoyance: in session mode every TableNova restart invalidates every client's session, which
+    // annoyance: in session mode every TableGrid restart invalidates every client's session, which
     // reaches the user as `session not found`.
     //
     // It broke a client that had been working. Stateless has no server-to-client stream, so
@@ -52,7 +52,7 @@ pub fn router(port: u16, token: Arc<str>, cancel: CancellationToken) -> Router {
     // that stream (its own name for it is `subscriptions/listen`), then abandons its whole tool list
     // when it cannot. Measured both ways against the real client.
     //
-    // So the trade is deliberate: keep sessions, and a restart of TableNova costs connected clients
+    // So the trade is deliberate: keep sessions, and a restart of TableGrid costs connected clients
     // one reconnect. That is a transient with an obvious remedy; the alternative was a permanent
     // failure for one of the two clients this build is actually tested against. Anyone tempted to
     // flip this again should read `docs/mcp-server-plan.md` §6 Bước 3 first.

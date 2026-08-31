@@ -1,5 +1,5 @@
 /**
- * Interactive ER Diagram Module for TableNova.
+ * Interactive ER Diagram Module for TableGrid.
  */
 
 export * from './erTypes';
