@@ -175,10 +175,28 @@ function buildSheetXml(colNames: string[], rows: any[]): string {
     const cells = colNames.map((c, i) => cellXml(`${colLetter(i)}${rowNum}`, row[c])).join('');
     rowXmls.push(`<row r="${rowNum}">${cells}</row>`);
   }
+  // The header row stays put while the sheet scrolls. Row 1 is always the column names, so this is
+  // unconditional — an export with no data rows still gets a frozen header, which costs nothing and
+  // keeps the output identical whether the query returned 0 rows or 100,000.
+  //
+  // `ySplit="1"` is how many rows are frozen; `topLeftCell="A2"` is the first cell of the scrolling
+  // pane and MUST agree with it, or Excel scrolls the frozen row out of view. `state="frozen"` is
+  // what makes it a freeze rather than a draggable split.
+  //
+  // `<sheetViews>` has to come BEFORE `<sheetData>`: the sheet schema is a `xsd:sequence`, so an
+  // element in the wrong order is not "ignored", it makes Excel report the file as corrupt.
+  //
+  // Deliberately no bold header or number formats here: both need a `styles.xml` part and an `s=`
+  // attribute on every cell, which is a different piece of work. A freeze needs neither.
+  const sheetViews =
+    `<sheetViews><sheetView workbookViewId="0">` +
+    `<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>` +
+    `</sheetView></sheetViews>`;
+
   return (
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
     `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
-    `<sheetData>${rowXmls.join('')}</sheetData></worksheet>`
+    `${sheetViews}<sheetData>${rowXmls.join('')}</sheetData></worksheet>`
   );
 }
 

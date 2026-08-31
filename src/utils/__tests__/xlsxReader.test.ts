@@ -55,3 +55,37 @@ describe('parseXlsx', () => {
     );
   });
 });
+
+describe('buildXlsx: freeze pane', () => {
+  // Reads the sheet XML back out of the zip the writer produced, so the assertion is about the file
+  // that actually ships rather than about a string the writer happened to build on the way there.
+  function sheetXml(bytes: Uint8Array): string {
+    // The writer builds a STORED (uncompressed) zip on purpose — see its header — so every part is
+    // present verbatim and the sheet XML can be read straight out of the bytes. No unzip needed,
+    // and nothing has to be exported from the reader just to be testable.
+    const all = new TextDecoder().decode(bytes);
+    const start = all.indexOf('<worksheet');
+    return all.slice(start, all.indexOf('</worksheet>', start));
+  }
+
+  it('đóng băng dòng tiêu đề', () => {
+    const xml = sheetXml(buildXlsx('S', ['a'], [{ a: 1 }]));
+    expect(xml).toContain('state="frozen"');
+    expect(xml).toContain('ySplit="1"');
+    // `topLeftCell` must agree with `ySplit`, or Excel scrolls the frozen row out of sight.
+    expect(xml).toContain('topLeftCell="A2"');
+  });
+
+  it('đóng băng cả khi không có dòng dữ liệu nào', () => {
+    const xml = sheetXml(buildXlsx('S', ['a'], []));
+    expect(xml).toContain('state="frozen"');
+  });
+
+  // The sheet schema is an xsd:sequence: an element out of order does not get ignored, Excel
+  // reports the whole file as corrupt. This ordering is the part a future edit can silently break.
+  it('sheetViews đứng trước sheetData', () => {
+    const xml = sheetXml(buildXlsx('S', ['a'], [{ a: 1 }]));
+    expect(xml.indexOf('<sheetViews>')).toBeGreaterThan(-1);
+    expect(xml.indexOf('<sheetViews>')).toBeLessThan(xml.indexOf('<sheetData>'));
+  });
+});
