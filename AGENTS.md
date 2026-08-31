@@ -19,7 +19,7 @@
 
 ## Git Commits, PRs & Source Code Comments (English Only)
 - **Git Commit Messages**: All commit messages must be written in **English** using Conventional Commits format (e.g., `feat(scope): ...`, `fix(scope): ...`, `refactor(scope): ...`, `docs(scope): ...`).
-- **Pull Requests**: PR Titles and Descriptions must be written in **English**. Do not include `Co-Authored-By` footers/trailers.
+- **Pull Requests**: PR Titles and Descriptions must be written in **English**. Do not include `Co-Authored-By` footers/trailers. **Always apply and fill out `.github/pull_request_template.md` directly from the start when creating any PR body** (never invent an ad-hoc format).
 - **Code Comments**: All code comments, explanations, and docstrings in TypeScript and Rust source files must be written in **English**.
 
 ## Refactoring & Verification Protocol

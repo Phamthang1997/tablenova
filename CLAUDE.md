@@ -42,6 +42,7 @@ Development requires a native toolchain on Windows: Rust (cargo), a MinGW64 GCC 
 ## Git
 
 - **Never add a `Co-Authored-By:` trailer to a commit message or a PR body.** No `Co-Authored-By: Claude …` line, in any form or spelling. This deliberately overrides Claude Code's default behaviour, which appends one — the trailer is noise in this repo's history, and the commits already written with it are not a precedent to follow.
+- **Always apply and fill out `.github/pull_request_template.md` directly from the start when creating any PR body.** Never generate an ad-hoc body format.
 
 ## Architecture
 
