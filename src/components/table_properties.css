@@ -18,6 +18,27 @@
   background: var(--win-bg-window, var(--win-bg-popover));
   color: var(--win-text-primary);
   font-family: var(--win-font-sans);
+
+  /* One hue per metric label, declared per THEME rather than as a literal in the rule that uses it.
+     The app has no `--win-*` token for these hues, and a single hex would be correct in at most one
+     of the two themes — the trap CLAUDE.md names. Amber is the one that forced the issue: `#f59e0b`
+     on 10px uppercase over a white ground is around 2:1 contrast, i.e. unreadable, while on the dark
+     ground it is fine. So these are the dark values (dark is the default theme, `:root`), and the
+     light block below darkens each one. `--tp-hue-size` needs no override: `--win-accent` is already
+     theme-aware. Scoped to this panel on purpose — defining `--win-warning` globally would silently
+     restyle the ~51 existing sites that reference it with a fallback. */
+  --tp-hue-size: var(--win-accent);
+  --tp-hue-rows: #4ade80;
+  --tp-hue-cols: #a78bfa;
+  --tp-hue-idx: #fbbf24;
+  --tp-code-str: #6ee7b7;
+}
+
+[data-theme='light'] .tp-container {
+  --tp-hue-rows: #15803d;
+  --tp-hue-cols: #7c3aed;
+  --tp-hue-idx: #b45309;
+  --tp-code-str: #047857;
 }
 
 /* ---------------------------------------------------------------- Toolbar */
@@ -186,6 +207,29 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
+  /* Set HERE and inherited by both children, so one hue per tile is one declaration. The icon is a
+     lucide SVG and strokes with `currentColor`; the label carries no colour of its own. */
+  color: var(--win-text-secondary);
+}
+
+/* One hue per figure, from the per-theme values on `.tp-container`. The hues mean what the Sidebar
+   already means by them: accent for tables/storage, violet for structure, amber for keys. The big
+   number stays `--win-text-primary` — it is the focal point, and four coloured numbers would compete
+   with each other instead of standing out from the labels. */
+.tp-metric-head-size {
+  color: var(--tp-hue-size);
+}
+
+.tp-metric-head-rows {
+  color: var(--tp-hue-rows);
+}
+
+.tp-metric-head-cols {
+  color: var(--tp-hue-cols);
+}
+
+.tp-metric-head-idx {
+  color: var(--tp-hue-idx);
 }
 
 .tp-metric-label {
@@ -194,11 +238,9 @@
   letter-spacing: 0.6px;
   line-height: 1.2;
   text-transform: uppercase;
-  color: var(--win-text-secondary);
 }
 
 .tp-metric-icon {
-  color: var(--win-text-disabled);
   flex-shrink: 0;
 }
 
@@ -420,8 +462,8 @@
 }
 
 .tp-badge-temp {
-  border-color: var(--win-warning, #f59e0b);
-  color: var(--win-warning, #f59e0b);
+  border-color: var(--tp-hue-idx);
+  color: var(--tp-hue-idx);
 }
 
 /* The object's kind, beside its name in the toolbar. It used to be a row in the General card AND
@@ -431,8 +473,8 @@
 }
 
 .tp-badge-view {
-  border-color: #8b5cf6;
-  color: #8b5cf6;
+  border-color: var(--tp-hue-cols);
+  color: var(--tp-hue-cols);
 }
 
 /* ------------------------------------------------------------ DDL block */
@@ -485,7 +527,7 @@
 }
 
 .tp-str {
-  color: var(--win-success, #16a34a);
+  color: var(--tp-code-str);
 }
 
 .tp-cmt {

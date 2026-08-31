@@ -418,16 +418,16 @@ export const TablePropertiesView: React.FC<TablePropertiesViewProps> = ({
             is the icon of the card that details it, so the eye can follow one to the other. */}
         <div className="tp-metrics">
           <div className="tp-metric">
-            <div className="tp-metric-head">
-              <HardDrive size={13} className="tp-metric-icon" />
+            <div className="tp-metric-head tp-metric-head-size">
+              <HardDrive size={14} className="tp-metric-icon" />
               <span className="tp-metric-label">{t('tableProperties.metricTotalSize')}</span>
             </div>
             <span className="tp-metric-val">{totalSize ?? '—'}</span>
             <span className="tp-metric-sub">{props.engine ?? props.dbType}</span>
           </div>
           <div className="tp-metric">
-            <div className="tp-metric-head">
-              <Hash size={13} className="tp-metric-icon" />
+            <div className="tp-metric-head tp-metric-head-rows">
+              <Hash size={14} className="tp-metric-icon" />
               <span className="tp-metric-label">{t('tableProperties.metricRows')}</span>
             </div>
             <span className="tp-metric-val">
@@ -439,8 +439,8 @@ export const TablePropertiesView: React.FC<TablePropertiesViewProps> = ({
             </span>
           </div>
           <div className="tp-metric">
-            <div className="tp-metric-head">
-              <Columns3 size={13} className="tp-metric-icon" />
+            <div className="tp-metric-head tp-metric-head-cols">
+              <Columns3 size={14} className="tp-metric-icon" />
               <span className="tp-metric-label">{t('tableProperties.metricColumns')}</span>
             </div>
             <span className="tp-metric-val">{formatCount(props.columnCount, locale)}</span>
@@ -451,8 +451,8 @@ export const TablePropertiesView: React.FC<TablePropertiesViewProps> = ({
             </span>
           </div>
           <div className="tp-metric">
-            <div className="tp-metric-head">
-              <KeyRound size={13} className="tp-metric-icon" />
+            <div className="tp-metric-head tp-metric-head-idx">
+              <KeyRound size={14} className="tp-metric-icon" />
               <span className="tp-metric-label">{t('tableProperties.metricIndexes')}</span>
             </div>
             <span className="tp-metric-val">{formatCount(props.indexCount, locale) ?? '—'}</span>
