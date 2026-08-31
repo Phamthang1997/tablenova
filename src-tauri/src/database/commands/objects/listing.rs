@@ -27,7 +27,7 @@ pub async fn get_database_objects(conn_id: String) -> Result<Value, String> {
     // Split tables/views out of the result (name_col, type_col) using the value that marks a view
     fn split_tables_views(results: &[Value], name_col: &str, type_col: &str, view_val: &str,
                           tables: &mut Vec<String>, views: &mut Vec<String>) {
-        if let Some(data) = results.get(0).and_then(|r| r.get("data")).and_then(|v| v.as_array()) {
+        if let Some(data) = results.first().and_then(|r| r.get("data")).and_then(|v| v.as_array()) {
             for row in data {
                 if let Some(o) = row.as_object() {
                     let name = o.get(name_col).and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -64,7 +64,7 @@ pub async fn get_database_objects(conn_id: String) -> Result<Value, String> {
             let rt = execute_raw_sql_generic(&conn_type,
                 format!("SELECT p.proname AS name, p.prokind::text AS kind FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = '{sch}' AND p.prokind IN ('f','p') ORDER BY p.proname"))
                 .await.unwrap_or_default();
-            if let Some(data) = rt.get(0).and_then(|r| r.get("data")).and_then(|v| v.as_array()) {
+            if let Some(data) = rt.first().and_then(|r| r.get("data")).and_then(|v| v.as_array()) {
                 for row in data {
                     if let Some(o) = row.as_object() {
                         let name = o.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -82,7 +82,7 @@ pub async fn get_database_objects(conn_id: String) -> Result<Value, String> {
             let rt = execute_raw_sql_generic(&conn_type,
                 "SELECT ROUTINE_NAME AS name, ROUTINE_TYPE AS kind FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = DATABASE() ORDER BY ROUTINE_NAME".to_string())
                 .await.unwrap_or_default();
-            if let Some(data) = rt.get(0).and_then(|r| r.get("data")).and_then(|v| v.as_array()) {
+            if let Some(data) = rt.first().and_then(|r| r.get("data")).and_then(|v| v.as_array()) {
                 for row in data {
                     if let Some(o) = row.as_object() {
                         let name = o.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();

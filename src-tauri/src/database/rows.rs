@@ -3,7 +3,7 @@
 use serde_json::Value;
 
 pub(crate) fn rows_of(res: &[Value]) -> Vec<Value> {
-    res.get(0)
+    res.first()
         .and_then(|r| r.get("data"))
         .and_then(|v| v.as_array())
         .cloned()
@@ -71,8 +71,7 @@ pub(crate) fn first_i64(results: Vec<Value>) -> Option<i64> {
 // Take the string value of the first cell of every row in an execute_raw_sql_generic result
 pub(crate) fn all_string_values(results: &[Value]) -> Vec<String> {
     let mut out = Vec::new();
-    if let Some(data) = results
-        .get(0)
+    if let Some(data) = results.first()
         .and_then(|r| r.get("data"))
         .and_then(|v| v.as_array())
     {

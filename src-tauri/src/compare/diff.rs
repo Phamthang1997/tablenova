@@ -167,8 +167,7 @@ pub(super) fn view_def_differs(
         }
 
         let mut cleaned = str_val
-            .replace('"', "")
-            .replace('`', "")
+            .replace(['"', '`'], "")
             .replace("public.", "")
             .replace("PUBLIC.", "")
             .replace("dbo.", "")
@@ -190,7 +189,7 @@ pub(super) fn view_def_differs(
             cleaned = cleaned.replace(&pfx1, "").replace(&pfx2, "");
         }
 
-        cleaned = cleaned.replace('(', " ").replace(')', " ");
+        cleaned = cleaned.replace(['(', ')'], " ");
 
         cleaned
             .split_whitespace()

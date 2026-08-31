@@ -467,7 +467,7 @@ pub async fn get_table_definition(conn_id: String, name: String) -> Result<Value
             );
             let results = execute_raw_sql_generic(&conn_type, sql).await?;
             let mut defs: Vec<String> = Vec::new();
-            if let Some(data) = results.get(0).and_then(|r| r.get("data")).and_then(|v| v.as_array()) {
+            if let Some(data) = results.first().and_then(|r| r.get("data")).and_then(|v| v.as_array()) {
                 for row in data {
                     let o = match row.as_object() { Some(o) => o, None => continue };
                     let col = o.get("column_name").and_then(|v| v.as_str()).unwrap_or("");

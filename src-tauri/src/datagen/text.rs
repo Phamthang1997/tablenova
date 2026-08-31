@@ -209,7 +209,7 @@ mod tests {
             let d = if i % 2 == 1 { d * 2 } else { d };
             sum += if d > 9 { d - 9 } else { d };
         }
-        sum % 10 == 0
+        sum.is_multiple_of(10)
     }
 
     #[test]

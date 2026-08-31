@@ -178,9 +178,9 @@ pub(super) fn o_val<'a>(options: &'a Option<Value>, key: &str) -> Option<&'a Val
 }
 
 pub(super) fn o_str(options: &Option<Value>, key: &str) -> Option<String> {
-    o_val(options, key).and_then(|v| match v {
-        Value::String(s) => Some(s.clone()),
-        other => Some(other.to_string()),
+    o_val(options, key).map(|v| match v {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
     })
 }
 

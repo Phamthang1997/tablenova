@@ -297,15 +297,14 @@ mod tests {
     #[test]
     fn an_omitted_connection_id_resolves_only_when_there_is_no_choice() {
         let one = choose_only(vec!["c1".to_string()]);
-        assert_eq!(one.ok().map(|s| s), Some("c1".to_string()));
+        assert_eq!(one.ok(), Some("c1".to_string()));
 
         // Nothing shared reads exactly like an id that does not exist - §3.3.
         assert!(choose_only(vec![]).is_err());
 
         // Two shared must REFUSE and name them, never guess.
         let many = choose_only(vec!["zeta".to_string(), "alpha".to_string()])
-            .err()
-            .expect("refuse");
+            .expect_err("refuse");
         let msg = many.error.message.to_string();
         assert!(msg.contains("connection_id is required"), "{msg}");
         assert!(msg.contains("alpha, zeta"), "must name them, sorted: {msg}");

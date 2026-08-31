@@ -89,8 +89,8 @@ pub(super) async fn raw_on_pinned(
             DbKind::Sqlite(arc) => database::sqlite_raw(arc, sql),
             _ => Err("Kết nối không khớp với phiên transaction".to_string()),
         },
-        Pinned::Postgres(c) => database::pg_raw(&mut **c, sql).await,
-        Pinned::Mysql(c) => database::mysql_raw(&mut **c, sql).await,
+        Pinned::Postgres(c) => database::pg_raw(c, sql).await,
+        Pinned::Mysql(c) => database::mysql_raw(c, sql).await,
     }
 }
 
@@ -172,8 +172,8 @@ pub(crate) async fn run_bound(
             DbKind::Sqlite(arc) => database::sqlite_bound(arc, &sql, params),
             _ => Err("Kết nối không khớp với phiên transaction".to_string()),
         },
-        Pinned::Postgres(c) => database::pg_bound(&mut **c, &sql, params).await,
-        Pinned::Mysql(c) => database::mysql_bound(&mut **c, &sql, params).await,
+        Pinned::Postgres(c) => database::pg_bound(c, &sql, params).await,
+        Pinned::Mysql(c) => database::mysql_bound(c, &sql, params).await,
     };
     drop(guard);
 
@@ -216,10 +216,10 @@ pub(crate) async fn run_stream(
             _ => Err("Kết nối không khớp với phiên transaction".to_string()),
         },
         Pinned::Postgres(c) => {
-            database::pg_stream(&mut **c, sql, params, stmt_index, channel, cancel).await
+            database::pg_stream(c, sql, params, stmt_index, channel, cancel).await
         }
         Pinned::Mysql(c) => {
-            database::mysql_stream(&mut **c, sql, params, stmt_index, channel, cancel).await
+            database::mysql_stream(c, sql, params, stmt_index, channel, cancel).await
         }
     };
     drop(guard);

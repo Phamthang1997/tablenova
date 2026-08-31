@@ -132,10 +132,8 @@ pub(crate) async fn get_tables_inner(
                     }))
                 })
                 .map_err(|e| e.to_string())?;
-            for row in rows {
-                if let Ok(val) = row {
-                    tables.push(val);
-                }
+            for val in rows.flatten() {
+                tables.push(val);
             }
         }
         DbKind::Postgres(pool) => {

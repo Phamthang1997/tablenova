@@ -101,7 +101,7 @@ pub(super) async fn resolve_side(
     let (active, active_type, last_config, tunnel_port) = {
         // `.ok()`, not `?`: each side may carry its own config, so "not connected" is not
         // an error here — `base` below is what decides (`side.config.or(last_config)`).
-        match state.connections.acquire(&conn_id).ok() {
+        match state.connections.acquire(conn_id).ok() {
             Some(ctx) => (
                 Some(ctx.conn().clone()),
                 ctx.server().db_type.clone(),

@@ -390,7 +390,7 @@ pub async fn get_db_charsets(conn_id: String) -> Result<Value, String> {
     // Extract the values of one column from an execute_raw_sql_generic result
     fn col_values(results: &[Value], col: &str) -> Vec<String> {
         let mut out = Vec::new();
-        if let Some(data) = results.get(0).and_then(|r| r.get("data")).and_then(|v| v.as_array()) {
+        if let Some(data) = results.first().and_then(|r| r.get("data")).and_then(|v| v.as_array()) {
             for row in data {
                 if let Some(v) = row.as_object().and_then(|o| o.get(col)).and_then(|v| v.as_str()) {
                     out.push(v.to_string());
@@ -409,7 +409,7 @@ pub async fn get_db_charsets(conn_id: String) -> Result<Value, String> {
             let coll_res = execute_raw_sql_generic(&conn_type, "SHOW COLLATION".to_string()).await?;
             // Group the collations by charset so the UI can filter them by the chosen encoding
             let mut by_enc: serde_json::Map<String, Value> = serde_json::Map::new();
-            if let Some(data) = coll_res.get(0).and_then(|r| r.get("data")).and_then(|v| v.as_array()) {
+            if let Some(data) = coll_res.first().and_then(|r| r.get("data")).and_then(|v| v.as_array()) {
                 for row in data {
                     if let Some(o) = row.as_object() {
                         let collation = o.get("Collation").and_then(|v| v.as_str());
