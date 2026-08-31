@@ -3,8 +3,42 @@ import react from '@vitejs/plugin-react'
 import path from 'path'
 
 // https://vite.dev/config/
+/**
+ * Connects the standalone React DevTools (`npx react-devtools`) to the app, for profiling.
+ *
+ * Three things this shape buys over pasting `<script src="http://localhost:8097">` into index.html,
+ * which is what was done first and had to be remembered and removed by hand before every build:
+ *
+ * - `apply: 'serve'` means it CANNOT reach a production build. index.html stays clean.
+ * - It is off unless asked for, so nobody gets a failed request to localhost:8097 on every reload.
+ *   Turn it on in the app's own DevTools console with `localStorage.rdt = 1`, then reload; turn it
+ *   off with `localStorage.removeItem('rdt')`.
+ * - `document.write` rather than appending a script element, deliberately. React DevTools works by
+ *   installing a global hook that React looks for AS IT INITIALISES; a dynamically appended script
+ *   loads asynchronously and usually arrives after React has already started, which presents as
+ *   "Waiting for React to connect" and no amount of reloading fixes it. `document.write` during the
+ *   initial parse is synchronous, which is the property needed here.
+ *
+ * Why the standalone tool and not a browser extension: this runs in WebView2, which has none.
+ */
+const reactDevtools = {
+  name: 'react-devtools-standalone',
+  apply: 'serve' as const,
+  transformIndexHtml() {
+    return [
+      {
+        tag: 'script',
+        injectTo: 'head-prepend' as const,
+        children:
+          `try{if(localStorage.getItem('rdt')==='1')` +
+          `document.write('<scr'+'ipt src="http://localhost:8097"></scr'+'ipt>')}catch(e){}`,
+      },
+    ];
+  },
+};
+
 export default defineConfig({
-  plugins: [react({})],
+  plugins: [react({}), reactDevtools],
   resolve: {
     alias: {
       '@': path.resolve(import.meta.dirname, './src')
