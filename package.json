@@ -18,6 +18,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "lint": "oxlint",
+    "postinstall": "node scripts/setup-blame.mjs",
     "fmt:rust": "cd src-tauri && cargo fmt",
     "lint:rust": "cd src-tauri && cargo clippy --all-targets",
     "test:rust": "cd src-tauri && cargo test --lib"
