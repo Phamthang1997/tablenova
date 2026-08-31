@@ -722,6 +722,25 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
         return;
       }
 
+      // 3a. Copy the selected rows (Ctrl/Cmd + C)
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === 'c') {
+        const el = document.activeElement;
+        const inTextField = el && (
+          el.tagName === 'INPUT' ||
+          el.tagName === 'TEXTAREA' ||
+          el.getAttribute('contenteditable') === 'true'
+        );
+        // Three ways this must NOT take over, all of them cases where the native copy is the right
+        // one: a cell editor or the search box owns the keystroke, or the user has highlighted text
+        // and means to copy that text rather than the rows it happens to sit in.
+        if (inTextField || editingCell) return;
+        if ((window.getSelection()?.toString() || '').length > 0) return;
+        if (selectedRowIds.size === 0) return;
+        e.preventDefault();
+        copySelectionAsTsv();
+        return;
+      }
+
       // 4. Delete Selected Row (Delete or Backspace - only when not editing a text input/textarea)
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedRowIds.size > 0) {
         const activeEl = document.activeElement;
@@ -1085,16 +1104,35 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
    * order the user is looking at; a `Set` preserves insertion order, which for a Shift range is the
    * click order, not the row order.
    */
-  const rowsToCopy = (clicked: any): any[] => {
-    if (selectedRowIds.size <= 1) return [clicked];
+  /**
+   * Maps a selection key back to its row object.
+   *
+   * Built from `displayedRows`/`displayedInserts`, never from `rows`/`inserts`: a row with no
+   * primary key is keyed `__idx_<position>`, and the position has to be the one the render used, or
+   * an active quick search shifts every key by the number of rows it hid — silently copying and
+   * exporting rows the user did not pick.
+   */
+  const rowByKey = (): Map<any, any> => {
     const byKey = new Map<any, any>();
-    rows.forEach((row, idx) => {
+    displayedRows.forEach((row, idx) => {
       const id = row[primaryKey];
       byKey.set(id !== undefined && id !== null ? id : `__idx_${idx}`, row);
     });
     displayedInserts.forEach(row => byKey.set(row.__tempId, row));
-    const picked = orderedRowKeys.filter(k => selectedRowIds.has(k)).map(k => byKey.get(k));
-    return picked.filter(Boolean).length > 0 ? picked.filter(Boolean) : [clicked];
+    return byKey;
+  };
+
+  /** The selected rows as objects, in screen order. Empty when nothing is selected. */
+  const selectedRows = (): any[] => {
+    if (selectedRowIds.size === 0) return [];
+    const byKey = rowByKey();
+    return orderedRowKeys.filter(k => selectedRowIds.has(k)).map(k => byKey.get(k)).filter(Boolean);
+  };
+
+  const rowsToCopy = (clicked: any): any[] => {
+    if (selectedRowIds.size <= 1) return [clicked];
+    const picked = selectedRows();
+    return picked.length > 0 ? picked : [clicked];
   };
 
   const csvCell = (v: any) => {
@@ -1158,6 +1196,26 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
     );
     copyToClipboard(JSON.stringify(objects, null, 2));
     setSuccessMsg(t('dataGrid.copiedRowJson'));
+    setTimeout(() => setSuccessMsg(null), 2000);
+  };
+
+  /**
+   * Ctrl+C's format is TAB-separated, not CSV: its destination is almost always a spreadsheet, and
+   * CSV pasted into one lands in a single column. The context menu keeps CSV for when the user
+   * actually wants a .csv. No header row, matching DBeaver and TablePlus — rows are usually pasted
+   * into a sheet that already has one.
+   *
+   * A tab or newline inside a value would break the row/column split, so both become a space. That
+   * is the same trade the Markdown copy makes with `|`, and it is why this is a copy for pasting
+   * rather than a lossless export — the export dialog is where fidelity lives.
+   */
+  const copySelectionAsTsv = () => {
+    const picked = selectedRows();
+    if (picked.length === 0) return;
+    const cols = activeColumns.map(c => c.name);
+    const cell = (v: any) => (v === null || v === undefined ? '' : String(v).replace(/[\t\r\n]+/g, ' '));
+    copyToClipboard(picked.map(r => cols.map(c => cell(r[c])).join('\t')).join('\n'));
+    setSuccessMsg(t('dataGrid.copiedRowsTsv', { n: picked.length }));
     setTimeout(() => setSuccessMsg(null), 2000);
   };
 
@@ -1499,12 +1557,12 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
    * not on screen and cannot be unselected by clicking.
    */
   const orderedRowKeys = React.useMemo(() => {
-    const keys = rows.map((row, idx) => {
+    const keys = displayedRows.map((row, idx) => {
       const id = row[primaryKey];
       return id !== undefined && id !== null ? id : `__idx_${idx}`;
     });
     return keys.concat(displayedInserts.map(row => row.__tempId));
-  }, [rows, displayedInserts, primaryKey]);
+  }, [displayedRows, displayedInserts, primaryKey]);
 
   /**
    * One click on a row, with the three behaviours every table has:
@@ -1519,6 +1577,10 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
    */
   const handleRowClick = useCallback(
     (key: any, e: React.MouseEvent) => {
+      // Shift+Click also extends the BROWSER's text selection across every row it spans. Left alone
+      // that highlight looks wrong AND breaks Ctrl+C, which stands aside whenever text is selected
+      // so that copying a highlighted cell value still works.
+      if (e.shiftKey) window.getSelection()?.removeAllRanges();
       if (e.shiftKey && anchorRowId !== null) {
         const from = orderedRowKeys.indexOf(anchorRowId);
         const to = orderedRowKeys.indexOf(key);
@@ -1879,7 +1941,11 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
                             onContextMenu={(e) => {
                               e.preventDefault();
                               e.stopPropagation();
-                              setSelectedRowId(selectionKey);
+                              // Must mirror the <tr> handler above, whose call this stopPropagation
+                              // suppresses: a cell fills its row, so right-clicking a row IS right-
+                              // clicking a cell, and the single-select setter used here threw away a
+                              // multi-row selection every time the menu was opened on it.
+                              selectForContextMenu(selectionKey);
                               setContextMenu({ x: e.clientX, y: e.clientY, rowId: selectionKey, row, colName: col.name, cellValue: cellVal });
                             }}
                           >
@@ -2003,7 +2069,8 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
                             onContextMenu={(e) => {
                               e.preventDefault();
                               e.stopPropagation();
-                              setSelectedRowId(rowId);
+                              // Same reason as the cell handler of the existing-rows table above.
+                              selectForContextMenu(rowId);
                               setContextMenu({ x: e.clientX, y: e.clientY, rowId, row, colName: col.name, cellValue: cellVal });
                             }}
                           >
@@ -2552,6 +2619,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
           // `all.length >= total`, so an estimate that is too low writes a truncated file with no
           // error. `null` is the safe answer: the dialog counts exactly itself on its first page read.
           totalCount: countExact ? totalCount : null,
+          selectedRows: showExportDialog ? selectedRows() : undefined,
         }}
         onClose={() => setShowExportDialog(false)}
         onSuccess={setSuccessMsg}
@@ -2869,7 +2937,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
           <div style={{ borderTop: '1px solid var(--win-border)', margin: '4px 0' }} />
 
           {/* Copy row */}
-          <div style={{ padding: '2px 8px 4px', color: 'var(--win-text-disabled)', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{t('dataGrid.ctxCopyRowAs')}</div>
+          <div style={{ padding: '2px 8px 4px', color: 'var(--win-text-disabled)', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{selectedRowIds.size > 1 ? t('dataGrid.ctxCopyRowsAs', { n: selectedRowIds.size }) : t('dataGrid.ctxCopyRowAs')}</div>
           <button className="context-menu-item" onClick={() => { setContextMenu(null); copyRowAsCSV(contextMenu.row, false); }}>
             <span>📊</span> CSV
           </button>

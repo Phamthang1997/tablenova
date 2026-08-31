@@ -671,6 +671,7 @@ const ja: typeof en = {
     copiedRowSql: 'SQL INSERT としてコピーしました。',
     copiedRowMarkdown: 'Markdown テーブルとしてコピーしました。',
     copiedRowJson: 'JSON 配列としてコピーしました。',
+    copiedRowsTsv: '{{n}} 行をコピーしました。',
     ctxJsonArray: 'JSON 配列',
     copiedCell: 'セルの値をコピーしました。',
     copiedColumn: '列のすべての値をコピーしました。',
@@ -774,6 +775,7 @@ const ja: typeof en = {
     ctxViewDocument: 'ドキュメント / 行の詳細を表示',
     ctxGoToFk: '参照テーブル "{{table}}" を開く',
     ctxCopyRowAs: '行を次の形式でコピー',
+    ctxCopyRowsAs: '{{n}} 行を次の形式でコピー',
     ctxCsvHeader: 'CSV (ヘッダー付き)',
     documentViewer: {
       title: 'ドキュメント詳細 — {{table}}',
@@ -1396,6 +1398,7 @@ const ja: typeof en = {
     formatLabel: 'エクスポート形式:',
     visibleColumnsOnly: '表示中の列のみ ({{shown}}/{{total}} 列)',
     applyGridView: 'グリッドで適用中の並べ替えとフィルタを反映',
+    onlySelectedRows: '選択中の {{n}} 行のみ',
     exportAllRowsNote: 'テーブルの全行をエクスポートします (現在のページだけではありません)',
     exportAllRowsCount: ' — 約 <strong>{{n}}</strong> 行',
     previewOnlyNote: '次の画面ではサンプル {{n}} 行のみ表示します。全データはエクスポート時に取得されます。',

@@ -682,6 +682,7 @@ const en = {
     copiedRowSql: 'Copied as a SQL INSERT.',
     copiedRowMarkdown: 'Copied as a Markdown table.',
     copiedRowJson: 'Copied as a JSON array.',
+    copiedRowsTsv: '{{n}} rows copied.',
     ctxJsonArray: 'JSON Array',
     copiedCell: 'Cell value copied.',
     copiedColumn: 'All column values copied.',
@@ -785,6 +786,7 @@ const en = {
     ctxViewDocument: 'View Document / Row Details',
     ctxGoToFk: 'Open referenced table "{{table}}"',
     ctxCopyRowAs: 'Copy the row as',
+    ctxCopyRowsAs: 'Copy {{n}} rows as',
     ctxCsvHeader: 'CSV (with header)',
     documentViewer: {
       title: 'Document Viewer — {{table}}',
@@ -1413,6 +1415,7 @@ const en = {
     formatLabel: 'Export format:',
     visibleColumnsOnly: 'Only the visible columns ({{shown}}/{{total}} columns)',
     applyGridView: 'Apply the sort & filter currently used on the grid',
+    onlySelectedRows: 'Only the {{n}} selected rows',
     exportAllRowsNote: 'Every row of the table is exported (not just the current page)',
     exportAllRowsCount: ' — about <strong>{{n}}</strong> rows',
     previewOnlyNote: 'The next step shows only {{n}} sample rows; the full data is fetched when you export.',

@@ -674,6 +674,7 @@ const vi: typeof en = {
     copiedRowSql: 'Đã sao chép dưới dạng SQL INSERT!',
     copiedRowMarkdown: 'Đã sao chép dưới dạng Markdown table!',
     copiedRowJson: 'Đã sao chép dưới dạng mảng JSON!',
+    copiedRowsTsv: 'Đã sao chép {{n}} dòng.',
     ctxJsonArray: 'Mảng JSON',
     copiedCell: 'Đã sao chép giá trị ô!',
     copiedColumn: 'Đã sao chép tất cả giá trị cột!',
@@ -777,6 +778,7 @@ const vi: typeof en = {
     ctxViewDocument: 'Xem chi tiết dòng (Document Viewer)',
     ctxGoToFk: 'Mở bảng liên kết "{{table}}"',
     ctxCopyRowAs: 'Sao chép dòng dưới dạng',
+    ctxCopyRowsAs: 'Sao chép {{n}} dòng dưới dạng',
     ctxCsvHeader: 'CSV (kèm tiêu đề)',
     documentViewer: {
       title: 'Chi tiết bản ghi — {{table}}',
@@ -1399,6 +1401,7 @@ const vi: typeof en = {
     formatLabel: 'Định dạng xuất:',
     visibleColumnsOnly: 'Chỉ xuất các cột đang hiện ({{shown}}/{{total}} cột)',
     applyGridView: 'Áp dụng sắp xếp & bộ lọc đang dùng trên grid',
+    onlySelectedRows: 'Chỉ {{n}} dòng đang chọn',
     exportAllRowsNote: 'Xuất toàn bộ dòng của bảng (không chỉ trang hiện tại)',
     exportAllRowsCount: ' — khoảng <strong>{{n}}</strong> dòng',
     previewOnlyNote: 'Bước sau chỉ xem {{n}} dòng làm mẫu; dữ liệu chỉ được tải hết khi bấm xuất.',
