@@ -1,8 +1,8 @@
-# Kế hoạch Tối ưu Cold Start của Frontend (Vite / Bundle Audit)
+﻿# Kế hoạch Tối ưu Cold Start của Frontend (Vite / Bundle Audit)
 
 Bản này thay thế hoàn toàn phiên bản trước — phiên bản trước dựa trên [Vite Performance Guide](https://vite.dev/guide/performance) một cách chung chung và có 2 luận điểm sai với codebase thực tế (xem mục 4). Bản này chỉ giữ những gì đã được kiểm chứng trực tiếp trên `node_modules` và trên output build thật.
 
-**Ngữ cảnh quan trọng:** TableNova là app Tauri. Asset được nạp từ local filesystem, **không** qua network. Vì vậy mọi tối ưu kiểu "giảm kích thước bundle đầu tiên để tải nhanh hơn" hay "tách vendor chunk để cache tốt hơn" đều **không có giá trị** ở đây. Thứ duy nhất còn ý nghĩa là: **giảm lượng JS mà WebView phải parse + execute lúc khởi động**.
+**Ngữ cảnh quan trọng:** TABLEGRID là app Tauri. Asset được nạp từ local filesystem, **không** qua network. Vì vậy mọi tối ưu kiểu "giảm kích thước bundle đầu tiên để tải nhanh hơn" hay "tách vendor chunk để cache tốt hơn" đều **không có giá trị** ở đây. Thứ duy nhất còn ý nghĩa là: **giảm lượng JS mà WebView phải parse + execute lúc khởi động**.
 
 ---
 

@@ -233,7 +233,7 @@ body {
 }
 
 /* Only the brand gets letter-spacing. uppercase + letter-spacing used to sit on the whole
-   .title-bar-left, which rendered "TableNova" as "TABLENOVA" and left every menu label undoing it
+   .title-bar-left, which rendered "TableGrid" as "TABLEGRID" and left every menu label undoing it
    with text-transform: none. */
 .title-bar-brand {
   font-size: 12px;
@@ -3116,7 +3116,7 @@ select.form-input {
 }
 
 /* ==========================================================================
-   TableNova AI Copilot Panel & Smart Chat UI (Theme Adaptive)
+   TableGrid AI Copilot Panel & Smart Chat UI (Theme Adaptive)
    ========================================================================== */
 
 .ai-panel {
@@ -9261,7 +9261,7 @@ input.rename-input {
 }
 
 
-/* ————— The "About TableNova" dialog ————— */
+/* ————— The "About TableGrid" dialog ————— */
 .about-dialog {
   position: relative;
   width: 420px;
@@ -15922,7 +15922,7 @@ input.rename-input {
 }
 
 /* ==========================================================================
-   Media / Image Viewer Component Styles (TableNova)
+   Media / Image Viewer Component Styles (TableGrid)
    Adheres to AGENTS.md: pure CSS classes, theme variables, no hardcoded inline styles.
    ========================================================================== */
 

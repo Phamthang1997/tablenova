@@ -1,6 +1,6 @@
-# Kế hoạch: hỗ trợ đa kết nối (multi-connection)
+﻿# Kế hoạch: hỗ trợ đa kết nối (multi-connection)
 
-Chuyển TableNova từ **một kết nối tại một thời điểm** sang **nhiều kết nối song song**, mỗi tab gắn
+Chuyển TABLEGRID từ **một kết nối tại một thời điểm** sang **nhiều kết nối song song**, mỗi tab gắn
 với kết nối của nó.
 
 Bản này viết lại bản đầu tiên. Bản đầu gộp ba nhóm việc khác nhau vào một tài liệu và chốt sai một

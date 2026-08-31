@@ -1,4 +1,4 @@
-# Kế hoạch: tách `src-tauri/src` thành các module một-nhiệm-vụ
+﻿# Kế hoạch: tách `src-tauri/src` thành các module một-nhiệm-vụ
 
 Hiện trạng: 18 tệp, 16.833 dòng, **phẳng** (không có thư mục con nào). Sáu tệp chiếm 87% khối lượng
 và mỗi tệp đang làm nhiều việc không liên quan nhau.
@@ -228,7 +228,7 @@ Không có test Rust nào ngoài 5 test trong `database.rs` (`json_to_sqlite_val
 in-memory), nên compiler gần như là mạng lưới an toàn duy nhất. Vì vậy:
 
 1. **Trước mỗi đợt**: lưu danh sách hàm (`grep` ở §2). Sau đợt: `diff` phải rỗng.
-2. **`cargo check`** với `CARGO_TARGET_DIR=C:\cargo-targets\tablenova`, **không chạy khi `tauri dev`
+2. **`cargo check`** với `CARGO_TARGET_DIR=C:\cargo-targets\TABLEGRID`, **không chạy khi `tauri dev`
    đang bật**. Nếu build script của Tauri crash (`STATUS_ACCESS_VIOLATION` — đã gặp trên máy này,
    không liên quan code app) thì kiểm bằng `.\dev-start.bat`.
 3. **Chạy thử tay theo đợt**, vì `generate_handler!` sai đường dẫn không lộ ra lúc compile nếu tên
@@ -341,7 +341,7 @@ không xảy ra lần nào trong cả 10 đợt; vòng lặp sửa–kiểm ch�
   nhưng Builder thì lại ở `lib.rs`. Nay: `app/run.rs` (Builder, cạnh hai mảnh của nó),
   `state/app.rs` (`AppState` + `AppState::new()` — nằm ở `state/` vì trường lớn nhất của nó
   chính là `ConnRegistry` ngay cạnh đó), còn `lib.rs` chỉ giữ danh sách module cộng hai
-  re-export giữ nguyên `tablenova::run` và `crate::AppState` (152 call site).
+  re-export giữ nguyên `TABLEGRID::run` và `crate::AppState` (152 call site).
 
 **Dọn nốt phần tài liệu lệch từ trước (2026-08-25).** `CLAUDE.md` còn năm chỗ mô tả `DatabaseManager`
 và `RedisState` như thứ đang tồn tại — hai kiểu này bị xoá từ đợt đa kết nối, TRƯỚC đợt tách module.

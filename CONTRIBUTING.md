@@ -25,8 +25,8 @@ Ensure you have the following installed on your development machine:
 
 1. **Fork & Clone the Repository**:
    ```bash
-   git clone https://github.com/Phamthang1997/tablenova.git
-   cd tablenova
+   git clone https://github.com/Phamthang1997/tablegrid.git
+   cd tablegrid
    ```
 
 2. **Install Frontend Dependencies**:
@@ -122,7 +122,7 @@ cargo clippy --all-targets -- -D warnings
    ```bash
    git push origin feat/your-feature-name
    ```
-2. Open a Pull Request against the `main` branch of `Phamthang1997/tablenova`.
+2. Open a Pull Request against the `main` branch of `Phamthang1997/tablegrid`.
 3. Provide a clear description of the problem solved, changes made, and screenshots/GIFs for UI changes.
 4. Ensure all automated CI checks pass.
 
@@ -130,4 +130,4 @@ cargo clippy --all-targets -- -D warnings
 
 ## 📄 License
 
-By contributing to **TABLENOVA**, you agree that your contributions will be licensed under the project's **[GNU Affero General Public License v3.0 (AGPL-3.0)](LICENSE)**.
+By contributing to **TABLEGRID**, you agree that your contributions will be licensed under the project's **[GNU Affero General Public License v3.0 (AGPL-3.0)](LICENSE)**.

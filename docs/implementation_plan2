@@ -1,6 +1,6 @@
-# Implementation Plan — Internationalization (i18n) with react-i18next
+﻿# Implementation Plan — Internationalization (i18n) with react-i18next
 
-Localize TableNova into **English (en)**, **Vietnamese (vi)** and **Japanese (ja)**.
+Localize TABLEGRID into **English (en)**, **Vietnamese (vi)** and **Japanese (ja)**.
 
 Delivered in phases. **Phase 1 is implemented**; phase 2 and 3 are the remaining scope.
 

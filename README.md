@@ -97,8 +97,8 @@
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/Phamthang1997/tablenova.git
-   cd tablenova
+   git clone https://github.com/Phamthang1997/tablegrid.git
+   cd tablegrid
    ```
 
 2. **Install frontend dependencies**:

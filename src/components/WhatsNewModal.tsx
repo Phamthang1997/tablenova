@@ -23,8 +23,8 @@ interface WhatsNewModalProps {
   onClose: () => void;
 }
 
-export const WHATS_NEW_STORAGE_KEY = 'tablenova_whats_new_seen_v1';
-export const WHATS_NEW_AUTO_SHOW_KEY = 'tablenova_whats_new_auto_show';
+export const WHATS_NEW_STORAGE_KEY = 'tablegrid_whats_new_seen_v1';
+export const WHATS_NEW_AUTO_SHOW_KEY = 'tablegrid_whats_new_auto_show';
 
 export const WhatsNewModal: React.FC<WhatsNewModalProps> = ({ isOpen, onClose }) => {
   const { t } = useTranslation();

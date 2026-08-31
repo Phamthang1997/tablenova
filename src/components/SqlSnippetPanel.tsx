@@ -139,7 +139,7 @@ const DEFAULT_SNIPPETS: SqlSnippet[] = [
   },
 ];
 
-const LOCAL_STORAGE_CUSTOM_KEY = 'tablenova.sql_custom_snippets';
+const LOCAL_STORAGE_CUSTOM_KEY = 'tablegrid.sql_custom_snippets';
 
 interface SqlSnippetPanelProps {
   dbType?: string;

@@ -1,6 +1,6 @@
-# Interactive ER Diagram Visualizer (TableNova)
+﻿# Interactive ER Diagram Visualizer (TABLEGRID)
 
-The **Interactive ER Diagram Visualizer** provides a modern, canvas-based Entity-Relationship diagram designed for PostgreSQL, MySQL, and SQLite databases within TableNova.
+The **Interactive ER Diagram Visualizer** provides a modern, canvas-based Entity-Relationship diagram designed for PostgreSQL, MySQL, and SQLite databases within TABLEGRID.
 
 ---
 

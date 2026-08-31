@@ -108,7 +108,7 @@ export const PROVIDER_AUTH_URLS: Record<AiProviderType, { name: string; url: str
   },
 };
 
-const STORAGE_KEY = 'tablenova_ai_settings_v1';
+const STORAGE_KEY = 'tablegrid_ai_settings_v1';
 
 export const DEFAULT_AI_PROFILES: AiAssistantProfile[] = [
   {

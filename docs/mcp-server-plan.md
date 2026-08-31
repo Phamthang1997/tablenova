@@ -1,6 +1,6 @@
-# Kế hoạch: MCP Server nội bộ (Model Context Protocol)
+﻿# Kế hoạch: MCP Server nội bộ (Model Context Protocol)
 
-Mở một **Local MCP Server** trong tiến trình TableNova để các AI client (Claude Desktop, Claude Code,
+Mở một **Local MCP Server** trong tiến trình TABLEGRID để các AI client (Claude Desktop, Claude Code,
 Cursor, Raycast, VS Code Copilot) truy vấn được database qua chính những kết nối người dùng đã mở
 trong app — không phải khai lại connection string, password hay private key SSH ở từng IDE.
 
@@ -66,11 +66,11 @@ Bản đầu còn viết "kiểm tra cú pháp **AST**" ở Giai đoạn 2. **Ba
 chỉ tồn tại ở frontend qua `monaco-sql-languages`. Kéo một AST vào Rust là một dependency lớn và một
 quyết định riêng, không phải một gạch đầu dòng.
 
-### 0.4. `tablenova.exe --mcp` mở một app thứ hai, không phải một cầu stdio
+### 0.4. `TABLEGRID.exe --mcp` mở một app thứ hai, không phải một cầu stdio
 
-[`main.rs`](../src-tauri/src/main.rs) chỉ gọi `tablenova::run()`; [`run.rs`](../src-tauri/src/app/run.rs)
+[`main.rs`](../src-tauri/src/main.rs) chỉ gọi `TABLEGRID::run()`; [`run.rs`](../src-tauri/src/app/run.rs)
 dựng thẳng `tauri::Builder` + webview. Không có arg parsing ở bất kỳ đâu, và app không cài plugin
-single-instance. Chạy `tablenova.exe --mcp` sẽ **mở cửa sổ thứ hai với `ConnRegistry` rỗng** — không
+single-instance. Chạy `TABLEGRID.exe --mcp` sẽ **mở cửa sổ thứ hai với `ConnRegistry` rỗng** — không
 thấy một kết nối nào của instance đang chạy. Bản đầu có nhắc "IPC / Named Pipe" nhưng đó là cơ chế
 thứ ba chưa đặc tả, và nó lại phải xuyên qua đúng cái HTTP server mà Lựa chọn 1 định thay thế.
 
@@ -91,14 +91,14 @@ rò. Lớp thiếu là **kiểm `Origin`/`Host`** — §3.1.
 nay"), và gần như chỉ là một lớp vỏ JSON-RPC bọc quanh command đã có.
 
 - Transport Streamable HTTP trên `127.0.0.1`, kiểm `Origin`/`Host`, bearer token trong keyring OS.
-- 5 tool đọc + `tablenova_query` giới hạn ở câu lệnh đọc.
+- 5 tool đọc + `TABLEGRID_query` giới hạn ở câu lệnh đọc.
 - Kết nối phải được người dùng **tích chọn** mới thấy được.
 - Giới hạn số dòng trả về, áp `statement_timeout` sẵn có.
 - Audit log sống trong bộ nhớ, hiện realtime trên Settings.
 
 ### 1.2. V2 — ghi có phê duyệt
 
-- `tablenova_mutate` + lớp phê duyệt tương tác (§3.5), **và** việc hòa giải nó với Safe Mode để
+- `TABLEGRID_mutate` + lớp phê duyệt tương tác (§3.5), **và** việc hòa giải nó với Safe Mode để
   repo không có hai chính sách phê duyệt lệch nhau.
 - ~~Cầu stdio cho client chỉ nói stdio.~~ — **đã làm trong V1**, sớm hơn kế hoạch, vì một client mục
   tiêu thực sự cần (§6 Bước 3, bẫy 6). Nó cũng là đường duy nhất không đặt token vào config client.
@@ -244,7 +244,7 @@ Khai mọi command mới vào [`app/handlers.rs`](../src-tauri/src/app/handlers.
 command chưa phân loại. Các `mcp_*` command là `internal` (chúng cấu hình app, không phải câu lệnh
 người dùng chạy trên database) — trừ `mcp_regenerate_token`, đáng cân nhắc để `write` vì nó cắt đứt
 mọi client đang kết nối.
-**Ngôn ngữ thông báo lỗi**: lỗi MCP trả về cho **AI client**, không phải cho UI TableNova → viết
+**Ngôn ngữ thông báo lỗi**: lỗi MCP trả về cho **AI client**, không phải cho UI TABLEGRID → viết
 **tiếng Anh** và **không** đi qua `backendErrors.ts`. Cùng luật với comment trong SQL script của
 `compare/` và với `failed[].error` của Redis. Chỉ chuỗi hiện trên Settings/audit log mới là key i18n.
 
@@ -279,7 +279,7 @@ Không có crate `rand` trong cây phụ thuộc và không cần thêm: `uuid` 
 `Uuid::new_v4()` hai lần cho 256 bit entropy từ nguồn của HĐH.
 
 Cất ở [`credentials/secret_store.rs`](../src-tauri/src/credentials/secret_store.rs) (keyring OS,
-`SERVICE = "TableNova"`) với `profile_id = "__mcp__"`, `field = "token"` — **không** ở `localStorage`,
+`SERVICE = "TABLEGRID"`) với `profile_id = "__mcp__"`, `field = "token"` — **không** ở `localStorage`,
 vì file profile của Tauri đọc bằng tay được. Module đã tồn tại; không thêm kho thứ hai.
 
 So sánh token bằng vòng lặp **constant-time** (hoặc so sánh digest SHA-256 — `sha2` đã có sẵn trong
@@ -305,7 +305,7 @@ trong repo**: `set_connection_read_only`.
   vì một listener chạy mà chưa tick gì thì không lộ gì cả.
 - **Mặc định `false`.** Một kết nối production mở sẵn không được lộ cho AI chỉ vì người dùng chưa
   vào Settings bao giờ.
-- `tablenova_list_connections` chỉ liệt kê kết nối đã phơi; mọi tool khác từ chối `conn_id` chưa
+- `TABLEGRID_list_connections` chỉ liệt kê kết nối đã phơi; mọi tool khác từ chối `conn_id` chưa
   phơi bằng **cùng một thông báo** như `conn_id` không tồn tại — không xác nhận cho client biết có
   một kết nối tồn tại mà nó không được thấy.
 
@@ -351,14 +351,14 @@ Sáu tool V1, gần như toàn bộ đã có command tương ứng — phần vi
 
 | Tool | Nguồn dữ liệu đã có | Ghi chú |
 |:--|:--|:--|
-| `tablenova_list_connections` | `ConnRegistry::list()` | Đã trả sẵn `connId`/`db`/`dialect`/`serverId`/`schema`/`readOnly`. Lọc theo §3.3, **bỏ** `pending` (rò rỉ hoạt động của người dùng) |
-| `tablenova_list_databases` | `list_databases` | |
-| `tablenova_list_tables` | `get_tables` | Đã phân biệt table/view, gồm cả matview của Postgres |
-| `tablenova_describe_table` | `get_table_schema` + `get_full_catalog` | Cột, kiểu, nullable, PK, FK, index |
-| `tablenova_preview_table` | `get_table_data` | SQL do ta dựng → `LIMIT` đặt vào SQL được (§4.3) |
-| `tablenova_query` | `execute_raw_sql_pooled` | Chỉ câu lệnh đọc (§3.4) |
+| `TABLEGRID_list_connections` | `ConnRegistry::list()` | Đã trả sẵn `connId`/`db`/`dialect`/`serverId`/`schema`/`readOnly`. Lọc theo §3.3, **bỏ** `pending` (rò rỉ hoạt động của người dùng) |
+| `TABLEGRID_list_databases` | `list_databases` | |
+| `TABLEGRID_list_tables` | `get_tables` | Đã phân biệt table/view, gồm cả matview của Postgres |
+| `TABLEGRID_describe_table` | `get_table_schema` + `get_full_catalog` | Cột, kiểu, nullable, PK, FK, index |
+| `TABLEGRID_preview_table` | `get_table_data` | SQL do ta dựng → `LIMIT` đặt vào SQL được (§4.3) |
+| `TABLEGRID_query` | `execute_raw_sql_pooled` | Chỉ câu lệnh đọc (§3.4) |
 
-Đặt tên `tablenova_query` chứ không phải `tablenova_execute_query`: tên tool là thứ AI đọc để chọn,
+Đặt tên `TABLEGRID_query` chứ không phải `TABLEGRID_execute_query`: tên tool là thứ AI đọc để chọn,
 và ở V1 không có tool "execute" nào khác để phân biệt.
 
 **Không** tách `execute_query` / `execute_mutation` làm hàng rào. Tách hai tool là tốt cho mô tả,
@@ -578,7 +578,7 @@ thêm nữa.
 
    **Cách chữa: `--scope user`.** Nó ghi vào `mcpServers` ở top-level `~/.claude.json`, tức **không
    qua project key nào**, nên cả hai đường resolve đều thấy. Đăng ký `--scope local` hay `project`
-   trên máy Windows đều phơi ra bug này. Kiểm bằng `claude mcp remove tablenova -s local` rồi
+   trên máy Windows đều phơi ra bug này. Kiểm bằng `claude mcp remove TABLEGRID -s local` rồi
    `claude mcp add … --scope user`; sau đó cả hai entry project phải còn **0** server và top-level
    phải có nó. Đánh đổi: server (và token) được chào ở mọi project — với một tool dev chạy loopback
    thì đó là giá đúng để trả cho việc tính năng chạy được.
@@ -606,7 +606,7 @@ tồn tại, hai middleware ghi qua `audit::record()` (một người ghi duy nh
 
 - [ ] Quyết hợp nhất hay song song với Safe Mode (§3.5) — **trước khi** viết code.
 - [ ] Cơ chế park request → event → hộp thoại → channel, có timeout.
-- [ ] `tablenova_mutate` + hộp thoại nói rõ "không nằm trong transaction của bạn".
+- [ ] `TABLEGRID_mutate` + hộp thoại nói rõ "không nằm trong transaction của bạn".
 - [ ] Audit log ghi tệp.
 - [x] Cầu stdio: một proxy mỏng stdio↔HTTP loopback, cờ xử lý **trước** `tauri::Builder` — **không**
       cần plugin single-instance. §0.4 lo đúng một nửa: nó đúng rằng mở app thứ hai là sai, nhưng mode
@@ -620,7 +620,7 @@ tồn tại, hai middleware ghi qua `audit::record()` (một người ghi duy nh
 
 - **Endpoint `/sse` như transport chính** — bản cũ của spec (§2.3). Chỉ thêm nếu một client mục tiêu
   thực sự cần, và khi đó nó là đường tương thích.
-- ~~**`tablenova.exe --mcp` ở V1**~~ — **đã làm**, dưới tên `--mcp-stdio` (`mcp/stdio.rs`). Ước lượng
+- ~~**`TABLEGRID.exe --mcp` ở V1**~~ — **đã làm**, dưới tên `--mcp-stdio` (`mcp/stdio.rs`). Ước lượng
   "ba thay đổi ở tầng bootstrap" hoá ra là **một `if`**: single-instance không cần, vì proxy không
   chạm tầng cửa sổ. Nó cũng mang hai món lợi ngoài dự tính — config của client chỉ còn `command` +
   `args` (đường dẫn exe mà dialog tự biết, nên **máy khác không phải sửa tay**), và **không còn token
@@ -652,11 +652,11 @@ tồn tại, hai middleware ghi qua `audit::record()` (một người ghi duy nh
 - ~~**`exposed` là per-`conn_id` trong Rust nhưng bền theo `connKey` ở frontend.**~~ — **đã đóng**
   bằng cách không lưu bền nó: xem §3.3. Không còn nơi thứ hai thì không còn chỗ lệch.
 
-- **Phơi một kết nối là phơi tầm-với mức SERVER, không phải mức database.** (Dialog nay **đo và kể tên** những database mà mỗi tick với tới được — `listDatabases(connId)`, cùng truy vấn mà AI chạy được — thay cho một câu cảnh báo trừu tượng. Đó là cách duy nhất app có thể nói đúng về chuyện này: không suy từ grant, mà báo cái đang thật.) `tablenova_query` phân
+- **Phơi một kết nối là phơi tầm-với mức SERVER, không phải mức database.** (Dialog nay **đo và kể tên** những database mà mỗi tick với tới được — `listDatabases(connId)`, cùng truy vấn mà AI chạy được — thay cho một câu cảnh báo trừu tượng. Đó là cách duy nhất app có thể nói đúng về chuyện này: không suy từ grant, mà báo cái đang thật.) `TABLEGRID_query` phân
   loại **chỉ theo đầu câu lệnh** (`ensure_single_read`), không giới hạn bảng hay database, nên trên
   một kết nối đã phơi thì `SELECT … FROM information_schema.tables` và `SHOW DATABASES` liệt kê cả
   server, còn `SELECT * FROM db_khac.bang` (MySQL) / `schema_khac.t` (Postgres) **đọc được dữ liệu
-  thật** từ database chưa bao giờ được tick. `tablenova_list_databases` vốn đã trả về mọi database
+  thật** từ database chưa bao giờ được tick. `TABLEGRID_list_databases` vốn đã trả về mọi database
   của server, nên độ hạt thật của việc phơi luôn là server — §3.3 chỉ bảo vệ *danh tính kết nối*,
   không bảo vệ *tầm với dữ liệu*.
   Cách vá hiển nhiên — chặn chuỗi `information_schema`/`pg_catalog`/tên database — là **đúng cơ chế

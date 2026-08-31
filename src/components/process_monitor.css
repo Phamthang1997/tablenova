@@ -1,6 +1,6 @@
 /* ==========================================================================
-   TableNova - Live Processlist & Query Monitor Styles
-   All styling strictly follows TableNova Design System:
+   TableGrid - Live Processlist & Query Monitor Styles
+   All styling strictly follows TableGrid Design System:
    - Independent action buttons with distinct borders (no pill segments)
    - Zero inline styles in JSX
    - Scoped under .pm-* class hierarchy
@@ -127,7 +127,7 @@
   margin-right: 3px;
 }
 
-/* Independent Buttons conforming to TableNova design rule */
+/* Independent Buttons conforming to TableGrid design rule */
 .pm-btn {
   display: inline-flex;
   align-items: center;

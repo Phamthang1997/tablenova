@@ -1,12 +1,12 @@
-# 🚀 BÁO CÁO TOÀN DIỆN: GIẢI PHÁP TỐI ƯU HÓA HIỆU NĂNG TABLENOVA (WINDOWS & MACOS)
+﻿# 🚀 BÁO CÁO TOÀN DIỆN: GIẢI PHÁP TỐI ƯU HÓA HIỆU NĂNG TABLEGRID (WINDOWS & MACOS)
 
-Tài liệu này tổng hợp đầy đủ các giải pháp kỹ thuật nhằm **tăng tốc độ thực thi, giảm dung lượng bộ nhớ RAM, tối ưu kích thước gói cài đặt và tăng độ mượt mà của giao diện** cho ứng dụng **TableNova** sau khi build bản Release (`tauri build`) trên cả hai hệ điều hành **Windows** và **macOS**.
+Tài liệu này tổng hợp đầy đủ các giải pháp kỹ thuật nhằm **tăng tốc độ thực thi, giảm dung lượng bộ nhớ RAM, tối ưu kích thước gói cài đặt và tăng độ mượt mà của giao diện** cho ứng dụng **TABLEGRID** sau khi build bản Release (`tauri build`) trên cả hai hệ điều hành **Windows** và **macOS**.
 
 ---
 
 ## 1. TỔNG QUAN KIẾN TRÚC & MỤC TIÊU TỐI ƯU
 
-TableNova được xây dựng trên nền tảng **Tauri v2 + Rust + React 19 + Vite**.
+TABLEGRID được xây dựng trên nền tảng **Tauri v2 + Rust + React 19 + Vite**.
 - **Trên Windows**: Ứng dụng chạy trên nhân **Microsoft Edge WebView2** (Chromium).
 - **Trên macOS**: Ứng dụng chạy trên nhân **WebKit (WKWebView)** của Apple.
 

@@ -1,4 +1,4 @@
-# Kế hoạch Thiết kế & Phát triển: Data Generator (sinh dữ liệu test)
+﻿# Kế hoạch Thiết kế & Phát triển: Data Generator (sinh dữ liệu test)
 
 > **Trạng thái: Phase 1 đã làm xong** (2026-08-06) — `data_generator.rs` + `datasets.rs`, 4 command,
 > `dataGenHelper.ts` (+ 51 unit test), `DataGeneratorDialog.tsx`, lối vào ở Sidebar + menu ngữ cảnh
@@ -17,7 +17,7 @@ Sao chép tính năng **dbForge Data Generator for MySQL** (https://www.devart.c
 
 ### Có làm (đối chiếu bản gốc)
 
-| dbForge | TableNova |
+| dbForge | TABLEGRID |
 |---|---|
 | Chọn nhiều bảng + số dòng mỗi bảng | ✅ |
 | "Basic generators" (~20 loại theo kiểu dữ liệu) | ✅ Phase 1 |
