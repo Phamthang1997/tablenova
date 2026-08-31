@@ -181,6 +181,28 @@ impl Entry {
     }
 }
 
+/// A refusal, carrying **both** what the client is told and which layer said no.
+///
+/// The two must travel together. Recovering the layer from the message afterwards would mean
+/// branching on user-facing text, which this codebase refuses to do anywhere - and the message is
+/// the one part that may be reworded freely.
+pub struct Refusal {
+    pub denial: Denial,
+    pub error: rmcp::ErrorData,
+}
+
+impl Refusal {
+    pub fn new(denial: Denial, error: rmcp::ErrorData) -> Self {
+        Refusal { denial, error }
+    }
+}
+
+impl From<Refusal> for rmcp::ErrorData {
+    fn from(r: Refusal) -> Self {
+        r.error
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -243,27 +265,5 @@ mod tests {
         let wire = json!(token);
         assert_eq!(wire["denial"], "badToken");
         assert_eq!(wire["layer"], 2);
-    }
-}
-
-/// A refusal, carrying **both** what the client is told and which layer said no.
-///
-/// The two must travel together. Recovering the layer from the message afterwards would mean
-/// branching on user-facing text, which this codebase refuses to do anywhere - and the message is
-/// the one part that may be reworded freely.
-pub struct Refusal {
-    pub denial: Denial,
-    pub error: rmcp::ErrorData,
-}
-
-impl Refusal {
-    pub fn new(denial: Denial, error: rmcp::ErrorData) -> Self {
-        Refusal { denial, error }
-    }
-}
-
-impl From<Refusal> for rmcp::ErrorData {
-    fn from(r: Refusal) -> Self {
-        r.error
     }
 }

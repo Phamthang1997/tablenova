@@ -48,7 +48,6 @@ pub(crate) async fn element_count(
 ///   stream    id of the last entry read
 ///
 /// Rank/index paging can skip or repeat an element if someone else writes between two pages;
-
 /// that is a deliberate trade (refresh fixes it) and the UI says so.
 pub(crate) async fn fetch_elements(
     c: &mut MultiplexedConnection,

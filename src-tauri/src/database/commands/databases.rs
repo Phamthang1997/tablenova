@@ -115,9 +115,6 @@ pub async fn list_databases(conn_id: String) -> Result<Value, String> {
     .await
 }
 
-/// The body, reachable without a `tauri::State`.
-///
-
 /// Open another database on the SAME server as a **new connection** (§4.3).
 ///
 /// The only way to reach another database now. It replaced `switch_database`, which *replaced* the

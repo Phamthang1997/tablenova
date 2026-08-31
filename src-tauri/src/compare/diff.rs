@@ -119,13 +119,19 @@ pub(super) fn fk_changes(a: &FkMeta, b: &FkMeta) -> Vec<&'static str> {
     if a.ref_columns != b.ref_columns {
         ch.push("refColumns");
     }
-    if a.on_delete.clone().unwrap_or_default().to_ascii_uppercase()
-        != b.on_delete.clone().unwrap_or_default().to_ascii_uppercase()
+    if !a
+        .on_delete
+        .clone()
+        .unwrap_or_default()
+        .eq_ignore_ascii_case(&b.on_delete.clone().unwrap_or_default())
     {
         ch.push("onDelete");
     }
-    if a.on_update.clone().unwrap_or_default().to_ascii_uppercase()
-        != b.on_update.clone().unwrap_or_default().to_ascii_uppercase()
+    if !a
+        .on_update
+        .clone()
+        .unwrap_or_default()
+        .eq_ignore_ascii_case(&b.on_update.clone().unwrap_or_default())
     {
         ch.push("onUpdate");
     }

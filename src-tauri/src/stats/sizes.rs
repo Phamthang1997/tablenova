@@ -4,6 +4,12 @@ use super::cells::get_mysql_i64_cell;
 use super::probe::{pg_count_tables_rows, pg_count_tables_rows_remote, sqlite_table_names};
 use super::system_dbs::{is_system_db, system_db_sql_list};
 use crate::database::DbKind;
+
+/// One database's probe result: its name, and either `(tables, rows)` or why the probe failed.
+///
+/// Named because the tuple is nested three deep inline, which is what `clippy::type_complexity`
+/// objects to — and it is right: the shape says nothing about which number is which.
+type ProbedDatabase = (String, Result<(i64, i64), String>);
 use serde_json::{Value, json};
 
 // Phase 2 (see the note on `get_all_databases_stats`): the numbers that require opening or
@@ -133,7 +139,7 @@ pub async fn get_all_databases_sizes(
                 // Each database means a fresh connection, so run them with bounded concurrency
                 // instead of serially: 20 databases × ~200ms of handshake is 4s of pure waiting.
                 use futures_util::StreamExt;
-                let results: Vec<(String, Result<(i64, i64), String>)> =
+                let results: Vec<ProbedDatabase> =
                     futures_util::stream::iter(targets)
                         .map(|(name, url)| async move {
                             (name, pg_count_tables_rows_remote(&url).await)

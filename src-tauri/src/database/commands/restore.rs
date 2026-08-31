@@ -382,14 +382,10 @@ pub async fn restore_backup(
             }
 
             // Turn foreign keys back on
-            match &conn_type.kind {
-                DbKind::Sqlite(conn_arc) => {
-                    if let Ok(conn) = conn_arc.lock() {
-                        let _ = conn.execute("PRAGMA foreign_keys = ON;", []);
-                    }
+            if let DbKind::Sqlite(conn_arc) = &conn_type.kind
+                && let Ok(conn) = conn_arc.lock() {
+                    let _ = conn.execute("PRAGMA foreign_keys = ON;", []);
                 }
-                _ => {}
-            }
         }
     }
 

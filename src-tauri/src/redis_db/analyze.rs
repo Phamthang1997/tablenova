@@ -116,7 +116,9 @@ pub async fn redis_analyze_db(
         return Ok(json!({ "success": false, "message": msg }));
     }
 
-    top.sort_by(|a, b| b.1.cmp(&a.1));
+    // `Reverse` rather than swapping the operands: descending is the intent, and a comparator
+    // written backwards is the kind of thing that reads as a typo on the next visit.
+    top.sort_by_key(|entry| std::cmp::Reverse(entry.1));
     top.truncate(20);
     let sampled_bytes: i64 = by_type.values().map(|(_, b)| *b).sum();
     // Extrapolation, only meaningful when the scan stopped early.
