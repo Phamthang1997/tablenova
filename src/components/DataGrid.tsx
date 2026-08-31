@@ -1133,10 +1133,18 @@ export const DataGrid: React.FC<DataGridProps> = ({ connId, tableName, dbType, i
     const cols = activeColumns.map(c => c.name);
     const header = `| ${cols.join(' | ')} |`;
     const sep = `| ${cols.map(() => '---').join(' | ')} |`;
-    // `|` inside a value would end the cell early and shift every column after it, which turns a
-    // pasted table into a silently misaligned one.
+    // Escape backslashes first, then pipes (so `|` does not split the cell), and replace newlines
+    // so multi-line text does not break Markdown table row structure.
     const body = rowsToCopy(row).map(
-      r => `| ${cols.map(c => String(r[c] ?? '').replace(/\|/g, '\\|')).join(' | ')} |`,
+      r =>
+        `| ${cols
+          .map(c =>
+            String(r[c] ?? '')
+              .replace(/\\/g, '\\\\')
+              .replace(/\|/g, '\\|')
+              .replace(/\r?\n/g, ' '),
+          )
+          .join(' | ')} |`,
     );
     copyToClipboard([header, sep, ...body].join('\n'));
     setSuccessMsg(t('dataGrid.copiedRowMarkdown'));
