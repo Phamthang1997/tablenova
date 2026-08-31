@@ -127,19 +127,23 @@ export const ExportTableDialog: React.FC<ExportTableDialogProps> = ({
   // export is pressed (see fetchAllRows) — which is when the progress bar appears.
   useEffect(() => {
     if (!open || step !== 'preview') return;
+    // A selection needs no read, and must not do one: the picked rows are not page 1 of anything.
+    //
+    // Handled HERE, before the loading flag is scheduled, precisely because this path has no `await`:
+    // inside the async block below, its `setLoading(false)` would run synchronously and therefore
+    // BEFORE the queued `setLoading(true)`, leaving the preview stuck on "loading" forever.
+    const picked = onlySelected ? grid?.selectedRows : undefined;
+    if (picked && picked.length > 0) {
+      setRows(picked.slice(0, PREVIEW_ROWS));
+      setTotalRows(picked.length);
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     queueMicrotask(() => {
       setLoading(true);
     });
     (async () => {
-      // A selection needs no read, and must not do one: the picked rows are not page 1 of anything.
-      const picked = onlySelected ? grid?.selectedRows : undefined;
-      if (picked && picked.length > 0) {
-        setRows(picked.slice(0, PREVIEW_ROWS));
-        setTotalRows(picked.length);
-        setLoading(false);
-        return;
-      }
       const useView = !!grid && applyView;
       const data = await dbHelper.getTableData(connId, 
         tableName,
