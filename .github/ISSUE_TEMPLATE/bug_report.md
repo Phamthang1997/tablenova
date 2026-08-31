@@ -1,6 +1,6 @@
 ---
 name: 🐛 Bug Report
-about: Create a report to help us improve TABLENOVA
+about: Create a report to help us improve TABLEGRID
 title: '[BUG] '
 labels: 'bug'
 assignees: ''
@@ -25,7 +25,7 @@ If applicable, add screenshots or screen recordings to help explain your problem
 ## 🖥️ Environment Information
 - **OS**: [e.g. Windows 11, macOS Sequoia, Ubuntu 24.04]
 - **Database Engine & Version**: [e.g. PostgreSQL 16, MySQL 8.0, SQLite 3, Redis 7]
-- **TABLENOVA Version**: [e.g. 0.1.0]
+- **TABLEGRID Version**: [e.g. 0.1.0]
 
 ## 📝 Additional Context
 Add any other context about the problem here (e.g. error stack trace or console logs).

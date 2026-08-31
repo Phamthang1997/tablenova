@@ -1,6 +1,6 @@
 ---
 name: ✨ Feature Request
-about: Suggest an idea or new feature for TABLENOVA
+about: Suggest an idea or new feature for TABLEGRID
 title: '[FEAT] '
 labels: 'enhancement'
 assignees: ''
@@ -14,7 +14,7 @@ Is your feature request related to a problem or limitation? Please describe.
 *Example: "I always have to manually export table schemas because..."*
 
 ## 🎨 Proposed Solution / User Experience
-Describe how you envision this feature working in TABLENOVA.
+Describe how you envision this feature working in TABLEGRID.
 - What UI components or buttons should be added?
 - How should the user interact with it?
 

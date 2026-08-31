@@ -1,4 +1,4 @@
-name: Build & Release TableNova
+name: Build & Release TableGrid
 
 on:
   workflow_dispatch:
@@ -53,16 +53,16 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: v__VERSION__
-          releaseName: 'TableNova v__VERSION__'
+          releaseName: 'TableGrid v__VERSION__'
           releaseBody: |
-            Official release build of TableNova for macOS (Apple Silicon ARM64) and Windows (x64).
+            Official release build of TableGrid for macOS (Apple Silicon ARM64) and Windows (x64).
 
-            ⚠️ **macOS Installation Note ("TableNova is damaged and can't be opened")**:
+            ⚠️ **macOS Installation Note ("TableGrid is damaged and can't be opened")**:
             Since this build is currently unsigned with an Apple Developer ID, macOS Gatekeeper may block downloaded `.dmg` packages with a security prompt.
 
-            To open the application on macOS, move `TableNova.app` to your **Applications** folder, open **Terminal**, and execute:
+            To open the application on macOS, move `TableGrid.app` to your **Applications** folder, open **Terminal**, and execute:
             ```bash
-            sudo xattr -rd com.apple.quarantine /Applications/TableNova.app
+            sudo xattr -rd com.apple.quarantine /Applications/TableGrid.app
             ```
           releaseDraft: true
           prerelease: false
