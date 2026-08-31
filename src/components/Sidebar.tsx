@@ -839,6 +839,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
     queueMicrotask(() => setMenuPos(clampMenu(contextMenu.x, contextMenu.y, r.width, r.height, window.innerWidth, window.innerHeight)));
   }, [contextMenu]);
 
+  // Context menu for right-clicking the "Tables" section header (Item overview, Show diagram)
+  const [tablesHeaderMenu, setTablesHeaderMenu] = useState<{ x: number; y: number } | null>(null);
+  const [tablesHeaderMenuPos, setTablesHeaderMenuPos] = useState<MenuRect | null>(null);
+  const tablesHeaderMenuRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    if (!tablesHeaderMenu) {
+      queueMicrotask(() => setTablesHeaderMenuPos(null));
+      return;
+    }
+    const el = tablesHeaderMenuRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    queueMicrotask(() =>
+      setTablesHeaderMenuPos(
+        clampMenu(tablesHeaderMenu.x, tablesHeaderMenu.y, r.width, r.height, window.innerWidth, window.innerHeight)
+      )
+    );
+  }, [tablesHeaderMenu]);
+
   const [renameState, setRenameState] = useState<{ tableName: string; value: string } | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   // The "+" menu on the Tables heading, and the create-view dialog
@@ -1080,7 +1100,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   }, []);
 
   useEffect(() => {
-    const closeMenu = () => setContextMenu(null);
+    const closeMenu = () => {
+      setContextMenu(null);
+      setTablesHeaderMenu(null);
+    };
     window.addEventListener('click', closeMenu);
     return () => window.removeEventListener('click', closeMenu);
   }, []);
@@ -1660,6 +1683,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <div
                 className="sidebar-section-title"
                 onClick={() => toggleSection('tables')}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setContextMenu(null);
+                  setTablesHeaderMenu({ x: e.clientX, y: e.clientY });
+                }}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -2565,6 +2594,45 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         );
       })()}
+
+      {tablesHeaderMenu && (
+        <div
+          ref={tablesHeaderMenuRef}
+          className="ws-menu"
+          style={{
+            position: 'fixed',
+            top: tablesHeaderMenuPos ? tablesHeaderMenuPos.top : tablesHeaderMenu.y,
+            left: tablesHeaderMenuPos ? tablesHeaderMenuPos.left : tablesHeaderMenu.x,
+            visibility: tablesHeaderMenuPos ? 'visible' : 'hidden',
+            zIndex: 99999,
+            minWidth: '170px',
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div
+            className="sidebar-context-item sidebar-context-item-icon"
+            style={{ padding: '6px 12px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}
+            onClick={() => {
+              setTablesHeaderMenu(null);
+              onOpenDbInfo?.();
+            }}
+          >
+            <Table size={13} className="sidebar-context-icon" />
+            <span>{t('sidebar.tablesItemOverview')}</span>
+          </div>
+          <div
+            className="sidebar-context-item sidebar-context-item-icon"
+            style={{ padding: '6px 12px', fontSize: '11px', color: 'var(--win-text-primary)', cursor: 'pointer' }}
+            onClick={() => {
+              setTablesHeaderMenu(null);
+              onOpenErDiagram?.();
+            }}
+          >
+            <Network size={13} className="sidebar-context-icon" />
+            <span>{t('sidebar.tablesShowDiagram')}</span>
+          </div>
+        </div>
+      )}
 
 
 

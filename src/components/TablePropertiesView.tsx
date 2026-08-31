@@ -15,7 +15,6 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { dbHelper, type TableProperties } from '../utils/dbHelper';
-import './table_properties.css';
 
 interface TablePropertiesViewProps {
   connId: string;

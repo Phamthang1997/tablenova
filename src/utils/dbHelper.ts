@@ -2467,6 +2467,9 @@ export const dbHelper = {
 
 export interface TableStatItem {
   table_name: string;
+  schema?: string | null;
+  kind?: string | null;
+  charset?: string | null;
   rows: number;
   is_exact: boolean;
   data_size_bytes: number | null;
@@ -2474,6 +2477,7 @@ export interface TableStatItem {
   total_size_bytes: number | null;
   engine: string;
   collation: string | null;
+  comment?: string | null;
 }
 
 export interface DatabaseStats {
