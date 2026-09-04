@@ -760,7 +760,7 @@ export const DatabaseInfoModal: React.FC<DatabaseInfoModalProps> = ({
                           <td className="dbi-grid-td is-right">
                             <div className="dbi-grid-count-wrap">
                               {!isView && !isExact && (
-                                <span className="dbi-grid-td is-muted">~</span>
+                                <span className="dbi-grid-approx">~</span>
                               )}
                               <span>{displayRows.toLocaleString()}</span>
                               {!isView && !isExact && (

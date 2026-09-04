@@ -18203,15 +18203,24 @@ input.rename-input {
   border-bottom: 1px solid var(--win-border);
   height: 25px;
   cursor: pointer;
+  background: var(--win-bg-window);
   transition: background 0.08s;
 }
 
+.dbi-grid-tr:nth-child(even) {
+  background: rgba(255, 255, 255, 0.035);
+}
+
+[data-theme='light'] .dbi-grid-tr:nth-child(even) {
+  background: rgba(0, 0, 0, 0.035);
+}
+
 .dbi-grid-tr:hover {
-  background: var(--win-bg-hover);
+  background: var(--win-bg-hover) !important;
 }
 
 .dbi-grid-tr.is-selected {
-  background: var(--win-accent-glow);
+  background: var(--win-accent-glow) !important;
 }
 
 .dbi-grid-td {
@@ -18273,6 +18282,11 @@ input.rename-input {
   align-items: center;
   justify-content: flex-end;
   gap: 4px;
+}
+
+.dbi-grid-approx {
+  color: var(--win-text-disabled);
+  font-size: 11px;
 }
 
 .dbi-exact-btn {
