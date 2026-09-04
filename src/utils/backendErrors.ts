@@ -142,6 +142,12 @@ export const PATTERNS: { re: RegExp; key: string; nested?: boolean }[] = [
   { re: /^Lỗi yêu cầu PTY: ([\s\S]*)$/, key: 'backend.ptyRequestFailed' },
   { re: /^Lỗi đọc file private key '([^']*)': ([\s\S]*)$/, key: 'backend.readPrivateKeyFileFailed' },
   { re: /^Lỗi đọc nội dung private key: ([\s\S]*)$/, key: 'backend.readPrivateKeyFailed' },
+  // mcp/audit_file.rs — the encrypted audit log on disk. Only the WRITER's failures surface here;
+  // a line that fails to decrypt is counted rather than thrown, because that is the tamper signal.
+  { re: /^Không lấy được khoá mã hoá nhật ký MCP: ([\s\S]*)$/, key: 'backend.mcpAuditKeyFailed' },
+  { re: /^Khoá mã hoá nhật ký MCP không hợp lệ: ([\s\S]*)$/, key: 'backend.mcpAuditKeyInvalid' },
+  { re: /^Không ghi được nhật ký MCP: ([\s\S]*)$/, key: 'backend.mcpAuditWriteFailed' },
+  { re: /^Không sinh được khoá mã hoá: ([\s\S]*)$/, key: 'backend.mcpAuditKeyGenFailed' },
   { re: /^PING lỗi: ([\s\S]*)$/, key: 'backend.pingFailed' },
   { re: /^Không thể kết nối Redis: ([\s\S]*)$/, key: 'backend.redisConnectFailed' },
   // redis_db.rs — refused commands and pagination

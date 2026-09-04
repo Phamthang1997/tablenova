@@ -104,8 +104,10 @@ impl Audit {
             }
             q.push_back(entry.clone());
         }
-        // Outside the lock: the UI listener runs on the caller's thread in Tauri, and holding this
-        // mutex across it would serialise every MCP request behind the slowest window.
+        // Outside the lock, and before the event for the same reason: the UI listener runs on the
+        // caller's thread in Tauri, so holding this mutex across it would serialise every MCP
+        // request behind the slowest window. The file write only queues, it does not block.
+        super::audit_file::append(&entry);
         crate::state::emit("mcp-request", json!(entry));
     }
 

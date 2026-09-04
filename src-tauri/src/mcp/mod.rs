@@ -30,6 +30,7 @@
 
 mod approval;
 mod audit;
+pub mod audit_file;
 mod auth;
 pub(crate) mod http;
 mod policy;

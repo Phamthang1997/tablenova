@@ -213,6 +213,7 @@ export const COMMAND_KINDS: Record<string, CommandKind> = {
   mcp_regenerate_token: 'write',
   mcp_audit_log: 'internal',
   mcp_audit_clear: 'internal',
+  mcp_audit_file_read: 'internal',
   set_connection_mcp_exposed: 'internal',
   set_connection_mcp_write: 'internal',
   // Answering the MCP approval dialog. `internal` because it IS an approval: gating it behind a

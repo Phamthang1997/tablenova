@@ -1120,6 +1120,17 @@ export const dbHelper = {
   },
 
   /**
+   * The audit log kept on disk, across runs — encrypted, with the key in the OS keyring.
+   *
+   * `unreadable` counts lines that failed to decrypt. That is a signal, not a glitch: each line is
+   * bound to the previous one, so a removed or reordered line makes the rest fail to open. The UI
+   * has to show the number rather than a quietly shorter list.
+   */
+  async mcpAuditFileRead(): Promise<{ entries: McpAuditEntry[]; unreadable: number; error: string | null }> {
+    return invoke<{ entries: McpAuditEntry[]; unreadable: number; error: string | null }>('mcp_audit_file_read');
+  },
+
+  /**
    * Answer one parked write request from an AI client.
    *
    * Rejects when the request is no longer pending (it timed out), rather than reporting success

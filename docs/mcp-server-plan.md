@@ -628,7 +628,23 @@ tồn tại, hai middleware ghi qua `audit::record()` (một người ghi duy nh
 - [x] Quyết hợp nhất hay song song với Safe Mode (§3.5) — **trước khi** viết code. Chốt: chung cơ chế, không chung chính sách; xem §3.5.
 - [x] Cơ chế park request → event → hộp thoại → channel, có timeout. `mcp/approval.rs` (oneshot theo id, 60s) + `McpApprovalGate.tsx` (hàng đợi, đếm ngược, tự đóng khi hết giờ).
 - [x] `tablegrid_mutate` + hộp thoại nói rõ "không nằm trong transaction của bạn". Ba lớp không thay thế nhau: tick ghi (`policy::resolve_write`), một câu lệnh và không phải câu đọc (`ensure_single_write`), rồi hộp thoại. Kiểm lại `reject_if_manual` **sau** khi được duyệt, vì 60 giây là quá đủ để người dùng bật manual-commit.
-- [ ] Audit log ghi tệp.
+- [x] Audit log ghi tệp — `mcp/audit_file.rs`, **mã hoá**. Ba điều đáng biết trước khi sửa:
+      1. **Mã hoá vì mục ghi mang nguyên văn SQL, mà SQL mang dữ liệu** — một `INSERT` gọi tên giá trị,
+         một `WHERE` gọi tên con người. Plaintext trên đĩa biến vết kiểm toán thành bản sao thứ hai
+         của dữ liệu, đọc được bởi mọi trình sao lưu / đồng bộ đám mây / lập chỉ mục trên máy.
+         AES-256-GCM, khoá 32 byte trong keyring OS cùng chỗ với bearer token (`__mcp__`, field khác).
+         `aes-gcm` đã có sẵn trong `Cargo.lock` qua `pkcs5` nên khai báo trực tiếp không thêm crate nào.
+      2. **Mỗi dòng buộc vào dòng trước** (tag của dòng trước làm AAD), nên xoá / đảo / chèn dòng làm
+         mọi dòng SAU đó không giải mã được. Điều này **không** chống được cắt đuôi tệp — không gì ở
+         đây chứng minh được một dòng đã bị xoá từng tồn tại. Nói thẳng thay vì để người đọc tưởng
+         tệp chống sửa. Số dòng, kích thước và thời điểm ghi cũng không giấu được.
+      3. **Một thread ghi riêng, không phải `spawn_blocking` mỗi mục**: chuỗi buộc dòng làm THỨ TỰ
+         ghi thành một phần của định dạng, mà task trên pool thì không có thứ tự. Hot path chỉ
+         serialize rồi gửi vào channel; mất mục khi channel hỏng là lựa chọn đúng, vì một nhật ký
+         có thể làm nghẽn chính request nó đang ghi sẽ biến sự cố đĩa thành AI client bị treo.
+      Đọc lại qua `mcp_audit_file_read` (tab Logs có công tắc *Phiên này* ⇄ *Đã lưu trên đĩa*), và số
+      dòng không giải mã được hiện ra cạnh danh sách chứ không bị nuốt — một log lặng lẽ ngắn đi tệ
+      hơn không có log.
 - [x] Cầu stdio: một proxy mỏng stdio↔HTTP loopback, cờ xử lý **trước** `tauri::Builder` — **không**
       cần plugin single-instance. §0.4 lo đúng một nửa: nó đúng rằng mở app thứ hai là sai, nhưng mode
       proxy **không bao giờ chạm tầng cửa sổ** (`mcp/stdio.rs::serve()` không quay lại `run()`), nên
