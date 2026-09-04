@@ -325,6 +325,12 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
     const restOfStatement = after.slice(0, after.indexOf(';') < 0 ? after.length : after.indexOf(';'));
     const canAppendOn = afterJoin && !/\bon\b/i.test(restOfStatement);
 
+    // The ranking below is worthless on a cold cache, and the very first `JOIN` of a session is
+    // exactly when it is cold — `getTables` only fires the prime and walks away. Awaited ONLY on
+    // this path (it is capped, and it is the one place whose answer depends on the cache rather
+    // than merely improving with it).
+    if (afterJoin && scopeTables.length) await catalog.ensureCatalogPrimed(editorConnId());
+
     const tables = await catalog.getTables(editorConnId());
     for (const tb of tables) {
       let insertText = tb.name;
