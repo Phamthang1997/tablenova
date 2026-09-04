@@ -1282,6 +1282,7 @@ const ja: typeof en = {
     cmplSqlFunction: 'SQL 関数 ({{engine}})',
     cmplSnippet: 'スニペット',
     cmplJoinCondition: 'JOIN 条件 (FK)',
+    cmplJoinsOn: '結合可: {{cond}}',
     cmplAllColumns: 'すべての列',
     cmplListColumns: '{{n}} 列を展開',
     cmplAllColumnsOf: '{{table}} のすべての列',

@@ -1299,6 +1299,7 @@ const en = {
     cmplSqlFunction: 'SQL function ({{engine}})',
     cmplSnippet: 'Snippet',
     cmplJoinCondition: 'JOIN condition (FK)',
+    cmplJoinsOn: 'joins on {{cond}}',
     cmplAllColumns: 'All columns',
     cmplListColumns: 'list {{n}} columns',
     cmplAllColumnsOf: 'All columns of {{table}}',

@@ -307,9 +307,23 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
   const emitTables = async () => {
     // Automatically assigns alias when inserting tables in FROM/JOIN (excluding INTO/UPDATE/DROP...)
     const stripped = textBefore.replace(/[\w$."`]*$/, '').trimEnd();
-    const wantAlias = /\b(from|join)$/i.test(stripped) || (stripped.endsWith(',') && /\bfrom\b/i.test(textBefore));
+    const afterJoin = /\bjoin$/i.test(stripped);
+    const wantAlias = afterJoin || /\bfrom$/i.test(stripped) || (stripped.endsWith(',') && /\bfrom\b/i.test(textBefore));
     const taken = new Set<string>();
     aliasByTable.forEach(a => taken.add(a.toLowerCase()));
+
+    // A table the caret's statement can already join to is ranked above the rest of the catalog and,
+    // right after `JOIN`, carries its own `ON` clause. This reads the catalog cache ONLY
+    // (`getCachedSchema`), so the ranking costs no IPC: the cache is primed in the background by
+    // `getTables`, and until it lands every table reports no relation and the list simply falls
+    // back to the plain frequency order.
+    const cachedSchema = async (tbl: string) => catalog.getCachedSchema(editorConnId(), tbl);
+    // Appending `ON …` to a re-picked table would produce a second one, so look for an `ON`
+    // already sitting after the caret first — up to the end of the STATEMENT, not of the line,
+    // since a hand-formatted join puts its condition on the next one.
+    const after = fullText.slice(model.getOffsetAt(position));
+    const restOfStatement = after.slice(0, after.indexOf(';') < 0 ? after.length : after.indexOf(';'));
+    const canAppendOn = afterJoin && !/\bon\b/i.test(restOfStatement);
 
     const tables = await catalog.getTables(editorConnId());
     for (const tb of tables) {
@@ -321,14 +335,34 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
         
         insertText = `${tb.name} ${alias}`;
       }
+
+      // FK only: the same-name fallback would call every table joinable in a schema where each one
+      // has an `id`, and a ranking that promotes everything ranks nothing.
+      let conds: string[] = [];
+      if (afterJoin && scopeTables.length) {
+        const aliasForCond = new Map(aliasByTable);
+        if (alias) aliasForCond.set(tb.name, alias);
+        conds = await buildJoinConditions([...scopeTables, tb.name], aliasForCond, cachedSchema, { fkOnly: true });
+      }
+      if (conds.length && canAppendOn) insertText = `${insertText} ON ${conds[0]}`;
+
       items.push({
         label: tb.name,
         kind: tb.type === 'view'
           ? monaco.languages.CompletionItemKind.Interface
           : monaco.languages.CompletionItemKind.Class,
-        detail: tableKind(tb.type) + (alias ? ` · alias ${alias}` : ''),
+        detail: tableKind(tb.type)
+          + (alias ? ` · alias ${alias}` : '')
+          + (conds.length ? ` · ${i18n.t('sqlEditor.cmplJoinsOn', { cond: conds[0] })}` : ''),
+        // More than one FK to the tables in scope: the popup shows the first, the doc panel all of them.
+        documentation: conds.length > 1
+          ? { value: ['```sql', conds.map(c => `ON ${c}`).join('\n'), '```'].join('\n') }
+          : undefined,
         insertText,
-        sortText: rankSort('2', tb.name),
+        // '1z' sorts between the column tier ('1') and the plain table tier ('2'); '15' would NOT,
+        // since '5' < '_'. A column is never emitted at a JOIN caret, but the ladder stays honest
+        // either way (completionOrder.test.ts pins it).
+        sortText: conds.length ? rankSort('1z', tb.name) : rankSort('2', tb.name),
         command: bumpCommand(tb.name),
       });
     }

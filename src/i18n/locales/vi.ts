@@ -1285,6 +1285,7 @@ const vi: typeof en = {
     cmplSqlFunction: 'Hàm SQL ({{engine}})',
     cmplSnippet: 'Mẫu câu',
     cmplJoinCondition: 'Điều kiện JOIN (FK)',
+    cmplJoinsOn: 'nối được: {{cond}}',
     cmplAllColumns: 'Tất cả các cột',
     cmplListColumns: 'liệt kê {{n}} cột',
     cmplAllColumnsOf: 'Tất cả cột của {{table}}',
