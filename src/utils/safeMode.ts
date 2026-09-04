@@ -214,6 +214,10 @@ export const COMMAND_KINDS: Record<string, CommandKind> = {
   mcp_audit_log: 'internal',
   mcp_audit_clear: 'internal',
   set_connection_mcp_exposed: 'internal',
+  set_connection_mcp_write: 'internal',
+  // Answering the MCP approval dialog. `internal` because it IS an approval: gating it behind a
+  // second dialog would ask the user to confirm that they confirmed.
+  mcp_approval_respond: 'internal',
 
   ai_chat: 'internal',
   open_url: 'internal',

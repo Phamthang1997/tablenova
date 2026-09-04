@@ -65,6 +65,11 @@ export interface OpenConnection {
   readOnly: boolean;
   /** Is this connection visible to AI clients through the built-in MCP server? Default false. */
   mcpExposed: boolean;
+  /**
+   * May an AI client ask to WRITE on it? Default false, and it goes back to false whenever
+   * `mcpExposed` does — a permission that came back on its own would be the worst kind.
+   */
+  mcpWrite: boolean;
 }
 
 /** State of the built-in MCP server. `url` is empty while stopped, so no one copies a dead address. */
@@ -91,7 +96,15 @@ export interface McpAuditEntry {
    * Absent when `ok`. Mirrors `mcp::audit::Denial` — `badOrigin`/`badToken` are the two door layers,
    * refused before any tool runs, so they carry no `connId` or `sql`.
    */
-  denial?: 'badOrigin' | 'badToken' | 'notShared' | 'notReadOnly' | 'manualTransaction' | 'failed';
+  denial?:
+    | 'badOrigin'
+    | 'badToken'
+    | 'notShared'
+    | 'notReadOnly'
+    | 'manualTransaction'
+    | 'writeNotAllowed'
+    | 'notApproved'
+    | 'failed';
   /** Which defence layer refused; `0` when the database itself failed. */
   layer?: number;
   message?: string;
@@ -1064,6 +1077,18 @@ export const dbHelper = {
     return !!res.mcpExposed;
   },
 
+  /**
+   * Let an AI client ask to write on one connection, or stop letting it.
+   *
+   * A third switch next to `setConnectionReadOnly` and `setConnectionMcpExposed`, answering the
+   * third question: not what the connection may do, nor whether an AI may see it, but whether an
+   * AI may propose changing it. The backend refuses this on a connection that is not shared.
+   */
+  async setConnectionMcpWrite(connId: string, enabled: boolean): Promise<boolean> {
+    const res = await invoke<{ mcpWrite: boolean }>('set_connection_mcp_write', { connId, enabled });
+    return !!res.mcpWrite;
+  },
+
   async mcpStatus(): Promise<McpStatus> {
     return invoke<McpStatus>('mcp_status');
   },
@@ -1092,6 +1117,16 @@ export const dbHelper = {
 
   async mcpAuditClear(): Promise<void> {
     await invoke<void>('mcp_audit_clear');
+  },
+
+  /**
+   * Answer one parked write request from an AI client.
+   *
+   * Rejects when the request is no longer pending (it timed out), rather than reporting success
+   * for an approval that arrived too late to run anything — see `mcp/approval.rs`.
+   */
+  async mcpApprovalRespond(requestId: string, approved: boolean): Promise<void> {
+    await invoke<void>('mcp_approval_respond', { requestId, approved });
   },
 
   async listConnections(): Promise<OpenConnection[]> {

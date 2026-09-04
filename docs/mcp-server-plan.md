@@ -337,6 +337,27 @@ kèm hai câu hỏi phải trả lời trước khi viết dòng đầu tiên:
 - **Timeout khi không ai trả lời?** Client MCP sẽ chờ. Phải có hạn và một câu trả lời rõ ràng cho
   client ("người dùng không phản hồi"), không để treo.
 
+**Đã quyết ngày 2026-09-04, và đây là câu trả lời cho cả hai câu hỏi trên.**
+
+1. **Chung cơ chế, KHÔNG chung chính sách.** Safe Mode không gác được MCP dù có muốn: nó nằm ở
+   frontend, trong đúng một chỗ là hàm `invoke()` cục bộ của `dbHelper`, còn request MCP đi
+   Rust→Rust và không hề qua đó. Nên `mcp/approval.rs` xây đúng cái máy mà `safeMode.ts` cố ý
+   tránh. Cái được chia sẻ là *hình dạng câu hỏi* và luật "một lời hỏi cho một hành động", không
+   phải cấu hình. Cổng MCP **luôn bật, không có chế độ tắt** — và đó chính là cách nỗi lo "hai
+   chính sách lệch nhau" được đóng: không có chính sách thứ hai để lệch. `silent` của Safe Mode
+   nghĩa là "tôi đang tự gõ, đừng hỏi nữa", không cách đọc nào kéo nó sang một request do dịch vụ
+   bên ngoài gửi.
+2. **Quyền ghi là một tick RIÊNG cho từng kết nối, mặc định TẮT** (`ConnEntry::mcp_write`). Phơi
+   để đọc và cho phép ghi là hai quyết định khác nhau; gộp lại thì mọi kết nối đã phơi đều có thể
+   bị dội hộp thoại, mà mệt là đường dẫn tới bấm Đồng ý theo phản xạ — đúng thứ hộp thoại sinh ra
+   để chặn. Bỏ tick phơi thì tick ghi **rơi theo**: một quyền tự quay lại là hành vi tệ nhất một
+   quyền có thể có.
+3. **60 giây rồi từ chối.** Client bị chặn suốt thời gian đó nên đây là ngân sách chứ không phải
+   phép lịch sự: đủ để người dùng đổi cửa sổ và ĐỌC câu lệnh, đủ ngắn để client không tưởng server
+   chết. Cố ý không dính gì tới `MAX_TIMEOUT` 30s — cái đó chặn database chạy bao lâu, đọc không
+   phải là chạy. Hết giờ thì Rust bắn `mcp-approval-resolved` để hộp thoại tự đóng, vì để lại hai
+   cái nút cho một request đã bị từ chối nghĩa là một nút Đồng ý bấm vào không có gì xảy ra.
+
 Và khi có ghi thì §0.2 quay lại thành câu hỏi thật: một `UPDATE` của AI chạy trên pooled connection
 (§2.2) **không** nằm trong transaction người dùng — nghĩa là nó tự commit ngay, không rollback được
 bằng nút Rollback của người dùng. Hộp thoại phê duyệt phải nói ra điều đó.
@@ -604,9 +625,9 @@ tồn tại, hai middleware ghi qua `audit::record()` (một người ghi duy nh
 
 ### V2 — ghi có phê duyệt (~2–3 tuần, đánh giá lại sau V1)
 
-- [ ] Quyết hợp nhất hay song song với Safe Mode (§3.5) — **trước khi** viết code.
-- [ ] Cơ chế park request → event → hộp thoại → channel, có timeout.
-- [ ] `TABLEGRID_mutate` + hộp thoại nói rõ "không nằm trong transaction của bạn".
+- [x] Quyết hợp nhất hay song song với Safe Mode (§3.5) — **trước khi** viết code. Chốt: chung cơ chế, không chung chính sách; xem §3.5.
+- [x] Cơ chế park request → event → hộp thoại → channel, có timeout. `mcp/approval.rs` (oneshot theo id, 60s) + `McpApprovalGate.tsx` (hàng đợi, đếm ngược, tự đóng khi hết giờ).
+- [x] `tablegrid_mutate` + hộp thoại nói rõ "không nằm trong transaction của bạn". Ba lớp không thay thế nhau: tick ghi (`policy::resolve_write`), một câu lệnh và không phải câu đọc (`ensure_single_write`), rồi hộp thoại. Kiểm lại `reject_if_manual` **sau** khi được duyệt, vì 60 giây là quá đủ để người dùng bật manual-commit.
 - [ ] Audit log ghi tệp.
 - [x] Cầu stdio: một proxy mỏng stdio↔HTTP loopback, cờ xử lý **trước** `tauri::Builder` — **không**
       cần plugin single-instance. §0.4 lo đúng một nửa: nó đúng rằng mở app thứ hai là sai, nhưng mode

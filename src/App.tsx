@@ -3,6 +3,7 @@ import { Trans, useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { TitleBar } from './components/TitleBar';
 import { SafeModeGate } from './components/SafeModeGate';
+import { McpApprovalGate } from './components/McpApprovalGate';
 import { ConnectionManager } from './components/ConnectionManager';
 import { Sidebar } from './components/Sidebar';
 import { DbRail } from './components/DbRail';
@@ -2138,6 +2139,7 @@ export const App: React.FC = () => {
           React, so it holds a registered confirmer, and the dialog has to live outside every tab so
           the question still appears wherever the command came from. */}
       <SafeModeGate />
+      <McpApprovalGate />
 
       {/* Adding another connection while one is already open (the rail's `+` button). It reuses
           `ConnectionManager` whole rather than writing a second screen; `handleConnect` already does

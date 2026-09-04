@@ -296,6 +296,10 @@ export function McpServerSettingsModal({ onClose, asTab = false }: Props) {
         return t('mcp.denialNotReadOnly');
       case 'manualTransaction':
         return t('mcp.denialManualTransaction');
+      case 'writeNotAllowed':
+        return t('mcp.denialWriteNotAllowed');
+      case 'notApproved':
+        return t('mcp.denialNotApproved');
       case 'failed':
         return t('mcp.denialFailed');
       default:
@@ -546,6 +550,27 @@ export function McpServerSettingsModal({ onClose, asTab = false }: Props) {
                           <span className="mcp-dialect-badge">{c.dialect}</span>
                         </label>
                         {c.mcpExposed && reachLine(c)}
+                        {/* Nested under the share tick and only rendered while it is on, because
+                            that is the actual relationship: the backend refuses a write tick on a
+                            connection nobody shared, and un-sharing clears it. A second top-level
+                            checkbox would read as two independent settings and invite the question
+                            "is it shared if only the write box is ticked?". */}
+                        {c.mcpExposed && (
+                          <label className="mcp-conn-write">
+                            <input
+                              type="checkbox"
+                              checked={c.mcpWrite}
+                              disabled={busy || c.readOnly}
+                              onChange={(e) =>
+                                run(() => dbHelper.setConnectionMcpWrite(c.connId, e.target.checked))
+                              }
+                            />
+                            <span>{t('mcp.writeTick')}</span>
+                          </label>
+                        )}
+                        {c.mcpExposed && c.mcpWrite && (
+                          <p className="mcp-conn-write-hint">{t('mcp.writeTickHint')}</p>
+                        )}
                       </li>
                     ))}
                   </ul>

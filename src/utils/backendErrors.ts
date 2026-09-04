@@ -25,6 +25,11 @@ export const EXACT: Record<string, string> = {
   'Kết nối đang ở chế độ chỉ đọc — tắt chế độ này trước khi ghi': 'backend.connReadOnly',
   // oauth.rs — the client id is baked in at compile time and may be empty
   'Chưa cấu hình Google OAuth client id cho bản dựng này': 'backend.oauthClientMissing',
+  // mcp/approval.rs — the only Vietnamese string in mcp/, because it answers the APPROVAL DIALOG
+  // rather than an AI client (everything the client reads stays English, see mcp/mod.rs).
+  'Yêu cầu này không còn chờ trả lời (đã hết hạn hoặc đã được trả lời).': 'backend.mcpApprovalGone',
+  // state/registry.rs — the write tick refuses on a connection that is not shared.
+  'Kết nối này chưa được chia sẻ với MCP nên không thể bật quyền ghi': 'backend.mcpWriteNeedsShare',
   // tx_session.rs — transaction manual
   'Không có transaction nào đang mở': 'backend.txNotOpen',
   'Transaction đã bị huỷ do lỗi trước đó, chỉ có thể rollback': 'backend.txAborted',

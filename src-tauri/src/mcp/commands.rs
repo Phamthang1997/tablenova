@@ -6,6 +6,7 @@
 //! client instead, so those are English and never go through that table. Registering these strings
 //! in `backendErrors.ts` happens together with the Settings UI (Bước 3 of the plan).
 
+use super::approval;
 use super::auth;
 use super::server::{DEFAULT_PORT, McpStatus};
 
@@ -83,4 +84,14 @@ pub async fn mcp_audit_clear() -> Result<(), String> {
         Ok(())
     })
     .await
+}
+
+/// The answer to one parked write request, from `McpApprovalGate.tsx`.
+///
+/// Deliberately NOT idempotent: replying to an id that is no longer pending is an error, because
+/// the only way to get there is a request that already timed out - and a dialog that silently
+/// succeeded would tell the user their approval went through when nothing ran.
+#[tauri::command]
+pub async fn mcp_approval_respond(request_id: String, approved: bool) -> Result<(), String> {
+    Box::pin(async move { approval::respond(&request_id, approved) }).await
 }

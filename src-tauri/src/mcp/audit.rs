@@ -42,6 +42,10 @@ pub enum Denial {
     NotReadOnly,
     /// The connection is mid-transaction in TableGrid.
     ManualTransaction,
+    /// Layer 4: the connection is shared for reading, but the user has not allowed writes on it.
+    WriteNotAllowed,
+    /// Layer 5: the user declined, did not answer in time, or the dialog went away.
+    NotApproved,
     /// The database itself refused, or the query failed.
     Failed,
 }
@@ -54,6 +58,8 @@ impl Denial {
             Denial::NotShared => 3,
             Denial::NotReadOnly => 4,
             Denial::ManualTransaction => 4,
+            Denial::WriteNotAllowed => 4,
+            Denial::NotApproved => 5,
             Denial::Failed => 0,
         }
     }
