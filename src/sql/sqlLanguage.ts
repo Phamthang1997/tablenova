@@ -332,24 +332,43 @@ const completionService: CompletionService = async (model, position, _ctx, sugge
     if (afterJoin && scopeTables.length) await catalog.ensureCatalogPrimed(editorConnId());
 
     const tables = await catalog.getTables(editorConnId());
+
+    // Aliases first, because a JOIN condition has to name the candidate by the alias it will be
+    // inserted with. `new Set(taken)` per item keeps each one isolated, so this stays independent
+    // of order - which is what makes resolving the conditions together below correct.
+    const aliasOf = new Map<string, string>();
+    if (wantAlias) {
+      for (const tb of tables) aliasOf.set(tb.name, genAlias(tb.name, new Set(taken)));
+    }
+
+    // Resolved TOGETHER rather than one per iteration. `Promise.all` is wrong at almost every other
+    // await-in-a-loop in this codebase - those are sequential DB reads, and firing N of them at once
+    // would hit the user's production database with a burst (see the triage note in CLAUDE.md). This
+    // one reads `getCachedSchema`, i.e. a Map already in memory, so there is nothing to burst.
+    const condsOf = new Map<string, string[]>();
+    if (afterJoin && scopeTables.length) {
+      const built = await Promise.all(
+        tables.map(tb => {
+          const aliasForCond = new Map(aliasByTable);
+          const alias = aliasOf.get(tb.name);
+          if (alias) aliasForCond.set(tb.name, alias);
+          // FK only: the same-name fallback would call every table joinable in a schema where each
+          // one has an `id`, and a ranking that promotes everything ranks nothing.
+          return buildJoinConditions([...scopeTables, tb.name], aliasForCond, cachedSchema, { fkOnly: true });
+        }),
+      );
+      tables.forEach((tb, i) => condsOf.set(tb.name, built[i]));
+    }
+
     for (const tb of tables) {
       let insertText = tb.name;
-      let alias: string | null = null;
-      if (wantAlias) {
-        alias = genAlias(tb.name, new Set(taken)); // isolated set per item to avoid alias collision
+      const alias = aliasOf.get(tb.name) ?? null;
+      if (alias) {
         // Inserts alias as plain text rather than snippet placeholder to prevent accidental overwrites.
-        
         insertText = `${tb.name} ${alias}`;
       }
 
-      // FK only: the same-name fallback would call every table joinable in a schema where each one
-      // has an `id`, and a ranking that promotes everything ranks nothing.
-      let conds: string[] = [];
-      if (afterJoin && scopeTables.length) {
-        const aliasForCond = new Map(aliasByTable);
-        if (alias) aliasForCond.set(tb.name, alias);
-        conds = await buildJoinConditions([...scopeTables, tb.name], aliasForCond, cachedSchema, { fkOnly: true });
-      }
+      const conds = condsOf.get(tb.name) ?? [];
       if (conds.length && canAppendOn) insertText = `${insertText} ON ${conds[0]}`;
 
       items.push({
